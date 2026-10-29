@@ -15,9 +15,9 @@ final class FakeServeWorld: @unchecked Sendable {
     var survives = true
     var statusError: Error?
 
-    func preload(repo: String, port: Int, jit: Bool = false, modelState: String? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, activeRequests: Int? = nil) {
+    func preload(repo: String, port: Int, jit: Bool = false, modelState: String? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, activeRequests: Int? = nil, receipt: String = "r", prefillKernel: LabValue? = nil, decodeProfile: LabValue? = nil) {
         lock.lock()
-        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r", jit: jit, modelState: modelState, activeRequests: activeRequests, memoryPolicy: memoryPolicy))
+        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: receipt, jit: jit, modelState: modelState, activeRequests: activeRequests, memoryPolicy: memoryPolicy, prefillKernel: prefillKernel, decodeProfile: decodeProfile))
         lock.unlock()
     }
 
@@ -28,7 +28,7 @@ final class FakeServeWorld: @unchecked Sendable {
         let old = servers[index]
         servers[index] = ServerInfo(repo: old.repo, path: old.path, runtime: old.runtime, port: old.port,
             pid: old.pid, state: old.state, logPath: old.logPath, startedAt: old.startedAt, receipt: old.receipt,
-            jit: old.jit, modelState: old.modelState, workerPid: old.workerPid, activeRequests: old.activeRequests, memoryPolicy: policy)
+            jit: old.jit, modelState: old.modelState, workerPid: old.workerPid, activeRequests: old.activeRequests, memoryPolicy: policy, prefillKernel: old.prefillKernel, decodeProfile: old.decodeProfile)
     }
 
     func unloadModel(port: Int) {
@@ -38,7 +38,7 @@ final class FakeServeWorld: @unchecked Sendable {
             let old = servers[index]
             servers[index] = ServerInfo(repo: old.repo, path: old.path, runtime: old.runtime, port: old.port,
                 pid: old.pid, state: old.state, logPath: old.logPath, startedAt: old.startedAt, receipt: old.receipt,
-                jit: true, modelState: "unloaded")
+                jit: true, modelState: "unloaded", prefillKernel: old.prefillKernel, decodeProfile: old.decodeProfile)
         }
     }
 

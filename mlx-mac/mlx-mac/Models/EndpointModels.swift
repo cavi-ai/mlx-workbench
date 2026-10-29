@@ -1,5 +1,17 @@
 import Foundation
 
+struct LocalAccelerationOptions: Codable, Equatable, Sendable {
+    var m5Prefill = false
+    var promptLookup = false
+    var requested: Bool { m5Prefill || promptLookup }
+}
+
+struct EndpointAccelerationPreview {
+    let slot: EndpointSlot
+    let options: LocalAccelerationOptions
+    let hash: String
+}
+
 // MARK: - Endpoint models
 //
 // Always-on Endpoint (premium spec 06): a stable loopback port that always
@@ -64,6 +76,9 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var memoryPolicy: EndpointMemoryPolicy?
     var servingProfile: ServingProfile? = nil
     var profilePreviewHash: String? = nil
+    var acceleration: LocalAccelerationOptions? = nil
+    var accelerationPreviewHash: String? = nil
+    var accelerationOptions: LocalAccelerationOptions { acceleration ?? .init() }
     var usesJIT: Bool { loadOnRequest == true }
 
     init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
@@ -97,6 +112,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case duplicatePort(Int)
     case duplicateRole(UseCase)
     case invalidMemoryPolicy(UUID)
+    case incompatibleAcceleration(UUID)
 }
 
 extension EndpointFleetValidation: LocalizedError {
@@ -112,6 +128,8 @@ extension EndpointFleetValidation: LocalizedError {
             return "Role \(role.title) is already assigned to another endpoint."
         case .invalidMemoryPolicy:
             return "Memory policy requires an idle timeout of 0–86400 seconds and a finite reserve of 0–1024 GB."
+        case .incompatibleAcceleration:
+            return "Local acceleration requires MLX-LM without a Strata serving profile."
         }
     }
 }
@@ -126,6 +144,9 @@ extension EndpointFleetConfig {
         var seenPorts = Set<Int>()
         var seenRoles = Set<UseCase>()
         for slot in slots {
+            if slot.servingProfile != nil, slot.accelerationOptions.requested {
+                throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
+            }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }
             guard (1...65535).contains(slot.port) else {
                 throw EndpointFleetValidation.invalidPort(slot.port)

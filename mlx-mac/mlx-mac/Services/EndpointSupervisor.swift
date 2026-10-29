@@ -49,6 +49,7 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     var profileLifecycle: ((ServingProfile) throws -> ServeLifecycle)?
+    var accelerationLifecycle: ((LocalAccelerationOptions) throws -> ServeLifecycle)?
     private let lifecycle: ServeLifecycle
     private let statusProvider: @Sendable () async throws -> [ServerInfo]
     private let fleetStore: EndpointFleetStore
@@ -134,6 +135,7 @@ final class EndpointSupervisor: ObservableObject {
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let old = fleet.slots.first
         var slot = old ?? EndpointSlot(enabled: false, port: port, modelPath: modelPath)
+        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
         slot.enabled = true; slot.port = port; slot.modelPath = modelPath
         slot.servingProfile = nil; slot.profilePreviewHash = nil
         if let mode = loadOnRequest ?? (old == nil ? lifecycle.jitPreview != nil : nil) { slot.loadOnRequest = mode }
@@ -162,6 +164,7 @@ final class EndpointSupervisor: ObservableObject {
         candidate.enabled = true; candidate.port = port; candidate.modelPath = profile.modelPath
         candidate.loadOnRequest = loadOnRequest; candidate.memoryPolicy = loadOnRequest ? .automatic : nil
         candidate.servingProfile = profile; candidate.profilePreviewHash = nil
+        candidate.acceleration = nil; candidate.accelerationPreviewHash = nil
         guard validate(candidate, isNew: fleet.slots.isEmpty) else { return }
         let old = fleet.slots.first
         guard commit(replacing: candidate) else { return }
@@ -214,7 +217,10 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         guard let old = fleet.slots.first(where: { $0.id == id }) else { return }
         var candidate = old
-        if candidate.modelPath != modelPath { candidate.servingProfile = nil; candidate.profilePreviewHash = nil }
+        if candidate.modelPath != modelPath {
+            candidate.servingProfile = nil; candidate.profilePreviewHash = nil
+            candidate.acceleration = nil; candidate.accelerationPreviewHash = nil
+        }
         candidate.modelPath = modelPath; candidate.port = port; candidate.role = role
         let selectionChanged = candidate.enabled && (old.modelPath != modelPath || old.port != port)
         guard validate(candidate, isNew: false), commit(replacing: candidate) else { return }
@@ -250,6 +256,7 @@ final class EndpointSupervisor: ObservableObject {
         guard let old = fleet.slots.first(where: { $0.id == id }),
               passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         var slot = old
+        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
         slot.modelPath = modelPath; slot.servingProfile = nil; slot.profilePreviewHash = nil
         guard commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
@@ -309,6 +316,7 @@ final class EndpointSupervisor: ObservableObject {
                     lastError = "A different model is serving on this port. Refresh before changing load mode."
                     return
                 }
+                _ = try await confirmedAccelerationHash(current, slot: slot)
                 guard (current.activeRequests ?? 0) == 0 else {
                     lastError = "Finish active requests before changing load mode."
                     return
@@ -333,6 +341,84 @@ final class EndpointSupervisor: ObservableObject {
         }
     }
 
+    /// Acceleration changes never stop a running endpoint. Disable it first,
+    /// review a launch preview, then save the same source-bound configuration.
+    func previewSlotAcceleration(id: UUID, options: LocalAccelerationOptions) async throws -> EndpointAccelerationPreview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard let slot = fleet.slots.first(where: { $0.id == id }) else {
+            throw WorkflowEvidenceError.invalid("Endpoint no longer exists.")
+        }
+        try await requireStoppedForAcceleration(slot)
+        var candidate = slot
+        candidate.acceleration = options.requested ? options : nil
+        let hash = try await accelerationPreviewHash(candidate)
+        guard !hash.isEmpty, fleet.slots.contains(slot) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Preview acceleration again.")
+        }
+        return EndpointAccelerationPreview(slot: slot, options: options, hash: hash)
+    }
+
+    func confirmSlotAcceleration(_ preview: EndpointAccelerationPreview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        do {
+            guard fleet.slots.contains(preview.slot) else {
+                throw WorkflowEvidenceError.invalid("Endpoint settings changed. Preview acceleration again.")
+            }
+            try await requireStoppedForAcceleration(preview.slot)
+            var candidate = preview.slot
+            candidate.acceleration = preview.options.requested ? preview.options : nil
+            candidate.accelerationPreviewHash = nil
+            let hash = try await accelerationPreviewHash(candidate)
+            guard hash == preview.hash, fleet.slots.contains(preview.slot) else {
+                throw WorkflowEvidenceError.invalid("Launch plan changed. Preview acceleration again.")
+            }
+            try await requireStoppedForAcceleration(preview.slot)
+            guard commit(replacing: candidate) else { return false }
+            lastError = nil
+            return true
+        } catch {
+            lastError = AppHost.render(error)
+            return false
+        }
+    }
+
+    private func requireStoppedForAcceleration(_ slot: EndpointSlot) async throws {
+        guard !slot.enabled, pendingStops[slot.id] == nil, slot.servingProfile == nil else {
+            throw WorkflowEvidenceError.invalid("Disable the endpoint and confirm it has stopped before changing acceleration. Strata profiles use their own settings.")
+        }
+        let servers = try await statusProvider()
+        guard !servers.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }) else {
+            throw WorkflowEvidenceError.invalid("A server is still using this port. Stop it before changing acceleration.")
+        }
+    }
+
+    private func servingLifecycle(_ slot: EndpointSlot) throws -> ServeLifecycle {
+        if slot.accelerationOptions.requested {
+            guard slot.servingProfile == nil, let factory = accelerationLifecycle else {
+                throw WorkflowEvidenceError.invalid("Local acceleration is unavailable for this endpoint.")
+            }
+            return try factory(slot.accelerationOptions)
+        }
+        if let profile = slot.servingProfile {
+            guard profile.modelPath == slot.modelPath, let factory = profileLifecycle else {
+                throw WorkflowEvidenceError.invalid("Serving profile is unavailable or changed.")
+            }
+            return try factory(profile)
+        }
+        return lifecycle
+    }
+
+    private func accelerationPreviewHash(_ slot: EndpointSlot) async throws -> String {
+        let selected = try servingLifecycle(slot)
+        if slot.usesJIT {
+            guard let preview = selected.jitPreview else { throw WorkflowEvidenceError.invalid("JIT serving is unavailable in this runtime.") }
+            return try await preview(slot.modelPath, slot.port, slot.memoryPolicy)
+        }
+        return try await selected.preview(slot.modelPath, slot.port)
+    }
+
     /// Save desired policy before applying it to the receipt-owned gateway.
     /// Policy updates do not stop the endpoint or interrupt inference leases.
     func setSlotMemoryPolicy(id: UUID, _ policy: EndpointMemoryPolicy) async {
@@ -352,6 +438,7 @@ final class EndpointSupervisor: ObservableObject {
                       let pid = current.pid, pid > 0 else {
                     throw WorkflowEvidenceError.invalid("Endpoint identity changed. Refresh before changing memory management.")
                 }
+                _ = try await confirmedAccelerationHash(current, slot: slot)
             }
             var candidate = fleet
             candidate.slots[index].memoryPolicy = policy
@@ -481,11 +568,24 @@ final class EndpointSupervisor: ObservableObject {
 
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
         guard pendingStops[slot.id] == nil else { return }
-        if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath {
+        if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath || slot.accelerationOptions.requested {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
         if let ours = running.first(where: { $0.port == slot.port }) {
             if ours.matchesUnadaptedModel(slot.modelPath) {
+                do {
+                    if let hash = try await confirmedAccelerationHash(ours, slot: slot), hash != slot.accelerationPreviewHash {
+                        guard fleet.slots.contains(slot), let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) else { return }
+                        var candidate = fleet
+                        candidate.slots[index].accelerationPreviewHash = hash
+                        guard commit(candidate) else {
+                            throw WorkflowEvidenceError.invalid(persistenceError ?? "Endpoint receipt identity could not be saved.")
+                        }
+                    }
+                } catch {
+                    slotStates[slot.id] = .degraded(reason: AppHost.render(error))
+                    return
+                }
                 if slot.servingProfile != nil && !ServingProfile.matchesReceipt(ours, previewHash: slot.profilePreviewHash) {
                     slotStates[slot.id] = .degraded(reason: "The running endpoint does not match the confirmed serving profile. Re-enable the profile."); return
                 }
@@ -539,11 +639,7 @@ final class EndpointSupervisor: ObservableObject {
         slotAttemptTimestamps[slot.id] = attempts
         slotRestartAttempts[slot.id] = attempts.count
         do {
-            let lifecycle: ServeLifecycle
-            if let profile = slot.servingProfile {
-                guard profile.modelPath == slot.modelPath, let factory = profileLifecycle else { throw WorkflowEvidenceError.invalid("Serving profile is unavailable or changed.") }
-                lifecycle = try factory(profile)
-            } else { lifecycle = self.lifecycle }
+            let lifecycle = try servingLifecycle(slot)
             let preview: @Sendable (String, Int) async throws -> String
             let start: @Sendable (String, Int, String) async throws -> Void
             if slot.usesJIT {
@@ -562,6 +658,14 @@ final class EndpointSupervisor: ObservableObject {
             if slot.servingProfile != nil, let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) {
                 var candidate = fleet
                 candidate.slots[index].profilePreviewHash = hash
+                guard commit(candidate) else {
+                    slotStates[slot.id] = .degraded(reason: persistenceError ?? "Endpoint settings could not be saved.")
+                    return
+                }
+            }
+            if slot.accelerationOptions.requested, let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) {
+                var candidate = fleet
+                candidate.slots[index].accelerationPreviewHash = hash
                 guard commit(candidate) else {
                     slotStates[slot.id] = .degraded(reason: persistenceError ?? "Endpoint settings could not be saved.")
                     return
@@ -698,9 +802,13 @@ final class EndpointSupervisor: ObservableObject {
         do {
             let servers = try await statusProvider()
             if let current = servers.first(where: { $0.state?.lowercased() == "running" && $0.port == slot.port }) {
-                let matches = slot.servingProfile != nil
-                    ? ServingProfile.matchesReceipt(current, previewHash: slot.profilePreviewHash)
-                    : current.matchesUnadaptedModel(slot.modelPath)
+                let matches: Bool
+                if slot.servingProfile != nil {
+                    matches = ServingProfile.matchesReceipt(current, previewHash: slot.profilePreviewHash)
+                } else {
+                    matches = current.matchesUnadaptedModel(slot.modelPath)
+                    if matches { _ = try await confirmedAccelerationHash(current, slot: slot) }
+                }
                 guard matches else {
                     throw WorkflowEvidenceError.invalid("A different model is running on port \(slot.port). Refresh before stopping it.")
                 }
@@ -720,5 +828,21 @@ final class EndpointSupervisor: ObservableObject {
             lastError = reason
             return false
         }
+    }
+
+    private func confirmedAccelerationHash(_ server: ServerInfo, slot: EndpointSlot) async throws -> String? {
+        guard server.matchesAcceleration(slot.accelerationOptions) else {
+            throw WorkflowEvidenceError.invalid("The running endpoint does not match its saved acceleration settings. Stop it and enable the endpoint again.")
+        }
+        guard slot.accelerationOptions.requested else { return nil }
+        if let hash = slot.accelerationPreviewHash,
+           ServingProfile.matchesReceipt(server, previewHash: hash, startedAt: server.startedAt) { return hash }
+        // A reinstalled login command can launch a new, equally configured receipt
+        // after policy or runtime updates. Require its exact fresh plan before adoption.
+        let hash = try await accelerationPreviewHash(slot)
+        guard !hash.isEmpty, ServingProfile.matchesReceipt(server, previewHash: hash, startedAt: server.startedAt) else {
+            throw WorkflowEvidenceError.invalid("The running endpoint does not match the current launch preview. Stop it and enable the endpoint again.")
+        }
+        return hash
     }
 }

@@ -1,11 +1,5 @@
 import Foundation
 
-struct LocalAccelerationOptions: Equatable {
-    var m5Prefill = false
-    var promptLookup = false
-    var requested: Bool { m5Prefill || promptLookup }
-}
-
 private struct ServeIntent: Equatable {
     let runtime: String
     let port: Int?

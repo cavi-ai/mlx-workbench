@@ -84,6 +84,8 @@ struct LaunchAgentManager: Sendable {
             ] + plan.arguments,
             "RunAtLoad": true,
             "KeepAlive": false,
+            "EnvironmentVariables": ["PATH": URL(fileURLWithPath: python).deletingLastPathComponent().path
+                + ":" + (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")],
             "StandardOutPath": logPath,
             "StandardErrorPath": logPath,
         ]
@@ -121,9 +123,10 @@ struct LaunchAgentManager: Sendable {
     slots = fleets[0]['slots'] if len(fleets) == 1 else []
     current = [slot for slot in slots if slot.get('id') == expected.get('id')]
     def settings(slot):
-        return {key: value for key, value in slot.items() if key != 'profilePreviewHash'}
+        return {key: value for key, value in slot.items() if key not in ('profilePreviewHash', 'accelerationPreviewHash')}
     if len(current) != 1 or not current[0].get('enabled') or settings(current[0]) != settings(expected):
         sys.exit('Endpoint settings changed. Review and reinstall the login item in Run.')
+    os.environ['PATH'] = os.path.dirname(sys.argv[3]) + ':' + os.environ.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')
     os.execv(sys.argv[3], sys.argv[3:])
     """
 
