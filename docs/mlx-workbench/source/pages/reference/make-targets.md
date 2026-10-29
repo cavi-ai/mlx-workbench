@@ -11,7 +11,7 @@ The `Makefile` is the supported command surface. Run `make help` for the short l
 | `make install-strata` | Install the optional Strata runtime into `~/.cache/mlx-agent/strata` |
 | `make check` | Verify the configured engine checkout has `scripts/mlx-agent` |
 | `make doctor` | `make check`, then verify the conversion environment |
-| `make pip-audit` | Audit `.venv` and every optional backend lock against the OSV database |
+| `make pip-audit` | Audit the pinned requirements and every optional backend lock with the `pip-audit` version pinned in `requirements.txt`; fails after reporting every vulnerable lock |
 
 ## Run
 
