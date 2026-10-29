@@ -32,6 +32,7 @@ struct ServeView: View {
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
+    @State private var m5Prefill = false
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
@@ -453,6 +454,12 @@ struct ServeView: View {
                 onRouteSelection(.compare)
                 return nil
             })
+        Toggle("Experimental M5 prompt acceleration", isOn: $m5Prefill)
+            .toggleStyle(.checkbox)
+            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || modelWorkflow.isServeSubmissionInFlight)
+            .help("MLX-LM only. Unsupported hardware and models use native MLX. First load compiles the M5 Q4 prompt kernel.")
+            .onChange(of: runtime) { _, value in if value == "mlx-vlm" { m5Prefill = false } }
+            .onChange(of: modelWorkflow.servingProfile) { _, value in if value != nil { m5Prefill = false } }
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
         }
@@ -505,15 +512,17 @@ struct ServeView: View {
         guard presentation.selectedCompletedModel != nil else { return }
         let port = portInput.port
         let runtime = runtime
-        Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
+        let m5Prefill = m5Prefill
+        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: m5Prefill) }
     }
 
     private func confirmServeAction() {
         guard portInput.error == nil else { return }
         let port = portInput.port
         let runtime = runtime
+        let m5Prefill = m5Prefill
         Task {
-            await modelWorkflow.confirmServe(runtime: runtime, port: port)
+            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: m5Prefill)
             if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
         }
     }

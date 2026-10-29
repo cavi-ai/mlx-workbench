@@ -9,6 +9,24 @@
 3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
+
+**Experimental M5 prompt acceleration** opts the server started with **Preview
+serve** into the engine's Q4 prompt kernel. It requires an M5 GPU, macOS 26,
+MLX/`mlx-metal` 0.31.1 and `mlx-lm` 0.29.1. It targets inference-only Qwen2 MLPs
+with FP16 activations, affine 4-bit weights and group size 64, on prompt batches
+of at least 128 rows. Original weight storage is retained; inputs with fewer than 128 rows use native MLX.
+Unsupported inputs and a failed preparation compile use native MLX. The first
+load compiles the kernel; speed depends on model and prompt shape. The server log
+reports the adapted layer count. No speedup is guaranteed.
+The engine wraps only its own Python environment's MLX-LM entrypoint; separately
+installed runtimes retain their native launch and report `adapter_enabled: false`
+in the preview. Selecting another serving runtime requires disabling this option.
+
+The option is off by default and applies to this manual server launch. Endpoint
+supervision, comparisons, verification, LoRA adapters and Strata profiles retain
+their existing execution. Changing the option after preview requires a new
+preview. Source and dependency hashes are bound into the engine plan and receipt.
+
 The status timeout includes engine startup and time spent waiting behind another
 status check; replacing the status process does not reset that timeout.
 

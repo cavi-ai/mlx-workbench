@@ -640,11 +640,12 @@ actor WorkbenchAPI {
 
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                               previewHash: String? = nil) -> [String] {
+                               previewHash: String? = nil, m5Prefill: Bool = false) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
         if jit { args += ["--jit"] + (memoryPolicy?.arguments ?? []) }
+        if m5Prefill { args += ["--m5-prefill"] }
         if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
         return args
     }
@@ -673,9 +674,9 @@ actor WorkbenchAPI {
 
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
-                      thinkingOff: Bool = false) async throws -> [String: Any] {
+                      thinkingOff: Bool = false, m5Prefill: Bool = false) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -687,9 +688,9 @@ actor WorkbenchAPI {
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
-                    thinkingOff: Bool = false) async throws -> [String: Any] {
+                    thinkingOff: Bool = false, m5Prefill: Bool = false) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
