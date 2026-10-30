@@ -41,6 +41,7 @@ struct ComparisonWorkspace: View {
                 }
             }
         }.onChange(of: appHost.compareHostedModels, initial: true) { _, selected in if selected { visitedHosted = true } }
+        .onChange(of: appHost.handoffs[.compareFamily], initial: true) { _, _ in routeNativeRequest() }
         .onChange(of: appHost.handoffs[.compareModel], initial: true) { _, _ in routeNativeRequest() }
         .onChange(of: appHost.handoffs[.compareServingProfiles], initial: true) { _, _ in routeNativeRequest() }
         .onChange(of: hosted.activeRunID) { _, _ in routeNativeRequest() }
@@ -48,7 +49,7 @@ struct ComparisonWorkspace: View {
 
     private func routeNativeRequest() {
         guard hosted.activeRunID == nil,
-              appHost.handoffs[.compareModel] != nil || appHost.handoffs[.compareServingProfiles] != nil else { return }
+              appHost.handoffs[.compareFamily] != nil || appHost.handoffs[.compareModel] != nil || appHost.handoffs[.compareServingProfiles] != nil else { return }
         appHost.compareHostedModels = false
     }
 }

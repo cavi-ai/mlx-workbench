@@ -9,11 +9,16 @@ import SwiftUI
 
 struct MenuBarView: View {
     let appHost: AppHost
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var endpoint: EndpointSupervisor
+    @ObservedObject private var workflow: ModelWorkflowCoordinator
+    @ObservedObject private var comparison: ComparisonCoordinator
 
     init(appHost: AppHost) {
         self.appHost = appHost
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+        _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _comparison = ObservedObject(wrappedValue: appHost.comparison)
     }
 
     var body: some View {
@@ -31,19 +36,27 @@ struct MenuBarView: View {
         }
         Divider()
         ForEach(endpoint.fleet.slots) { slot in
-            Button {
-                Task { await endpoint.setSlotEnabled(id: slot.id, !slot.enabled) }
-            } label: {
-                Label(
-                    MenuBarPresentation.slotTitle(slot),
-                    systemImage: EndpointIcon.name(for: endpoint.slotStates[slot.id] ?? .disabled)
-                )
+            Menu("\(MenuBarPresentation.modelName(slot.modelPath, models: appHost.librarySnapshot?.models ?? [])) · :\(String(slot.port))") {
+                Text(MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id]))
+                Button(slot.enabled ? "Stop" : "Start…") {
+                    if slot.enabled {
+                        Task {
+                            guard comparison.hasLoadedHistory, !appHost.occupancy.blocksStop(modelIdentity: slot.modelPath) else { return }
+                            await endpoint.setSlotEnabled(id: slot.id, false)
+                        }
+                    } else { openManager() }
+                }.disabled(endpoint.isChanging || !comparison.hasLoadedHistory || appHost.occupancy.blocksStop(modelIdentity: slot.modelPath))
+                Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
+                if let connection = ServedModelsSelection.connection(slot: slot, state: endpoint.slotStates[slot.id], servers: workflow.servers) {
+                    Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) }
+                }
             }
         }
         if endpoint.fleet.slots.isEmpty {
             Button("No endpoints configured") {}.disabled(true)
         }
         Divider()
+        Button("Manage served models…") { openManager() }
         Button("Open MLX Workbench") { openApp() }
         Divider()
         Button("Quit MLX Workbench") { NSApp.terminate(nil) }
@@ -67,21 +80,34 @@ struct MenuBarView: View {
         return String(format: "%.1f tok/s measured", tps)
     }
 
-    private func openApp() {
+    private func openManager() {
+        openWindow(id: ServedModelsWindow.id)
         NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            NSApp.windows.first?.makeKeyAndOrderFront(nil)
-        }
     }
+
+    private func openApp() {
+        openWindow(id: ServedModelsWindow.mainID)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
 }
 
 /// Strings the menu draws; pure so no file-system lookup happens during rendering.
 enum MenuBarPresentation {
     /// The last path component, without resolving the path; an empty path reads "No model".
-    static func modelName(_ path: String) -> String {
-        path.isEmpty ? "No model" : NSString(string: path).lastPathComponent
+    static func modelName(_ path: String, models: [LibraryModel] = []) -> String {
+        if let model = models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) { return model.displayName }
+        return path.isEmpty ? "No model" : NSString(string: path).lastPathComponent
+    }
+
+    static func availability(_ slot: EndpointSlot, state: EndpointState?, residency: String?) -> String {
+        guard slot.enabled else { return "Stopped" }
+        switch state {
+        case .running:
+            return slot.usesJIT ? "Available · \(residency ?? "residency unknown")" : "Running"
+        case .some(let state): return state.summary
+        case nil: return "Checking status…"
+        }
     }
 
     /// The icon for the enabled slots; the header and the status item share it.

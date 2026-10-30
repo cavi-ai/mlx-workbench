@@ -216,9 +216,9 @@ final class ComparisonInsightsTests: XCTestCase {
             companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
             task: task.map { ModelTask(type: $0, useCases: [], source: "test", confidence: "test") }), readiness: readiness, capabilities: capabilities)
     }
-    private func result(_ path: String, speed: Double = 20, ttft: Double = 0.2, environment: String? = "macOS|M4|1.0", prompts: [String] = ["p"], metric: Double? = nil) -> VariantResult {
+    private func result(_ path: String, speed: Double = 20, ttft: Double = 0.2, environment: String? = "macOS|M4|1.0", prompts: [String] = ["p"], metric: Double? = nil, finish: String = "stop", output: String = "answer") -> VariantResult {
         VariantResult(modelPath: path, modelSignature: "s", samples: prompts.map {
-            ComparisonSample(promptID: $0, outputExcerpt: "answer", tokensPerSecond: speed, timeToFirstTokenSeconds: ttft, error: nil)
+            ComparisonSample(promptID: $0, outputExcerpt: output, tokensPerSecond: speed, timeToFirstTokenSeconds: ttft, error: nil, finishReason: finish)
         }, aggregateTokensPerSecond: speed, aggregateTTFTSeconds: ttft, error: nil, environmentFingerprint: environment, aggregateMetric: metric)
     }
     private func run(_ results: [VariantResult], scores: [String: Int] = [:], mode: ComparisonMode = .chat, set: String = "work") -> ComparisonRun {
@@ -226,6 +226,55 @@ final class ComparisonInsightsTests: XCTestCase {
             startedAt: Date(timeIntervalSince1970: 1000), finishedAt: Date(timeIntervalSince1970: 1001), state: .completed, mode: mode,
             promptEntries: [prompt], qualityReviews: scores.mapValues { ComparisonQualityReview(score: $0, rubricID: "task-outcome-v1", reviewedAt: Date()) })
     }
+    func testTruncatedAnswersCannotSupportReplacementAdvice() {
+        let models = [model("/a"), model("/b", bytes: 3_000_000_000)]
+        let measured = run([result("/a"), result("/b", speed: 40, ttft: 0.1, finish: "length")], scores: ["/a": 4, "/b": 4])
+        XCTAssertTrue(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [],
+            environment: environment, protected: []).isEmpty)
+    }
+
+    func testReasoningOnlyAnswersCannotSupportReplacementAdvice() {
+        let models = [model("/a"), model("/b", bytes: 3_000_000_000)]
+        let measured = run([result("/a"), result("/b", speed: 40, ttft: 0.1, output: "<think>Reasoning only</think>")], scores: ["/a": 4, "/b": 4])
+        XCTAssertFalse(ChatComparisonPresentation.completion(measured.results[1], in: measured).isComplete)
+        XCTAssertTrue(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment, protected: []).isEmpty)
+    }
+
+    func testServingConfirmationRejectsChangedAndMissingModels() {
+        XCTAssertTrue(ServedModelsSelection.canConfirm(model: model("/a"), models: [model("/a")]))
+        XCTAssertFalse(ServedModelsSelection.canConfirm(model: model("/a"), models: [model("/a", signature: "changed")]))
+        XCTAssertFalse(ServedModelsSelection.canConfirm(model: model("/a"), models: []))
+        XCTAssertFalse(ServedModelsSelection.canConfirm(model: nil, models: [model("/a")]))
+        XCTAssertFalse(ServedModelsSelection.canConfirm(model: model("/a", signature: nil), models: [model("/a", signature: nil)]))
+    }
+
+    func testPurposeBearingSingletonRemainsAvailableForReview() {
+        let retained = model("/Models/Qwen3-8B-abliterated")
+        let purpose = ModelPurpose(path: retained.item.path, signature: "s", note: "Creative writing")
+        XCTAssertTrue(ModelFamilyReview.groups(models: [retained]).isEmpty)
+        XCTAssertEqual(ModelFamilyReview.groups(models: [retained], purposes: [purpose]).first?.models, [retained])
+    }
+
+    func testFamilyNamesSuggestPeersWithoutLosingTuningOrSize() {
+        let variants = [model("/Models/Qwen3-8B-4bit"), model("/Models/Qwen3-8B-abliterated-8bit"),
+            model("/Models/Qwen3-14B-4bit"), model("/Models/Llama-3.1-8B-4bit"),
+            model("/Models/Qwen3.5-8B-4bit")]
+        let groups = ModelFamilyReview.groups(models: variants)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].models.map(\.item.path), variants.prefix(2).map(\.item.path))
+        XCTAssertTrue(groups[0].models[1].displayName.contains("abliterated"))
+    }
+
+    func testFamilyComparisonFreezesIdentitiesAndNeverDropsAnEntrant() throws {
+        let models = [model("/a"), model("/b")]
+        let request = try XCTUnwrap(FamilyComparisonRequest(models: models))
+        XCTAssertEqual(request.resolve(in: models)?.map(\.item.path), ["/a", "/b"])
+        XCTAssertNil(request.resolve(in: [models[0]]))
+        XCTAssertNil(request.resolve(in: [models[0], model("/b", signature: "changed")]))
+        XCTAssertNil(FamilyComparisonRequest(models: [models[0], models[0]]))
+        XCTAssertNil(FamilyComparisonRequest(models: (0..<5).map { model("/\($0)") }))
+    }
+
     func testServedDefaultWinsAndMissingInventoryWaits() {
         let models = [model("/a"), model("/b")]
         let selection = ComparisonInsights.suggestion(candidates: models, lastServed: ["/b": Date()], selectedPath: "/a", runs: [], mode: .chat, environment: environment)

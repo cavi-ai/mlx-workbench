@@ -5,7 +5,7 @@ import Foundation
 struct ModelOccupancy: Equatable, Sendable {
     enum Holder: Equatable, Sendable {
         case verification, comparison, hostedComparison, promptTest
-        case runningServer, endpoint, preference, inferenceTask, conversion
+        case runningServer, endpoint, preference, retention, inferenceTask, conversion
 
         /// Runs that serve the model themselves and fail if its server stops.
         var needsServer: Bool { self == .verification || self == .comparison || self == .hostedComparison || self == .promptTest }

@@ -58,6 +58,7 @@ class AppHost {
     let workflowEvidence: WorkflowEvidenceStore
     /// Disk Pressure Advisor apply surface (premium spec 04).
     let reclaim: ReclaimCoordinator
+    let modelPurposes: ModelPurposeStore
     /// Watch & regression alerts (premium spec 08).
     let watch: WatchCoordinator
     /// Guided runtime setup (make install runner). Only actionable when a
@@ -118,6 +119,7 @@ class AppHost {
         usage: UsageTracker? = nil,
         workflowEvidence: WorkflowEvidenceStore? = nil,
         reclaim: ReclaimCoordinator? = nil,
+        modelPurposes: ModelPurposeStore? = nil,
         watch: WatchCoordinator? = nil,
         runtimeInstaller: RuntimeInstaller? = nil,
         setup: SetupCoordinator? = nil,
@@ -204,6 +206,7 @@ class AppHost {
         )
         self.workflowEvidence = workflowEvidence ?? WorkflowEvidenceStore(store: JSONStore<WorkflowEvidence>(fileURL: JSONStore<WorkflowEvidence>.defaultFileURL("workflow-evidence.json")))
         self.reclaim = reclaim ?? ReclaimCoordinator()
+        self.modelPurposes = modelPurposes ?? ModelPurposeStore()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller(checkRuntime: {
             await Task.detached(priority: .utility) { RuntimeChecker.report() }.value
         }, checkPrerequisites: { root in await RuntimeInstaller.inspectPrerequisites(root: root) })
@@ -342,6 +345,7 @@ class AppHost {
         }
         self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
+        self.modelPurposes.canEdit = { [weak self] in self?.reclaim.isApplying == false }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
         self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
         self.reclaim.mlxRoots = { [weak self] in
@@ -351,7 +355,7 @@ class AppHost {
         }
         self.reclaim.protectedPaths = { [weak self] in
             guard let self else { return [] }
-            if !self.comparison.hasLoadedHistory {
+            if !self.comparison.hasLoadedHistory || !self.modelPurposes.hasLoadedHistory || self.modelPurposes.isSaving {
                 return Array(self.occupancy.protectedPaths) + self.reclaim.ggufRoots() + self.reclaim.mlxRoots()
             }
             return Array(self.occupancy.protectedPaths)
@@ -359,6 +363,9 @@ class AppHost {
         self.reclaim.servingModelPaths = { [weak self] in
             guard self?.comparison.hasLoadedHistory == true else {
                 throw WorkflowEvidenceError.invalid("Saved comparison ownership is unavailable. Wait for history to load before reclaiming models.")
+            }
+            guard self?.modelPurposes.hasLoadedHistory == true, self?.modelPurposes.isSaving == false else {
+                throw WorkflowEvidenceError.invalid("Saved model purposes are unavailable or changing. Resolve that state before removing models.")
             }
             return try await api.servingPathsForRemoval()
         }
@@ -997,6 +1004,7 @@ class AppHost {
             .flatMap { [$0.repo, $0.path].compactMap { $0 } }, for: .runningServer)
         occupancy.add(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath), for: .endpoint)
         occupancy.add(recommendationPreferences.preferredModelIDs.values, for: .preference)
+        occupancy.add(modelPurposes.protectedPaths, for: .retention)
         occupancy.add([verification.activeModelPath].compactMap { $0 }, for: .verification)
         occupancy.add(inferenceTasks.activeModelPaths, for: .inferenceTask)
         occupancy.add([endpointTest.activeServer?.modelIdentity].compactMap { $0 }, for: .promptTest)

@@ -77,6 +77,16 @@ struct DuplicatesView: View {
                     ErrorBanner(text: appHost.lastError)
                     ReclaimLedgerView(ledger: ledger, isStacked: layout.stacksStages)
                     scanCoverageSection
+                    ModelFamilyReviewView(appHost: appHost, onCompare: { onRouteSelection(.compare) }, onReviewRemoval: { path in
+                        Task {
+                            appHost.analyzeReclaim()
+                            await reclaim.previewLibraryTrash(path)
+                            if reclaim.libraryTrashPlan != nil {
+                                appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
+                                onRouteSelection(.library)
+                            }
+                        }
+                    })
                     suggestionsSection(models)
                     Divider()
                     quarantinedSection(models)

@@ -100,6 +100,27 @@ model's quality verdict and cannot be added as Always-on endpoints from this
 panel. Historical training receipts without a pinned base identity cannot be
 used here.
 
+## Serve models to other apps
+
+Choose **Manage served models…** from the menu bar to open the model manager.
+Search ready local models and choose **Add…**, review the model, port, verification
+and memory warnings, then confirm. New selections use the existing load-on-request
+endpoints; there is no separate serving process for the manager. Up to four models
+can be selected, each on its own stable port. Models already selected are omitted
+from the add list.
+
+Each selection shows its state and OpenAI-compatible base URL. Use **Copy base URL**
+and, when a matching running server reports it, **Copy model ID** in the other
+application's OpenAI-compatible provider settings. **Refresh status** updates the
+reported servers. The menu bar also lists each selected model with status and copy
+controls. **Start…** opens the manager for review; **Stop** stops its endpoint.
+
+**Remove…** removes a serving selection and stops its endpoint after confirmation.
+The model files stay in Library. Work using that model must finish before its
+endpoint can stop. **Serving settings…** opens Run for memory policy, acceleration,
+login startup and client configuration. Acceleration remains opt-in; serving a
+model does not establish that one configuration is fastest for every workload.
+
 ## Always-on endpoints
 
 The **Endpoints** section keeps chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
@@ -110,7 +131,7 @@ The **Endpoints** section keeps chosen models serving on stable ports. The app r
 - The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
-The menu bar item aggregates endpoints ("N of M endpoints running") and starts or stops each one. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, acceleration, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
+The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, acceleration, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
 
 ### Acceleration for saved endpoints
 
