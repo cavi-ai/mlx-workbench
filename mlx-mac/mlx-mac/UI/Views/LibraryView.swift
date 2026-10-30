@@ -887,7 +887,7 @@ struct LibraryView: View {
         if ModelRuntimeRecoveryRequest(model: actions.model) != nil {
             Button("Repair runtime…") { actions.repairRuntime() }
         } else if actions.canPrepare {
-            Button("Prepare to run") { actions.prepare() }
+            Button(actions.prepareTitle) { actions.prepare() }
         }
         if actions.canCompare {
             Button("Select for Compare") { actions.compare() }

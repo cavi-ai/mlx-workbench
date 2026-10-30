@@ -33,9 +33,10 @@ Some repositories need more than a plain conversion:
 - **Backend ports.** Architectures the pinned backends lack can ship as MLX Agent ports; their links resolve as convertible and the port runs its own converter. Edge0/Audio8-ASR-Infinite (streaming English and Chinese speech recognition) converts through mlx-audio this way.
 - **Diffusers pipelines.** Image-generation repositories resolve through their `model_index.json` pipeline class.
 - **Recipes.** Curated recipe repositories resolve through their pinned base plus a LoRA; the window shows **Built from**.
-- **Drafters.** A DeepSeek-V4 DSpark `dflash` GGUF converts through its port. Other speculative-decoding drafters are refused at plan time.
+- **Qwen3.5 GGUFs.** Qwen3.5-family GGUFs, including Qwen3.6 and Qwen3.8 checkpoints, convert through an MLX Agent port. When the GGUF's folder holds exactly one matching Qwen3-VL projector (`mmproj`), the plan names it and the output is the vision-language model.
+- **Drafters.** A DeepSeek-V4 DSpark `dflash` GGUF converts through its port. Other speculative-decoding drafters, including GGUFs that hold only a multi-token-prediction block, are refused at plan time.
 
-GGUF projector and companion files are refused before conversion.
+GGUF projector and companion files are never converted on their own.
 
 ## Runtime selection
 

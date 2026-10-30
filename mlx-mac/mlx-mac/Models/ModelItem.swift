@@ -48,6 +48,9 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
 
     var id: String { path }
 
+    /// A vision projector or similar sidecar that runs only beside its model.
+    var isCompanion: Bool { status == "companion" || companion == true }
+
     init(path: String, name: String, bytes: Int64, modifiedAt: Int?, shard: String?,
          modelKey: String?, architecture: String?, quantization: String?, parameters: String?,
          structure: String?, signature: String?, companion: Bool?, readable: Bool?,

@@ -69,6 +69,28 @@ final class ModelTaskTests: XCTestCase {
     }
 
     @MainActor
+    func testUnconvertedWeightsOfferConvertAndSidecarsOfferNothing() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("prepare-actions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = AppHost(catalogStore: CatalogStore(appSupportDirectory: { root }), config: Config.defaults())
+        func actions(_ name: String, status: String, companion: Bool? = nil, draft: ModelDraft? = nil) -> ModelActions {
+            let item = ModelItem(path: "/m/\(name)", name: name, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: companion, readable: true, status: status, outputs: [], tensorCount: nil, error: nil, draft: draft)
+            return ModelActions(appHost: host, model: LibraryModel(item: item), onRouteSelection: { _ in })
+        }
+        let gguf = actions("Qwen3.8-27B-Q6_K.gguf", status: "pending")
+        XCTAssertTrue(gguf.canPrepare)
+        XCTAssertEqual(gguf.prepareTitle, "Convert to MLX…")
+        let dspark = actions("dspark-Q8_0.gguf", status: "pending", draft: ModelDraft(port: "deepseek_v4_dspark", target: "DeepSeek-V4", blockSize: 5))
+        XCTAssertTrue(dspark.canPrepare)
+        XCTAssertFalse(actions("mmproj-F32.gguf", status: "companion", companion: true).canPrepare)
+        XCTAssertFalse(actions("Qwen3.8-27B-FastMTP.gguf", status: "pending", draft: ModelDraft(port: nil, target: "Qwen3.8-27B", blockSize: nil)).canPrepare)
+        let unsupported = actions("checkpoint", status: "unsupported")
+        XCTAssertTrue(unsupported.canPrepare)
+        XCTAssertEqual(unsupported.prepareTitle, "Prepare to run")
+        XCTAssertFalse(actions("ready-model", status: "ready").canPrepare)
+    }
+
+    @MainActor
     func testLibraryComparisonRequestsSelectTheTaskWithoutStartingWork() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-actions-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
