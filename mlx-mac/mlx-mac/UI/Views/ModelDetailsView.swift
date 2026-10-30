@@ -545,6 +545,10 @@ struct ModelDetailsView: View {
         for canary in report.canaries {
             rows.append(DetailRow(canary.title, canary.passed ? "Passed" : "Failed: \(canary.failureReason ?? "unknown")", prose: true))
         }
+        if let agent = report.agentReadiness {
+            rows.append(DetailRow("Agent tools", agent.summary, prose: true))
+            rows += agent.rows.map { DetailRow($0.title, $0.value, prose: true) }
+        }
         return rows
     }
 

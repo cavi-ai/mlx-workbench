@@ -11,6 +11,13 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+### Added
+
+- Quality Gate: a text LLM that passes verification gets an agent-readiness check, a tool-call round trip over Chat Completions, Anthropic Messages and OpenAI Responses plus a 16,384-token prompt, shown in Prepare and the Library inspector without changing the verdict.
+
+### Changed
+
+- Engine: `mlx-agent` moves to `cd0b831`, which requires Python 3.11 or later and serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways.
 
 ## [0.7.1] - 2026-10-22
 ### Fixed

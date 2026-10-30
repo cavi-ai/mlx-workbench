@@ -390,6 +390,7 @@ class AppHost {
         )
         self.verification.decide = { path, request in try await api.decide(path: path, request: request.path) }
         self.verification.render = { path, out, request in try await api.generate(path: path, out: out.path, request: request) }
+        self.verification.agent = AgentHTTPProber()
         // Record the environment fingerprint on every verification report.
         self.verification.environmentFingerprint = { [weak self] in
             self?.watch.currentFingerprintDescription

@@ -62,7 +62,9 @@ including a speculative-decoding drafter's target. The inspector also holds:
 Actions: **Run model** opens the existing server preview flow; **Compare**
 selects the model for comparison. Models needing conversion offer **Prepare
 to run**. **Verify now** runs the canary suite for a ready model; when a run
-cannot reach a verdict, the Verification section says why. **Reveal in Finder** and **Copy Path** are in the model's action menu.
+cannot reach a verdict, the Verification section says why. For a text LLM it
+also lists **Agent tools**: the protocols the model is agent-ready for and each
+failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
 **Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 

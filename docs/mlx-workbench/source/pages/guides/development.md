@@ -22,7 +22,7 @@ make test-swift
 make start
 ```
 
-`make test-swift` runs the XCTest suite hosted in the app. By default, hosted tests skip launch-time live work and resolve state paths into a fresh temporary directory per test. Explicit real-runtime acceptance tests require their opt-in environment variables. UI tests run a separate app process.
+`make test-swift` runs the XCTest suite hosted in the app. By default, hosted tests skip launch-time live work and resolve state paths into a fresh temporary directory per test. Tests that call the engine run `mlx-agent` with the repository's `.venv` interpreter, Python 3.11 or later, which `make install` creates. Explicit real-runtime acceptance tests require their opt-in environment variables. UI tests run a separate app process.
 
 `tests/fixtures/` is consumed by both the Python suite and the XCTest suite. A fixture change must keep both green.
 

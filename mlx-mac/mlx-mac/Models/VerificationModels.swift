@@ -382,6 +382,9 @@ struct VerificationReport: Codable, Equatable, Identifiable, Sendable {
     /// evidence stale in the environment dimension (spec 08). Optional so
     /// reports written before this field existed still decode.
     let environmentFingerprint: String?
+    /// Agent tool-call evidence for the same bytes, recorded after the task
+    /// verdict and never part of it. Nil when the agent canary did not run.
+    var agentReadiness: AgentReadiness? = nil
 
     init(
         id: UUID,
@@ -416,7 +419,7 @@ struct VerificationReport: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, modelPath, modelSignature, workflowRecordID, suiteVersion
         case canaries, tokensPerSecond, timeToFirstTokenSeconds, metricsEstimated
-        case startedAt, finishedAt, outcome, environmentFingerprint
+        case startedAt, finishedAt, outcome, environmentFingerprint, agentReadiness
     }
 }
 
@@ -429,4 +432,289 @@ enum VerificationStatus: Equatable {
     case failed(VerificationReport)
     case keptAnyway(VerificationReport)
     case stale(VerificationReport)
+}
+
+// MARK: - Agent canary
+//
+// A tool-call round trip through each agent protocol the JIT gateway serves,
+// plus one request at agent context size. A model is agent-ready for a
+// protocol only when its round trip and the context check pass on this Mac.
+// Bump `version` whenever requests or scoring change.
+
+enum AgentAPI: String, Codable, CaseIterable, Sendable {
+    case chatCompletions = "chat-completions"
+    case messages
+    case responses
+
+    var title: String {
+        switch self {
+        case .chatCompletions: "Chat Completions"
+        case .messages: "Anthropic Messages"
+        case .responses: "OpenAI Responses"
+        }
+    }
+
+    var path: String {
+        switch self {
+        case .chatCompletions: "v1/chat/completions"
+        case .messages: "v1/messages"
+        case .responses: "v1/responses"
+        }
+    }
+}
+
+struct AgentToolCall: Equatable, Sendable {
+    let id: String
+    let name: String
+    /// Arguments as JSON text, the form every protocol sends back.
+    let arguments: String
+}
+
+struct AgentReply: Equatable, Sendable {
+    let text: String
+    let calls: [AgentToolCall]
+    let promptTokens: Int?
+}
+
+struct AgentCheck: Codable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let passed: Bool
+    let failureReason: String?
+    let responseExcerpt: String
+}
+
+struct AgentReadiness: Codable, Equatable, Sendable {
+    let suiteVersion: Int
+    /// How the gateway served the model during the canary.
+    let settings: String
+    /// Prompt tokens the context check reached, as the server reported them.
+    let contextTokens: Int?
+    let checks: [AgentCheck]
+    /// Why the canary could not finish, when it could not.
+    let error: String?
+
+    func isReady(for api: AgentAPI) -> Bool {
+        error == nil && checks.contains { $0.id == api.rawValue && $0.passed }
+            && checks.contains { $0.id == AgentCanary.contextID && $0.passed }
+    }
+
+    var readyAPIs: [AgentAPI] { AgentAPI.allCases.filter(isReady) }
+
+    /// The verdict Prepare and the Library inspector show.
+    var summary: String {
+        if let error { return "Not checked: \(error)" }
+        let ready = readyAPIs
+        guard !ready.isEmpty else { return "Not agent-ready." }
+        let context = contextTokens.map { " with a \($0.formatted())-token prompt" } ?? ""
+        let apis = ready.count == AgentAPI.allCases.count ? "every agent protocol" : ready.map(\.title).joined(separator: ", ")
+        return "Ready for \(apis)\(context)."
+    }
+
+    /// One line per check, failures with their reason.
+    var rows: [(title: String, value: String)] {
+        checks.map { ($0.title, $0.passed ? "Passed" : "Failed: \($0.failureReason ?? "unknown")") }
+    }
+}
+
+enum AgentCanaryError: LocalizedError, Equatable {
+    case unavailable
+    case unreadable(AgentAPI)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: "Agent verification is not available in this build."
+        case .unreadable(let api): "The \(api.title) reply could not be read."
+        }
+    }
+}
+
+enum AgentCanary {
+    static let version = 1
+    static let contextID = "context"
+    static let settings = "JIT gateway, reasoning off, temperature 0"
+    static let maxTokens = 512
+    static let tool = PromptToolSpec(
+        name: "get_weather",
+        description: "Current weather for a city.",
+        parametersJSON: #"{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"],"additionalProperties":false}"#
+    )
+    static let question = "What is the weather in Lisbon right now? Use the get_weather tool."
+    static let toolResult = "Lisbon: 23 degrees Celsius, light rain."
+    static let resultToken = "23"
+
+    /// Prompt size of the context check, in tokens: a coding agent's opening
+    /// request with its system prompt and tool definitions.
+    static let contextTokens = 16_384
+    static let contextFact = "The vault code is 7351."
+    static let contextAnswer = "7351"
+    static let contextPrompt: String = {
+        // About 24 tokens per entry; varied so the filler is not one repeated sentence.
+        let entries = (1...(contextTokens / 24)).map { index in
+            "Entry \(index): the harbour ledger records tide \(index % 7 + 1), \(index % 13 + 3) gulls and \(index % 5 + 2) coils of rope."
+        }
+        return "\(contextFact)\n\n" + entries.joined(separator: "\n")
+            + "\n\nWhat is the vault code stated at the start of this message? Answer with the number."
+    }()
+
+    // MARK: Requests
+
+    static func request(_ api: AgentAPI, model: String, call: AgentToolCall? = nil) -> [String: Any] {
+        let user = ["role": "user", "content": question]
+        switch api {
+        case .chatCompletions:
+            var messages: [[String: Any]] = [user]
+            if let call {
+                messages.append(["role": "assistant", "content": "", "tool_calls": [[
+                    "id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.arguments]]]])
+                messages.append(["role": "tool", "tool_call_id": call.id, "content": toolResult])
+            }
+            return ["model": model, "messages": messages, "tools": [tool.openAITool ?? [:]],
+                    "max_tokens": maxTokens, "temperature": 0]
+        case .messages:
+            var messages: [[String: Any]] = [user]
+            if let call {
+                messages.append(["role": "assistant", "content": [[
+                    "type": "tool_use", "id": call.id, "name": call.name, "input": object(call.arguments) ?? [:]]]])
+                messages.append(["role": "user", "content": [[
+                    "type": "tool_result", "tool_use_id": call.id, "content": toolResult]]])
+            }
+            return ["model": model, "messages": messages, "max_tokens": maxTokens, "temperature": 0, "tools": [[
+                "name": tool.name, "description": tool.description, "input_schema": object(tool.parametersJSON) ?? [:]]]]
+        case .responses:
+            var input: [[String: Any]] = [["type": "message", "role": "user", "content": question]]
+            if let call {
+                input.append(["type": "function_call", "call_id": call.id, "name": call.name, "arguments": call.arguments])
+                input.append(["type": "function_call_output", "call_id": call.id, "output": toolResult])
+            }
+            return ["model": model, "input": input, "max_output_tokens": maxTokens, "temperature": 0, "store": false,
+                    "tools": [["type": "function", "name": tool.name, "description": tool.description,
+                               "parameters": object(tool.parametersJSON) ?? [:]]]]
+        }
+    }
+
+    static func contextRequest(model: String) -> [String: Any] {
+        ["model": model, "messages": [["role": "user", "content": contextPrompt]], "max_tokens": 64, "temperature": 0]
+    }
+
+    // MARK: Replies
+
+    static func reply(_ api: AgentAPI, data: Data) throws -> AgentReply {
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AgentCanaryError.unreadable(api)
+        }
+        var text = "", calls: [AgentToolCall] = [], promptTokens: Int?
+        let usage = body["usage"] as? [String: Any]
+        switch api {
+        case .chatCompletions:
+            guard let message = ((body["choices"] as? [[String: Any]])?.first)?["message"] as? [String: Any] else {
+                throw AgentCanaryError.unreadable(api)
+            }
+            text = message["content"] as? String ?? ""
+            for call in message["tool_calls"] as? [[String: Any]] ?? [] {
+                let function = call["function"] as? [String: Any] ?? [:]
+                calls.append(AgentToolCall(id: call["id"] as? String ?? "", name: function["name"] as? String ?? "",
+                                           arguments: function["arguments"] as? String ?? ""))
+            }
+            promptTokens = usage?["prompt_tokens"] as? Int
+        case .messages:
+            guard let content = body["content"] as? [[String: Any]] else { throw AgentCanaryError.unreadable(api) }
+            for block in content {
+                if block["type"] as? String == "text" { text += block["text"] as? String ?? "" }
+                if block["type"] as? String == "tool_use" {
+                    calls.append(AgentToolCall(id: block["id"] as? String ?? "", name: block["name"] as? String ?? "",
+                                               arguments: json(block["input"]) ?? ""))
+                }
+            }
+            promptTokens = usage?["input_tokens"] as? Int
+        case .responses:
+            guard let output = body["output"] as? [[String: Any]] else { throw AgentCanaryError.unreadable(api) }
+            for item in output {
+                if item["type"] as? String == "message" {
+                    for part in item["content"] as? [[String: Any]] ?? [] where part["type"] as? String == "output_text" {
+                        text += part["text"] as? String ?? ""
+                    }
+                }
+                if item["type"] as? String == "function_call" {
+                    calls.append(AgentToolCall(id: item["call_id"] as? String ?? "", name: item["name"] as? String ?? "",
+                                               arguments: item["arguments"] as? String ?? ""))
+                }
+            }
+            promptTokens = usage?["input_tokens"] as? Int
+        }
+        return AgentReply(text: InlineReasoning.split(text)?.answer ?? text, calls: calls, promptTokens: promptTokens)
+    }
+
+    /// The error message an endpoint returned with a failed status, in any protocol's error shape.
+    static func errorMessage(_ data: Data) -> String? {
+        let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (body?["error"] as? [String: Any])?["message"] as? String
+    }
+
+    // MARK: Scoring
+
+    /// Why the arguments do not satisfy the tool's schema, or nil when they do.
+    static func argumentProblem(_ arguments: String) -> String? {
+        guard let object = object(arguments) else { return "Arguments are not a JSON object: \(arguments.prefix(120))" }
+        if let extra = object.keys.sorted().first(where: { $0 != "city" }) { return "Arguments include unknown key \"\(extra)\"." }
+        guard let city = object["city"] else { return "Arguments are missing the required \"city\"." }
+        guard let name = city as? String, !name.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return "\"city\" is not a non-empty string."
+        }
+        return nil
+    }
+
+    static func evaluate(_ api: AgentAPI, first: AgentReply, second: AgentReply?, failure: String? = nil) -> AgentCheck {
+        let call = first.calls.first
+        let problem: String?
+        if let failure {
+            problem = failure
+        } else if let call {
+            if call.name != tool.name {
+                problem = "Called \"\(call.name)\" instead of \(tool.name)."
+            } else if let argument = argumentProblem(call.arguments) {
+                problem = argument
+            } else if call.id.isEmpty {
+                problem = "The tool call has no id."
+            } else if let second, !second.text.contains(resultToken) {
+                problem = "The answer after the tool result did not use it."
+            } else {
+                problem = second == nil ? "No answer followed the tool result." : nil
+            }
+        } else {
+            problem = "No tool call was made."
+        }
+        let excerpt = [call.map { "\($0.name)(\($0.arguments))" }, second.map(\.text) ?? (call == nil ? first.text : nil)]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " → ")
+        return AgentCheck(id: api.rawValue, title: api.title, passed: problem == nil, failureReason: problem,
+                          responseExcerpt: String(excerpt.prefix(280)))
+    }
+
+    static func evaluateContext(_ reply: AgentReply?, failure: String? = nil) -> AgentCheck {
+        let problem: String?
+        if let failure {
+            problem = failure
+        } else if let reply, reply.text.contains(contextAnswer) {
+            problem = nil
+        } else {
+            problem = "The answer did not recall a fact from the start of a \(contextTokens.formatted())-token prompt."
+        }
+        let tokens = reply?.promptTokens.map { "\($0.formatted()) prompt tokens" }
+        let answer = reply?.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AgentCheck(id: contextID, title: "Agent context", passed: problem == nil, failureReason: problem,
+                          responseExcerpt: String([tokens, answer].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ").prefix(280)))
+    }
+
+    private static func object(_ json: String) -> [String: Any]? {
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func json(_ value: Any?) -> String? {
+        guard let value, JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 }
