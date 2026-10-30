@@ -25,7 +25,7 @@ enum ModelFamilyReview {
     }
 
     static func reasons(for model: LibraryModel, purpose: ModelPurpose?, preferredRoles: [UseCase],
-                        served: Bool, replacements: [ReclaimOpportunity]) -> [String] {
+                        served: Bool, replacements: [ReclaimOpportunity], showdowns: [ModelShowdownResults] = []) -> [String] {
         var reasons: [String] = []
         if let purpose {
             reasons.append("Keep: \(purpose.note)")
@@ -37,6 +37,14 @@ enum ModelFamilyReview {
         reasons += kept.map { "Keep for \($0.task): comparable reviewed quality with no worse speed, latency, estimated memory or disk." }
         let replaced = replacements.compactMap(\.replacement).filter { $0.replaced.contains { $0.path == model.item.path } }
         reasons += replaced.map { "Removal candidate for \($0.task): \($0.keeper.name) covers this measured task. Review other uses first." }
+        for showdown in showdowns where showdown.isReviewed {
+            if showdown.qualityLeaders.contains(model.item.path) {
+                reasons.append("\(showdown.run.promptSetName): \(showdown.qualityLeaders.count > 1 ? "shared highest" : "highest") reviewed task quality.")
+            }
+            if showdown.speedLeaders.contains(model.item.path) {
+                reasons.append("\(showdown.run.promptSetName): \(showdown.speedLeaders.count > 1 ? "shared fastest" : "fastest") recorded decode speed in this run.")
+            }
+        }
         if reasons.isEmpty { reasons.append("No retention decision yet. Record its purpose or compare it on the tasks you need.") }
         return reasons
     }

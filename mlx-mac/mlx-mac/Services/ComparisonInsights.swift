@@ -319,7 +319,7 @@ enum ComparisonInsights {
     }
 
     /// Dominance is task-scoped and needs explicit reviewed quality, not quantization.
-    static func superseded(models: [LibraryModel], runs: [ComparisonRun], workflow: [WorkflowEvidence], environment: String?, protected: Set<String>, contextTokens: Int = 8192) -> [ReclaimOpportunity] {
+    static func superseded(models: [LibraryModel], runs: [ComparisonRun], workflow: [WorkflowEvidence], environment: String?, protected: Set<String>, contextTokens: Int = 8192, promptSets: [PromptSet]? = nil) -> [ReclaimOpportunity] {
         guard let environment, knownEnvironment(environment) else { return [] }
         var found: [ReclaimOpportunity] = []
         func resourcesNoWorse(_ replacement: LibraryModel, _ candidate: LibraryModel) -> Bool {
@@ -382,6 +382,7 @@ enum ComparisonInsights {
         for run in runs.sorted(by: { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }) where run.state == .completed && run.effectiveMode == .chat && !run.hasCustomServingConfiguration {
             // Newer results for a prompt set supersede its older advice, including incomplete reviews.
             guard seenRuns.insert(run.promptSetID).inserted else { continue }
+            guard ModelShowdownResults(run: run, models: models, environment: environment, promptSets: promptSets).supportsReplacement else { continue }
             let measurements = models.compactMap { model -> Measurement? in
                 guard let result = run.results.first(where: { valid($0, model: model, environment: environment) }), fullCohort(result, run: run),
                       ChatComparisonPresentation.completion(result, in: run).isComplete,

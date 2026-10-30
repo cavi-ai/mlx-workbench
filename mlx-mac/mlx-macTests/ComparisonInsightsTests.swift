@@ -216,9 +216,9 @@ final class ComparisonInsightsTests: XCTestCase {
             companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
             task: task.map { ModelTask(type: $0, useCases: [], source: "test", confidence: "test") }), readiness: readiness, capabilities: capabilities)
     }
-    private func result(_ path: String, speed: Double = 20, ttft: Double = 0.2, environment: String? = "macOS|M4|1.0", prompts: [String] = ["p"], metric: Double? = nil, finish: String = "stop", output: String = "answer") -> VariantResult {
+    private func result(_ path: String, speed: Double = 20, ttft: Double = 0.2, environment: String? = "macOS|M4|1.0", prompts: [String] = ["p"], metric: Double? = nil, finish: String = "stop", output: String = "answer", estimated: Bool? = nil) -> VariantResult {
         VariantResult(modelPath: path, modelSignature: "s", samples: prompts.map {
-            ComparisonSample(promptID: $0, outputExcerpt: output, tokensPerSecond: speed, timeToFirstTokenSeconds: ttft, error: nil, finishReason: finish)
+            ComparisonSample(promptID: $0, outputExcerpt: output, tokensPerSecond: speed, timeToFirstTokenSeconds: ttft, error: nil, finishReason: finish, metricsEstimated: estimated)
         }, aggregateTokensPerSecond: speed, aggregateTTFTSeconds: ttft, error: nil, environmentFingerprint: environment, aggregateMetric: metric)
     }
     private func run(_ results: [VariantResult], scores: [String: Int] = [:], mode: ComparisonMode = .chat, set: String = "work") -> ComparisonRun {
@@ -226,6 +226,217 @@ final class ComparisonInsightsTests: XCTestCase {
             startedAt: Date(timeIntervalSince1970: 1000), finishedAt: Date(timeIntervalSince1970: 1001), state: .completed, mode: mode,
             promptEntries: [prompt], qualityReviews: scores.mapValues { ComparisonQualityReview(score: $0, rubricID: "task-outcome-v1", reviewedAt: Date()) })
     }
+    private func taskSet(_ id: String = "work", prompts: [PromptEntry]? = nil) -> PromptSet {
+        PromptSet(id: id, name: "Task", useCase: .coding, prompts: prompts ?? [prompt], origin: .userCreated)
+    }
+
+    func testShowdownSeparatesQualityAndSpeedWithoutCombiningTasks() {
+        let models = [model("/a", bytes: 3_000_000_000), model("/b")]
+        let measured = run([result("/a", speed: 40), result("/b", speed: 20)], scores: ["/a": 4, "/b": 5])
+        let assessment = ModelShowdownResults(run: measured, models: models, environment: environment, promptSets: [taskSet()])
+        XCTAssertTrue(assessment.isReviewed)
+        XCTAssertEqual(assessment.qualityLeaders, ["/b"])
+        XCTAssertEqual(assessment.speedLeaders, ["/a"])
+        XCTAssertTrue(assessment.hasQualitySpeedTradeoff)
+        XCTAssertEqual(assessment.rows.first?.diskBytes, 3_000_000_000)
+        XCTAssertTrue(assessment.explanation.contains("Different variants"))
+        let reasons = ModelFamilyReview.reasons(for: models[1], purpose: nil, preferredRoles: [], served: false,
+            replacements: [], showdowns: [assessment])
+        XCTAssertTrue(reasons.contains { $0.contains("highest reviewed task quality") })
+        XCTAssertFalse(reasons.contains { $0.contains("No retention decision") })
+    }
+
+    func testSharedQualityLeaderDoesNotInventAReasonToKeepBoth() {
+        let measured = run([result("/a", speed: 40), result("/b", speed: 20)], scores: ["/a": 5, "/b": 5])
+        let assessment = ModelShowdownResults(run: measured, models: [model("/a"), model("/b")], environment: environment)
+        XCTAssertEqual(assessment.qualityLeaders, ["/a", "/b"])
+        XCTAssertEqual(assessment.speedLeaders, ["/a"])
+        XCTAssertFalse(assessment.hasQualitySpeedTradeoff)
+        let tied = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 5])
+        let allTied = ModelShowdownResults(run: tied, models: [model("/a"), model("/b")], environment: environment)
+        XCTAssertEqual(allTied.speedLeaders, ["/a", "/b"])
+        XCTAssertTrue(allTied.explanation.contains("tie"))
+    }
+
+    func testShowdownPreservesEstimatedSpeedProvenance() {
+        let measured = run([result("/a", speed: 40, estimated: true), result("/b", estimated: false)], scores: ["/a": 5, "/b": 4])
+        let assessment = ModelShowdownResults(run: measured, models: [model("/a"), model("/b")], environment: environment)
+        XCTAssertEqual(assessment.rows.first?.speedEstimated, true)
+        XCTAssertEqual(assessment.rows.last?.speedEstimated, false)
+    }
+
+    func testSavedShowdownRequestResolvesOnlyItsRecordedRun() {
+        let first = run([result("/a"), result("/b")]), second = run([result("/a"), result("/b")])
+        let request = ComparisonResultsRequest(runID: first.id)
+        XCTAssertEqual(request.resolve(in: [second, first])?.id, first.id)
+        XCTAssertNil(request.resolve(in: [second]))
+        var handoffs = RouteHandoffs()
+        handoffs.send(request, as: .reviewComparisonResults)
+        let newer = ComparisonResultsRequest(runID: second.id)
+        handoffs.send(newer, as: .reviewComparisonResults)
+        handoffs.finish(request, as: .reviewComparisonResults)
+        XCTAssertEqual(handoffs.take(.reviewComparisonResults), newer)
+    }
+
+    func testEveryShowdownReviewIsRequiredBeforeNamingLeaders() {
+        let models = [model("/a"), model("/b"), model("/c")]
+        let measured = run([result("/a"), result("/b", speed: 40), result("/c")], scores: ["/a": 5, "/b": 4])
+        let assessment = ModelShowdownResults(run: measured, models: models, environment: environment)
+        XCTAssertEqual(assessment.reviewState, .needsQualityReview)
+        XCTAssertEqual(assessment.rows.count, 3)
+        XCTAssertNil(assessment.rows.last?.qualityScore)
+        XCTAssertTrue(assessment.qualityLeaders.isEmpty)
+        XCTAssertTrue(assessment.speedLeaders.isEmpty)
+    }
+
+    func testChangedPromptDefinitionInvalidatesShowdownAndRemovalAdvice() {
+        let models = [model("/a"), model("/b", bytes: 3_000_000_000)]
+        let measured = run([result("/a"), result("/b", speed: 40, ttft: 0.1)], scores: ["/a": 4, "/b": 4])
+        let changed = taskSet(prompts: [PromptEntry(id: "p", text: "a different task")])
+        let assessment = ModelShowdownResults(run: measured, models: models, environment: environment, promptSets: [changed])
+        XCTAssertFalse(assessment.isReviewed)
+        XCTAssertTrue(assessment.rows.isEmpty)
+        XCTAssertTrue(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment,
+            protected: [], promptSets: [changed]).isEmpty)
+        XCTAssertFalse(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment,
+            protected: [], promptSets: [taskSet()]).isEmpty)
+        XCTAssertTrue(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment,
+            protected: [], promptSets: []).isEmpty)
+    }
+
+    func testNewerUnreviewedTaskDoesNotReviveOlderShowdownWinners() {
+        let models = [model("/a"), model("/b")]
+        var older = run([result("/a", speed: 40), result("/b")], scores: ["/a": 5, "/b": 4])
+        older.finishedAt = Date(timeIntervalSince1970: 1000)
+        var newer = run([result("/a"), result("/b", speed: 40)])
+        newer.finishedAt = Date(timeIntervalSince1970: 2000)
+        let assessments = ModelShowdownResults.latest(runs: [older, newer], models: models, environment: environment, promptSets: [taskSet()])
+        XCTAssertEqual(assessments.count, 1)
+        XCTAssertEqual(assessments.first?.run.id, newer.id)
+        XCTAssertEqual(assessments.first?.reviewState, .needsQualityReview)
+        XCTAssertTrue(assessments.first?.qualityLeaders.isEmpty == true)
+    }
+
+    func testSeparateShowdownTasksKeepIndependentQualityLeaders() {
+        let models = [model("/a"), model("/b")]
+        let first = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 4], set: "coding")
+        let second = run([result("/a"), result("/b")], scores: ["/a": 3, "/b": 5], set: "writing")
+        let assessments = ModelShowdownResults.latest(runs: [first, second], models: models, environment: environment,
+            promptSets: [taskSet("coding"), taskSet("writing")])
+        XCTAssertEqual(assessments.count, 2)
+        XCTAssertEqual(assessments.first { $0.run.id == first.id }?.qualityLeaders, ["/a"])
+        XCTAssertEqual(assessments.first { $0.run.id == second.id }?.qualityLeaders, ["/b"])
+    }
+
+    func testPartialPromptTimingCannotProduceASpeedLeaderOrReplacement() {
+        let prompts = [prompt, PromptEntry(id: "q", text: "second task")]
+        func variant(_ path: String, rates: [Double?], firstTokens: [Double?]) -> VariantResult {
+            VariantResult(modelPath: path, modelSignature: "s", samples: prompts.indices.map { index in
+                ComparisonSample(promptID: prompts[index].id, outputExcerpt: "answer", tokensPerSecond: rates[index],
+                    timeToFirstTokenSeconds: firstTokens[index], error: nil, finishReason: "stop")
+            }, aggregateTokensPerSecond: path == "/a" ? 100 : 70, aggregateTTFTSeconds: path == "/a" ? 0.1 : 0.2,
+                error: nil, environmentFingerprint: environment)
+        }
+        let models = [model("/a", bytes: 3_000_000_000), model("/b")]
+        for missingSpeed in [true, false] {
+            var measured = run([variant("/a", rates: missingSpeed ? [100, nil] : [100, 100], firstTokens: missingSpeed ? [0.1, 0.1] : [0.1, nil]),
+                variant("/b", rates: [90, 50], firstTokens: [0.2, 0.2])], scores: ["/a": 5, "/b": 4])
+            measured.promptEntries = prompts
+            let assessment = ModelShowdownResults(run: measured, models: models, environment: environment)
+            XCTAssertTrue(assessment.isReviewed)
+            XCTAssertFalse(assessment.supportsReplacement)
+            if missingSpeed { XCTAssertNil(assessment.rows.first?.tokensPerSecond); XCTAssertTrue(assessment.speedLeaders.isEmpty) }
+            else { XCTAssertNil(assessment.rows.first?.firstTokenSeconds) }
+            XCTAssertTrue(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment, protected: []).isEmpty)
+        }
+    }
+
+    func testSavedChatResultsOpenFromAMediaMode() throws {
+        let chat = run([result("/a"), result("/b")]), media = run([result("/image")], mode: .imageGeneration)
+        let request = ComparisonResultsRequest(runID: chat.id)
+        let current = CompareSelection(mode: .imageGeneration, selectedRunID: media.id, promptSetID: "images")
+        let next = try XCTUnwrap(request.selection(in: [media, chat], from: current, promptSets: [taskSet()]))
+        XCTAssertEqual(next.mode, .chat)
+        XCTAssertEqual(next.selectedRunID, chat.id)
+        XCTAssertEqual(next.promptSetID, "work")
+        XCTAssertEqual(ComparePresentation.shownRun(runs: [media, chat], mode: next.mode,
+            selectedRunID: next.selectedRunID, activeRunID: nil)?.id, chat.id)
+    }
+
+    func testCompactedShowdownHistoryPreservesCompletedAnswerEvidence() throws {
+        let measured = run([result("/a", speed: 40), result("/b")], scores: ["/a": 4, "/b": 5])
+        let summary = try ComparisonRecordArchive<ComparisonRun>.summarized(measured)
+        XCTAssertEqual(summary.historyDetailsOmitted, true)
+        let assessment = ModelShowdownResults(run: summary, models: [model("/a"), model("/b")], environment: environment)
+        XCTAssertTrue(assessment.isReviewed)
+        XCTAssertTrue(assessment.hasQualitySpeedTradeoff)
+    }
+
+    func testNonfiniteAndMissingShowdownSpeedsStayUnknown() {
+        let models = [model("/a"), model("/b")]
+        for speed in [Double.nan, .infinity, -.infinity, 0, -1] {
+            let measured = run([result("/a", speed: speed), result("/b")], scores: ["/a": 5, "/b": 4])
+            let assessment = ModelShowdownResults(run: measured, models: models, environment: environment)
+            XCTAssertTrue(assessment.isReviewed)
+            XCTAssertNil(assessment.rows.first?.tokensPerSecond)
+            XCTAssertTrue(assessment.speedLeaders.isEmpty)
+            XCTAssertTrue(assessment.explanation.contains("incomplete"))
+        }
+    }
+
+    func testIncompleteOrChangedShowdownEvidenceCannotNameLeaders() {
+        let models = [model("/a"), model("/b")]
+        for finish in ["length", "tool_calls", ""] {
+            let measured = run([result("/a"), result("/b", finish: finish)], scores: ["/a": 5, "/b": 5])
+            XCTAssertFalse(ModelShowdownResults(run: measured, models: models, environment: environment).isReviewed)
+        }
+        let measured = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 4])
+        for current in [[models[0]], [models[0], model("/b", signature: "changed")]] {
+            XCTAssertFalse(ModelShowdownResults(run: measured, models: current, environment: environment).isReviewed)
+        }
+        XCTAssertFalse(ModelShowdownResults(run: measured, models: models, environment: "another Mac").isReviewed)
+        XCTAssertFalse(ModelShowdownResults(run: measured, models: models, environment: nil).isReviewed)
+    }
+
+    @MainActor
+    func testShowdownCardRendersWithoutReplayingAComparison() async throws {
+        let models = [model("/a", bytes: 3_000_000_000), model("/b")]
+        let measured = run([result("/a", speed: 40), result("/b", speed: 20)], scores: ["/a": 4, "/b": 5])
+        let assessment = ModelShowdownResults(run: measured, models: models, environment: environment, promptSets: [taskSet()])
+        var requests: [UUID] = []
+        for width in [560, 800] {
+            for dark in [false, true] {
+                let card = ModelShowdownResultsCard(results: assessment, familyPaths: ["/a", "/b", "/untested"]) { requests.append(assessment.id) }
+                let host = NSHostingView(rootView: card.padding().frame(width: CGFloat(width), height: 620, alignment: .topLeading)
+                    .background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 620), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderFront(nil)
+                await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+                host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let name = "showdown-\(width)-\(dark ? "dark" : "light")"
+                let capture = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+                capture.name = name; capture.lifetime = .keepAlways; add(capture)
+                if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDER_OUTPUT"] {
+                    let url = URL(fileURLWithPath: folder)
+                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                    try data.write(to: url.appendingPathComponent(name + ".png"))
+                }
+                window.close()
+            }
+        }
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testReplacementWaitsForEveryShowdownEntrantToBeReviewed() {
+        let models = [model("/a"), model("/b", bytes: 3_000_000_000), model("/c")]
+        let measured = run([result("/a"), result("/b", speed: 40, ttft: 0.1), result("/c")], scores: ["/a": 4, "/b": 4])
+        XCTAssertTrue(ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment, protected: []).isEmpty)
+    }
+
     func testTruncatedAnswersCannotSupportReplacementAdvice() {
         let models = [model("/a"), model("/b", bytes: 3_000_000_000)]
         let measured = run([result("/a"), result("/b", speed: 40, ttft: 0.1, finish: "length")], scores: ["/a": 4, "/b": 4])

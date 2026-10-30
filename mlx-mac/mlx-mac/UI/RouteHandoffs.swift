@@ -10,10 +10,23 @@ extension HandoffKind where Value == ModelRuntimeRecoveryRequest { static var re
 extension HandoffKind where Value == HostedModelsRequest { static var openHostedModels: Self { Self(name: "openHostedModels") } }
 extension HandoffKind where Value == ClientWiringRequest { static var wireClient: Self { Self(name: "wireClient") } }
 extension HandoffKind where Value == ClientSetupRequest { static var clientSetup: Self { Self(name: "clientSetup") } }
+extension HandoffKind where Value == ComparisonResultsRequest { static var reviewComparisonResults: Self { Self(name: "reviewComparisonResults") } }
 extension HandoffKind where Value == FamilyComparisonRequest { static var compareFamily: Self { Self(name: "compareFamily") } }
 extension HandoffKind where Value == ComparisonModelRequest { static var compareModel: Self { Self(name: "compareModel") } }
 extension HandoffKind where Value == ServingProfileComparisonSetup { static var compareServingProfiles: Self { Self(name: "compareServingProfiles") } }
 extension HandoffKind where Value == WorkflowReportImportRequest { static var importWorkflowReport: Self { Self(name: "importWorkflowReport") } }
+
+/// Read a recorded comparison; this request never starts or replays inference.
+struct ComparisonResultsRequest: Equatable, Identifiable {
+    let id = UUID()
+    let runID: UUID
+
+    func resolve(in runs: [ComparisonRun]) -> ComparisonRun? { runs.first { $0.id == runID } }
+
+    func selection(in runs: [ComparisonRun], from current: CompareSelection, promptSets: [PromptSet]) -> CompareSelection? {
+        resolve(in: runs).map { ComparePresentation.pick($0, from: current, promptSets: promptSets) }
+    }
+}
 
 /// Opens Library's Hosted models source, optionally selecting one saved connection.
 struct HostedModelsRequest: Equatable {

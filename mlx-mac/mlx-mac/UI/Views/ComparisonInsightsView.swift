@@ -83,7 +83,7 @@ struct ComparisonInsightsView: View {
 
     private var environment: String? { appHost.watch.currentFingerprintDescription }
     private var replacements: [ReclaimOpportunity] {
-        ComparisonInsights.superseded(models: appHost.librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflow.records, environment: environment, protected: appHost.occupancy.protectedPaths, contextTokens: contextTokens)
+        ComparisonInsights.superseded(models: appHost.librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflow.records, environment: environment, protected: appHost.occupancy.protectedPaths, contextTokens: contextTokens, promptSets: comparison.promptSets)
     }
 
     var body: some View {

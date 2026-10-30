@@ -181,6 +181,8 @@ struct QuantView: View {
         .onChange(of: appHost.handoffs[.compareServingProfiles]?.id) { _, _ in consumeProfileComparisonRequest() }
         .task(id: isRouteActive) { consumeModelComparisonRequest() }
         .task(id: isRouteActive) { consumeFamilyComparisonRequest() }
+        .task(id: isRouteActive) { consumeResultsRequest() }
+        .onChange(of: appHost.handoffs[.reviewComparisonResults]?.id) { _, _ in consumeResultsRequest() }
         .onChange(of: appHost.handoffs[.compareFamily]?.id) { _, _ in consumeFamilyComparisonRequest() }
         .onChange(of: appHost.handoffs[.compareModel]?.id) { _, _ in consumeModelComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
@@ -221,6 +223,7 @@ struct QuantView: View {
                 selectedPromptSetID = restored
             }
             applySuggestions()
+            consumeResultsRequest()
         }
         .onChange(of: selectedPromptSetID) { _, newID in
             if let reusedPromptSet, newID != reusedPromptSet.id { self.reusedPromptSet = nil }
@@ -275,6 +278,20 @@ struct QuantView: View {
         selectedRunID = nil; reuseError = nil
         selectionReason = "Selected from Library. Add another model or run this model against the chosen prompts."
         appHost.handoffs.finish(request, as: .compareModel)
+    }
+
+    private func consumeResultsRequest() {
+        guard isRouteActive, let request = appHost.handoffs[.reviewComparisonResults] else { return }
+        guard comparison.hasLoadedHistory, canApplyLibrarySelection else {
+            reuseError = "Finish the current comparison or editor, then open the requested saved results."; return
+        }
+        guard let next = request.selection(in: comparison.runs, from: currentSelection, promptSets: comparison.promptSets) else {
+            reuseError = "The requested comparison is no longer available."
+            appHost.handoffs.finish(request, as: .reviewComparisonResults); return
+        }
+        apply(next)
+        reuseError = nil
+        appHost.handoffs.finish(request, as: .reviewComparisonResults)
     }
 
     private func consumeFamilyComparisonRequest() {
@@ -528,6 +545,10 @@ struct QuantView: View {
             if appHost.handoffs[.compareServingProfiles] != nil {
                 Button("Use requested profiles") { consumeProfileComparisonRequest() }
                     .disabled(comparison.activeRunID != nil || comparison.savingPromptSet || servingProfiles.activeID != nil)
+            }
+            if appHost.handoffs[.reviewComparisonResults] != nil {
+                Button("Open requested saved results") { consumeResultsRequest() }
+                    .disabled(!canApplyLibrarySelection || !comparison.hasLoadedHistory)
             }
             if appHost.handoffs[.compareFamily] != nil {
                 Button("Use selected showdown models") { consumeFamilyComparisonRequest() }

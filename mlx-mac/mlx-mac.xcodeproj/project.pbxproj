@@ -322,6 +322,7 @@
 		D52C00000000000000000002 /* ModelFamilyReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000002 /* ModelFamilyReview.swift */; };
 		D52C00000000000000000003 /* ServedModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000003 /* ServedModelsView.swift */; };
 		D52C00000000000000000004 /* ModelFamilyReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000004 /* ModelFamilyReviewView.swift */; };
+		D53C00000000000000000001 /* ModelShowdownResults.swift in Sources */ = {isa = PBXBuildFile; fileRef = D53F00000000000000000001 /* ModelShowdownResults.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -655,6 +656,7 @@
 		D52F00000000000000000002 /* ModelFamilyReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelFamilyReview.swift; path = Services/ModelFamilyReview.swift; sourceTree = "<group>"; };
 		D52F00000000000000000003 /* ServedModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServedModelsView.swift; path = UI/Views/ServedModelsView.swift; sourceTree = "<group>"; };
 		D52F00000000000000000004 /* ModelFamilyReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelFamilyReviewView.swift; path = UI/Views/ModelFamilyReviewView.swift; sourceTree = "<group>"; };
+		D53F00000000000000000001 /* ModelShowdownResults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelShowdownResults.swift; path = Services/ModelShowdownResults.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -776,6 +778,7 @@
 				A6C0100000000000000000F04 /* ComparisonInsightsView.swift */,
 				24FREF057 /* UsageTracker.swift */,
 				D52F00000000000000000001 /* ModelPurposeStore.swift */,
+				D53F00000000000000000001 /* ModelShowdownResults.swift */,
 				D52F00000000000000000002 /* ModelFamilyReview.swift */,
 				D52F00000000000000000003 /* ServedModelsView.swift */,
 				D52F00000000000000000004 /* ModelFamilyReviewView.swift */,
@@ -1352,6 +1355,7 @@
 				A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */,
 				24BBLD059 /* UsageTracker.swift in Sources */,
 				D52C00000000000000000001 /* ModelPurposeStore.swift in Sources */,
+				D53C00000000000000000001 /* ModelShowdownResults.swift in Sources */,
 				D52C00000000000000000002 /* ModelFamilyReview.swift in Sources */,
 				D52C00000000000000000003 /* ServedModelsView.swift in Sources */,
 				D52C00000000000000000004 /* ModelFamilyReviewView.swift in Sources */,

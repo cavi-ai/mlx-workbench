@@ -99,6 +99,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   rollback fences and persisted progress for partial rollback retries).
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
   `ModelPurposeStore` owns durable keep reasons; `ModelFamilyReview` builds related-name review groups and identity-bound Compare handoffs.
+  `ModelShowdownResults` validates recorded chat cohorts for task-specific result cards and replacement advice.
   Batch moves and quarantine-history refresh use a serial I/O queue; failed
   recovery-record writes restore the moved model or report its recovery path.
 - Studies and Training: `LabCoordinator`, `TrainingSession`.
