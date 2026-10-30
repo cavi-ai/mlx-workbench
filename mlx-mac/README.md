@@ -38,6 +38,9 @@ then run:
 make test-native-ui NATIVE_UI_BASE_VM=mlx-workbench-ui-base
 ```
 
+Install Tart on `PATH` or in `/Applications/Tart.app` to share the executable
+across checkouts. Each checkout keeps its VM storage separate.
+
 `scripts/native_ui_vm.py` also accepts `--tart`, `--vm-home` and an optional
 `--baseline-app` for matched before/after captures. VM storage defaults to
 `.build/native-ui-vms`. Provisioning is explicit; the test command never

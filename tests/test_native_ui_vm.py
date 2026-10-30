@@ -17,6 +17,45 @@ vm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vm)
 
 
+class TartResolutionTests(unittest.TestCase):
+    def test_explicit_executable_takes_precedence(self):
+        self.assertEqual(vm.resolve_tart(Path("unused"), "/tools/tart"), "/tools/tart")
+
+    def test_shared_application_is_used_without_a_path_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shared = root / "Tart.app/Contents/MacOS/tart"
+            shared.parent.mkdir(parents=True)
+            shared.write_text("#!/bin/sh\nexit 0\n")
+            shared.chmod(0o755)
+            with patch.object(vm.shutil, "which", return_value=None), \
+                    patch.object(vm, "SHARED_TART", shared):
+                self.assertEqual(vm.resolve_tart(root), str(shared))
+
+    def test_path_installation_takes_precedence_over_shared_application(self):
+        with patch.object(vm.shutil, "which", return_value="/tools/tart"):
+            self.assertEqual(vm.resolve_tart(Path("unused")), "/tools/tart")
+
+    def test_legacy_bundle_remains_available_when_shared_install_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundled = root / ".build/native-ui-tools/tart.app/Contents/MacOS/tart"
+            bundled.parent.mkdir(parents=True)
+            bundled.write_text("#!/bin/sh\nexit 0\n")
+            bundled.chmod(0o755)
+            with patch.object(vm.shutil, "which", return_value=None), \
+                    patch.object(vm, "SHARED_TART", root / "missing"):
+                self.assertEqual(vm.resolve_tart(root), str(bundled))
+
+    def test_missing_installation_reports_the_setup_guide(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(vm.shutil, "which", return_value=None), \
+                    patch.object(vm, "SHARED_TART", root / "missing"):
+                with self.assertRaisesRegex(RuntimeError, "Tart is required"):
+                    vm.resolve_tart(root)
+
+
 class NativeUIVMTests(unittest.TestCase):
     def artifact(self, root, number, size=10):
         run = root / f"ui-{number:012x}"

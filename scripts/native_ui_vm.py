@@ -21,6 +21,16 @@ import uuid
 RUNTIME_INSTALL_TEST = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
 ARTIFACT_KEEP_RUNS = 5
 ARTIFACT_MAX_BYTES = 2 * 1024**3
+SHARED_TART = Path("/Applications/Tart.app/Contents/MacOS/tart")
+
+
+def resolve_tart(repo, explicit=None):
+    if executable := explicit or shutil.which("tart"):
+        return executable
+    for candidate in (SHARED_TART, Path(repo) / ".build/native-ui-tools/tart.app/Contents/MacOS/tart"):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    raise RuntimeError("Tart is required. See mlx-mac/README.md#isolated-native-ui-tests.")
 
 
 def artifact_root(path):
@@ -511,13 +521,7 @@ def wait_for_guest(tart, vm, running, env, timeout=300):
 
 def host(args):
     repo = Path(__file__).resolve().parent.parent
-    tart = args.tart or shutil.which("tart")
-    if not tart:
-        bundled = repo / ".build/native-ui-tools/tart.app/Contents/MacOS/tart"
-        if bundled.is_file():
-            tart = str(bundled)
-        else:
-            raise RuntimeError("Tart is required. See mlx-mac/README.md#isolated-native-ui-tests.")
+    tart = resolve_tart(repo, args.tart)
     env = dict(os.environ, TART_HOME=str(Path(args.vm_home).resolve()))
     local_vms = subprocess.check_output([tart, "list", "--source", "local", "--quiet"], env=env, text=True).splitlines()
     if args.base_vm not in local_vms:
