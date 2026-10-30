@@ -85,7 +85,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `ConversionWorkflow`; Quality Gate: `VerificationCoordinator` with
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:
   `ConvertedSourceCleanup`.
-- Run and endpoints: `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
+- Run and endpoints: `ServedModelsView` and `MenuBarView` share `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
   JIT gateway, memory policy, source-bound acceleration settings), transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
@@ -98,6 +98,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
 - Wire: `WiringCoordinator` (allowlisted client configs, backups, content-digest
   rollback fences and persisted progress for partial rollback retries).
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
+  `ModelPurposeStore` owns durable keep reasons; `ModelFamilyReview` builds related-name review groups and identity-bound Compare handoffs.
   Batch moves and quarantine-history refresh use a serial I/O queue; failed
   recovery-record writes restore the moved model or report its recovery path.
 - Studies and Training: `LabCoordinator`, `TrainingSession`.

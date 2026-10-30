@@ -7,7 +7,7 @@ struct MlxWorkbenchApp: App {
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
 
     var body: some Scene {
-        WindowGroup {
+        Window("MLX Workbench", id: ServedModelsWindow.mainID) {
             ContentView(appHost: appHost)
                 .workbenchTheme()
                 .onAppear {
@@ -50,6 +50,10 @@ struct MlxWorkbenchApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 720, height: 640)
+        Window("Served models", id: ServedModelsWindow.id) {
+            ServedModelsView(appHost: appHost).workbenchTheme()
+        }
+        .defaultSize(width: 640, height: 620)
         MenuBarExtra("MLX Workbench", systemImage: MenuBarPresentation.fleetIcon(slots: appHost.endpoint.fleet.slots, states: appHost.endpoint.slotStates)) {
             MenuBarView(appHost: appHost)
         }

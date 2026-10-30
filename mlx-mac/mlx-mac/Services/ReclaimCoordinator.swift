@@ -466,6 +466,12 @@ final class ReclaimCoordinator: ObservableObject {
             do {
                 try Task.checkCancellation()
                 guard roots == ggufRoots(), directory == quarantineDir() else { throw QuarantineError.changedSincePreview }
+                let path = Quarantine.resolve(item.path)
+                guard !protectedFolderPaths.contains(where: { protected in
+                    guard protected.hasPrefix("/") else { return HFRepoID.matches(protected, path) }
+                    let other = Quarantine.resolve(protected)
+                    return path == other || path.hasPrefix(other + "/") || other.hasPrefix(path + "/")
+                }) else { throw QuarantineError.unsafeFolder("the model is retained or in use.") }
                 let movedAt = now()
                 let record = try await WorkbenchIO.perform(on: quarantineIO) { Result {
                     try Quarantine.move(target: item.path, roots: roots, quarantineDir: directory,

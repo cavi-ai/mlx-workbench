@@ -384,6 +384,7 @@ enum ComparisonInsights {
             guard seenRuns.insert(run.promptSetID).inserted else { continue }
             let measurements = models.compactMap { model -> Measurement? in
                 guard let result = run.results.first(where: { valid($0, model: model, environment: environment) }), fullCohort(result, run: run),
+                      ChatComparisonPresentation.completion(result, in: run).isComplete,
                       let quality = run.qualityReviews?[result.id], (1...5).contains(quality.score), !quality.rubricID.isEmpty,
                       let speed = positive(result.aggregateTokensPerSecond), let ttft = nonnegative(result.aggregateTTFTSeconds) else { return nil }
                 return Measurement(model: model, quality: quality.score, rubric: quality.rubricID, speed: speed, ttft: ttft, duration: nil)

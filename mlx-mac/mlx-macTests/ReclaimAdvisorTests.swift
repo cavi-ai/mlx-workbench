@@ -7,6 +7,102 @@ import XCTest
 final class ReclaimAdvisorTests: XCTestCase {
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 
+    func testPurposeNotesSurviveRelaunchAndPublishOnlyAfterSave() async throws {
+        let root = try makeRoot(), url = root.appendingPathComponent("purposes.json")
+        let store = ModelPurposeStore(store: JSONStore(fileURL: url))
+        await store.waitForHistory()
+        let saved = await store.save(path: "/models/a", signature: "weights", note: "  Abliterated creative writing  ")
+        XCTAssertTrue(saved)
+        let reopened = ModelPurposeStore(store: JSONStore(fileURL: url))
+        await reopened.waitForHistory()
+        XCTAssertEqual(reopened.records.first?.note, "Abliterated creative writing")
+        XCTAssertEqual(reopened.protectedPaths, ["/models/a"])
+        let removed = await reopened.save(path: "/models/a", signature: "weights", note: "")
+        XCTAssertTrue(removed)
+        XCTAssertTrue(reopened.records.isEmpty)
+    }
+
+    func testUnreadablePurposeStoreRefusesWrites() async throws {
+        let root = try makeRoot(), url = root.appendingPathComponent("purposes.json")
+        try Data("corrupt".utf8).write(to: url)
+        let store = ModelPurposeStore(store: JSONStore(fileURL: url))
+        await store.waitForHistory()
+        XCTAssertFalse(store.hasLoadedHistory)
+        let saved = await store.save(path: "/a", signature: "s", note: "Keep for coding")
+        XCTAssertFalse(saved)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "corrupt")
+    }
+
+    func testFailedPurposeSavePreservesPublishedProtection() async throws {
+        let root = try makeRoot(), url = root.appendingPathComponent("purposes.json")
+        let original = ModelPurpose(path: "/models/a", signature: "s", note: "Creative writing")
+        try JSONStore<ModelPurpose>(fileURL: url).replaceAll([original])
+        let store = ModelPurposeStore(store: JSONStore(fileURL: url, replaceItem: { _, _ in throw NSError(domain: "WriteFailure", code: 1) }))
+        await store.waitForHistory()
+        let saved = await store.save(path: original.path, signature: "s", note: "")
+        XCTAssertFalse(saved)
+        XCTAssertEqual(store.records, [original])
+        XCTAssertEqual(try JSONStore<ModelPurpose>(fileURL: url).load(), [original])
+    }
+
+    func testPurposeProtectsChangedModelThroughAppOccupancyAndReclaim() async throws {
+        let root = try makeRoot()
+        let purposes = ModelPurposeStore(store: JSONStore(fileURL: root.appendingPathComponent("purposes.json")))
+        await purposes.waitForHistory()
+        let model = makeModel(path: "/models/retained.gguf", modifiedDaysAgo: 200)
+        _ = await purposes.save(path: model.item.path, signature: "old-weights", note: "Abliterated writing")
+        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured,
+            runtimeReport: .checking, modelPurposes: purposes)
+        app.librarySnapshot = snapshot(with: [model])
+        XCTAssertTrue(app.occupancy.protectedPaths.contains(model.item.path))
+        XCTAssertFalse(app.occupancy.blocksStop(modelIdentity: model.item.path))
+        app.analyzeReclaim()
+        XCTAssertFalse(app.reclaim.opportunities.contains { $0.paths.contains(model.item.path) })
+        let reasons = ModelFamilyReview.reasons(for: model, purpose: purposes.records.first, preferredRoles: [], served: false, replacements: [])
+        XCTAssertTrue(reasons.contains { $0.contains("Abliterated writing") })
+        XCTAssertTrue(reasons.contains { $0.contains("identity changed") })
+    }
+
+    func testPurposeSaveIsRefusedWhileAQuarantineMoveIsSuspended() async throws {
+        let root = try makeRoot(), quarantine = try makeRoot(), file = root.appendingPathComponent("moving.gguf")
+        try Data("weights".utf8).write(to: file)
+        let manager = ThreadRecordingFileManager(), coordinator = ReclaimCoordinator(fileManager: manager)
+        coordinator.ggufRoots = { [root.path] }; coordinator.quarantineDir = { quarantine.path }
+        let purposes = ModelPurposeStore(store: JSONStore(fileURL: root.appendingPathComponent("purposes.json")))
+        let app = AppHost(config: .defaults(ggufRoots: [root.path]), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured,
+            runtimeReport: .checking, reclaim: coordinator, modelPurposes: purposes)
+        await app.comparison.waitForHistory(); await purposes.waitForHistory()
+        let opportunity = ReclaimOpportunity(kind: .stale, paths: [file.path], bytes: 7, evidence: "unused", confidence: .high, actionable: true)
+        coordinator.setOpportunitiesForTesting([opportunity]); coordinator.preview(selected: [opportunity.id])
+        let hash = try XCTUnwrap(coordinator.plan?.previewHash)
+        let started = expectation(description: "filesystem move entered"), release = DispatchSemaphore(value: 0)
+        manager.beforeMove = { started.fulfill(); release.wait() }
+        let moving = Task { await coordinator.confirm(previewHash: hash) }
+        await fulfillment(of: [started], timeout: 5)
+        let saved = await purposes.save(path: file.path, signature: "s", note: "Keep this model")
+        release.signal()
+        _ = await moving.value
+        XCTAssertFalse(saved)
+        XCTAssertTrue(purposes.records.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testBatchQuarantineRechecksRetentionAfterPreview() async throws {
+        let root = try makeRoot(), quarantine = try makeRoot(), file = root.appendingPathComponent("keep.gguf")
+        try Data("weights".utf8).write(to: file)
+        let coordinator = ReclaimCoordinator()
+        coordinator.ggufRoots = { [root.path] }; coordinator.quarantineDir = { quarantine.path }
+        let opportunity = ReclaimOpportunity(kind: .stale, paths: [file.path], bytes: 7,
+            evidence: "unused", confidence: .high, actionable: true)
+        coordinator.setOpportunitiesForTesting([opportunity])
+        coordinator.preview(selected: [opportunity.id])
+        let hash = try XCTUnwrap(coordinator.plan?.previewHash)
+        coordinator.protectedPaths = { [file.path] }
+        _ = await coordinator.confirm(previewHash: hash)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertNotNil(coordinator.lastMoves.first?.error)
+    }
+
     func testBatchQuarantineMovesFilesOffTheMainThread() async throws {
         let root = try makeRoot(), quarantine = try makeRoot()
         let file = root.appendingPathComponent("background.gguf")
@@ -621,9 +717,11 @@ final class ReclaimAdvisorTests: XCTestCase {
 private final class ThreadRecordingFileManager: FileManager, @unchecked Sendable {
     private let state = NSLock()
     private var mainThread = false
+    var beforeMove: (() -> Void)?
     var movedOnMainThread: Bool { state.lock(); defer { state.unlock() }; return mainThread }
     override func moveItem(atPath srcPath: String, toPath dstPath: String) throws {
         state.lock(); mainThread = mainThread || Thread.isMainThread; state.unlock()
+        beforeMove?()
         try super.moveItem(atPath: srcPath, toPath: dstPath)
     }
 }

@@ -20,6 +20,35 @@ Folder copies that need a separate review remain visible in the headline as an i
 
 Quantization bits alone never establish that one model supersedes another. Replacement chains pick a keeper within one reviewed comparison or matched conversion cohort; suggestions stay advisory and keepers are protected from stale-file advice. Intentional serving counts as use; verification and benchmark runs do not.
 
+## Review related variants
+
+**Which variants should I keep?** groups related model names for review, including
+quantizations and named tuning variants. These groups suggest candidates to
+compare; they do not prove identical weights or interchangeable behavior.
+
+Expand a group to see each variant's size, quantization, serving selection,
+preferred roles and current task-specific replacement evidence. **Keep for a
+purpose…** records why a model deserves a place, such as abliterated writing, a
+coding fine-tune or a lower-memory fallback. Saved purposes protect models from
+cleanup, including after their identity changes. **Edit keep reason…** updates or
+clears that protection. Purpose-bearing single models remain listed; saved reasons
+for models absent from the current scan can also be cleared. Unreadable purpose
+storage blocks cleanup, and purpose changes wait for active cleanup to finish.
+
+Select two to four ready variants and choose **Prepare showdown…**. Compare opens
+with those exact models; selecting them starts no inference. Choose prompts that
+exercise the intended use, run the comparison and rate each model's task quality.
+For larger groups, compare a retained contender against the remaining variants in
+another explicit run. Separate runs do not become one combined ranking.
+
+Replacement advice requires current model and environment identities, the same
+complete prompt cohort and reviewed quality. Truncated or reasoning-only answers
+cannot support chat replacement advice. A model can remain useful for another
+task even when a peer beats it here. **Review removal…** on an evidenced candidate
+opens Library's existing removal preview; confirmation moves it to macOS Trash.
+For a Hugging Face cache entry, that preview names the entire repository and all
+included revisions. No showdown automatically removes model files.
+
 ## Quarantine
 
 **Preview reclaim** lists the files a batch would move and their total size. **Confirm quarantine** moves them into the quarantine directory (**Settings → Storage**). **Put back** restores a quarantined item to its original path.

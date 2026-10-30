@@ -180,6 +180,8 @@ struct QuantView: View {
         .task(id: isRouteActive) { consumeProfileComparisonRequest() }
         .onChange(of: appHost.handoffs[.compareServingProfiles]?.id) { _, _ in consumeProfileComparisonRequest() }
         .task(id: isRouteActive) { consumeModelComparisonRequest() }
+        .task(id: isRouteActive) { consumeFamilyComparisonRequest() }
+        .onChange(of: appHost.handoffs[.compareFamily]?.id) { _, _ in consumeFamilyComparisonRequest() }
         .onChange(of: appHost.handoffs[.compareModel]?.id) { _, _ in consumeModelComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
             ComparisonRunSetupSheet(setup: setup,
@@ -273,6 +275,28 @@ struct QuantView: View {
         selectedRunID = nil; reuseError = nil
         selectionReason = "Selected from Library. Add another model or run this model against the chosen prompts."
         appHost.handoffs.finish(request, as: .compareModel)
+    }
+
+    private func consumeFamilyComparisonRequest() {
+        guard isRouteActive, let request = appHost.handoffs[.compareFamily] else { return }
+        guard canApplyLibrarySelection else {
+            reuseError = "Finish the current comparison or editor, then use the selected showdown models."; return
+        }
+        guard let models = request.resolve(in: appHost.librarySnapshot?.models ?? []) else {
+            reuseError = "A showdown model changed or is unavailable. Select the entrants again in Reclaim."
+            appHost.handoffs.finish(request, as: .compareFamily); return
+        }
+        reusedPromptSet = nil
+        changeMode(to: request.mode)
+        if !modePromptSets.contains(where: { $0.id == selectedPromptSetID }) { selectedPromptSetID = modePromptSets.first?.id ?? "" }
+        variantSlots = models.map { Optional($0.item.path) }
+        slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
+        strataSettings = [:]; laneSources = [:]; settingsSearchGoal = nil
+        familyFilter = nil; sizeFilter = .all; modelSearch = ""
+        initializedSuggestions = true; manuallySelectedModels = true
+        selectedRunID = nil; reuseError = nil
+        selectionReason = "Showdown from Reclaim. Choose prompts that exercise each model’s intended purpose, run the comparison, then rate task quality."
+        appHost.handoffs.finish(request, as: .compareFamily)
     }
 
     private func consumeProfileComparisonRequest() {
@@ -504,6 +528,10 @@ struct QuantView: View {
             if appHost.handoffs[.compareServingProfiles] != nil {
                 Button("Use requested profiles") { consumeProfileComparisonRequest() }
                     .disabled(comparison.activeRunID != nil || comparison.savingPromptSet || servingProfiles.activeID != nil)
+            }
+            if appHost.handoffs[.compareFamily] != nil {
+                Button("Use selected showdown models") { consumeFamilyComparisonRequest() }
+                    .disabled(!canApplyLibrarySelection)
             }
             if appHost.handoffs[.compareModel] != nil {
                 Button("Use selected Library model") { consumeModelComparisonRequest() }

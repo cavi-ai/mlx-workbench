@@ -318,6 +318,10 @@
 		BKLOGB1 /* BackendInstallLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKLOGF1 /* BackendInstallLog.swift */; };
 		HLTBKDB1 /* HealthBackendSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = HLTBKDF1 /* HealthBackendSession.swift */; };
 		DSCSNB1 /* DiscoverySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCSNF1 /* DiscoverySession.swift */; };
+		D52C00000000000000000001 /* ModelPurposeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000001 /* ModelPurposeStore.swift */; };
+		D52C00000000000000000002 /* ModelFamilyReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000002 /* ModelFamilyReview.swift */; };
+		D52C00000000000000000003 /* ServedModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000003 /* ServedModelsView.swift */; };
+		D52C00000000000000000004 /* ModelFamilyReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000004 /* ModelFamilyReviewView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -647,6 +651,10 @@
 		BKLOGF1 /* BackendInstallLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BackendInstallLog.swift; path = Services/BackendInstallLog.swift; sourceTree = "<group>"; };
 		HLTBKDF1 /* HealthBackendSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthBackendSession.swift; path = Services/HealthBackendSession.swift; sourceTree = "<group>"; };
 		DSCSNF1 /* DiscoverySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverySession.swift; path = Services/DiscoverySession.swift; sourceTree = "<group>"; };
+		D52F00000000000000000001 /* ModelPurposeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelPurposeStore.swift; path = Services/ModelPurposeStore.swift; sourceTree = "<group>"; };
+		D52F00000000000000000002 /* ModelFamilyReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelFamilyReview.swift; path = Services/ModelFamilyReview.swift; sourceTree = "<group>"; };
+		D52F00000000000000000003 /* ServedModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServedModelsView.swift; path = UI/Views/ServedModelsView.swift; sourceTree = "<group>"; };
+		D52F00000000000000000004 /* ModelFamilyReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelFamilyReviewView.swift; path = UI/Views/ModelFamilyReviewView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -767,6 +775,10 @@
 				A6C0100000000000000000F03 /* WorkflowEvidenceStore.swift */,
 				A6C0100000000000000000F04 /* ComparisonInsightsView.swift */,
 				24FREF057 /* UsageTracker.swift */,
+				D52F00000000000000000001 /* ModelPurposeStore.swift */,
+				D52F00000000000000000002 /* ModelFamilyReview.swift */,
+				D52F00000000000000000003 /* ServedModelsView.swift */,
+				D52F00000000000000000004 /* ModelFamilyReviewView.swift */,
 				24FREF058 /* ReclaimAdvisor.swift */,
 				24FREF059 /* ReclaimCoordinator.swift */,
 				24FREF05B /* LineageModels.swift */,
@@ -1339,6 +1351,10 @@
 				A6C0100000000000000000B03 /* WorkflowEvidenceStore.swift in Sources */,
 				A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */,
 				24BBLD059 /* UsageTracker.swift in Sources */,
+				D52C00000000000000000001 /* ModelPurposeStore.swift in Sources */,
+				D52C00000000000000000002 /* ModelFamilyReview.swift in Sources */,
+				D52C00000000000000000003 /* ServedModelsView.swift in Sources */,
+				D52C00000000000000000004 /* ModelFamilyReviewView.swift in Sources */,
 				24BBLD05A /* ReclaimAdvisor.swift in Sources */,
 				24BBLD05B /* ReclaimCoordinator.swift in Sources */,
 				24BBLD05D /* LineageModels.swift in Sources */,

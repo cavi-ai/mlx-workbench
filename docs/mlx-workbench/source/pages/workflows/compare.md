@@ -104,6 +104,18 @@ New streamed inline reasoning is separated before recording. Streaming examines 
 
 Shorter clips hold at their end. Missing outputs are excluded and labeled.
 
+## Showdowns from Reclaim
+
+**Prepare showdown…** in Reclaim selects two to four related variants in Compare.
+The handoff rechecks every selected model's identity and readiness; a changed or
+missing entrant requires a fresh selection. An active comparison or editor keeps
+the request pending until **Use selected showdown models** can apply it.
+
+Choose prompts relevant to the models' intended purposes, run the comparison and
+rate every lane's task quality. Current, finished chat results can support Reclaim's
+task-scoped replacement advice. Different tasks may justify retaining different
+models. Removal keeps its own preview and confirmation.
+
 ## Rate quality
 
 Each lane has a **Rate quality** menu with a 1–5 task-outcome rating; music lanes carry a 1–5 listening rating instead. Ratings are human judgments, stored separately from speed and automated checks. A new rating needs a completed run with every output available; saved ratings stay visible after media is pruned and can be cleared.
