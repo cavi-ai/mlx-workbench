@@ -48,6 +48,8 @@ final class VerificationCoordinator: ObservableObject {
     var decide: (@Sendable (String, URL) async throws -> DecisionResult)?
     /// Renders the image canary (model path, output PNG, request); without it image models are unverifiable.
     var render: (@Sendable (String, URL, ImageRequest) async throws -> GenerationResult)?
+    /// Sends the agent canary's requests; without it text models get no agent-readiness evidence.
+    var agent: (any AgentEndpointProbing)?
 
     init(probe: ServeProbe, store: VerificationStore, now: @escaping () -> Date = Date.init) {
         self.probe = probe
@@ -188,6 +190,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
         let speech = self.speech
         let decide = self.decide
         let render = self.render
+        let agent = kind == .textLLM ? self.agent : nil
         activeModelPath = target
         switch kind {
         case .speechToText: progressMessage = "Transcribing a spoken canary sentence."
@@ -268,6 +271,9 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                         break
                     }
                 }
+                if let agent, outcome == .passed {
+                    await recordAgentReadiness(report, agent: agent)
+                }
             } catch {
                 let rendered = AppHost.render(error)
                 lastError = rendered
@@ -277,6 +283,23 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                 }
             }
         }
+    }
+
+    /// Runs the agent canary after the task verdict is published and saves its
+    /// evidence on the same report; a failure here never changes that verdict.
+    private func recordAgentReadiness(_ report: VerificationReport, agent: any AgentEndpointProbing) async {
+        progressMessage = "Checking agent tool calls."
+        let readiness: AgentReadiness
+        do {
+            readiness = try await probe.runAgentCanary(modelPath: report.modelPath, agent: agent)
+        } catch {
+            readiness = AgentReadiness(suiteVersion: AgentCanary.version, settings: AgentCanary.settings,
+                                       contextTokens: nil, checks: [], error: AppHost.render(error))
+        }
+        var updated = report
+        updated.agentReadiness = readiness
+        progressMessage = "Saving agent readiness."
+        do { try await persist(updated) } catch { lastError = AppHost.render(error); lastErrorModelPath = canonical(report.modelPath) }
     }
 
     private func reportSummary(_ report: VerificationReport) -> String {

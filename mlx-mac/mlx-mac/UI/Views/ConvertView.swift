@@ -527,6 +527,12 @@ struct ConvertView: View {
         return appHost.librarySnapshot?.models.first { $0.item.path == presentation.destinationPath }
     }
 
+    private var agentReadiness: AgentReadiness? {
+        guard let path = presentation.completedModelPath,
+              case .verified(let report) = verification.status(for: path, signature: outputModel?.item.signature) else { return nil }
+        return report.agentReadiness
+    }
+
     private var hasVerificationEvidence: Bool {
         let status = presentation.completedModelPath.map { verification.status(for: $0, signature: outputModel?.item.signature) }
         return PrepareWorkflowPresentation.hasVerificationEvidence(state: presentation.state, status: status)
@@ -549,6 +555,9 @@ struct ConvertView: View {
                     transformSurface
                     actionRow
                     pipeline
+                    if let agentReadiness {
+                        DetailGrid(rows: [DetailRow("Agent tools", agentReadiness.summary, prose: true)])
+                    }
                     if modelWorkflow.workflow.state == .verified {
                         sourceCleanupActions
                     }

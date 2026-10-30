@@ -341,12 +341,12 @@ extension ServeLifecycle {
             },
             jitPreview: { modelPath, port, policy in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
+                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
                 return response.string("preview_hash") ?? ""
             },
             jitStart: { modelPath, port, hash, policy in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
+                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
             },
             unload: { port, pid in
                 _ = try await api.serveUnload(port: port, expectedPID: pid)
@@ -506,6 +506,97 @@ struct ServeProbe: Sendable {
             try? await Task.sleep(nanoseconds: readyPollIntervalNanoseconds)
         }
         return false
+    }
+
+    /// Serves `modelPath` through a JIT gateway on an ephemeral loopback port,
+    /// runs the agent canary over every protocol, and stops the gateway even
+    /// when a request throws.
+    func runAgentCanary(modelPath: String, agent: any AgentEndpointProbing) async throws -> AgentReadiness {
+        guard let jitPreview = lifecycle.jitPreview, let jitStart = lifecycle.jitStart else { throw AgentCanaryError.unavailable }
+        try Task.checkCancellation()
+        guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
+        let hash = try await jitPreview(modelPath, port, nil)
+        guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        try Task.checkCancellation()
+        try await jitStart(modelPath, port, hash, nil)
+        let baseURL = URL(string: "http://127.0.0.1:\(port)")!
+        do {
+            guard await waitUntilReady(baseURL: baseURL) else { throw ServeProbeError.serverNeverReady(timeout: readyTimeout) }
+            let readiness = try await Self.agentChecks(baseURL: baseURL, agent: agent)
+            do { try await lifecycle.stop(port) }
+            catch { throw ServeProbeError.stopFailed(error.localizedDescription, port: port) }
+            return readiness
+        } catch {
+            if case ServeProbeError.stopFailed = error { throw error }
+            do { try await lifecycle.stop(port) }
+            catch { throw ServeProbeError.stopFailed(error.localizedDescription, port: port) }
+            throw error
+        }
+    }
+
+    private static func agentChecks(baseURL: URL, agent: any AgentEndpointProbing) async throws -> AgentReadiness {
+        // The gateway's alias for the one model it serves.
+        let model = "default_model"
+        func send(_ api: AgentAPI, _ body: [String: Any]) async throws -> (reply: AgentReply?, failure: String?) {
+            try Task.checkCancellation()
+            let (status, data) = try await agent.post(url: baseURL.appendingPathComponent(api.path),
+                                                      body: JSONSerialization.data(withJSONObject: body))
+            guard (200..<300).contains(status) else {
+                return (nil, "HTTP \(status)" + (AgentCanary.errorMessage(data).map { ": \($0)" } ?? "."))
+            }
+            do { return (try AgentCanary.reply(api, data: data), nil) }
+            catch { return (nil, error.localizedDescription) }
+        }
+        var checks: [AgentCheck] = []
+        for api in AgentAPI.allCases {
+            let first = try await send(api, AgentCanary.request(api, model: model))
+            guard let reply = first.reply else {
+                checks.append(AgentCanary.evaluate(api, first: AgentReply(text: "", calls: [], promptTokens: nil),
+                                                   second: nil, failure: first.failure))
+                continue
+            }
+            var second: (reply: AgentReply?, failure: String?) = (nil, nil)
+            if let call = reply.calls.first, call.name == AgentCanary.tool.name, !call.id.isEmpty,
+               AgentCanary.argumentProblem(call.arguments) == nil {
+                second = try await send(api, AgentCanary.request(api, model: model, call: call))
+            }
+            checks.append(AgentCanary.evaluate(api, first: reply, second: second.reply, failure: second.failure))
+        }
+        let context = try await send(.chatCompletions, AgentCanary.contextRequest(model: model))
+        checks.append(AgentCanary.evaluateContext(context.reply, failure: context.failure))
+        return AgentReadiness(suiteVersion: AgentCanary.version, settings: AgentCanary.settings,
+                              contextTokens: context.reply?.promptTokens, checks: checks, error: nil)
+    }
+}
+
+// MARK: - Agent endpoint requests
+
+/// Posts one agent-protocol request and returns the status and body; tests replay recorded gateway replies.
+protocol AgentEndpointProbing: Sendable {
+    func post(url: URL, body: Data) async throws -> (status: Int, data: Data)
+}
+
+struct AgentHTTPProber: AgentEndpointProbing {
+    var session: URLSession = .shared
+    /// The first request loads the model and the context check prefills an agent-sized prompt.
+    var requestTimeout: TimeInterval = 600
+    var maximumResponseBytes = 1_048_576
+
+    func post(url: URL, body: Data) async throws -> (status: Int, data: Data) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = requestTimeout
+        request.httpBody = body
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
+        guard let http = response as? HTTPURLResponse else { throw ProbeHTTPError.invalidResponse }
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            guard data.count <= maximumResponseBytes else { throw ProbeHTTPError.responseTooLarge }
+        }
+        return (http.statusCode, data)
     }
 }
 

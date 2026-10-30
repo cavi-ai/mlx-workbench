@@ -1530,6 +1530,169 @@ final class VerificationCoordinatorTests: XCTestCase {
     private enum ProbeStubError: Error { case offline }
 }
 
+extension VerificationCoordinatorTests {
+    func testMalformedToolCallsKeepTheVerdictAndRecordWhyTheModelIsNotAgentReady() async throws {
+        let url = temporaryURL("agent-reports.json")
+        let invalid = "The model produced an invalid tool call."
+        let verification = await makeAgentVerification(storeURL: url, gateway: ReplayAgentGateway(firstTurn: [
+            "/v1/chat/completions": (200, ReplayAgentGateway.chat(content: "", arguments: #"{"city": Lisbon}"#)),
+            "/v1/messages": (502, #"{"type": "error", "error": {"type": "api_error", "message": "\#(invalid)"}}"#),
+            "/v1/responses": (502, #"{"error": {"message": "\#(invalid)", "type": "server_error", "param": null, "code": "invalid_worker_response"}}"#),
+        ]))
+        verification.verifyNow(modelPath: "/Models/agent", signature: "signature-1")
+        let finished = await waitFor(timeout: 10) { verification.activeModelPath == nil }
+        XCTAssertTrue(finished)
+        guard case .verified(let report) = verification.status(for: "/Models/agent", signature: "signature-1") else {
+            return XCTFail("A failed agent canary must not change the task verdict")
+        }
+        let readiness = try XCTUnwrap(report.agentReadiness)
+        XCTAssertEqual(readiness.readyAPIs, [])
+        XCTAssertEqual(readiness.summary, "Not agent-ready.")
+        XCTAssertEqual(readiness.rows.map(\.title), ["Chat Completions", "Anthropic Messages", "OpenAI Responses", "Agent context"])
+        XCTAssertEqual(readiness.rows.map(\.value), [
+            #"Failed: Arguments are not a JSON object: {"city": Lisbon}"#,
+            "Failed: HTTP 502: \(invalid)",
+            "Failed: HTTP 502: \(invalid)",
+            "Passed",
+        ])
+        XCTAssertEqual(try VerificationStore(fileURL: url).load().first?.agentReadiness, readiness)
+    }
+
+    func testToolRoundTripsMakeTheModelAgentReadyAndTheEvidenceSurvivesReload() async throws {
+        let url = temporaryURL("agent-reports.json")
+        let verification = await makeAgentVerification(storeURL: url, gateway: ReplayAgentGateway())
+        verification.verifyNow(modelPath: "/Models/agent", signature: "signature-1")
+        let finished = await waitFor(timeout: 10) { verification.activeModelPath == nil }
+        XCTAssertTrue(finished)
+        guard case .verified(let report) = verification.status(for: "/Models/agent", signature: "signature-1") else {
+            return XCTFail("The passing report must stay verified")
+        }
+        let readiness = try XCTUnwrap(report.agentReadiness)
+        XCTAssertEqual(readiness.readyAPIs, AgentAPI.allCases)
+        XCTAssertEqual(readiness.contextTokens, 16_412)
+        XCTAssertEqual(readiness.summary, "Ready for every agent protocol with a \(16_412.formatted())-token prompt.")
+        XCTAssertEqual(readiness.rows.map(\.value), ["Passed", "Passed", "Passed", "Passed"])
+        XCTAssertEqual(readiness.checks.first?.responseExcerpt,
+                       #"get_weather({"city": "Lisbon"}) → The weather in Lisbon is 23 degrees Celsius with light rain."#)
+
+        let reloaded = VerificationCoordinator(probe: verificationProbe(responder: passingResponder), store: VerificationStore(fileURL: url))
+        await reloaded.waitForHistory()
+        guard case .verified(let saved) = reloaded.status(for: "/Models/agent", signature: "signature-1") else {
+            return XCTFail("The saved report must load as verified")
+        }
+        XCTAssertEqual(saved.agentReadiness, readiness)
+    }
+
+    func testLocalAgentReadinessWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_AGENT_CANARY_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_AGENT_CANARY_MANIFEST for real agent-canary acceptance.")
+        }
+        // `readyAPIs`: the protocols this machine's runtime should pass for the ready model.
+        struct Manifest: Decodable {
+            let agentPath: String; let readyModelPath: String; let readyAPIs: [AgentAPI]
+            let notReadyModelPath: String?; let evidenceRoot: String
+        }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let root = URL(fileURLWithPath: manifest.evidenceRoot).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let registry = CLIProcessRegistry(notificationCenter: NotificationCenter())
+        defer { registry.terminateAll(grace: CLIProcess.terminationGrace) }
+        let api = WorkbenchAPI(cli: CLIProcess(registry: registry), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let probe = ServeProbe(lifecycle: .live(api: api, thinkingOff: true), prober: OpenAIEndpointProber())
+        let reportsURL = root.appendingPathComponent("reports.json")
+        let verification = VerificationCoordinator(probe: probe, store: VerificationStore(fileURL: reportsURL))
+        verification.taskType = { _ in .textLLM }
+        verification.agent = AgentHTTPProber()
+        await verification.waitForHistory()
+        let models = [(manifest.readyModelPath, true)] + (manifest.notReadyModelPath.map { [($0, false)] } ?? [])
+        for (model, ready) in models {
+            verification.verifyNow(modelPath: model, signature: "live")
+            let finished = await waitFor(timeout: 1800) { verification.activeModelPath == nil }
+            guard finished else { return XCTFail("Verification of \(model) did not finish") }
+            guard case .verified(let report) = verification.status(for: model, signature: "live") else {
+                return XCTFail(verification.lastError ?? "\(model) did not pass the task canaries")
+            }
+            let readiness = try XCTUnwrap(report.agentReadiness, verification.lastError ?? "No agent readiness was saved")
+            try JSONEncoder().encode(report).write(to: root.appendingPathComponent(ready ? "ready-report.json" : "not-ready-report.json"))
+            XCTAssertNil(readiness.error)
+            if ready {
+                XCTAssertEqual(readiness.readyAPIs, manifest.readyAPIs, "\(readiness.rows)")
+            } else {
+                XCTAssertNotEqual(readiness.readyAPIs, AgentAPI.allCases, "\(readiness.rows)")
+            }
+        }
+        let reopened = VerificationCoordinator(probe: probe, store: VerificationStore(fileURL: reportsURL))
+        await reopened.waitForHistory()
+        guard case .verified(let saved) = reopened.status(for: manifest.readyModelPath, signature: "live") else {
+            return XCTFail("Reopening must read the persisted verdict")
+        }
+        XCTAssertEqual(saved.agentReadiness?.readyAPIs, manifest.readyAPIs)
+    }
+
+    private func makeAgentVerification(storeURL: URL, gateway: ReplayAgentGateway) async -> VerificationCoordinator {
+        let probe = ServeProbe(
+            lifecycle: ServeLifecycle(preview: { _, _ in "hash-1" }, start: { _, _, _ in }, stop: { _ in },
+                                      jitPreview: { _, _, _ in "jit-hash" }, jitStart: { _, _, _, _ in }),
+            prober: StubVerificationProber(responder: passingResponder),
+            readyPollIntervalNanoseconds: 1_000_000,
+            pickPort: { 9999 }
+        )
+        let verification = VerificationCoordinator(probe: probe, store: VerificationStore(fileURL: storeURL))
+        verification.taskType = { _ in .textLLM }
+        verification.agent = gateway
+        await verification.waitForHistory()
+        return verification
+    }
+}
+
+/// Answers in the JIT gateway's reply shapes: a tool call until the request
+/// carries the tool result, then an answer that uses it.
+private struct ReplayAgentGateway: AgentEndpointProbing {
+    /// First-turn replies to replay instead of a well-formed call, by path.
+    var firstTurn: [String: (Int, String)] = [:]
+
+    func post(url: URL, body: Data) async throws -> (status: Int, data: Data) {
+        let request = String(decoding: body, as: UTF8.self)
+        let answer = "The weather in Lisbon is 23 degrees Celsius with light rain."
+        let arguments = #"{"city": "Lisbon"}"#
+        let reply: (Int, String)
+        if request.contains(AgentCanary.contextFact) {
+            reply = (200, Self.chat(content: "The vault code is 7351.", arguments: nil, promptTokens: 16_412))
+        } else if !request.contains(AgentCanary.toolResult), let recorded = firstTurn[url.path] {
+            reply = recorded
+        } else {
+            let answered = request.contains(AgentCanary.toolResult)
+            switch url.path {
+            case "/v1/chat/completions":
+                reply = (200, Self.chat(content: answered ? answer : "", arguments: answered ? nil : arguments))
+            case "/v1/messages":
+                let block = answered ? #"{"type": "text", "text": "\#(answer)"}"#
+                    : #"{"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": {"city": "Lisbon"}}"#
+                reply = (200, #"{"id": "msg_01", "type": "message", "role": "assistant", "model": "default_model", "content": [\#(block)], "stop_reason": "\#(answered ? "end_turn" : "tool_use")", "stop_sequence": null, "usage": {"input_tokens": 163, "output_tokens": 24}}"#)
+            default:
+                let item = answered
+                    ? #"{"type": "message", "id": "msg_01", "status": "completed", "role": "assistant", "content": [{"type": "output_text", "text": "\#(answer)", "annotations": []}]}"#
+                    : #"{"type": "function_call", "id": "fc_01", "call_id": "call_01", "name": "get_weather", "arguments": "{\"city\": \"Lisbon\"}", "status": "completed"}"#
+                reply = (200, #"{"id": "resp_01", "object": "response", "status": "completed", "model": "default_model", "output": [\#(item)], "usage": {"input_tokens": 163, "output_tokens": 24, "total_tokens": 187}}"#)
+            }
+        }
+        return (reply.0, Data(reply.1.utf8))
+    }
+
+    /// A chat completion as mlx_lm.server returns it, with an optional tool call.
+    static func chat(content: String, arguments: String?, promptTokens: Int = 163) -> String {
+        var message: [String: Any] = ["role": "assistant", "content": content]
+        if let arguments {
+            message["tool_calls"] = [["id": "6a0f1c9e-2b7d-4c1e-9a55-0d3f8e1b7c42", "type": "function",
+                                      "function": ["name": "get_weather", "arguments": arguments]]]
+        }
+        let body: [String: Any] = ["id": "chatcmpl-1", "object": "chat.completion", "model": "default_model",
+                                   "choices": [["index": 0, "finish_reason": arguments == nil ? "stop" : "tool_calls", "message": message]],
+                                   "usage": ["prompt_tokens": promptTokens, "completion_tokens": 24, "total_tokens": promptTokens + 24]]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: body), as: UTF8.self)
+    }
+}
+
 private actor CompletionGate {
     private var isOpen = false
     func wait() async {

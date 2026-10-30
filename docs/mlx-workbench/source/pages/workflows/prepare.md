@@ -27,6 +27,12 @@ A pass marks the workflow **verified** only after its report is saved; a failure
 
 A notification announces each terminal state: completed, verified, verification failed or failed. Restoring state at launch never notifies.
 
+### Agent readiness
+
+After a text LLM passes, the gate checks whether coding agents can use it. It serves the model through a temporary JIT gateway, with reasoning off and temperature 0, and runs one tool-call round trip through each agent protocol: Chat Completions, Anthropic Messages and OpenAI Responses. The model must call `get_weather` with arguments that match its schema and a call id, then answer with the tool result; agents return results by that id. One more request checks recall at the start of a 16,384-token prompt, the size of an agent's opening request. A model is agent-ready for a protocol only when its round trip and the context check both pass.
+
+Prepare and the Library inspector show the result under **Agent tools**, with each failed check and its reason. Agent readiness is saved on the verification report for the same bytes and never changes the verified or failed verdict. A changed model file makes it stale with the rest of the report.
+
 ## Activity
 
 **Activity** puts active comparisons and in-flight conversions before older records. Study and training work that is queued, running, failed or in an unknown state stays prominent; successful and cancelled jobs remain in expandable history. Failed conversions appear under **Needs attention**. Other conversion records stay grouped by creation day. Each conversion has a stage track, its state and one action.
