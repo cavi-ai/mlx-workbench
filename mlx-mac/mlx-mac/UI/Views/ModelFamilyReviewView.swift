@@ -5,6 +5,7 @@ struct ModelFamilyReviewView: View {
     let appHost: AppHost
     let onCompare: () -> Void
     let onReviewRemoval: (String) -> Void
+    @ObservedObject private var watch: WatchCoordinator
     @ObservedObject private var purposes: ModelPurposeStore
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var workflow: WorkflowEvidenceStore
@@ -23,6 +24,7 @@ struct ModelFamilyReviewView: View {
     init(appHost: AppHost, onCompare: @escaping () -> Void, onReviewRemoval: @escaping (String) -> Void) {
         self.appHost = appHost; self.onCompare = onCompare; self.onReviewRemoval = onReviewRemoval
         _purposes = ObservedObject(wrappedValue: appHost.modelPurposes)
+        _watch = ObservedObject(wrappedValue: appHost.watch)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _workflow = ObservedObject(wrappedValue: appHost.workflowEvidence)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
@@ -32,12 +34,14 @@ struct ModelFamilyReviewView: View {
     private var models: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
     private var replacements: [ReclaimOpportunity] {
         ComparisonInsights.superseded(models: models, runs: comparison.runs, workflow: workflow.records,
-            environment: appHost.watch.currentFingerprintDescription, protected: appHost.occupancy.protectedPaths)
+            environment: watch.currentFingerprintDescription, protected: appHost.occupancy.protectedPaths, promptSets: comparison.promptSets)
     }
     private var entrants: [LibraryModel] { models.filter { selected.contains($0.item.path) }.sorted { $0.item.path < $1.item.path } }
 
     var body: some View {
         let groups = ModelFamilyReview.groups(models: models, purposes: purposes.records)
+        let showdowns = ModelShowdownResults.latest(runs: comparison.runs, models: models,
+            environment: watch.currentFingerprintDescription, promptSets: comparison.promptSets)
         if !groups.isEmpty || !purposes.records.isEmpty || purposes.error != nil {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 SectionTitle(text: "Which variants should I keep?")
@@ -48,8 +52,16 @@ struct ModelFamilyReviewView: View {
                 ForEach(groups) { group in
                     DisclosureGroup("\(group.id) · \(group.models.count) variants") {
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                            let paths = Set(group.models.map(\.item.path))
+                            let results = showdowns.filter { paths.intersection($0.run.variants).count >= 2 }
+                            ForEach(results) { result in
+                                ModelShowdownResultsCard(results: result, familyPaths: paths) {
+                                    appHost.handoffs.send(ComparisonResultsRequest(runID: result.id), as: .reviewComparisonResults)
+                                    onCompare()
+                                }
+                            }
                             ForEach(group.models, id: \.item.path) { model in
-                                modelRow(model, replacements: replacements)
+                                modelRow(model, replacements: replacements, showdowns: results)
                             }
                         }.padding(.top, WorkbenchSpacing.sm)
                     }
@@ -84,12 +96,12 @@ struct ModelFamilyReviewView: View {
         }
     }
 
-    private func modelRow(_ model: LibraryModel, replacements: [ReclaimOpportunity]) -> some View {
+    private func modelRow(_ model: LibraryModel, replacements: [ReclaimOpportunity], showdowns: [ModelShowdownResults]) -> some View {
         let path = model.item.path
         let roles = appHost.recommendationPreferences.preferredModelIDs.compactMap { $0.value == path ? $0.key : nil }
         let served = endpoint.fleet.slots.contains { $0.modelPath == path }
         let reasons = ModelFamilyReview.reasons(for: model, purpose: purposes.purpose(for: path), preferredRoles: roles,
-            served: served, replacements: replacements)
+            served: served, replacements: replacements, showdowns: showdowns)
         let candidate = replacements.contains { $0.paths.contains(path) }
         return WorkbenchSurface(.tinted, padding: WorkbenchSpacing.sm) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -137,6 +149,58 @@ struct ModelFamilyReviewView: View {
         Text("\(selected.count) selected · 2–\(ComparePresentation.maxSlots) per showdown")
             .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
         if !selected.isEmpty { Button("Clear selection") { selected = [] } }
+    }
+}
+
+/// Recorded measurements and human ratings stay separate, with every tie visible.
+struct ModelShowdownResultsCard: View {
+    let results: ModelShowdownResults
+    let familyPaths: Set<String>
+    let onReview: () -> Void
+
+    var body: some View {
+        WorkbenchSurface(.tinted, padding: WorkbenchSpacing.sm) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                Text(results.run.promptSetName).font(WorkbenchTypography.cardTitle)
+                Text((results.run.finishedAt ?? results.run.startedAt).formatted(date: .abbreviated, time: .shortened))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Text(results.explanation).font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                ForEach(results.rows) { row in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        Text(row.name).font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                        let labels = strengths(row)
+                        if !labels.isEmpty { Text(labels).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.accent) }
+                        Text(metrics(row)).font(WorkbenchTypography.secondaryTabular).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                let unmeasured = familyPaths.subtracting(results.run.variants).count
+                if unmeasured > 0 {
+                    Text("\(unmeasured) other family variants were not part of this run.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                Text("Quality is your task rating. Speed is the recorded median decode rate. These results do not establish other tasks or model equivalence.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Button(results.reviewState == .needsQualityReview ? "Rate quality in Compare…" : "Review saved outputs…", action: onReview)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("review-showdown-\(results.id.uuidString)")
+            }
+        }
+    }
+
+    private func strengths(_ row: ModelShowdownResults.Row) -> String {
+        var labels: [String] = []
+        if results.qualityLeaders.contains(row.path) { labels.append(results.qualityLeaders.count > 1 ? "Shared highest quality" : "Highest reviewed quality") }
+        if results.speedLeaders.contains(row.path) { labels.append(results.speedLeaders.count > 1 ? "Shared fastest decode" : "Fastest recorded decode") }
+        return labels.joined(separator: " · ")
+    }
+
+    private func metrics(_ row: ModelShowdownResults.Row) -> String {
+        let quality = row.qualityScore.map { "\($0)/5 quality" } ?? "Quality not rated"
+        let speed = row.tokensPerSecond.map { String(format: "%.1f tok/s", $0) + (row.speedEstimated ? " (estimated)" : "") } ?? "Speed unknown"
+        let latency = row.firstTokenSeconds.map { String(format: "%.2f s first token", $0) } ?? "First token unknown"
+        let disk = row.diskBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) + " model size" } ?? "Disk size unknown"
+        return [quality, speed, latency, disk].joined(separator: " · ")
     }
 }
 

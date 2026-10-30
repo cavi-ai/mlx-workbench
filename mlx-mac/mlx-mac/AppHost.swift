@@ -1075,7 +1075,7 @@ class AppHost {
             isVerified: { [weak self] path in self?.isModelVerified(path) ?? false },
             occupiedPaths: protected,
             staleDays: config.reclaimStaleDays,
-            measuredSuperseded: ComparisonInsights.superseded(models: librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription, protected: protected)
+            measuredSuperseded: ComparisonInsights.superseded(models: librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription, protected: protected, promptSets: comparison.promptSets)
         )
     }
 

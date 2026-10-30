@@ -41,8 +41,25 @@ exercise the intended use, run the comparison and rate each model's task quality
 For larger groups, compare a retained contender against the remaining variants in
 another explicit run. Separate runs do not become one combined ranking.
 
+After a completed chat showdown, the family review shows the latest completed
+run for each prompt set. Each card keeps that run's task ratings, recorded median
+decode rates, first-token times and model sizes together. Quality and speed leaders
+are separate, and ties stay shared. Different leaders can explain keeping one
+variant for quality and another for speed. Variants absent from that run remain
+explicitly untested there; results from separate runs are never combined into a
+single ranking. Model size comes from the current Library scan and does not
+establish memory use or physical space freed.
+
+Every entrant needs current identity and environment evidence, finished outputs
+and a task-quality rating before leaders are named. A changed or missing prompt
+set makes the verdict unavailable. Missing per-prompt timing withholds a speed
+leader or replacement advice; estimated rates retain their label. **Rate quality
+in Compare…** or **Review saved outputs…** opens the named saved run, including
+when Compare was left in a media mode. This reads saved results and starts no
+inference. Active work or an open editor keeps the navigation request pending.
+
 Replacement advice requires current model and environment identities, the same
-complete prompt cohort and reviewed quality. Truncated or reasoning-only answers
+complete prompt cohort, timing for every prompt and reviewed quality for every entrant. Truncated or reasoning-only answers
 cannot support chat replacement advice. A model can remain useful for another
 task even when a peer beats it here. **Review removal…** on an evidenced candidate
 opens Library's existing removal preview; confirmation moves it to macOS Trash.

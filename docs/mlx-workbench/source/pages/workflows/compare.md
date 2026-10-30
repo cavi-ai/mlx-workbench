@@ -114,7 +114,12 @@ the request pending until **Use selected showdown models** can apply it.
 Choose prompts relevant to the models' intended purposes, run the comparison and
 rate every lane's task quality. Current, finished chat results can support Reclaim's
 task-scoped replacement advice. Different tasks may justify retaining different
-models. Removal keeps its own preview and confirmation.
+models. Reclaim's task cards keep quality leaders and recorded speed leaders
+separate, preserve ties and identify variants not included in that run. Every
+entrant must be reviewed before a task verdict; incomplete timing cannot establish
+a speed winner or replacement. **Review saved outputs…** returns to the exact
+recorded comparison without replaying it. Removal keeps its own preview and
+confirmation.
 
 ## Rate quality
 
