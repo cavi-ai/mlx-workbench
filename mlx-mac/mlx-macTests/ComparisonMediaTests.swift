@@ -220,6 +220,10 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertNotNil(prompt.validationError(for: .meshGeneration))
         prompt.meshResolution = "128"
         XCTAssertNil(prompt.validationError(for: .meshGeneration))
+        prompt.meshResolution = "512"
+        XCTAssertNil(prompt.validationError(for: .meshGeneration))
+        prompt.meshResolution = "1024"
+        XCTAssertNotNil(prompt.validationError(for: .meshGeneration))
     }
 
     @MainActor
