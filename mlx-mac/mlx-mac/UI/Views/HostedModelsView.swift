@@ -76,7 +76,7 @@ struct HostedModelsView: View {
                         Label(hosts.hosts.isEmpty ? "Connect a local model host" : "Choose a model host", systemImage: "externaldrive.connected.to.line.below")
                     } description: {
                         Text(hosts.hosts.isEmpty
-                            ? "See models managed by Ollama, LM Studio, ComfyUI or an OpenAI-compatible server."
+                            ? "See models managed by Ollama, LM Studio, ComfyUI, a System One server or an OpenAI-compatible server."
                             : "Choose a saved connection above, or add another model host.")
                     } actions: {
                         Button("Add host…") { addHost() }.buttonStyle(.workbenchPrimary)
@@ -257,7 +257,8 @@ struct HostedModelsView: View {
         guard let model = selectedModel else { return }
         let target = HostedComparisonTarget(host: inventory.host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: inventory.runtimeVersion)
         do {
-            try target.validate(mode: inventory.host.provider.adapter.runsImageWorkflows ? .imageGeneration : .chat)
+            let provider = inventory.host.provider
+            try target.validate(mode: provider.adapter.runsImageWorkflows ? .imageGeneration : provider == .systemOne ? .classification : .chat)
             if !appHost.hostedComparisonTargets.contains(where: { $0.id == target.id }) {
                 guard appHost.hostedComparisonTargets.count < 4 else { throw HostedIntegrationError.invalid("Remove a comparison lane before adding another model.") }
                 appHost.hostedComparisonTargets.append(target)

@@ -1070,7 +1070,7 @@ extension RunRemodelTests {
         let server = Fixture.server(path, port: 8766)
         let (host, gate) = makeProtectedHost(counter: counter, endpointCalls: endpointCalls, server: server)
         await host.modelWorkflow.refreshServers()
-        host.hostedComparison.validateTarget = { _ in }
+        host.hostedComparison.validateTarget = { _, _ in }
         await host.hostedComparison.waitForHistory()
         try await host.hostedComparison.start(
             targets: [HostedComparisonTarget(local: Fixture.model(path: path), capturedAt: Date())],

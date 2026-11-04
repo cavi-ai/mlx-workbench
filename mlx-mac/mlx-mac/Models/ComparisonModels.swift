@@ -91,6 +91,8 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
     var media: MediaParameters?
     /// Display-only source filename; never used to resolve a file or build argv.
     var inputName: String?
+    /// Classification: typed questions about the state in `text`, with expected answers.
+    var decisionQuestions: [DecisionQuestion]?
 
     var inputDisplayName: String? {
         if let name = Self.readableInputName(inputName) { return name }
@@ -115,7 +117,8 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
         builtinInput: String? = nil,
         expectedKeywords: [String]? = nil,
         media: MediaParameters? = nil,
-        inputName: String? = nil
+        inputName: String? = nil,
+        decisionQuestions: [DecisionQuestion]? = nil
     ) {
         self.id = id
         self.text = text
@@ -127,12 +130,14 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
         self.expectedKeywords = expectedKeywords
         self.media = media
         self.inputName = inputName
+        self.decisionQuestions = decisionQuestions
     }
 
     fileprivate func duplicated() -> Self {
         Self(id: UUID().uuidString, text: text, maxTokens: maxTokens, tool: tool,
             inputKind: inputKind, inputPath: inputPath, builtinInput: builtinInput,
-            expectedKeywords: expectedKeywords, media: media, inputName: inputName)
+            expectedKeywords: expectedKeywords, media: media, inputName: inputName,
+            decisionQuestions: decisionQuestions)
     }
 }
 
@@ -222,6 +227,8 @@ struct PromptSetDraft: Identifiable {
         var meshResolution: String
         var lyrics: String
         var duration: String
+        /// Classification: the typed questions and expected answers; `text` is the state.
+        var questions: [DecisionQuestion]
         var toolName: String? { original.tool?.name }
         var hasInputChanges: Bool { inputPath != (original.inputPath ?? "") }
         mutating func revertInput() { inputPath = original.inputPath ?? "" }
@@ -263,6 +270,7 @@ struct PromptSetDraft: Identifiable {
             meshResolution = initialMedia?.meshResolution.map(String.init) ?? ""
             lyrics = initialMedia?.lyrics ?? ""
             duration = initialMedia?.durationSeconds.map { String($0) } ?? ""
+            questions = entry.decisionQuestions ?? []
         }
 
         fileprivate func duplicated() -> Self {
@@ -395,6 +403,10 @@ struct PromptSetDraft: Identifiable {
                 if meshResolution != (initialMedia?.meshResolution.map(String.init) ?? "") { parameters.meshResolution = resolutionValue }
                 if parameters != (initialMedia ?? MediaParameters()) { copy.media = parameters }
             }
+            if mode == .classification {
+                if let error = DecisionQuestion.validationError(questions) { throw InvalidDraft(message: error) }
+                copy.decisionQuestions = questions
+            }
             return copy
         }
     }
@@ -450,7 +462,10 @@ struct PromptSetDraft: Identifiable {
 
     private static func newPrompt(mode: ComparisonMode) -> Prompt {
         Prompt(PromptEntry(id: UUID().uuidString, text: "", inputKind: mode.inputKind,
-            media: defaultParameters(for: mode)), mode: mode)
+            media: defaultParameters(for: mode),
+            decisionQuestions: mode == .classification
+                ? [DecisionQuestion(name: "label", kind: .choice, instructions: "", options: [.init(label: ""), .init(label: "")])] : nil),
+            mode: mode)
     }
 
     mutating func addPrompt() { prompts.append(Self.newPrompt(mode: mode)) }
@@ -815,6 +830,8 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     var historyCompletedAnswer: Bool? = nil
     var historyAnswerPresent: Bool? = nil
     var historyOutputIsEmpty: Bool? = nil
+    /// Classification: each question's returned answer graded against the expected one.
+    var decision: DecisionEvidence? = nil
 
     var hasCompletedAnswer: Bool {
         historyCompletedAnswer ?? (error == nil && finishReason == "stop" && !(fullOutput ?? outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1306,6 +1323,7 @@ struct ComparisonQualityReview: Codable, Equatable, Sendable {
         case .imageGeneration: "Inspect prompt match, visual coherence and unwanted artifacts."
         case .videoGeneration: "Inspect prompt match, motion, continuity between frames and unwanted artifacts."
         case .meshGeneration: "Inspect shape, silhouette, surface continuity and unwanted geometry against the input image. Timing does not measure shape quality."
+        case .classification: "Check the wrong and low-confidence answers against the state. Accuracy counts only questions with an expected answer."
         case .musicGeneration: musicRubric
         }
     }

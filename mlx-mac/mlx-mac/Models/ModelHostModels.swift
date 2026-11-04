@@ -2,7 +2,7 @@ import Foundation
 
 /// Provider behavior lives in its `adapter` (`Services/ModelHostAdapter.swift`).
 enum ModelHostProvider: String, Codable, CaseIterable, Identifiable, Sendable {
-    case ollama, lmStudio, comfyUI, llamaCpp, openAICompatible
+    case ollama, lmStudio, comfyUI, llamaCpp, openAICompatible, systemOne
 
     var id: String { rawValue }
 }

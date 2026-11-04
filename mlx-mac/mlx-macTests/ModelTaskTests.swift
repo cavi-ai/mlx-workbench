@@ -101,7 +101,7 @@ final class ModelTaskTests: XCTestCase {
             (.textLLM, .chat), (.visionLanguage, .chat), (.speechToText, .speechToText),
             (.textToSpeech, .textToSpeech), (.musicGeneration, .musicGeneration),
             (.imageGeneration, .imageGeneration), (.videoGeneration, .videoGeneration),
-            (.classification, nil), (.embedding, nil), (.speculativeDraft, nil), (.other, nil)
+            (.classification, .classification), (.embedding, nil), (.speculativeDraft, nil), (.other, nil)
         ]
         for (type, mode) in cases {
             let model = comparisonModel(type)

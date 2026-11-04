@@ -167,8 +167,14 @@ enum ComparisonViewLogic {
             if let audio = sample.audioSeconds { parts.append(String(format: "%.1f s of audio", audio)) }
         case .imageGeneration, .videoGeneration, .meshGeneration:
             break
+        case .classification:
+            if let decision = sample.decision {
+                parts.append("\(decision.correctCount) of \(decision.scoredCount) correct")
+                if let probability = decision.meanExpectedProbability { parts.append(String(format: "p(expected) %.2f", probability)) }
+            }
         }
-        if mode != .speechToText, let seconds = sample.seconds { parts.append(String(format: "%.1f s", seconds)) }
+        if mode == .classification, let seconds = sample.seconds { parts.append(String(format: "%.3f s", seconds)) }
+        else if mode != .speechToText, let seconds = sample.seconds { parts.append(String(format: "%.1f s", seconds)) }
         if let load = sample.loadSeconds { parts.append(String(format: "load %.1f s", load)) }
         if let memory = sample.peakMemoryGB { parts.append(String(format: "%.1f GB peak", memory)) }
         let details = parts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: " · ")
@@ -440,7 +446,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
             Text("Prompt")
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.ink)
-            Text("\(mode.primaryMetric.title) · \(mode.primaryMetric.higherIsBetter ? "higher" : "lower") is faster")
+            Text("\(mode.primaryMetric.title) · \(mode.primaryMetric.higherIsBetter ? "higher" : "lower") is \(mode == .classification ? "better" : "faster")")
                 .font(WorkbenchTypography.metadata)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -459,7 +465,8 @@ struct MediaRunResultsView<LaneActions: View>: View {
                         .livePulse(lane.state == .measuring && isRouteActive)
                     Spacer(minLength: 0)
                     if lane.isLeader {
-                        Label("Fastest", systemImage: "bolt.fill")
+                        Label(mode == .classification ? "Most accurate" : "Fastest",
+                              systemImage: mode == .classification ? "checkmark.seal.fill" : "bolt.fill")
                             .font(WorkbenchTypography.label)
                             .foregroundStyle(WorkbenchColor.accent)
                             .lineLimit(1)
@@ -581,6 +588,9 @@ struct MediaRunResultsView<LaneActions: View>: View {
                     }
                 }
             }
+            if mode == .classification, let questions = entry.decisionQuestions {
+                DecisionQuestionsSummary(questions: questions)
+            }
             if let keywords = entry.expectedKeywords, !keywords.isEmpty {
                 Text("Expected words: \(keywords.joined(separator: ", "))")
                     .font(WorkbenchTypography.secondary)
@@ -657,6 +667,19 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 Button("Reveal mesh", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             } else {
                 Label("output pruned", systemImage: "trash.slash").font(WorkbenchTypography.secondary)
+            }
+        case .text where mode == .classification:
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                if let decision = sample.decision {
+                    DecisionAnswersView(evidence: decision,
+                                        questions: ComparisonViewLogic.rows(for: run).first { $0.id == sample.promptID }?.decisionQuestions ?? [])
+                } else {
+                    OutputExcerpt(text: sample.outputExcerpt)
+                }
+                if let answers = sample.fullOutput, !answers.isEmpty {
+                    DisclosureGroup("Returned answers") { OutputExcerpt(text: answers) }
+                        .font(WorkbenchTypography.metadata)
+                }
             }
         case .text:
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {

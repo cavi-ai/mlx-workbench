@@ -66,7 +66,7 @@ cannot reach a verdict, the Verification section says why. For a text LLM it
 also lists **Agent tools**: the protocols the model is agent-ready for and each
 failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
-**Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
+**Select for Compare** is available for ready chat, speech, music, image, video, 3D and classification models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 
 ### Local inference tasks
 
@@ -86,7 +86,8 @@ use two or more ordered level descriptions. A probability question (`noul`)
 can include descriptions of its false and true outcomes. Results show the
 model's returned answers, probabilities and score legend when available.
 Missing fields remain unavailable. These are model predictions, without
-ground-truth checks or an automatic quality verdict.
+ground-truth checks or an automatic quality verdict. To grade models against
+expected answers, use [Compare's Classification mode](compare.md#classification).
 
 For **Generate music**, enter a caption and optional lyrics. Blank lyrics mean
 instrumental music. Defaults are 15 seconds, 30 steps and seed 42. The engine
@@ -205,7 +206,7 @@ The screen never writes configuration. When the scan does not reach the folder, 
 
 ## Hosted models
 
-Choose **Library → Source → Hosted models**, then **Add host…**. Presets cover Ollama, LM Studio, ComfyUI and llama.cpp; **OpenAI-compatible** accepts other local servers exposing a model-list API. Enter the server's HTTP or HTTPS loopback address, including its port. A trailing `/v1` is accepted. Remote addresses are not supported. Optional API tokens are stored in macOS Keychain, separately from the saved connection.
+Choose **Library → Source → Hosted models**, then **Add host…**. Presets cover Ollama, LM Studio, ComfyUI and llama.cpp; **OpenAI-compatible** accepts other local servers exposing a model-list API. **System One** connects to decision servers that implement TypeSafe's System One API, such as Kev's `kev.serve` (default `http://127.0.0.1:8008`). Enter the server's HTTP or HTTPS loopback address, including its port. A trailing `/v1` is accepted. Remote addresses are not supported. Optional API tokens are stored in macOS Keychain, separately from the saved connection.
 
 The editor shows invalid names or addresses before Save. **Test connection** is
 optional: it reads the selected provider's model inventory using the entered
@@ -233,6 +234,7 @@ The table shows model identifiers, available or loaded state, parameter size, qu
 - LM Studio uses its native inventory API, with compatibility fallbacks for older servers. Multiple loaded instances with different contexts have an unknown loaded context.
 - ComfyUI lists model files by category, plus reported device and version information. File availability does not establish whether a model is loaded. Unsupported categories can produce a partial inventory with a warning.
 - llama.cpp and compatible servers expose their advertised models. Additional metadata is shown only when reported; names never establish capabilities or identical weights.
+- System One servers list their decision models with the reported base model. These models answer typed questions only: they appear in classification comparisons, never in text comparisons, and offer no unload action.
 
 For ComfyUI, expand **Reported device memory** in the host inventory or the Memory panel's **Saved model hosts** section. Refresh reads each device's reported free and total bytes with a separate capture time. Missing or invalid values are **Unknown**; a reported zero free-memory value remains zero, and an empty device list says **No devices reported**. Opening the disclosure uses cached readings without contacting the host.
 
@@ -242,7 +244,7 @@ For an installed Ollama tag, select its row, expand **Reported model details**, 
 
 The read refreshes inventory and publishes the selected model's details only after the final identity check. Failed reads retain the previous dated inventory. Ordinary **Refresh** replaces inspected metadata with the basic inventory; read details again when needed. Selection and disclosure expansion perform no metadata requests. Reading details does not generate, load, unload or download models.
 
-**Compare…** sends the selected model to the **Hosted & mixed** comparison setup without starting a run. Text models can be compared with ready native models. ComfyUI image comparisons require checkpoint models and an explicitly imported API workflow. Host inventories remain separate from local scan, conversion, verification and reclaim state.
+**Compare…** sends the selected model to the **Hosted & mixed** comparison setup without starting a run. Text models can be compared with ready native models. System One decision models open a classification comparison, alongside ready native classification models. ComfyUI image comparisons require checkpoint models and an explicitly imported API workflow. Host inventories remain separate from local scan, conversion, verification and reclaim state.
 
 ### Release host memory
 

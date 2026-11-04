@@ -14,6 +14,7 @@ and is versioned independently; submodule bumps are recorded here.
 ### Added
 
 - Quality Gate: a text LLM that passes verification gets an agent-readiness check, a tool-call round trip over Chat Completions, Anthropic Messages and OpenAI Responses plus a 16,384-token prompt, shown in Prepare and the Library inspector without changing the verdict.
+- Compare: **Classification** grades classification models such as Laya against expected answers to choice, score and true-or-false questions, and **Hosted & mixed** runs them beside System One servers such as Kev, added in Library as **System One** hosts.
 
 ### Changed
 

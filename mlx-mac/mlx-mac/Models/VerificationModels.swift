@@ -249,16 +249,26 @@ enum SpeechCanary {
     }
 }
 
-/// One `convert decide` answer: the chosen option and the calibrated distribution.
+/// One System One answer (`convert decide` or a System One server): the chosen option,
+/// the expected score level or the probability of true, with the calibrated distribution.
 struct DecisionAnswer: Codable, Equatable, Sendable {
     let type: String
     let choice: String?
     let probabilities: [String: Double]?
+    var score: Double? = nil
+    var noul: Double? = nil
+    var confidence: Double? = nil
 }
 
 struct DecisionResult: Codable, Equatable, Sendable {
     let answers: [String: DecisionAnswer]
     let seconds: Double?
+    var loadSeconds: Double? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case answers, seconds
+        case loadSeconds = "load_seconds"
+    }
 }
 
 /// The classification canary: a support ticket whose team and refund intent

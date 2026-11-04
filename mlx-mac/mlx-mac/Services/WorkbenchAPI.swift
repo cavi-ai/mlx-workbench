@@ -330,6 +330,18 @@ actor WorkbenchAPI {
         try await runOffActor(DecisionResult.self, ["convert", "decide", "--path", path, "--request", request], timeout: 600)
     }
 
+    /// One System One request body through `convert decide`; its private request file lasts only for the call.
+    func decide(path: String, requestBody: Data) async throws -> DecisionResult {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("mlx-decide-request-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let file = staging.appendingPathComponent("request.json")
+        guard FileManager.default.createFile(atPath: file.path, contents: requestBody, attributes: [.posixPermissions: 0o600]) else {
+            throw BridgeError.skillUnavailable
+        }
+        return try await decide(path: path, request: file.path)
+    }
+
     /// One prompt rendered to a new PNG by a converted image model (`convert generate`).
     func generate(path: String, out: String, request: ImageRequest) async throws -> GenerationResult {
         try await runOffActor(GenerationResult.self, [

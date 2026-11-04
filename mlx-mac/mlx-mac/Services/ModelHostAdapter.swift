@@ -93,6 +93,7 @@ extension ModelHostProvider {
         case .comfyUI: return ComfyUIHostAdapter()
         case .llamaCpp: return OpenAIHostAdapter(title: "llama.cpp", readsLlamaMetadata: true)
         case .openAICompatible: return OpenAIHostAdapter(title: "OpenAI-compatible", readsLlamaMetadata: false)
+        case .systemOne: return SystemOneHostAdapter()
         }
     }
 

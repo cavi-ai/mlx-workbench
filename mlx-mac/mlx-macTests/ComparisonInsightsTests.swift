@@ -1021,11 +1021,14 @@ final class ComparisonInsightsTests: XCTestCase {
             case .textToSpeech: .textToSpeech
             case .imageGeneration: .imageGeneration
             case .meshGeneration: .meshGeneration
+            case .classification: .classification
             default: .videoGeneration
             }
             let models = [model("/a", task: type), model("/b", task: type)]
-            var measured = run([result("/a", speed: 20, metric: mode.primaryMetric.higherIsBetter ? 20 : 1),
-                result("/b", speed: 40, metric: mode.primaryMetric.higherIsBetter ? 40 : 0.5)],
+            // Accuracy is a share of answers, so its better value stays within 0–1.
+            let (worse, better): (Double, Double) = mode == .classification ? (0.5, 0.8)
+                : mode.primaryMetric.higherIsBetter ? (20, 40) : (1, 0.5)
+            var measured = run([result("/a", speed: 20, metric: worse), result("/b", speed: 40, metric: better)],
                 scores: ["/a": 5], mode: mode)
             let partial = try XCTUnwrap(ComparisonInsights.champions(models: models, runs: [measured], environment: environment).first)
             XCTAssertEqual(partial.performance.map(\.modelPath), ["/b"])

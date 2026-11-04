@@ -86,7 +86,7 @@ struct HostedComparisonView: View {
         workflowJSON.map { ComfyWorkflow(apiJSON: $0, checkpointNodeID: checkpointNode, promptNodeID: promptNode, outputNodeID: outputNode) }
     }
     private var promptSet: PromptSet? {
-        if mode == .chat { return native.promptSets.first { $0.id == promptSetID && $0.effectiveMode == .chat } }
+        if mode == .chat || mode == .classification { return native.promptSets.first { $0.id == promptSetID && $0.effectiveMode == mode } }
         return PromptSet(id: "comfy-workflow", name: workflowName.isEmpty ? "ComfyUI workflow" : workflowName,
             useCase: nil, prompts: [PromptEntry(id: "image-prompt", text: promptText, maxTokens: 512)], origin: .userCreated, mode: .imageGeneration)
     }
@@ -141,6 +141,11 @@ struct HostedComparisonView: View {
         .accessibilityIdentifier("hosted-comparison-workspace")
         .onChange(of: appHost.hostedComparisonTargets, initial: true) { _, targets in
             if !targets.isEmpty, targets.allSatisfy({ $0.host?.provider.adapter.runsImageWorkflows == true }) { mode = .imageGeneration }
+            if targets.contains(where: { $0.host?.provider == .systemOne }) { mode = .classification }
+        }
+        .onChange(of: mode, initial: true) { _, mode in
+            let sets = native.promptSets.filter { $0.effectiveMode == mode }
+            if !sets.isEmpty, !sets.contains(where: { $0.id == promptSetID }) { promptSetID = sets[0].id }
         }
     }
 
@@ -148,8 +153,9 @@ struct HostedComparisonView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Picker("Task", selection: $mode) {
                 Text("Text").tag(ComparisonMode.chat)
+                Text("Classification").tag(ComparisonMode.classification)
                 Text("ComfyUI images").tag(ComparisonMode.imageGeneration)
-            }.pickerStyle(.segmented).frame(maxWidth: 350).disabled(comparison.activeRunID != nil)
+            }.pickerStyle(.segmented).frame(maxWidth: 480).disabled(comparison.activeRunID != nil)
             HStack {
                 addModelMenu
                 Button("Manage hosts…") { appHost.handoffs.send(HostedModelsRequest(), as: .openHostedModels); onRouteSelection(.library) }
@@ -178,12 +184,18 @@ struct HostedComparisonView: View {
                         .labelStyle(.iconOnly).buttonStyle(.borderless).disabled(comparison.activeRunID != nil)
                 }
             }
-            if mode == .chat {
+            if mode == .chat || mode == .classification {
                 Picker("Prompt set", selection: $promptSetID) {
-                    ForEach(native.promptSets.filter { $0.effectiveMode == .chat }) { Text($0.name).tag($0.id) }
+                    ForEach(native.promptSets.filter { $0.effectiveMode == mode }) { Text($0.name).tag($0.id) }
                 }.disabled(comparison.activeRunID != nil)
-                Text("Requests use temperature 0 and each prompt's output-token limit. Context, templates and other defaults are host-managed. Latency includes transport and any loading; tokenizer differences affect tokens per second.")
+                Text(mode == .chat
+                     ? "Requests use temperature 0 and each prompt's output-token limit. Context, templates and other defaults are host-managed. Latency includes transport and any loading; tokenizer differences affect tokens per second."
+                     : "Every lane receives the same System One request: System One hosts through /v1/systemone, native classification models through the engine. Answers are graded against each question's expected answer. Hosted latency includes transport; native time excludes model loading.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if mode == .classification {
+                    Text("Edit classification prompt sets in Local models › Compare › Classification.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
             } else { workflowSetup }
             if let progress = comparison.progress { Text(progress).font(WorkbenchTypography.secondary) }
             else if let unavailable { Label(unavailable, systemImage: "info.circle").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
@@ -192,9 +204,9 @@ struct HostedComparisonView: View {
 
     private var addModelMenu: some View {
         Menu("Add model") {
-            if mode == .chat {
+            if mode == .chat || mode == .classification {
                 Section("MLX Workbench") {
-                    ForEach(ComparePresentation.candidates(from: appHost.librarySnapshot?.models ?? []), id: \.item.path) { model in
+                    ForEach(ComparisonViewLogic.candidates(from: appHost.librarySnapshot?.models ?? [], mode: mode), id: \.item.path) { model in
                         Button(model.displayName) { append(HostedComparisonTarget(local: model, capturedAt: appHost.librarySnapshot?.generatedAt ?? Date())) }
                     }
                 }
@@ -260,12 +272,18 @@ struct HostedComparisonView: View {
                     laneActions: { lane in Text(name(lane.resultKey, in: record)).font(WorkbenchTypography.secondary) })
                     .id(record.id)
             } else {
-                Text("Elapsed times include queue wait, loading and execution. Cached ComfyUI nodes can affect timing; per-step speed is unknown.")
+                let classifies = record.run.effectiveMode == .classification
+                Text(classifies
+                     ? "Hosted lanes record request time, including transport; native lanes record model time after loading."
+                     : "Elapsed times include queue wait, loading and execution. Cached ComfyUI nodes can affect timing; per-step speed is unknown.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 MediaRunResultsView(run: record.run, store: comparison.outputStore, contentWidth: width, isRouteActive: active,
                     name: { name($0, in: record) }, onReview: { comparison.review(runID: record.id, targetID: $0, score: $1) }, reviewError: comparison.lastError,
                     laneActions: { lane in
-                        if let seconds = record.run.results.first(where: { $0.id == lane.resultKey })?.samples.first?.seconds {
+                        let samples = record.run.results.first(where: { $0.id == lane.resultKey })?.samples ?? []
+                        if classifies, let seconds = DecisionScoring.medianSeconds(samples) {
+                            Text("Median \(seconds, specifier: "%.3f") s per prompt").font(WorkbenchTypography.secondary)
+                        } else if !classifies, let seconds = samples.first?.seconds {
                             Text("Elapsed \(seconds, specifier: "%.2f") s including queue").font(WorkbenchTypography.secondary)
                         }
                     }).id(record.id)

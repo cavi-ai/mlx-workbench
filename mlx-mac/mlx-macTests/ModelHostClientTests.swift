@@ -726,7 +726,8 @@ final class ModelHostClientTests: XCTestCase {
             (.lmStudio, "LM Studio", "http://127.0.0.1:1234", .instance, false, false, false),
             (.comfyUI, "ComfyUI", "http://127.0.0.1:8188", .host, false, true, true),
             (.llamaCpp, "llama.cpp", "http://127.0.0.1:8080", nil, false, false, false),
-            (.openAICompatible, "OpenAI-compatible", "http://127.0.0.1:8080", nil, false, false, false)
+            (.openAICompatible, "OpenAI-compatible", "http://127.0.0.1:8080", nil, false, false, false),
+            (.systemOne, "System One", "http://127.0.0.1:8008", nil, false, false, false)
         ]
         XCTAssertEqual(expected.map { $0.0 }, ModelHostProvider.allCases)
         for row in expected {
