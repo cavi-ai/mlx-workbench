@@ -10,7 +10,7 @@ make test
 make start
 ```
 
-mlx-agent is vendored at `vendor/mlx-agent`. Prefer bumping the submodule to a tagged release rather than tracking `main`.
+mlx-agent is vendored at `vendor/mlx-agent`. The `pin-engine` workflow runs on demand or on a `server-merged` repository dispatch; when mlx-agent's main moved, it opens a `chore: pin mlx-agent to main` PR and closes older ones. It needs a `CONSUMER_DISPATCH_TOKEN` secret with contents read on mlx-agent and contents and pull-request write on this repository.
 
 ## Layout
 

@@ -1,0 +1,54 @@
+name: pin-engine
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [server-merged]
+permissions:
+  contents: read
+concurrency:
+  group: pin-engine
+  cancel-in-progress: false
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Fine-grained token: contents read on mlx-agent; contents + pull requests write here.
+      - name: Require CONSUMER_DISPATCH_TOKEN
+        env:
+          TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+        run: test -n "$TOKEN" || { echo "::error::Add the CONSUMER_DISPATCH_TOKEN repository secret"; exit 1; }
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          token: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+          submodules: true
+          fetch-depth: 0
+      - id: sync
+        run: |
+          from=$(git -C vendor/mlx-agent rev-parse HEAD)
+          git -C vendor/mlx-agent fetch -q origin main
+          to=$(git -C vendor/mlx-agent rev-parse FETCH_HEAD)
+          if [ "$from" != "$to" ]; then
+            git -C vendor/mlx-agent checkout -q "$to"
+            echo "branch=bot/pin-engine-${to:0:7}" >> "$GITHUB_OUTPUT"
+            echo "body=- mlx-agent ${from:0:7} -> ${to:0:7}" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.sync.outputs.branch
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+          BRANCH: ${{ steps.sync.outputs.branch }}
+          BODY: ${{ steps.sync.outputs.body }}
+        run: |
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null; then
+            echo "$BRANCH already proposed"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add vendor/mlx-agent
+          git commit -q -m "chore: pin mlx-agent to main"
+          git push -q origin "$BRANCH"
+          for old in $(gh pr list --state open --json number,headRefName -q '.[] | select(.headRefName | startswith("bot/pin-engine-")) | .number'); do
+            gh pr close "$old" --delete-branch --comment "Superseded by a newer engine pin."
+          done
+          gh pr create --head "$BRANCH" --title "chore: pin mlx-agent to main" --body "$BODY"
