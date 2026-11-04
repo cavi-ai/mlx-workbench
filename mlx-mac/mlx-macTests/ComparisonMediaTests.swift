@@ -3,6 +3,7 @@ import AVFoundation
 import AVKit
 import Foundation
 import ImageIO
+import SceneKit
 import SwiftUI
 import XCTest
 
@@ -202,11 +203,89 @@ actor StubMediaRunner: ComparisonMediaRunner {
             return MediaRunOutput(seconds: 40, steps: 20, pixelStd: 60)
         case .videoGeneration:
             return MediaRunOutput(seconds: 18, frames: 9, secondsPerFrame: 2, pixelStd: 50)
+        case .meshGeneration:
+            return MediaRunOutput(seconds: 12)
         }
     }
 }
 
 final class ComparisonMediaTests: XCTestCase {
+    func testMeshArgumentsAndDraftValidateRecordedSettings() throws {
+        let parameters = MediaParameters(steps: 30, seed: 17, meshResolution: 64)
+        XCTAssertEqual(WorkbenchAPI.meshArguments(path: "/Models/shape", image: "/Images/input.png", out: "/Outputs/shape.glb", parameters: parameters),
+                       ["convert", "mesh", "--path", "/Models/shape", "--image", "/Images/input.png", "--out", "/Outputs/shape.glb", "--timeout", "3600", "--steps", "30", "--seed", "17", "--resolution", "64"])
+        var prompt = PromptSetDraft.Prompt(PromptEntry(id: "cube", text: "", inputKind: .image, builtinInput: "cube-object", media: parameters), mode: .meshGeneration)
+        XCTAssertNil(prompt.validationError(for: .meshGeneration))
+        prompt.meshResolution = "96"
+        XCTAssertNotNil(prompt.validationError(for: .meshGeneration))
+        prompt.meshResolution = "128"
+        XCTAssertNil(prompt.validationError(for: .meshGeneration))
+    }
+
+    @MainActor
+    func testMeshPreviewReadsAndRendersAnIndexedGLB() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var json = Data("""
+        {"asset":{"version":"2.0"},"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":3,"type":"SCALAR"}]}
+        """.utf8)
+        while json.count % 4 != 0 { json.append(32) }
+        var binary = Data()
+        for value: Float in [0, 0, 0, 1, 0, 0, 0, 1, 0] {
+            var bits = value.bitPattern.littleEndian
+            withUnsafeBytes(of: &bits) { binary.append(contentsOf: $0) }
+        }
+        for var index in [UInt32(0), 1, 2] {
+            withUnsafeBytes(of: &index) { binary.append(contentsOf: $0) }
+        }
+        var glb = Data()
+        func append(_ value: UInt32) {
+            var word = value.littleEndian
+            withUnsafeBytes(of: &word) { glb.append(contentsOf: $0) }
+        }
+        append(0x46546C67); append(2); append(UInt32(28 + json.count + binary.count))
+        append(UInt32(json.count)); append(0x4E4F534A); glb.append(json)
+        append(UInt32(binary.count)); append(0x004E4942); glb.append(binary)
+        let fixture = root.appendingPathComponent("triangle.glb")
+        try glb.write(to: fixture)
+        let triangle = try ComparisonMeshData.read(fixture)
+        XCTAssertEqual(triangle.positions.count, 3)
+        XCTAssertEqual(triangle.indices, [0, 1, 2])
+        try Data(glb.prefix(20)).write(to: fixture)
+        XCTAssertThrowsError(try ComparisonMeshData.read(fixture))
+        let mesh: ComparisonMeshData
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_MESH_ARTIFACT"] {
+            mesh = try ComparisonMeshData.read(URL(fileURLWithPath: path))
+            XCTAssertGreaterThan(mesh.indices.count, 3)
+        } else { mesh = triangle }
+        let scene = mesh.scene()
+        let renderer = SCNRenderer(device: nil, options: nil)
+        renderer.scene = scene
+        renderer.pointOfView = scene.rootNode.childNodes.first { $0.camera != nil }
+        renderer.autoenablesDefaultLighting = true
+        let rendered = renderer.snapshot(atTime: 0, with: CGSize(width: 640, height: 640), antialiasingMode: .multisampling4X)
+        let attachment = XCTAttachment(image: rendered)
+        attachment.name = "Mesh preview"; attachment.lifetime = .keepAlways; add(attachment)
+        if let directory = ProcessInfo.processInfo.environment["MLX_WORKBENCH_MESH_PREVIEW_DIR"],
+           let data = rendered.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("mesh-preview.png"))
+        }
+    }
+
+    func testMeshComparisonUsesImageInputAndRetainsGLBOutput() throws {
+        let mode = try XCTUnwrap(ComparisonMode(rawValue: "meshGeneration"))
+        XCTAssertEqual(mode.inputKind, .image)
+        XCTAssertEqual(mode.outputKind.fileExtension, "glb")
+        XCTAssertFalse(mode.primaryMetric.higherIsBetter)
+        XCTAssertEqual(mode.primaryMetric.value(of: ComparisonSample(
+            promptID: "shape", outputExcerpt: "", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil, seconds: 12)), 12)
+        XCTAssertTrue(mode.accepts(ModelTaskType(rawValue: "mesh_generation")))
+        XCTAssertFalse(ComparisonMode.chat.accepts(ModelTaskType(rawValue: "mesh_generation")))
+    }
+
     @MainActor
     func testCancellationWaitsForAnUncooperativeRunnerAndDiscardsItsLateResult() async throws {
         let runner = DelayedCancellationMediaRunner(), coordinator = makeCoordinator(runner: runner)
@@ -573,7 +652,7 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(ComparisonMode.videoUnderstanding.inputKind, .video)
         XCTAssertEqual(ComparisonMode.speechToText.inputKind, .audio)
         XCTAssertNil(ComparisonMode.imageGeneration.inputKind)
-        XCTAssertEqual(ComparisonMode.allCases.count, 8)
+        XCTAssertEqual(ComparisonMode.allCases.count, 9)
         XCTAssertEqual(ComparisonMode.musicGeneration.acceptedTaskTypes, [.musicGeneration])
         XCTAssertEqual(ComparisonMode.musicGeneration.outputKind, .audio)
         XCTAssertEqual(ComparisonMode.musicGeneration.primaryMetric, .realTimeFactor)

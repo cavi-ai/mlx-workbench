@@ -401,6 +401,18 @@ actor WorkbenchAPI {
         )
     }
 
+    static func meshArguments(path: String, image: String, out: String, parameters: MediaParameters) -> [String] {
+        var argv = ["convert", "mesh", "--path", path, "--image", image, "--out", out, "--timeout", "3600"]
+        if let steps = parameters.steps { argv += ["--steps", String(steps)] }
+        if let seed = parameters.seed { argv += ["--seed", String(seed)] }
+        if let resolution = parameters.meshResolution { argv += ["--resolution", String(resolution)] }
+        return argv
+    }
+
+    func mesh(path: String, image: String, out: String, parameters: MediaParameters) async throws -> MeshResult {
+        try await runOffActor(MeshResult.self, Self.meshArguments(path: path, image: image, out: out, parameters: parameters), timeout: 3700)
+    }
+
     func intakeResolve(source: String) async throws -> IntakeResolution {
         try Self.decode(IntakeResolution.self, from: await raw(["intake", "resolve", source], timeout: 45))
     }

@@ -25,7 +25,7 @@ final class LibraryRemodelTests: XCTestCase {
 
     // MARK: - Symbol vocabulary
 
-    func testSymbolVocabularyPinsAllElevenNamesAndEachResolves() {
+    func testSymbolVocabularyPinsEveryTaskAndEachResolves() {
         let expected: [ModelTaskType: String] = [
             .textLLM: "text.bubble",
             .visionLanguage: "eye",
@@ -36,10 +36,11 @@ final class LibraryRemodelTests: XCTestCase {
             .classification: "tag",
             .imageGeneration: "photo",
             .videoGeneration: "film",
+            .meshGeneration: "cube.transparent",
             .speculativeDraft: "bolt",
             .other: "cube",
         ]
-        XCTAssertEqual(ModelTaskType.allCases.count, 11)
+        XCTAssertEqual(ModelTaskType.allCases.count, 12)
         XCTAssertEqual(Set(ModelTaskType.allCases), Set(expected.keys))
         for type in ModelTaskType.allCases {
             XCTAssertEqual(type.symbolName, expected[type], type.rawValue)

@@ -158,8 +158,15 @@ enum ComparisonMediaFixtures {
         mode: .videoGeneration
     )
 
+    static let meshGenerationSet = PromptSet(
+        id: "builtin-mesh-generation", name: "3D shape", useCase: nil,
+        prompts: [PromptEntry(id: "mesh-cube", text: "Cube", inputKind: .image,
+                             builtinInput: "cube-object", media: MediaParameters(steps: 50, seed: 42, meshResolution: 128))],
+        origin: .builtin, mode: .meshGeneration
+    )
+
     static let all: [PromptSet] = [
-        visionSet, videoUnderstandingSet, speechToTextSet, textToSpeechSet, musicGenerationSet, imageGenerationSet, videoGenerationSet,
+        visionSet, videoUnderstandingSet, speechToTextSet, textToSpeechSet, musicGenerationSet, imageGenerationSet, videoGenerationSet, meshGenerationSet,
     ]
 
     // MARK: Generators
@@ -200,7 +207,7 @@ enum ComparisonMediaFixtures {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stem = ComparisonOutputStore.safeComponent(entry.id)
         switch builtin {
-        case "red-circle", "blue-squares", "green-triangle":
+        case "red-circle", "blue-squares", "green-triangle", "cube-object":
             let url = directory.appendingPathComponent("\(stem).png")
             try writeImage(named: builtin, to: url)
             return url
@@ -233,6 +240,19 @@ enum ComparisonMediaFixtures {
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: edge, height: edge))
         switch name {
+        case "cube-object":
+            let faces: [([CGPoint], CGColor)] = [
+                ([CGPoint(x: 60, y: 90), CGPoint(x: 128, y: 50), CGPoint(x: 128, y: 136), CGPoint(x: 60, y: 176)],
+                 CGColor(gray: 0.45, alpha: 1)),
+                ([CGPoint(x: 128, y: 50), CGPoint(x: 196, y: 90), CGPoint(x: 196, y: 176), CGPoint(x: 128, y: 136)],
+                 CGColor(gray: 0.65, alpha: 1)),
+                ([CGPoint(x: 60, y: 176), CGPoint(x: 128, y: 216), CGPoint(x: 196, y: 176), CGPoint(x: 128, y: 136)],
+                 CGColor(gray: 0.85, alpha: 1)),
+            ]
+            for (points, color) in faces {
+                context.setFillColor(color)
+                context.beginPath(); context.addLines(between: points); context.closePath(); context.fillPath()
+            }
         case "red-circle":
             context.setFillColor(CGColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1))
             context.fillEllipse(in: CGRect(x: 56, y: 56, width: 144, height: 144))

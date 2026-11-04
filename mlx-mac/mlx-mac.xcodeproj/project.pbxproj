@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A31D00000000000000000002 /* CompareMeshPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31D00000000000000000001 /* CompareMeshPreview.swift */; };
 		97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */; };
 		2FC0D65EBB12434769C4403A /* EndpointTestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */; };
 		AC9CA088CCDA4A2355DB61A1 /* EndpointTestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */; };
@@ -326,6 +327,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A31D00000000000000000001 /* CompareMeshPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/CompareMeshPreview.swift; sourceTree = "<group>"; };
 		9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointTestTests.swift; sourceTree = "<group>"; };
 		704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/EndpointTestSheet.swift; sourceTree = "<group>"; };
 		868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/EndpointTestCoordinator.swift; sourceTree = "<group>"; };
@@ -849,6 +851,7 @@
 				27ABCD100000000000000007 /* ModelTask.swift */,
 				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
+				A31D00000000000000000001 /* CompareMeshPreview.swift */,
 				27ABCD10000000000000002B /* CompareMediaViews.swift */,
 				5A1E5E770000000000000047 /* ComparisonPromptEditorViews.swift */,
 				5A1E5E770000000000000049 /* ComparisonPickerViews.swift */,
@@ -1238,6 +1241,7 @@
 				24BBLD000010 /* x */,
 				24BBLD000011 /* x */,
 				24BBLD000012 /* x */,
+				A31D00000000000000000002 /* CompareMeshPreview.swift in Sources */,
 				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
 				5A1E5E770000000000000048 /* ComparisonPromptEditorViews.swift in Sources */,
 				5A1E5E77000000000000004A /* ComparisonPickerViews.swift in Sources */,

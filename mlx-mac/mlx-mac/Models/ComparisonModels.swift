@@ -49,11 +49,12 @@ struct MediaParameters: Codable, Equatable, Sendable {
     var seed: Int?
     var frames: Int?
     var fps: Int?
+    var meshResolution: Int?
     /// Maximum requested music duration; the output reports its measured duration.
     var durationSeconds: Double?
     var lyrics: String?
 
-    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil, durationSeconds: Double? = nil, lyrics: String? = nil) {
+    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil, meshResolution: Int? = nil, durationSeconds: Double? = nil, lyrics: String? = nil) {
         self.size = size
         self.width = width
         self.height = height
@@ -61,6 +62,7 @@ struct MediaParameters: Codable, Equatable, Sendable {
         self.seed = seed
         self.frames = frames
         self.fps = fps
+        self.meshResolution = meshResolution
         self.durationSeconds = durationSeconds
         self.lyrics = lyrics
     }
@@ -217,6 +219,7 @@ struct PromptSetDraft: Identifiable {
         var fps: String
         var steps: String
         var seed: String
+        var meshResolution: String
         var lyrics: String
         var duration: String
         var toolName: String? { original.tool?.name }
@@ -257,6 +260,7 @@ struct PromptSetDraft: Identifiable {
             fps = initialMedia?.fps.map(String.init) ?? ""
             steps = initialMedia?.steps.map(String.init) ?? ""
             seed = initialMedia?.seed.map(String.init) ?? ""
+            meshResolution = initialMedia?.meshResolution.map(String.init) ?? ""
             lyrics = initialMedia?.lyrics ?? ""
             duration = initialMedia?.durationSeconds.map { String($0) } ?? ""
         }
@@ -311,7 +315,7 @@ struct PromptSetDraft: Identifiable {
 
         private func validatedEntry(for mode: ComparisonMode, checkInputAvailability: Bool) throws -> PromptEntry {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard (mode == .speechToText || !trimmed.isEmpty),
+            guard (mode == .speechToText || mode == .meshGeneration || !trimmed.isEmpty),
                   !text.unicodeScalars.contains(where: { $0.value < 32 && $0 != "\n" && $0 != "\t" }) else {
                 throw InvalidDraft(message: "Enter plain text for this prompt.")
             }
@@ -378,6 +382,19 @@ struct PromptSetDraft: Identifiable {
                 }
                 if parameters != (initialMedia ?? MediaParameters()) { copy.media = parameters }
             }
+            if mode == .meshGeneration {
+                var parameters = initialMedia ?? MediaParameters()
+                let stepValue = try IntegerSetting(title: "Steps", range: 1...100).value(steps)
+                let seedValue = try InferenceSettings.seed.value(seed)
+                let resolutionValue = try IntegerSetting(title: "Resolution", range: 32...256).value(meshResolution)
+                if let resolutionValue, ![32, 64, 128, 256].contains(resolutionValue) {
+                    throw InvalidDraft(message: "Mesh resolution must be 32, 64, 128 or 256.")
+                }
+                if steps != (initialMedia?.steps.map(String.init) ?? "") { parameters.steps = stepValue }
+                if seed != (initialMedia?.seed.map(String.init) ?? "") { parameters.seed = seedValue }
+                if meshResolution != (initialMedia?.meshResolution.map(String.init) ?? "") { parameters.meshResolution = resolutionValue }
+                if parameters != (initialMedia ?? MediaParameters()) { copy.media = parameters }
+            }
             return copy
         }
     }
@@ -419,6 +436,7 @@ struct PromptSetDraft: Identifiable {
         switch mode {
         case .imageGeneration: MediaParameters(size: 512, steps: 20, seed: 42)
         case .videoGeneration: ComparisonMediaFixtures.videoGenerationParameters
+        case .meshGeneration: MediaParameters(steps: 50, seed: 42, meshResolution: 128)
         case .musicGeneration: MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")
         default: nil
         }
@@ -1287,6 +1305,7 @@ struct ComparisonQualityReview: Codable, Equatable, Sendable {
         case .textToSpeech: "Listen for intelligibility, pronunciation, natural delivery and audible artifacts."
         case .imageGeneration: "Inspect prompt match, visual coherence and unwanted artifacts."
         case .videoGeneration: "Inspect prompt match, motion, continuity between frames and unwanted artifacts."
+        case .meshGeneration: "Inspect shape, silhouette, surface continuity and unwanted geometry against the input image. Timing does not measure shape quality."
         case .musicGeneration: musicRubric
         }
     }

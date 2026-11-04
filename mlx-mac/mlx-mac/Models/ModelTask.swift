@@ -16,6 +16,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     case classification = "classification"
     case imageGeneration = "image_generation"
     case videoGeneration = "video_generation"
+    case meshGeneration = "mesh_generation"
     case speculativeDraft = "speculative_draft"
     case other = "other"
 
@@ -37,6 +38,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .classification: return "Classification"
         case .imageGeneration: return "Image generation"
         case .videoGeneration: return "Video generation"
+        case .meshGeneration: return "3D generation"
         case .speculativeDraft: return "Speculative drafter"
         case .other: return "Other"
         }
@@ -55,6 +57,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .classification: return "tag"
         case .imageGeneration: return "photo"
         case .videoGeneration: return "film"
+        case .meshGeneration: return "cube.transparent"
         case .speculativeDraft: return "bolt"
         case .other: return "cube"
         }
