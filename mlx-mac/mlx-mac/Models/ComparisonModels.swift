@@ -386,9 +386,9 @@ struct PromptSetDraft: Identifiable {
                 var parameters = initialMedia ?? MediaParameters()
                 let stepValue = try IntegerSetting(title: "Steps", range: 1...100).value(steps)
                 let seedValue = try InferenceSettings.seed.value(seed)
-                let resolutionValue = try IntegerSetting(title: "Resolution", range: 32...256).value(meshResolution)
-                if let resolutionValue, ![32, 64, 128, 256].contains(resolutionValue) {
-                    throw InvalidDraft(message: "Mesh resolution must be 32, 64, 128 or 256.")
+                let resolutionValue = try IntegerSetting(title: "Resolution", range: 32...512).value(meshResolution)
+                if let resolutionValue, ![32, 64, 128, 256, 512].contains(resolutionValue) {
+                    throw InvalidDraft(message: "Mesh resolution must be 32, 64, 128, 256 or 512.")
                 }
                 if steps != (initialMedia?.steps.map(String.init) ?? "") { parameters.steps = stepValue }
                 if seed != (initialMedia?.seed.map(String.init) ?? "") { parameters.seed = seedValue }

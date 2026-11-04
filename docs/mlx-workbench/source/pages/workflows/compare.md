@@ -51,7 +51,7 @@ Models run one at a time. Chat serves each model on a loopback server, warms it 
 
 Choose **3D generation** for ready TripoSG models converted by the engine's `mlx-3d` backend. Install that backend before conversion. Keep the converted directory under a model folder configured in Settings, then scan Library and use **Select for Compare**.
 
-Each entry takes an image; its optional label is not a text-generation prompt. Use an isolated object on a white or transparent background. Set resolution (32, 64, 128 or 256), steps and seed, or start with the built-in **3D shape** set. Each lane saves its input and generated GLB. Drag the mesh preview to rotate, scroll to zoom, and use **Reveal mesh** to locate the file.
+Each entry takes an image; its optional label is not a text-generation prompt. Use an isolated object on a white or transparent background. Set resolution (32, 64, 128, 256 or 512; the engine uses 512 when it is empty), steps and seed, or start with the built-in **3D shape** set. Each lane saves its input and generated GLB. Drag the mesh preview to rotate, scroll to zoom, and use **Reveal mesh** to locate the file.
 
 The primary metric is generation time, excluding model loading. Compare like-for-like steps and inputs, then rate the geometry separately. TripoSG produces untextured shapes; 3D results do not become chat recommendations or endpoint promotions. GLB files follow the same retention rules as other media outputs.
 
