@@ -165,7 +165,7 @@ enum ComparisonViewLogic {
             }
         case .textToSpeech, .musicGeneration:
             if let audio = sample.audioSeconds { parts.append(String(format: "%.1f s of audio", audio)) }
-        case .imageGeneration, .videoGeneration:
+        case .imageGeneration, .videoGeneration, .meshGeneration:
             break
         }
         if mode != .speechToText, let seconds = sample.seconds { parts.append(String(format: "%.1f s", seconds)) }
@@ -649,6 +649,15 @@ struct MediaRunResultsView<LaneActions: View>: View {
     @ViewBuilder
     private func outputView(_ sample: ComparisonSample, modelPath: String, side: CGFloat) -> some View {
         switch mode.outputKind {
+        case .mesh:
+            if let url = store.artifactURL(runID: run.id, artifact: sample.artifact ?? ""),
+               FileManager.default.fileExists(atPath: url.path) {
+                ComparisonMeshPreview(url: url).frame(width: side, height: side)
+                Text(sample.outputExcerpt).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Button("Reveal mesh", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            } else {
+                Label("output pruned", systemImage: "trash.slash").font(WorkbenchTypography.secondary)
+            }
         case .text:
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 if let status = sample.completionDescription {

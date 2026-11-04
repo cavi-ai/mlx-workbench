@@ -147,6 +147,17 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
                 steps: result.steps, frames: result.frames, secondsPerFrame: result.secondsPerFrame,
                 pixelStd: result.pixelStd
             )
+        case .meshGeneration:
+            guard let input = request.inputURL else { throw ComparisonMediaError.missingInput }
+            guard let out = request.outputURL else { throw ComparisonMediaError.missingOutputPath }
+            let result = try await api.mesh(path: request.modelPath, image: input.path, out: out.path,
+                                            parameters: entry.media ?? MediaParameters(steps: 50, seed: 42))
+            let summary: String
+            if let vertices = result.vertices, let faces = result.faces { summary = "\(vertices) vertices · \(faces) faces" }
+            else { summary = "GLB mesh" }
+            return MediaRunOutput(text: summary,
+                                  seconds: result.seconds, loadSeconds: result.loadSeconds,
+                                  peakMemoryGB: result.peakMemoryGB)
         }
     }
 }

@@ -45,7 +45,15 @@ The accepted prompt ID and submitted graph are saved before observing that job's
 3. Choose a prompt set.
 4. **Run comparison**. A setup message names whatever blocks the run: a pending prompt-set save, a missing or empty prompt set, no model selected, or the first unavailable slot.
 
-Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate` or `video` commands.
+Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate`, `video` or `mesh` commands.
+
+### 3D generation
+
+Choose **3D generation** for ready TripoSG models converted by the engine's `mlx-3d` backend. Install that backend before conversion. Keep the converted directory under a model folder configured in Settings, then scan Library and use **Select for Compare**.
+
+Each entry takes an image; its optional label is not a text-generation prompt. Use an isolated object on a white or transparent background. Set resolution (32, 64, 128 or 256), steps and seed, or start with the built-in **3D shape** set. Each lane saves its input and generated GLB. Drag the mesh preview to rotate, scroll to zoom, and use **Reveal mesh** to locate the file.
+
+The primary metric is generation time, excluding model loading. Compare like-for-like steps and inputs, then rate the geometry separately. TripoSG produces untextured shapes; 3D results do not become chat recommendations or endpoint promotions. GLB files follow the same retention rules as other media outputs.
 
 Local chat requests use the selected model's path, including its exact Hugging Face snapshot directory. Readiness checks prefer the server's lightweight health endpoint, falling back to the model endpoint when no health endpoint exists. MLX-LM's cache inventory does not have to finish listing before the comparison can proceed.
 
@@ -73,6 +81,7 @@ Cancelled runs and runs interrupted by an app restart remain explicit in history
 | Music generation | Music generation | Caption, lyrics, duration, steps, seed | Audio | Real-time factor |
 | Image generation | Image generation | Prompt, size, steps, seed | Image | Seconds per step |
 | Video generation | Video generation | Prompt, size, frames, frame rate, steps, seed | Video | Seconds per frame |
+| 3D generation | 3D generation | Image, resolution, steps, seed | GLB mesh | Generation time |
 
 Prompts can carry an expected-words check (all must appear, case-insensitive; `a|b` accepts either). Speech to text scores against a reference transcript. Built-in media inputs are generated at run time: images and video with CoreGraphics and AVFoundation, speech with `say`. The repository holds no binary fixtures.
 
@@ -88,7 +97,7 @@ Fenced code uses monospaced formatting. Reasoning, including recorded inline `<t
 
 **Reasoning and measurements** retains per-prompt speed, first token, answer-start timing, duration, tokens and tool-call counts when recorded. First token may include reasoning. Answer-start timing is unavailable when inline reasoning makes that boundary ambiguous. Missing completion and timing evidence stays unknown. Tool-only prompts require a recorded tool-call finish and valid arguments for every emitted call to count as finished.
 
-Media results retain one lettered lane per model, with the mode’s primary metric and a relative bar, followed by one row per prompt and one column per lane for text, images, audio or video.
+Media results retain one lettered lane per model, with the mode’s primary metric and a relative bar, followed by one row per prompt and one column per lane for text, images, audio, video or meshes.
 
 New streamed inline reasoning is separated before recording. Streaming examines each incoming fragment without reparsing earlier reasoning; fragmented thinking tags do not count as the start of an answer. An incomplete opening tag leaves answer-start timing unavailable. Each request closes its own HTTP stream after completion, failure or cancellation, leaving the shared connection session available. Decode speed is omitted when tokens arrive in a single burst, since arrival timing cannot establish generation speed.
 

@@ -368,6 +368,7 @@ private struct ComparisonPromptCard: View {
         case .vision, .videoUnderstanding: "Question"
         case .speechToText: "Reference transcript (optional)"
         case .textToSpeech: "Text to speak"
+        case .meshGeneration: "Label (optional)"
         default: "Prompt"
         }
     }
@@ -438,6 +439,15 @@ private struct ComparisonPromptCard: View {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
                     parameter("Size · square px", placeholder: "Default: 512", value: $prompt.size)
                     parameter("Steps", placeholder: "Default: 20", value: $prompt.steps)
+                    parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
+                }
+            }
+            if mode == .meshGeneration {
+                Text("Use an isolated object on a white or transparent background. TripoSG generates shape without textures.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                    parameter("Resolution", placeholder: "32, 64, 128 or 256", value: $prompt.meshResolution)
+                    parameter("Steps", placeholder: "Default: 50", value: $prompt.steps)
                     parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
                 }
             }

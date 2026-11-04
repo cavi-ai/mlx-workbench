@@ -1020,6 +1020,7 @@ final class ComparisonInsightsTests: XCTestCase {
             case .speechToText: .speechToText
             case .textToSpeech: .textToSpeech
             case .imageGeneration: .imageGeneration
+            case .meshGeneration: .meshGeneration
             default: .videoGeneration
             }
             let models = [model("/a", task: type), model("/b", task: type)]

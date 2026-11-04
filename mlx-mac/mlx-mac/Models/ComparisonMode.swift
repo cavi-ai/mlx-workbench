@@ -36,6 +36,7 @@ enum ComparisonOutputKind: String, Sendable {
     case image
     case audio
     case video
+    case mesh
 
     /// File extension of the saved artifact.
     var fileExtension: String {
@@ -44,12 +45,14 @@ enum ComparisonOutputKind: String, Sendable {
         case .image: return "png"
         case .audio: return "wav"
         case .video: return "mp4"
+        case .mesh: return "glb"
         }
     }
 }
 
 /// The metric a mode ranks and charts.
 enum ComparisonMetric: String, Sendable {
+    case generationSeconds
     case tokensPerSecond
     case generationTokensPerSecond
     case realTimeFactor
@@ -58,6 +61,7 @@ enum ComparisonMetric: String, Sendable {
 
     var title: String {
         switch self {
+        case .generationSeconds: return "Generation time (s)"
         case .tokensPerSecond: return "Decode speed (tok/s)"
         case .generationTokensPerSecond: return "Generation speed (tok/s)"
         case .realTimeFactor: return "Real-time factor (s per audio s)"
@@ -69,12 +73,13 @@ enum ComparisonMetric: String, Sendable {
     var higherIsBetter: Bool {
         switch self {
         case .tokensPerSecond, .generationTokensPerSecond: return true
-        case .realTimeFactor, .secondsPerStep, .secondsPerFrame: return false
+        case .realTimeFactor, .secondsPerStep, .secondsPerFrame, .generationSeconds: return false
         }
     }
 
     func value(of sample: ComparisonSample) -> Double? {
         switch self {
+        case .generationSeconds: return sample.seconds
         case .tokensPerSecond: return sample.tokensPerSecond
         case .generationTokensPerSecond: return sample.generationTokensPerSecond
         case .realTimeFactor: return sample.realTimeFactor
@@ -85,6 +90,7 @@ enum ComparisonMetric: String, Sendable {
 
     func format(_ value: Double) -> String {
         switch self {
+        case .generationSeconds: return String(format: "%.2f s", value)
         case .tokensPerSecond, .generationTokensPerSecond: return String(format: "%.1f tok/s", value)
         case .realTimeFactor: return String(format: "RTF %.2f", value)
         case .secondsPerStep: return String(format: "%.2f s/step", value)
@@ -102,6 +108,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case musicGeneration
     case imageGeneration
     case videoGeneration
+    case meshGeneration
 
     var id: String { rawValue }
 
@@ -115,6 +122,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .musicGeneration: return "Music generation"
         case .imageGeneration: return "Image generation"
         case .videoGeneration: return "Video generation"
+        case .meshGeneration: return "3D generation"
         }
     }
 
@@ -129,6 +137,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .musicGeneration: return [.musicGeneration]
         case .imageGeneration: return [.imageGeneration]
         case .videoGeneration: return [.videoGeneration]
+        case .meshGeneration: return [.meshGeneration]
         }
     }
 
@@ -149,7 +158,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
     /// The input file a prompt carries in this mode; nil for text-only prompts.
     var inputKind: ComparisonMediaKind? {
         switch self {
-        case .vision: return .image
+        case .vision, .meshGeneration: return .image
         case .videoUnderstanding: return .video
         case .speechToText: return .audio
         case .chat, .textToSpeech, .musicGeneration, .imageGeneration, .videoGeneration: return nil
@@ -162,6 +171,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .textToSpeech, .musicGeneration: return .audio
         case .imageGeneration: return .image
         case .videoGeneration: return .video
+        case .meshGeneration: return .mesh
         }
     }
 
@@ -178,7 +188,24 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .speechToText, .textToSpeech, .musicGeneration: return .realTimeFactor
         case .imageGeneration: return .secondsPerStep
         case .videoGeneration: return .secondsPerFrame
+        case .meshGeneration: return .generationSeconds
         }
+    }
+}
+
+/// `convert mesh`: image-conditioned shape generation into a binary glTF file.
+struct MeshResult: Codable, Sendable {
+    let path: String
+    let seconds: Double?
+    let loadSeconds: Double?
+    let peakMemoryGB: Double?
+    let vertices: Int?
+    let faces: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case path, seconds, vertices, faces
+        case loadSeconds = "load_seconds"
+        case peakMemoryGB = "peak_memory_gb"
     }
 }
 
