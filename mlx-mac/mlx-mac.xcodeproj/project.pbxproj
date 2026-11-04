@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		A31D00000000000000000002 /* CompareMeshPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31D00000000000000000001 /* CompareMeshPreview.swift */; };
+		A31D00000000000000000004 /* DecisionComparison.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31D00000000000000000003 /* DecisionComparison.swift */; };
+		A31D00000000000000000006 /* SystemOneHostAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31D00000000000000000005 /* SystemOneHostAdapter.swift */; };
+		A31D00000000000000000008 /* CompareDecisionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31D00000000000000000007 /* CompareDecisionViews.swift */; };
+		A31D0000000000000000000A /* DecisionComparisonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31D00000000000000000009 /* DecisionComparisonTests.swift */; };
 		97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */; };
 		2FC0D65EBB12434769C4403A /* EndpointTestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */; };
 		AC9CA088CCDA4A2355DB61A1 /* EndpointTestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */; };
@@ -328,6 +332,10 @@
 
 /* Begin PBXFileReference section */
 		A31D00000000000000000001 /* CompareMeshPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/CompareMeshPreview.swift; sourceTree = "<group>"; };
+		A31D00000000000000000003 /* DecisionComparison.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/DecisionComparison.swift; sourceTree = "<group>"; };
+		A31D00000000000000000005 /* SystemOneHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SystemOneHostAdapter.swift; sourceTree = "<group>"; };
+		A31D00000000000000000007 /* CompareDecisionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/CompareDecisionViews.swift; sourceTree = "<group>"; };
+		A31D00000000000000000009 /* DecisionComparisonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionComparisonTests.swift; sourceTree = "<group>"; };
 		9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointTestTests.swift; sourceTree = "<group>"; };
 		704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/EndpointTestSheet.swift; sourceTree = "<group>"; };
 		868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/EndpointTestCoordinator.swift; sourceTree = "<group>"; };
@@ -751,6 +759,7 @@
 				24FREF043 /* VerificationCoordinator.swift */,
 				24FREF047 /* ComparisonModels.swift */,
 				27ABCD100000000000000027 /* ComparisonMode.swift */,
+				A31D00000000000000000003 /* DecisionComparison.swift */,
 				24FREF048 /* JSONStore.swift */,
 				24FREF049 /* ComparisonCoordinator.swift */,
 				27ABCD10000000000000002A /* ComparisonMediaFixtures.swift */,
@@ -816,6 +825,7 @@
 				5A1E5E770000000000000025 /* LMStudioHostAdapter.swift */,
 				5A1E5E770000000000000027 /* ComfyUIHostAdapter.swift */,
 				5A1E5E770000000000000029 /* OpenAIHostAdapter.swift */,
+				A31D00000000000000000005 /* SystemOneHostAdapter.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				26WQREF001 /* WebConvertQueue.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
@@ -852,6 +862,7 @@
 				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
 				A31D00000000000000000001 /* CompareMeshPreview.swift */,
+				A31D00000000000000000007 /* CompareDecisionViews.swift */,
 				27ABCD10000000000000002B /* CompareMediaViews.swift */,
 				5A1E5E770000000000000047 /* ComparisonPromptEditorViews.swift */,
 				5A1E5E770000000000000049 /* ComparisonPickerViews.swift */,
@@ -955,6 +966,7 @@
 				24FREF044 /* VerificationModelTests.swift */,
 				24FREF045 /* ServeProbeTests.swift */,
 				9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */,
+				A31D00000000000000000009 /* DecisionComparisonTests.swift */,
 				24FREF046 /* VerificationCoordinatorTests.swift */,
 				24FREF069 /* HFRepoIDTests.swift */,
 				5A1E5E770000000000000033 /* RouteHandoffsTests.swift */,
@@ -1242,6 +1254,9 @@
 				24BBLD000011 /* x */,
 				24BBLD000012 /* x */,
 				A31D00000000000000000002 /* CompareMeshPreview.swift in Sources */,
+				A31D00000000000000000004 /* DecisionComparison.swift in Sources */,
+				A31D00000000000000000006 /* SystemOneHostAdapter.swift in Sources */,
+				A31D00000000000000000008 /* CompareDecisionViews.swift in Sources */,
 				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
 				5A1E5E770000000000000048 /* ComparisonPromptEditorViews.swift in Sources */,
 				5A1E5E77000000000000004A /* ComparisonPickerViews.swift in Sources */,
@@ -1441,6 +1456,7 @@
 				24BBLD046 /* VerificationModelTests.swift in Sources */,
 				24BBLD047 /* ServeProbeTests.swift in Sources */,
 				97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */,
+				A31D0000000000000000000A /* DecisionComparisonTests.swift in Sources */,
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				5A1E5E770000000000000034 /* RouteHandoffsTests.swift in Sources */,

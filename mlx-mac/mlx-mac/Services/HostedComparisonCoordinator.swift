@@ -4,6 +4,8 @@ import Foundation
 @MainActor
 final class HostedComparisonCoordinator: ObservableObject {
     typealias Chat = @Sendable (ModelHost, String?, String, PromptEntry) async throws -> ProbeSample
+    typealias HostedDecide = @Sendable (ModelHost, String?, String, PromptEntry) async throws -> DecisionResult
+    typealias NativeDecide = @Sendable (String, Data) async throws -> DecisionResult
     @Published private(set) var records: [HostedComparisonRecord] = []
     @Published private(set) var activeRunID: UUID?
     @Published private(set) var progress: String?
@@ -20,21 +22,24 @@ final class HostedComparisonCoordinator: ObservableObject {
     private var reviewTask: Task<Void, Never>?
     private var detailGeneration = UUID()
     private let nativeProbe: ServeProbe?
+    private let nativeDecide: NativeDecide?
     private let readToken: (UUID) throws -> String?
     private let freshInventory: @Sendable (ModelHost, String?) async throws -> HostInventory
     private let hostedChat: Chat
+    private let hostedDecide: HostedDecide
     private let comfy: ComfyWorkflowRunner
     private let recoverCleanup: @Sendable (ComparisonServerReceipt) async throws -> Void
     private let memoryProbe: @Sendable () -> MemorySnapshot?
     private let now: @Sendable () -> Date
     private var task: Task<Void, Never>?
     private var pendingNativeServer: ComparisonServerReceipt?
-    /// Current local inventory and connection configuration are rechecked before each lane.
-    var validateTarget: (HostedComparisonTarget) throws -> Void = { _ in }
+    /// Current local inventory and connection configuration are rechecked for the run's mode before each lane.
+    var validateTarget: (HostedComparisonTarget, ComparisonMode) throws -> Void = { _, _ in }
 
     init(store: JSONStore<HostedComparisonRecord> = JSONStore(fileURL: JSONStore<HostedComparisonRecord>.defaultFileURL("hosted-comparison-runs.json")),
          outputStore: ComparisonOutputStore = ComparisonOutputStore(root: JSONStore<HostedComparisonRecord>.defaultFileURL("hosted-comparison-outputs")),
          nativeProbe: ServeProbe? = nil,
+         nativeDecide: NativeDecide? = nil,
          readToken: @escaping (UUID) throws -> String? = HostCredentialStore.token,
          freshInventory: @escaping @Sendable (ModelHost, String?) async throws -> HostInventory = { host, token in
              try await ModelHostClient().inventory(host: host, token: token)
@@ -43,6 +48,11 @@ final class HostedComparisonCoordinator: ObservableObject {
              let prober = OpenAIEndpointProber(session: HostHTTPClient.sharedSession, requestTimeout: 180, bearerToken: token)
              return try await prober.chat(baseURL: host.validatedURL(), model: model, prompt: prompt.text,
                                           maxTokens: prompt.maxTokens, tool: prompt.tool)
+         },
+         hostedDecide: @escaping HostedDecide = { host, token, model, prompt in
+             guard let questions = prompt.decisionQuestions else { throw ComparisonMediaError.missingQuestions }
+             return try await SystemOneHostAdapter.decide(HostReader(host: host, token: token, http: HostHTTPClient()),
+                                                          model: model, state: prompt.text, questions: questions)
          }, comfy: ComfyWorkflowRunner = ComfyWorkflowRunner(),
          recoverCleanup: @escaping @Sendable (ComparisonServerReceipt) async throws -> Void = { _ in
              throw HostedIntegrationError.invalid("Reopen with the original native runtime to recover its owned server.")
@@ -50,6 +60,7 @@ final class HostedComparisonCoordinator: ObservableObject {
          now: @escaping @Sendable () -> Date = { Date() },
          loadHistoryInBackground: Bool = false, indexedHistory: Bool = false) {
         self.history = RecordHistoryWorker(store: store, indexed: indexedHistory); self.outputStore = outputStore; self.nativeProbe = nativeProbe
+        self.nativeDecide = nativeDecide; self.hostedDecide = hostedDecide
         self.readToken = readToken; self.freshInventory = freshInventory; self.hostedChat = hostedChat
         self.comfy = comfy; self.recoverCleanup = recoverCleanup
         self.memoryProbe = memoryProbe; self.now = now
@@ -111,15 +122,21 @@ final class HostedComparisonCoordinator: ObservableObject {
             throw HostedIntegrationError.invalid(storageError ?? (isLoadingHistory ? "Loading saved comparisons…" : "Wait for the active comparison and its cleanup."))
         }
         let mode = promptSet.effectiveMode
-        guard mode == .chat || mode == .imageGeneration, (1...4).contains(targets.count),
+        guard [.chat, .imageGeneration, .classification].contains(mode), (1...4).contains(targets.count),
               Set(targets.map(\.id)).count == targets.count, (1...32).contains(promptSet.prompts.count),
               Set(promptSet.prompts.map(\.id)).count == promptSet.prompts.count,
               promptSet.prompts.allSatisfy({ !$0.id.isEmpty && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (1...4096).contains($0.maxTokens) }) else {
             throw HostedIntegrationError.invalid("Choose 1–4 distinct models and 1–32 valid prompts with at most 4096 output tokens each.")
         }
+        if mode == .classification {
+            guard promptSet.prompts.allSatisfy({ $0.decisionQuestions.map { DecisionQuestion.validationError($0) == nil } ?? false }) else {
+                throw HostedIntegrationError.invalid("Every classification prompt needs valid questions.")
+            }
+        }
         for target in targets {
-            try target.validate(mode: mode); try validateTarget(target)
-            if target.host == nil && nativeProbe == nil { throw HostedIntegrationError.invalid("The native comparison runtime is unavailable.") }
+            try target.validate(mode: mode); try validateTarget(target, mode)
+            let nativeUnavailable = mode == .classification ? nativeDecide == nil : nativeProbe == nil
+            if target.host == nil && nativeUnavailable { throw HostedIntegrationError.invalid("The native comparison runtime is unavailable.") }
         }
         if mode == .imageGeneration {
             guard let workflow else { throw HostedIntegrationError.invalid("Import and bind a ComfyUI API workflow first.") }
@@ -214,6 +231,7 @@ final class HostedComparisonCoordinator: ObservableObject {
 
     private func execute(_ id: UUID) async {
         guard let original = records.first(where: { $0.id == id }), let entries = original.run.promptEntries else { return }
+        let mode = original.run.effectiveMode
         var state: ComparisonRunState = .completed
         defer {
             if !cleanupPending { activeRunID = nil; progress = nil }
@@ -221,7 +239,7 @@ final class HostedComparisonCoordinator: ObservableObject {
         }
         do {
             for (lane, target) in original.targets.enumerated() {
-                try Task.checkCancellation(); try validateTarget(target)
+                try Task.checkCancellation(); try validateTarget(target, mode)
                 progress = "Measuring \(target.displayName)…"
                 var samples: [ComparisonSample] = []
                 var outcome: ProbeRunResult?
@@ -230,11 +248,14 @@ final class HostedComparisonCoordinator: ObservableObject {
                     if let host = target.host, let model = target.model {
                         let token = try readToken(host.id)
                         let fresh = try await freshInventory(host, token)
-                        try target.validate(inventory: fresh, mode: original.run.effectiveMode)
+                        try target.validate(inventory: fresh, mode: mode)
                         try await recordConditions(id, target: target, inventory: fresh)
                         for entry in entries {
                             try Task.checkCancellation()
-                            if let workflow = original.workflow {
+                            if mode == .classification {
+                                let decide = hostedDecide
+                                samples.append(try await decisionSample(entry) { try await decide(host, token, model.modelID, entry) })
+                            } else if let workflow = original.workflow {
                                 let result = try await comfy.run(host: host, token: token, modelID: model.name, prompt: entry.text,
                                     workflow: workflow, onSubmitted: { [weak self] remoteID, graph in
                                         guard let self else { throw CancellationError() }
@@ -247,6 +268,14 @@ final class HostedComparisonCoordinator: ObservableObject {
                                 let sample = try await hostedChat(host, token, model.modelID, entry)
                                 samples.append(ComparisonAggregation.sample(from: sample, promptID: entry.id))
                             }
+                        }
+                    } else if mode == .classification, let nativeDecide, let path = target.localPath {
+                        try await recordConditions(id, target: target, inventory: nil)
+                        for entry in entries {
+                            try Task.checkCancellation()
+                            guard let questions = entry.decisionQuestions else { throw ComparisonMediaError.missingQuestions }
+                            let body = try DecisionRequest.body(state: entry.text, questions: questions)
+                            samples.append(try await decisionSample(entry) { try await nativeDecide(path, body) })
                         }
                     } else if let nativeProbe, let path = target.localPath {
                         try await recordConditions(id, target: target, inventory: nil)
@@ -280,6 +309,7 @@ final class HostedComparisonCoordinator: ObservableObject {
                 let result = VariantResult(modelPath: target.id, modelSignature: target.signature, samples: samples,
                     aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
                     aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples), error: failure,
+                    aggregateMetric: mode == .classification ? DecisionScoring.pooledAccuracy(samples) : nil,
                     servingEvidence: outcome?.servingEvidence, startupSeconds: outcome?.startupSeconds, systemMemory: outcome?.systemMemory)
                 try await update(id) {
                     $0.run.results.append(result)
@@ -305,11 +335,27 @@ final class HostedComparisonCoordinator: ObservableObject {
         }
     }
 
+    /// One graded classification answer. Native lanes keep the engine's model time after loading;
+    /// hosted lanes record request time, including transport. A failed request fails only its prompt.
+    private func decisionSample(_ entry: PromptEntry, _ request: () async throws -> DecisionResult) async throws -> ComparisonSample {
+        let clock = ContinuousClock(), started = clock.now
+        do {
+            let result = try await request()
+            let elapsed = started.duration(to: clock.now).components
+            var output = ComparisonMediaScoring.decisionOutput(result)
+            output.seconds = result.seconds ?? Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+            return ComparisonMediaScoring.sample(mode: .classification, entry: entry, output: output, artifact: nil)
+        } catch {
+            if Task.isCancelled || error is CancellationError { throw CancellationError() }
+            return ComparisonMediaScoring.failedSample(promptID: entry.id, message: AppHost.render(error))
+        }
+    }
+
     private func recordConditions(_ id: UUID, target: HostedComparisonTarget, inventory: HostInventory?) async throws {
         let probe = memoryProbe, clock = now
         let (reading, capturedAt) = await Task.detached(priority: .utility) { (probe(), clock()) }.value
         try Task.checkCancellation()
-        try validateTarget(target)
+        try validateTarget(target, records.first { $0.id == id }?.run.effectiveMode ?? .chat)
         let validReading = reading.flatMap { $0.totalBytes > 0 && (0...$0.totalBytes).contains($0.availableBytes) ? $0 : nil }
         let conditions = HostedLaneConditions(targetID: target.id, memoryCapturedAt: capturedAt, systemMemory: validReading,
             reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: inventory?.capturedAt, activity: inventory?.activity,

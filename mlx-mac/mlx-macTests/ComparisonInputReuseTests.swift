@@ -628,7 +628,9 @@ extension ComparisonMediaTests {
                 tool: mode == .chat ? tool : nil, inputKind: mode.inputKind,
                 inputPath: mode.inputKind == nil ? nil : input.path,
                 expectedKeywords: ["red", "bird"],
-                media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12))
+                media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12),
+                decisionQuestions: mode == .classification
+                    ? ComparisonMediaFixtures.supportRoutingSet.prompts[0].decisionQuestions : nil)
             run.promptEntries = [entry]
             let original = run
             var setup = try ComparisonRunSetup(run: run)

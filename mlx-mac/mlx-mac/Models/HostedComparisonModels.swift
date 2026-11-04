@@ -39,6 +39,10 @@ struct HostedComparisonTarget: Codable, Equatable, Identifiable, Sendable {
                 guard host.provider.adapter.runsImageWorkflows, model.category == "checkpoints" else {
                     throw HostedIntegrationError.invalid("Image workflow comparisons require ComfyUI checkpoints.")
                 }
+            } else if mode == .classification {
+                guard host.provider == .systemOne, model.category == SystemOneHostAdapter.category else {
+                    throw HostedIntegrationError.invalid("Classification comparisons require System One decision models.")
+                }
             } else {
                 guard mode == .chat, !host.provider.adapter.runsImageWorkflows,
                       model.category != "embedding", model.category != "embeddings", model.category != "decision",
@@ -48,9 +52,9 @@ struct HostedComparisonTarget: Codable, Equatable, Identifiable, Sendable {
                 }
             }
         } else {
-            guard mode == .chat, host == nil, model == nil, let localPath, localPath.hasPrefix("/"),
+            guard mode == .chat || mode == .classification, host == nil, model == nil, let localPath, localPath.hasPrefix("/"),
                   !localPath.unicodeScalars.contains(where: { $0.value < 32 }) else {
-                throw HostedIntegrationError.invalid("Select a ready local chat model.")
+                throw HostedIntegrationError.invalid(mode == .classification ? "Select a ready local classification model." : "Select a ready local chat model.")
             }
         }
     }

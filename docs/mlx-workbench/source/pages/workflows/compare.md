@@ -8,7 +8,7 @@ When the selected mode has no results, setup comes first, followed by compact hi
 
 The **Compare source** picker keeps **Local models** and **Hosted & mixed** setups separate. Switching preserves the existing local setup and results. Finish or cancel an active comparison before changing source.
 
-For hosted comparisons, first add and refresh connections in [Library's Hosted models source](library.md#hosted-models). Choose **Hosted & mixed**, add up to four models and select **Text** or **ComfyUI images**. Selecting models never starts inference.
+For hosted comparisons, first add and refresh connections in [Library's Hosted models source](library.md#hosted-models). Choose **Hosted & mixed**, add up to four models and select **Text**, **Classification** or **ComfyUI images**. Selecting models never starts inference.
 
 ### Text
 
@@ -25,6 +25,12 @@ Results preserve full outputs, requested prompts and limits, selected source sna
 **Recorded sources and settings → Conditions before each lane** retains estimated system headroom, the reserve used for model-fit estimates, host activity, reported loaded models, unknown residency and inventory warnings. Memory, inventory and activity keep separate capture times. Native lanes record system headroom only; their existing sampled memory results remain separate. The host observations reuse the inventory read before that lane, without additional polling or automatic unloading.
 
 Activity, other loaded models and headroom below the recorded reserve can produce a timing caveat. These snapshots do not establish the cause of a timing difference, continuous host activity or per-model GPU allocation. Missing readings remain unknown and do not block inference. Older comparisons show **Not recorded**; cancelled or partial runs retain observations only for lanes reached. Conditions and fresh source identity must be saved before a lane can start.
+
+### Hosted classification
+
+Classification comparisons accept decision models from **System One** connections, such as Kev served by `kev.serve`, and ready native classification models, such as Laya, in the same run. Choose a classification prompt set, then **Run comparison**. Every lane receives the same System One request: hosted lanes through the host's `/v1/systemone` endpoint, native lanes through the engine's `convert decide`. Before each hosted lane, the host's model list is read again; a model no longer listed blocks that lane.
+
+Lanes report the share of expected answers they matched. Hosted time is the request time, including transport; native time is the engine's model time after loading. Each prompt that fails records its error, and the lane continues with the next prompt. Answers are graded as described in [Classification](#classification) and do not enter local recommendations.
 
 ### ComfyUI images
 
@@ -45,7 +51,21 @@ The accepted prompt ID and submitted graph are saved before observing that job's
 3. Choose a prompt set.
 4. **Run comparison**. A setup message names whatever blocks the run: a pending prompt-set save, a missing or empty prompt set, no model selected, or the first unavailable slot.
 
-Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate`, `video` or `mesh` commands.
+Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate`, `video`, `mesh` or `decide` commands.
+
+### Classification
+
+Choose **Classification** for ready classification models, such as Laya converted by the engine's `mlx-embeddings` backend. To include a System One server such as Kev, use [Hosted & mixed](#hosted-classification).
+
+Each entry is a **State**, the text to classify, with up to 32 typed questions:
+
+- **Choice**: two or more labels in order, each with an optional description. Expect one label.
+- **Score**: two or more level descriptions, lowest first. Expect one level.
+- **True or false**: optional descriptions of each outcome. Expect true or false.
+
+Leave **Expected answer** at **Not scored** to record a question's answer without grading it. Start with the built-in **Support routing** set: six support tickets with department and refund expectations, and urgency where the ticket states it.
+
+A choice answer is the model's chosen label. A score answer is the most likely level; the reported expected level is shown beside it. A true-or-false answer is true when its reported probability is 0.5 or higher. The lane metric pools every scored question across prompts. Each answer shows its probability, and wrong answers show the probability given to the expected one. Probabilities are the models' reported values; Compare never recalibrates them. Each lane keeps the returned answers as JSON.
 
 ### 3D generation
 
@@ -82,6 +102,7 @@ Cancelled runs and runs interrupted by an app restart remain explicit in history
 | Image generation | Image generation | Prompt, size, steps, seed | Image | Seconds per step |
 | Video generation | Video generation | Prompt, size, frames, frame rate, steps, seed | Video | Seconds per frame |
 | 3D generation | 3D generation | Image, resolution, steps, seed | GLB mesh | Generation time |
+| Classification | Classification | State, typed questions, expected answers | Graded answers with probabilities | Answers correct |
 
 Prompts can carry an expected-words check (all must appear, case-insensitive; `a|b` accepts either). Speech to text scores against a reference transcript. Built-in media inputs are generated at run time: images and video with CoreGraphics and AVFoundation, speech with `say`. The repository holds no binary fixtures.
 

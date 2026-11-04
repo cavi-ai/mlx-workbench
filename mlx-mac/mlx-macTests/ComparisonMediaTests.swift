@@ -205,6 +205,22 @@ actor StubMediaRunner: ComparisonMediaRunner {
             return MediaRunOutput(seconds: 18, frames: 9, secondsPerFrame: 2, pixelStd: 50)
         case .meshGeneration:
             return MediaRunOutput(seconds: 12)
+        case .classification:
+            // Answers each question with its expected answer, or its first option when unscored.
+            var answers: [String: DecisionAnswer] = [:]
+            for question in request.entry.decisionQuestions ?? [] {
+                switch question.kind {
+                case .choice:
+                    let label = question.expected ?? question.options[0].label
+                    answers[question.name] = DecisionAnswer(type: "choice", choice: label, probabilities: [label: 1])
+                case .score:
+                    let level = question.expected ?? "0"
+                    answers[question.name] = DecisionAnswer(type: "score", choice: nil, probabilities: [level: 1], score: Double(level))
+                case .noul:
+                    answers[question.name] = DecisionAnswer(type: "noul", choice: nil, probabilities: nil, noul: question.expected == "false" ? 0 : 1)
+                }
+            }
+            return ComparisonMediaScoring.decisionOutput(DecisionResult(answers: answers, seconds: 0.05, loadSeconds: 0.3))
         }
     }
 }
@@ -656,7 +672,11 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(ComparisonMode.videoUnderstanding.inputKind, .video)
         XCTAssertEqual(ComparisonMode.speechToText.inputKind, .audio)
         XCTAssertNil(ComparisonMode.imageGeneration.inputKind)
-        XCTAssertEqual(ComparisonMode.allCases.count, 9)
+        XCTAssertEqual(ComparisonMode.allCases.count, 10)
+        XCTAssertEqual(ComparisonMode.classification.acceptedTaskTypes, [.classification])
+        XCTAssertEqual(ComparisonMode.classification.outputKind, .text)
+        XCTAssertEqual(ComparisonMode.classification.primaryMetric, .decisionAccuracy)
+        XCTAssertNil(ComparisonMode.classification.inputKind)
         XCTAssertEqual(ComparisonMode.musicGeneration.acceptedTaskTypes, [.musicGeneration])
         XCTAssertEqual(ComparisonMode.musicGeneration.outputKind, .audio)
         XCTAssertEqual(ComparisonMode.musicGeneration.primaryMetric, .realTimeFactor)
@@ -1138,7 +1158,9 @@ final class ComparisonMediaTests: XCTestCase {
             let entry = PromptEntry(id: "original", text: "Reference", maxTokens: 77,
                 tool: BuiltinPromptSets.toolCalling.prompts[0].tool, inputKind: mode.inputKind,
                 builtinInput: mode.inputKind == nil ? nil : "fixture", expectedKeywords: ["red"],
-                media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12))
+                media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12),
+                decisionQuestions: mode == .classification
+                    ? ComparisonMediaFixtures.supportRoutingSet.prompts[0].decisionQuestions : nil)
             let set = PromptSet(id: "set", name: "Suite", useCase: .coding, prompts: [entry], origin: .userCreated, mode: mode)
             var draft = try PromptSetDraft(set: set)
             draft.prompts[0].text = "Edited reference"

@@ -257,7 +257,7 @@ final class OverviewPresentationTests: XCTestCase {
                                  (.textToSpeech, [.discovered, .prepared, .measured]),
                                  (.speechToText, [.discovered, .prepared, .verified, .measured]),
                                  (.videoGeneration, [.discovered, .prepared, .measured]),
-                                 (.classification, [.discovered, .prepared, .verified]),
+                                 (.classification, [.discovered, .prepared, .verified, .measured]),
                                  (.embedding, [.discovered, .prepared]),
                                  (.speculativeDraft, [.discovered, .prepared])] {
             let model = makeModel(bytes: 1000, parameters: nil, type: type)

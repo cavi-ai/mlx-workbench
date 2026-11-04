@@ -369,6 +369,7 @@ private struct ComparisonPromptCard: View {
         case .speechToText: "Reference transcript (optional)"
         case .textToSpeech: "Text to speak"
         case .meshGeneration: "Label (optional)"
+        case .classification: "State"
         default: "Prompt"
         }
     }
@@ -450,6 +451,9 @@ private struct ComparisonPromptCard: View {
                     parameter("Steps", placeholder: "Default: 50", value: $prompt.steps)
                     parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
                 }
+            }
+            if mode == .classification {
+                DecisionQuestionsEditor(questions: $prompt.questions, promptNumber: number)
             }
             if mode == .videoGeneration {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.md) {

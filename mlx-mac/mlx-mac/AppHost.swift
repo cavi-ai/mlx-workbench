@@ -189,6 +189,7 @@ class AppHost {
         self.modelHosts = hosts
         self.hostedComparison = hostedComparison ?? HostedComparisonCoordinator(
             nativeProbe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
+            nativeDecide: { path, body in try await api.decide(path: path, requestBody: body) },
             readToken: { try hosts.token(for: $0) },
             recoverCleanup: { try await api.recoverComparisonServer($0) },
             loadHistoryInBackground: true, indexedHistory: true)
@@ -268,7 +269,7 @@ class AppHost {
             guard let self else { return true }
             return self.hostedComparison.activeRunID != nil || self.comparison.activeRunID != nil
         }
-        self.hostedComparison.validateTarget = { [weak self] target in
+        self.hostedComparison.validateTarget = { [weak self] target, mode in
             guard let self, self.comparison.activeRunID == nil, !self.modelHosts.resourceBusy else {
                 throw HostedIntegrationError.invalid("Finish the active comparison or host memory operation before starting hosted lanes.")
             }
@@ -279,7 +280,7 @@ class AppHost {
             } else if let path = target.localPath {
                 guard let model = self.librarySnapshot?.models.first(where: { $0.item.path == path }),
                       model.item.signature == target.localSignature,
-                      ComparePresentation.candidates(from: [model]).count == 1 else {
+                      ComparisonViewLogic.candidates(from: [model], mode: mode).count == 1 else {
                     throw HostedIntegrationError.invalid("The local model changed or is no longer ready. Scan and select it again.")
                 }
             }

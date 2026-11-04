@@ -4,8 +4,8 @@ import Foundation
 //
 // Compare runs chat prompts through the serve probe. The other modes run one
 // agent task per variant and prompt (`convert describe|transcribe|speak|
-// generate|video`) and keep the output next to the metrics, so the operator
-// can read, look at, and listen to what each variant produced.
+// generate|video|mesh|decide`) and keep the output next to the metrics, so the
+// operator can read, look at, and listen to what each variant produced.
 
 enum ComparisonMediaKind: String, Codable, Sendable {
     case image
@@ -52,6 +52,7 @@ enum ComparisonOutputKind: String, Sendable {
 
 /// The metric a mode ranks and charts.
 enum ComparisonMetric: String, Sendable {
+    case decisionAccuracy
     case generationSeconds
     case tokensPerSecond
     case generationTokensPerSecond
@@ -61,6 +62,7 @@ enum ComparisonMetric: String, Sendable {
 
     var title: String {
         switch self {
+        case .decisionAccuracy: return "Answers correct"
         case .generationSeconds: return "Generation time (s)"
         case .tokensPerSecond: return "Decode speed (tok/s)"
         case .generationTokensPerSecond: return "Generation speed (tok/s)"
@@ -72,13 +74,14 @@ enum ComparisonMetric: String, Sendable {
 
     var higherIsBetter: Bool {
         switch self {
-        case .tokensPerSecond, .generationTokensPerSecond: return true
+        case .tokensPerSecond, .generationTokensPerSecond, .decisionAccuracy: return true
         case .realTimeFactor, .secondsPerStep, .secondsPerFrame, .generationSeconds: return false
         }
     }
 
     func value(of sample: ComparisonSample) -> Double? {
         switch self {
+        case .decisionAccuracy: return sample.decision?.accuracy
         case .generationSeconds: return sample.seconds
         case .tokensPerSecond: return sample.tokensPerSecond
         case .generationTokensPerSecond: return sample.generationTokensPerSecond
@@ -90,6 +93,7 @@ enum ComparisonMetric: String, Sendable {
 
     func format(_ value: Double) -> String {
         switch self {
+        case .decisionAccuracy: return String(format: "%.0f%% correct", value * 100)
         case .generationSeconds: return String(format: "%.2f s", value)
         case .tokensPerSecond, .generationTokensPerSecond: return String(format: "%.1f tok/s", value)
         case .realTimeFactor: return String(format: "RTF %.2f", value)
@@ -109,6 +113,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case imageGeneration
     case videoGeneration
     case meshGeneration
+    case classification
 
     var id: String { rawValue }
 
@@ -123,6 +128,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .imageGeneration: return "Image generation"
         case .videoGeneration: return "Video generation"
         case .meshGeneration: return "3D generation"
+        case .classification: return "Classification"
         }
     }
 
@@ -138,6 +144,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .imageGeneration: return [.imageGeneration]
         case .videoGeneration: return [.videoGeneration]
         case .meshGeneration: return [.meshGeneration]
+        case .classification: return [.classification]
         }
     }
 
@@ -161,13 +168,13 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .vision, .meshGeneration: return .image
         case .videoUnderstanding: return .video
         case .speechToText: return .audio
-        case .chat, .textToSpeech, .musicGeneration, .imageGeneration, .videoGeneration: return nil
+        case .chat, .textToSpeech, .musicGeneration, .imageGeneration, .videoGeneration, .classification: return nil
         }
     }
 
     var outputKind: ComparisonOutputKind {
         switch self {
-        case .chat, .vision, .videoUnderstanding, .speechToText: return .text
+        case .chat, .vision, .videoUnderstanding, .speechToText, .classification: return .text
         case .textToSpeech, .musicGeneration: return .audio
         case .imageGeneration: return .image
         case .videoGeneration: return .video
@@ -175,9 +182,11 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The value this mode ranks a result by; only positive, finite values count.
+    /// The value this mode ranks a result by; only positive, finite values count,
+    /// except accuracy, where no correct answers is a measured zero.
     func metricValue(of result: VariantResult) -> Double? {
         let value = self == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric
+        if self == .classification { return value.flatMap { (0...1).contains($0) ? $0 : nil } }
         return value.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
     }
 
@@ -189,6 +198,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .imageGeneration: return .secondsPerStep
         case .videoGeneration: return .secondsPerFrame
         case .meshGeneration: return .generationSeconds
+        case .classification: return .decisionAccuracy
         }
     }
 }

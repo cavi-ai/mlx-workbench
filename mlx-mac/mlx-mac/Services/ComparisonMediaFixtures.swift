@@ -165,8 +165,43 @@ enum ComparisonMediaFixtures {
         origin: .builtin, mode: .meshGeneration
     )
 
+    /// Support tickets with unambiguous routing; urgency is expected only where the ticket states it.
+    static let supportRoutingSet: PromptSet = {
+        func questions(department: String, refund: Bool, urgency: Int?) -> [DecisionQuestion] {
+            [
+                DecisionQuestion(name: "department", kind: .choice, instructions: "Which team should handle this ticket?",
+                                 options: [.init(label: "billing", detail: "payments, invoices and refunds"),
+                                           .init(label: "technical", detail: "bugs, outages and errors"),
+                                           .init(label: "sales", detail: "new purchases, plans and upgrades"),
+                                           .init(label: "account", detail: "sign-in, passwords and profile access")],
+                                 expected: department),
+                DecisionQuestion(name: "urgency", kind: .score, instructions: "How urgent is this ticket?",
+                                 options: [.init(label: "not urgent"), .init(label: "somewhat urgent"), .init(label: "very urgent")],
+                                 expected: urgency.map(String.init)),
+                DecisionQuestion(name: "refund", kind: .noul, instructions: "Is the customer asking for money back?",
+                                 trueText: "the customer asks for a refund", falseText: "the customer does not ask for a refund",
+                                 expected: refund ? "true" : "false"),
+            ]
+        }
+        let tickets: [(id: String, state: String, department: String, refund: Bool, urgency: Int?)] = [
+            ("routing-double-charge", "I was charged twice for my subscription this month. Please refund the duplicate charge.", "billing", true, nil),
+            ("routing-outage", "Our whole team is locked out of the dashboard and every page returns a 500 error since 9am. We are losing orders every minute.", "technical", false, 2),
+            ("routing-upgrade", "Whenever you get a chance, could you tell me whether the annual plan includes priority support? We may upgrade next quarter.", "sales", false, 0),
+            ("routing-password", "I forgot my password and the reset email never arrives, so I cannot sign in to my account.", "account", false, nil),
+            ("routing-crash", "The desktop app crashes every time I export a PDF since the latest update.", "technical", false, nil),
+            ("routing-cancelled", "I cancelled last week but was still billed $49 today. I want that money back.", "billing", true, nil),
+        ]
+        return PromptSet(
+            id: "builtin-classification-routing", name: "Support routing", useCase: nil,
+            prompts: tickets.map { PromptEntry(id: $0.id, text: $0.state,
+                                               decisionQuestions: questions(department: $0.department, refund: $0.refund, urgency: $0.urgency)) },
+            origin: .builtin, mode: .classification
+        )
+    }()
+
     static let all: [PromptSet] = [
         visionSet, videoUnderstandingSet, speechToTextSet, textToSpeechSet, musicGenerationSet, imageGenerationSet, videoGenerationSet, meshGenerationSet,
+        supportRoutingSet,
     ]
 
     // MARK: Generators

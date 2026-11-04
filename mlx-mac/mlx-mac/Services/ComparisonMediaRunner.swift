@@ -33,6 +33,8 @@ struct MediaRunOutput: Sendable, Equatable {
     var frames: Int?
     var secondsPerFrame: Double?
     var pixelStd: Double?
+    /// Classification: the returned answers, graded by `ComparisonMediaScoring`.
+    var decision: DecisionResult?
 
     init(
         text: String? = nil,
@@ -73,10 +75,12 @@ enum ComparisonMediaError: LocalizedError, Equatable {
     case missingOutputPath
     case outputNotWritten
     case unavailable
+    case missingQuestions
 
     var errorDescription: String? {
         switch self {
         case .notAMediaMode: return "Chat comparisons run through the serve probe, not the media runner."
+        case .missingQuestions: return "This prompt has no classification questions."
         case .missingInput: return "This prompt needs an input file."
         case .missingOutputPath: return "No output file was prepared for this prompt."
         case .outputNotWritten: return "The model reported success but wrote no file."
@@ -85,8 +89,8 @@ enum ComparisonMediaError: LocalizedError, Equatable {
     }
 }
 
-/// Calls the agent: `convert describe|transcribe|speak|generate|video`. Each call hops onto the
-/// API actor, so nothing runs on the main actor.
+/// Calls the agent: `convert describe|transcribe|speak|music|generate|video|mesh|decide`. Each call
+/// hops onto the API actor, so nothing runs on the main actor.
 struct LiveComparisonMediaRunner: ComparisonMediaRunner {
     let api: WorkbenchAPI
 
@@ -158,6 +162,11 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
             return MediaRunOutput(text: summary,
                                   seconds: result.seconds, loadSeconds: result.loadSeconds,
                                   peakMemoryGB: result.peakMemoryGB)
+        case .classification:
+            guard let questions = entry.decisionQuestions else { throw ComparisonMediaError.missingQuestions }
+            let result = try await api.decide(path: request.modelPath,
+                                              requestBody: try DecisionRequest.body(state: entry.text, questions: questions))
+            return ComparisonMediaScoring.decisionOutput(result)
         }
     }
 }
@@ -207,9 +216,12 @@ enum ComparisonMediaScoring {
             return SpeechCanary.wordErrorRate(reference: entry.text, hypothesis: text)
         }()
         let describes = mode == .vision || mode == .videoUnderstanding
-        return ComparisonSample(
+        let decision = mode == .classification
+            ? output.decision.map { DecisionScoring.grade(entry.decisionQuestions ?? [], answers: $0.answers) } : nil
+        let excerpt = decision?.summary(questions: entry.decisionQuestions ?? []) ?? text
+        var sample = ComparisonSample(
             promptID: entry.id,
-            outputExcerpt: String(text.prefix(280)),
+            outputExcerpt: String(excerpt.prefix(280)),
             tokensPerSecond: nil,
             timeToFirstTokenSeconds: nil,
             error: nil,
@@ -228,6 +240,18 @@ enum ComparisonMediaScoring {
             secondsPerFrame: secondsPerFrame,
             pixelStd: output.pixelStd
         )
+        sample.decision = decision
+        return sample
+    }
+
+    /// The recorded text of a classification answer is the returned answers as JSON.
+    static func decisionOutput(_ result: DecisionResult) -> MediaRunOutput {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var output = MediaRunOutput(text: (try? encoder.encode(result.answers)).flatMap { String(data: $0, encoding: .utf8) },
+                                    seconds: result.seconds, loadSeconds: result.loadSeconds)
+        output.decision = result
+        return output
     }
 
     static func failedSample(promptID: String, message: String) -> ComparisonSample {
@@ -238,7 +262,9 @@ enum ComparisonMediaScoring {
     }
 
     /// Median of the mode's primary metric over the samples that measured it.
+    /// Classification pools every scored question instead, so each answer counts once.
     static func aggregateMetric(_ samples: [ComparisonSample], mode: ComparisonMode) -> Double? {
+        if mode == .classification { return DecisionScoring.pooledAccuracy(samples) }
         let values = samples.filter { $0.error == nil }.compactMap { mode.primaryMetric.value(of: $0) }.sorted()
         guard !values.isEmpty else { return nil }
         let mid = values.count / 2

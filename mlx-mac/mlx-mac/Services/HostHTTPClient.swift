@@ -39,10 +39,11 @@ struct HostHTTPClient: Sendable {
 
     func request(
         host: ModelHost, path: String, method: String = "GET", body: Data? = nil,
-        query: [URLQueryItem] = [], token: String? = nil, maximumBytes: Int = 8_388_608
+        query: [URLQueryItem] = [], token: String? = nil, maximumBytes: Int = 8_388_608,
+        timeout: TimeInterval = 30
     ) async throws -> Data {
         let baseURL = try host.validatedURL()
-        guard maximumBytes > 0, !path.hasPrefix("//"), !path.contains(":"),
+        guard maximumBytes > 0, (1...120).contains(timeout), !path.hasPrefix("//"), !path.contains(":"),
               !path.contains("?"), !path.contains("#"),
               !path.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }),
               ["GET", "POST", "DELETE"].contains(method),
@@ -57,7 +58,7 @@ struct HostHTTPClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token, !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
