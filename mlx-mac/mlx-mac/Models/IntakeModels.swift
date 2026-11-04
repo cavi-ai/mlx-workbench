@@ -107,7 +107,7 @@ struct IntakeResolution: Codable, Equatable {
     let bytes: Int64
     /// What a snapshot download takes (a port's files, or the repo less ignored formats); nil from older agents.
     let downloadBytes: Int64?
-    /// Converted size by bit width ("4", "8") from the weight headers; nil when unknown.
+    /// Converted size by bit width ("4", "5", "6", "8") from the weight headers; nil when unknown.
     let estimatedOutputBytes: [String: Int64]?
     /// Bit widths a conversion keeps accurate (a port can allow fewer than 4 and 8); nil from older agents.
     let qBits: [Int]?

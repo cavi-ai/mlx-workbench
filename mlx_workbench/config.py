@@ -24,7 +24,7 @@ _STRING_FIELDS = ("output_dir", "mlx_agent_path", "quarantine_dir", "host")
 _INT_FIELDS = ("port", "q_bits")
 _BOOL_FIELDS = ("signatures",)
 MAX_ROOTS = 32
-Q_BITS_CHOICES = (4, 8)
+Q_BITS_CHOICES = (4, 5, 6, 8)
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 # Keys this file manages. Anything else in the file (e.g. the native app's

@@ -69,16 +69,16 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable, Sendable {
     var sourceRepo: String? = nil
     /// Optional converter backend id for repo conversions (nil = mlx-lm).
     var backend: String? = nil
-    /// Intake's converted-size estimate by bit width ("4", "8"), for progress.
+    /// Intake's converted-size estimate by bit width ("4", "5", "6", "8"), for progress.
     var estimatedOutputBytes: [String: Int64]? = nil
     /// Intake's model type; selects a backend port's own converter (`--model-type`).
     var modelType: String? = nil
     /// The repository folder holding the checkpoint (`--subfolder`); nil for the root.
     var subfolder: String? = nil
-    /// Bit widths intake allows for this source; nil means 4 and 8.
     var localSourcePath: String? = nil
     /// Consent captured by Confirm conversion; old records retain their source.
     var reclaimSourceAfterVerification: Bool? = nil
+    /// Bit widths intake or the GGUF scan allows for this source; nil means 4 and 8.
     var allowedBits: [Int]? = nil
 
     var persistenceIdentifier: String {

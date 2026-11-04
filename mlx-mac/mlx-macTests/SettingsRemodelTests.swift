@@ -868,7 +868,7 @@ final class SettingsSourceContractTests: XCTestCase {
             "Check for updates", "Update to \\(offer.target)", "Relaunch", "Rebuild & relaunch", "Update log",
             "uncommitted change(s) in the checkout — commit or discard them before updating.",
             "This app is not running from a repository checkout, so in-app updates are unavailable. Install updates by replacing the app with a newly built one.",
-            "Default bits", "4-bit", "8-bit", "Sign converted outputs", "Verify conversions (canary quality gate)",
+            "Default bits", "ForEach(Config.Q_BITS_CHOICES.sorted(), id: \\.self)", "Text(\"\\(bits)-bit\")", "Sign converted outputs", "Verify conversions (canary quality gate)",
             "Watch & regression alerts", "Unsaved changes", "All changes saved", "Saved to \\(appHost.configPath)",
             "Settings could not be saved.", "Discard", "Save", ".keyboardShortcut(.defaultAction)",
             "Enter a number between 0 and 16.", "Enter an integer between 2 and 365.", "Enter an integer between 64 and 4096.",

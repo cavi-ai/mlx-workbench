@@ -244,6 +244,53 @@ final class DecisionComparisonTests: XCTestCase {
         XCTAssertNotNil(record.run.results[0].samples.first?.seconds)
     }
 
+    private func lane(_ path: String, signature: String? = nil, grades: [[Bool?]]) -> VariantResult {
+        let samples = grades.enumerated().map { index, row -> ComparisonSample in
+            var sample = ComparisonSample(promptID: "p\(index)", outputExcerpt: "", tokensPerSecond: nil, timeToFirstTokenSeconds: nil, error: nil)
+            sample.decision = DecisionEvidence(grades: row.map {
+                DecisionGrade(question: "q", kind: .choice, answer: "a", probability: nil, score: nil, expected: $0 == nil ? nil : "a",
+                              expectedProbability: nil, correct: $0)
+            })
+            return sample
+        }
+        return VariantResult(modelPath: path, modelSignature: signature, samples: samples, aggregateTokensPerSecond: nil,
+                             aggregateTTFTSeconds: nil, error: nil, aggregateMetric: DecisionScoring.pooledAccuracy(samples))
+    }
+
+    private func classificationRun(_ results: [VariantResult], at seconds: TimeInterval, state: ComparisonRunState = .completed) -> ComparisonRun {
+        ComparisonRun(id: UUID(), promptSetID: "builtin-classification-routing", promptSetName: "Support routing", useCase: nil,
+                      variants: results.map(\.modelPath), results: results, startedAt: Date(timeIntervalSince1970: seconds),
+                      finishedAt: Date(timeIntervalSince1970: seconds + 60), state: state, mode: .classification, promptEntries: nil)
+    }
+
+    func testLibraryRecordsEachClassificationRunBesideTheOtherLanes() throws {
+        let laya = "/m/laya-MLX-8bit"
+        let local = classificationRun([lane(laya, signature: "sig", grades: [[true, nil, true], [false, true, true]]),
+                                       lane("/m/laya-MLX-6bit", grades: [[true, nil, true], [true, true, true]])], at: 100)
+        let stale = classificationRun([lane(laya, signature: "old", grades: [[true]])], at: 300)
+        let unfinished = classificationRun([lane(laya, signature: "sig", grades: [[true]])], at: 400, state: .cancelled)
+        let host = ModelHost(name: "Kev", provider: .systemOne, baseURL: "http://127.0.0.1:8009")
+        let kev = HostedComparisonTarget(host: host, model: HostedModel(hostID: host.id, modelID: "kev-latest", name: "kev-latest"),
+                                         capturedAt: Date(timeIntervalSince1970: 0))
+        let native = try JSONDecoder().decode(HostedComparisonTarget.self, from: Data("""
+            {"localPath":"\(laya)","localSignature":"sig","displayName":"laya-MLX-8bit · MLX Workbench","capturedAt":0}
+            """.utf8))
+        let hostedRun = classificationRun([lane(native.id, grades: [[true, nil, true], [false, true, false]]),
+                                           lane(kev.id, grades: [[true, nil, true], [true, true, true]])], at: 200)
+        let hosted = HostedComparisonRecord(run: hostedRun, targets: [native, kev], temperature: 0, workflow: nil, submissions: [])
+
+        let records = ClassificationResultRecord.records(modelPaths: [laya], signature: "sig", localRuns: [local, stale, unfinished],
+                                                         hostedRecords: [hosted])
+
+        XCTAssertEqual(records.map(\.runID), [hosted.id, local.id], "newest first; other signatures and unfinished runs are left out")
+        XCTAssertEqual(records[0].model, .init(name: "laya-MLX-8bit · MLX Workbench", accuracy: 0.6, correct: 3, scored: 5))
+        XCTAssertEqual(records[0].others, [.init(name: "kev-latest · Kev", accuracy: 1, correct: 5, scored: 5)])
+        XCTAssertTrue(records[0].hosted)
+        XCTAssertEqual(records[1].model, .init(name: "laya-MLX-8bit", accuracy: 0.8, correct: 4, scored: 5))
+        XCTAssertEqual(records[1].others.map(\.name), ["laya-MLX-6bit"])
+        XCTAssertEqual(ClassificationResultsList.score(records[0].model), "60% correct (3 of 5)")
+    }
+
     func testClassificationDraftNeedsAStateAndValidQuestionsBeforeItSaves() throws {
         var draft = PromptSetDraft(mode: .classification)
         draft.name = "Tickets"

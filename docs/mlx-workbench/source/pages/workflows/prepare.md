@@ -5,7 +5,7 @@
 ## Preview a conversion
 
 1. Choose a source: from Library (**Convert to MLX…** for weights that need converting, **Prepare to run** for other models that are not ready), LM Studio, the Add from Hugging Face window, or **Choose in Library**.
-2. Pick a quantization width. Each tile shows the output size and fit on this Mac above a Source-to-Ready pipeline track; a Hugging Face source uses the task the intake window labelled. The default width comes from **Settings → Conversion defaults**.
+2. Pick a quantization width: 4, 5, 6 or 8 bits, as far as the model's converter supports them. MLX-LM, MLX-VLM, MLX-Audio and MLX-Embeddings models and GGUF files offer all four; video, image and music conversions, the Qwen3.5 and DSpark GGUF ports and Audio8 offer 4 and 8; Laya offers 6 and 8; TripoSG offers 8 and unquantized. A source the engine has not reported widths for, such as a conversion restored from older history, offers 4 and 8. Each tile shows the output size and fit on this Mac above a Source-to-Ready pipeline track; a Hugging Face source uses the task the intake window labelled. The default width comes from **Settings → Conversion defaults**; a model that does not offer it starts at its widest width.
 3. **Preview conversion** asks the engine for a plan: the exact command, output path and a preview hash. Choosing a different width re-targets the destination.
 4. Choose whether to move the original source to the Trash after verification. The choice you see is the one recorded. A source outside the model folders in **Settings** cannot be moved, so the choice is off and says the original stays.
 5. **Confirm conversion** runs exactly the reviewed plan.

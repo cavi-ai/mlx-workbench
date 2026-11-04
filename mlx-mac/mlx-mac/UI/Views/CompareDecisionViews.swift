@@ -60,6 +60,52 @@ struct DecisionAnswersView: View {
     }
 }
 
+/// Recorded classification runs for one model, newest first: its accuracy beside every other lane's.
+struct ClassificationResultsList: View {
+    let records: [ClassificationResultRecord]
+    let onReview: (UUID) -> Void
+    static let shown = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Classification results").font(WorkbenchTypography.label)
+            ForEach(records.prefix(Self.shown)) { record in
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+                        Text(record.promptSetName).font(WorkbenchTypography.emphasis)
+                        Text(Self.when(record)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        Spacer(minLength: 0)
+                        if !record.hosted {
+                            Button("Review") { onReview(record.runID) }.controlSize(.small)
+                                .accessibilityLabel("Review \(record.promptSetName) in Compare")
+                        }
+                    }
+                    Text("This model: \(Self.score(record.model))").font(WorkbenchTypography.secondary.monospacedDigit())
+                    ForEach(Array(record.others.enumerated()), id: \.offset) { _, other in
+                        Text("\(other.name): \(Self.score(other))")
+                            .font(WorkbenchTypography.secondary.monospacedDigit()).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+            if records.count > Self.shown {
+                Text("\(records.count - Self.shown) older runs are in Compare history.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+    }
+
+    static func when(_ record: ClassificationResultRecord) -> String {
+        record.measuredAt.formatted(date: .abbreviated, time: .shortened) + (record.hosted ? " · Hosted & mixed" : "")
+    }
+
+    static func score(_ lane: ClassificationResultRecord.Lane) -> String {
+        guard let accuracy = lane.accuracy, lane.scored > 0 else { return "no scored answers" }
+        return String(format: "%.0f%% correct (%d of %d)", accuracy * 100, lane.correct, lane.scored)
+    }
+}
+
 /// The questions a classification prompt asks, with the answer that counts as correct.
 struct DecisionQuestionsSummary: View {
     let questions: [DecisionQuestion]

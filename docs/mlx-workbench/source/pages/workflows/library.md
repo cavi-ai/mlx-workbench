@@ -52,7 +52,7 @@ including a speculative-decoding drafter's target. The inspector also holds:
 - **Repair runtime…**, for models whose declared backend is missing: review and explicitly confirm its installation in Health, then **Return to model** to refresh readiness and reveal the same model. No model download or execution starts from this navigation.
 
 - **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
-- **Measured performance**: throughput and first-token latency aggregated from past comparisons.
+- **Measured performance**: throughput and first-token latency aggregated from past comparisons. Classification models list their completed classification comparisons, newest first: the prompt set, when it ran, the share of expected answers this model matched and every other lane's share, including System One models from Hosted & mixed runs. **Review** opens a local run in Compare.
 - **Generate image**, for ready image-generation models: enter a prompt and use the displayed defaults, or adjust dimensions, steps and seed in **Advanced options**. Completed output is retained with its task and can be inspected or exported as a verified PNG.
 - **Understand image**, for ready vision-language models: choose a local image and ask a question. The engine retains a verified input copy with the task; the result shows the full answer and input image.
 - **Classify**, for ready classification models: a state description and questions with choice, score or probability answers.

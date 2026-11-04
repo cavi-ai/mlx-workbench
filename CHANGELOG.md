@@ -14,11 +14,12 @@ and is versioned independently; submodule bumps are recorded here.
 ### Added
 
 - Quality Gate: a text LLM that passes verification gets an agent-readiness check, a tool-call round trip over Chat Completions, Anthropic Messages and OpenAI Responses plus a 16,384-token prompt, shown in Prepare and the Library inspector without changing the verdict.
-- Compare: **Classification** grades classification models such as Laya against expected answers to choice, score and true-or-false questions, and **Hosted & mixed** runs them beside System One servers such as Kev, added in Library as **System One** hosts.
+- Compare: **Classification** grades classification models such as Laya against expected answers to choice, score and true-or-false questions, and **Hosted & mixed** runs them beside System One servers such as Kev, added in Library as **System One** hosts; the Library inspector lists each classification model's recorded results beside the other lanes'.
+- Prepare: 5- and 6-bit conversions where the model's converter supports them, including Laya at 6 bits, and **Settings → Default bits** offers 4, 5, 6 and 8.
 
 ### Changed
 
-- Engine: `mlx-agent` moves to 0.11.1 at `0b00e18`, which requires Python 3.11 or later, serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways, converts Qwen3.5-family GGUFs to MLX with the matching vision projector from the same folder, and generates TripoSG meshes on the upstream octree at resolution 32 to 512.
+- Engine: `mlx-agent` moves to 0.11.1 at `5da594f`, which requires Python 3.11 or later, serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways, gives every Chat Completions tool call an id and drops the end-of-sequence token from unstreamed answers, converts Qwen3.5-family GGUFs to MLX with the matching vision projector from the same folder, generates TripoSG meshes on the upstream octree at resolution 32 to 512, lists unquantized TripoSG conversions in scans, and converts at 5 and 6 bits where the converter supports them.
 - Compare: **3D generation** accepts resolution 512.
 - Library: weights that need converting offer **Convert to MLX…** instead of **Prepare to run**, and vision projector files and drafters no port converts offer no conversion.
 

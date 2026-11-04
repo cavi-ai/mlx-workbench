@@ -139,6 +139,22 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    func testGGUFTilesFollowTheWidthsTheScanReports() async throws {
+        func scanned(_ stem: String, qBits: String) throws -> ModelItem {
+            let row = #"{"path":"/models/\#(stem).gguf","name":"\#(stem).gguf","bytes":1,"status":"pending","outputs":[],"q_bits":\#(qBits)}"#
+            return try JSONDecoder().decode(ModelItem.self, from: Data(row.utf8))
+        }
+        let plain = try scanned("Plain-Q4_K_M", qBits: "[4, 5, 6, 8]")
+        let ported = try scanned("Qwen3.5-9B-Q4_K_M", qBits: "[4, 8]")
+        let host = await makeHost()
+        await MainActor.run {
+            host.modelWorkflow.inspect(source: plain, snapshot: nil)
+            XCTAssertEqual(PrepareWorkflowPresentation(workflow: host.modelWorkflow.workflow).bitWidths, [4, 5, 6, 8])
+            host.modelWorkflow.inspect(source: ported, snapshot: nil)
+            XCTAssertEqual(PrepareWorkflowPresentation(workflow: host.modelWorkflow.workflow).bitWidths, [4, 8])
+        }
+    }
+
     func testConfirmStoresReceiptAndEntersQueuedState() async {
         let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
         await MainActor.run { host.modelWorkflow.inspect(source: ggufSource, snapshot: nil) }
