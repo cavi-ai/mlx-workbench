@@ -19,7 +19,7 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Changed
 
-- Engine: `mlx-agent` moves to 0.11.1 at `5da594f`, which requires Python 3.11 or later, serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways, gives every Chat Completions tool call an id and drops the end-of-sequence token from unstreamed answers, converts Qwen3.5-family GGUFs to MLX with the matching vision projector from the same folder, generates TripoSG meshes on the upstream octree at resolution 32 to 512, lists unquantized TripoSG conversions in scans, and converts at 5 and 6 bits where the converter supports them.
+- Engine: `mlx-agent` moves to 0.11.1 at `294c360`, which requires Python 3.11 or later, serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways, gives every Chat Completions tool call an id and drops the end-of-sequence token from unstreamed answers, converts Qwen3.5-family GGUFs to MLX with the matching vision projector from the same folder, generates TripoSG meshes on the upstream octree at resolution 32 to 512, lists unquantized TripoSG conversions in scans, and converts at 5 and 6 bits where the converter supports them.
 - Compare: **3D generation** accepts resolution 512.
 - Library: weights that need converting offer **Convert to MLX…** instead of **Prepare to run**, and vision projector files and drafters no port converts offer no conversion.
 
