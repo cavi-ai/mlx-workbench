@@ -583,7 +583,8 @@ struct ModelDetailsView: View {
             .first
         let classification = ClassificationResultRecord.records(
             modelPaths: [model.item.path] + model.outputPaths, signature: model.item.signature,
-            localRuns: appHost.comparison.runs, hostedRecords: appHost.hostedComparison.records)
+            localRuns: appHost.comparison.runs, hostedRecords: appHost.hostedComparison.records,
+            library: appHost.librarySnapshot?.models ?? [])
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Performance")
             if let profile {
