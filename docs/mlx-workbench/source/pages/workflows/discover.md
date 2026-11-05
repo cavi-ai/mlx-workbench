@@ -4,17 +4,20 @@
 
 ## Browse candidates
 
-**Discover** runs the engine's `discover` command for a role and lists ranked candidates from remote catalog metadata.
+**Discover** runs the engine's `discover` command and lists ranked MLX candidates from remote catalog metadata. The first visit after launch loads **Most downloaded**, four per role, without selecting **Discover**.
 
-1. Pick a **Role**. The picker offers only the roles the engine accepts.
-2. Set the number of candidates per role. **Any** searches every supported role, so the total can exceed this limit. **Fast** uses repository names instead of inspecting each model; sizes and memory-fit estimates may be missing. Turn it off and select **Discover** again to request inspection.
-3. **Discover**.
+1. Choose an order: **Most downloaded**, **Trending**, or **Newest** (new uploads from trusted publishers such as mlx-community and lmstudio-community). Changing it searches again.
+2. Optionally type a name in **Search Hugging Face** and press Return. The text matches repository names; leave it empty to browse.
+3. Optionally pick a **Role**, set the number of candidates per role, or turn on **Fast**. **Any** covers every supported role, so the total can exceed the limit. **Fast** uses repository names instead of inspecting each model; sizes and memory-fit estimates may be missing.
+4. **Discover** runs the search with the current settings.
+
+Candidates from every role appear as one list in the chosen order, one row per repository. Repositories that hold only GGUF files are left out. When a live memory reading is available, the first tool-calling chat model that fits this Mac's model budget and is not in the Library leads the list, marked **Recommended for this Mac**.
 
 **Stop discovery** cancels only the current search. Search controls stay busy
 until that request exits; **Discover** then starts a fresh search. Previous
 successful candidates remain visible while searching, after a failure, or after
-stopping, labeled **Showing previous search results** with their original role,
-limit and inspection mode. Editing the controls does not relabel those results.
+stopping, labeled **Showing previous search results** with their original order,
+search text, role, limit and inspection mode. Editing the controls does not relabel those results.
 A successful search replaces them, including when it finds no candidates.
 **Clear** removes the displayed results when no search is running. Results are
 kept while switching modes or routes, but are not saved across app launches.

@@ -62,10 +62,33 @@ enum DiscoverRole {
     }
 }
 
+/// The Hugging Face order a Browse search ranks by; the raw value is the engine's `--sort`.
+enum DiscoverSort: String, CaseIterable, Identifiable {
+    case downloads, trending, newest
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .downloads: return "Most downloaded"
+        case .trending: return "Trending"
+        case .newest: return "Newest"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .downloads: return "MLX models with the most downloads on Hugging Face."
+        case .trending: return "MLX models Hugging Face ranks as trending now."
+        case .newest: return "The newest MLX uploads from trusted publishers such as mlx-community and lmstudio-community."
+        }
+    }
+}
+
 /// The agent's limit is per role, so the request is a bounded integer.
 enum DiscoverLimit {
     static let range = 1...50
-    static let initial = 10
+    static let initial = 4
 
     static func clamped(_ value: Int) -> Int { min(max(value, range.lowerBound), range.upperBound) }
 }
@@ -201,6 +224,10 @@ struct DiscoverRow: Equatable, Identifiable {
     let likesText: String?
     let fit: DiscoverFit
     let isInLibrary: Bool
+    var isRecommended = false
+
+    static let recommendedTitle = "Recommended for this Mac"
+    static let recommendedHelp = "The highest-ranked tool-calling chat model in these results that is not in your Library and fits this Mac's model budget right now."
 
     /// "1.2K", "3.4M": deterministic and locale-free.
     static func compactCount(_ value: Int) -> String {
@@ -231,6 +258,7 @@ struct DiscoverRow: Equatable, Identifiable {
 
     var accessibilityLabel: String {
         var parts = [repo]
+        if isRecommended { parts.append(Self.recommendedTitle) }
         if !roles.isEmpty { parts.append(roles.joined(separator: ", ")) }
         if isInLibrary { parts.append("In Library") }
         parts.append(fit.state == .sizeUnknown ? "size unknown" : "\(fit.weightsText ?? ""), \(fit.spokenVerdict)")
@@ -244,7 +272,7 @@ struct DiscoverRow: Equatable, Identifiable {
 // MARK: - Presentation
 
 /// Everything the candidate list shows, derived from injected inputs: no I/O,
-/// no process. Rows keep the agent's order.
+/// no process. Rows keep the agent's order, except that the recommended pick leads.
 struct DiscoverPresentation: Equatable {
     let legend: DiscoverLegend
     let rows: [DiscoverRow]
@@ -300,8 +328,20 @@ struct DiscoverPresentation: Equatable {
             legend: DiscoverLegend.make(
                 memory: memory, hasProbed: hasProbed, reserveGB: reserveGB, contextTokens: contextTokens, hardware: hardware
             ),
-            rows: rows
+            rows: leadingWithRecommendation(rows)
         )
+    }
+
+    /// Moves the first tool-calling chat model that fits the live budget, and is not
+    /// already in the Library, to the top. Without such a row the order is unchanged.
+    static func leadingWithRecommendation(_ rows: [DiscoverRow]) -> [DiscoverRow] {
+        guard let index = rows.firstIndex(where: {
+            $0.roles.contains("tool-use") && !$0.isInLibrary && $0.fit.state == .estimated && $0.fit.tone == .fits
+        }) else { return rows }
+        var ordered = rows
+        var pick = ordered.remove(at: index)
+        pick.isRecommended = true
+        return [pick] + ordered
     }
 }
 
@@ -316,7 +356,7 @@ struct DiscoverStatePresentation: Equatable {
     let symbol: String
     let sentence: String
 
-    static let runningSentence = "Discovering models. This lists and inspects Hugging Face repositories and can take a few minutes; Fast is quicker but may miss sizes."
+    static let runningSentence = "Discovering models. This lists Hugging Face repositories and inspects the ones it shows; Fast skips inspection but may miss sizes."
     static let fastRunningSentence = "Discovering models. This lists Hugging Face repositories without inspecting them, so sizes may be missing."
 
     /// `fast` is the mode the running discovery was started with.

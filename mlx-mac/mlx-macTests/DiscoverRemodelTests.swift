@@ -448,8 +448,7 @@ final class DiscoverStateAndControlTests: XCTestCase {
         XCTAssertEqual(idle.sentence, DiscoveryState.notRun.message)
         let running = DiscoverStatePresentation.make(.running)
         XCTAssertEqual(running.kind, .running)
-        XCTAssertTrue(running.sentence.contains("lists and inspects"))
-        XCTAssertTrue(running.sentence.contains("few minutes"))
+        XCTAssertTrue(running.sentence.contains("inspects the ones it shows"))
         let fastRunning = DiscoverStatePresentation.make(.running, fast: true)
         XCTAssertEqual(fastRunning.sentence, "Discovering models. This lists Hugging Face repositories without inspecting them, so sizes may be missing.")
         XCTAssertFalse(fastRunning.sentence.contains("inspects"))
@@ -557,6 +556,80 @@ final class DiscoverStateAndControlTests: XCTestCase {
             size.rowThreshold,
             size.symbolColumn + size.nameMinimum + size.barWidth + size.figuresWidth + size.actionWidth + size.columnGap * 4
         )
+    }
+}
+
+// MARK: - Ranking
+
+/// The engine command lines a WorkbenchAPI sent.
+private final class SentCommands: @unchecked Sendable {
+    private let lock = NSLock()
+    private var commands: [[String]] = []
+
+    var last: [String]? { lock.lock(); defer { lock.unlock() }; return commands.last }
+
+    func append(_ argv: [String]) { lock.lock(); commands.append(argv); lock.unlock() }
+}
+
+final class DiscoverRankingTests: XCTestCase {
+    private typealias F = DiscoverFixtures
+
+    func testARankedSearchSendsItsOrderAndTextAndMergesRolesInListingOrder() async throws {
+        let sent = SentCommands()
+        func item(_ repo: String, _ roles: [String], rank: Int) -> [String: Any] {
+            ["repo": repo, "roles": roles, "downloads": 1_000 - rank, "likes": 1, "list_rank": rank]
+        }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            sent.append(argv)
+            return ["roles": [
+                "vision": [item("org/Qwen3-VL-4B-4bit", ["vision", "tool-use"], rank: 2)],
+                "coding": [item("org/Qwen3-Coder-30B-4bit", ["coding", "tool-use"], rank: 1)],
+                "general": [item("org/Qwen3-8B-4bit", ["general", "tool-use"], rank: 0), item("org/Qwen3-1B-4bit", ["general"], rank: 3)],
+                "tool-use": [item("org/Qwen3-8B-4bit", ["general", "tool-use"], rank: 0)],
+            ]]
+        })
+
+        let result = try await api.discover(role: nil, limit: 4, fast: false, new: false, sort: "downloads", search: "qwen3")
+
+        XCTAssertEqual(result.candidates?.map(\.repo),
+                       ["org/Qwen3-8B-4bit", "org/Qwen3-Coder-30B-4bit", "org/Qwen3-VL-4B-4bit", "org/Qwen3-1B-4bit"])
+        let argv = try XCTUnwrap(sent.last)
+        XCTAssertEqual(argv.firstIndex(of: "--sort").map { argv[$0 + 1] }, "downloads")
+        XCTAssertEqual(argv.firstIndex(of: "--search").map { argv[$0 + 1] }, "qwen3")
+    }
+
+    func testTheRequestCollapsesSearchWhitespaceAndDefaultsToMostDownloaded() {
+        let request = DiscoveryRequest(role: "", limit: DiscoverLimit.initial, fast: false, search: "  qwen3 \t coder ")
+        XCTAssertEqual(request.search, "qwen3 coder")
+        XCTAssertEqual(request.sort, .downloads)
+        XCTAssertNil(DiscoveryRequest(role: "", limit: 4, fast: false, sort: .newest, search: "   ").search)
+        XCTAssertEqual(DiscoverSort.allCases.map(\.rawValue), ["downloads", "trending", "newest"])
+    }
+
+    func testTheFirstToolUseModelThatFitsAndIsNotInTheLibraryLeads() {
+        let candidates = [
+            F.candidate("org/Speech-1B", gb: 2, roles: ["general"]),
+            F.candidate("org/Huge-480B", gb: 390, roles: ["coding", "tool-use"]),
+            F.candidate("org/Owned-8B", gb: 5, roles: ["general", "tool-use"]),
+            F.candidate("org/Pick-9B", gb: 6, roles: ["general", "tool-use"]),
+            F.candidate("org/Next-4B", gb: 3, roles: ["vision", "tool-use"]),
+        ]
+        let library = F.snapshot(["/Users/test/.cache/huggingface/hub/models--org--Owned-8B/snapshots/abc"])
+
+        let rows = F.presentation(candidates, library: library).rows
+
+        XCTAssertEqual(rows.map(\.repo), ["org/Pick-9B", "org/Speech-1B", "org/Huge-480B", "org/Owned-8B", "org/Next-4B"])
+        XCTAssertEqual(rows.filter(\.isRecommended).map(\.repo), ["org/Pick-9B"])
+        XCTAssertTrue(rows[0].accessibilityLabel.contains(DiscoverRow.recommendedTitle))
+    }
+
+    func testNothingIsRecommendedWithoutALiveMemoryReading() {
+        let candidates = [F.candidate("org/A-8B", gb: 5, roles: ["general"]), F.candidate("org/B-8B", gb: 5, roles: ["general", "tool-use"])]
+
+        let rows = F.presentation(candidates, memory: nil, hasProbed: true).rows
+
+        XCTAssertEqual(rows.map(\.repo), ["org/A-8B", "org/B-8B"])
+        XCTAssertFalse(rows.contains(where: \.isRecommended))
     }
 }
 

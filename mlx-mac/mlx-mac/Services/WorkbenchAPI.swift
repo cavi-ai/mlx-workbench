@@ -507,12 +507,15 @@ actor WorkbenchAPI {
 
     // MARK: - Discover
 
-    func discover(role: String?, limit: Int?, fast: Bool, new: Bool) async throws -> DiscoverResult {
+    func discover(role: String?, limit: Int?, fast: Bool, new: Bool,
+                  sort: String? = nil, search: String? = nil) async throws -> DiscoverResult {
         var argv = ["discover"]
         if let role { argv.append(contentsOf: ["--role", role]) }
         if let limit { argv.append(contentsOf: ["--limit", String(limit)]) }
         if fast { argv.append("--fast") }
         if new { argv.append("--new") }
+        if let sort { argv.append(contentsOf: ["--sort", sort]) }
+        if let search { argv.append(contentsOf: ["--search", search]) }
         let data = try await raw(argv, isScout: true, cancellable: true)
         return DiscoverResult(candidates: Self.candidates(from: data))
     }
@@ -946,7 +949,8 @@ actor WorkbenchAPI {
                 license: r.string("license"),
                 wiring: r.string("wiring"),
                 downloads: r.int("downloads"),
-                likes: r.int("likes")
+                likes: r.int("likes"),
+                listRank: r.int("list_rank")
             )
         }
         // dedupe by repo id, keep first
@@ -956,7 +960,11 @@ actor WorkbenchAPI {
             seen.insert(c.repo)
             out.append(c)
         }
-        return out
+        // A ranked listing merges every role into the engine's Hugging Face order.
+        guard out.contains(where: { $0.listRank != nil }) else { return out }
+        return out.enumerated().sorted {
+            ($0.element.listRank ?? Int.max, $0.offset) < ($1.element.listRank ?? Int.max, $1.offset)
+        }.map(\.element)
     }
 
     static func findings(from data: [String: Any], key: String = "findings") -> [DoctorFinding]? {

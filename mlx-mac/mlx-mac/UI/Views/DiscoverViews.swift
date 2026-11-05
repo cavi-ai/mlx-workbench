@@ -83,7 +83,8 @@ struct DiscoverFitField: View {
         let label = status.kind == .populated ? "Search results" : "Showing previous search results"
         guard let request = snapshot.request else { return label + ". Search settings were not recorded." }
         let mode = request.fast ? "Fast" : "Repository inspection"
-        return "\(label) · \(DiscoverRole.title(request.role ?? "")) · \(request.limit) per role · \(mode)"
+        let lens = request.search.map { "\(request.sort.title) matching “\($0)”" } ?? request.sort.title
+        return "\(label) · \(lens) · \(DiscoverRole.title(request.role ?? "")) · \(request.limit) per role · \(mode)"
     }
 
     private func notice(_ status: DiscoverStatePresentation) -> some View {
@@ -287,6 +288,14 @@ struct DiscoverRowView: View {
 
     private var nameColumn: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            if row.isRecommended {
+                Label(DiscoverRow.recommendedTitle, systemImage: "star.fill")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.ink)
+                    .symbolRenderingMode(.hierarchical)
+                    .help(DiscoverRow.recommendedHelp)
+                    .accessibilityIdentifier("discover-recommended")
+            }
             Text(row.repo)
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.ink)

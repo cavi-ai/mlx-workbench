@@ -73,19 +73,28 @@ struct ScoutView: View {
     @State private var role = ""
     @State private var limit = DiscoverLimit.initial
     @State private var fast = false
+    @State private var sort = DiscoverSort.downloads
+    @State private var search = ""
     @StateObject private var session: DiscoverySession
     @State private var showsCatalogDetails = false
     @State private var layout = DiscoverLayout()
+    @Environment(\.isRouteActive) private var isRouteActive
 
     /// `resources` and `initialState` let a render hold the page at a fixed budget and result.
     init(appHost: AppHost, resources: SystemResourceMonitor? = nil, initialState: DiscoveryState = .notRun) {
         self.appHost = appHost
         self.resources = resources ?? appHost.resources
         _session = StateObject(wrappedValue: DiscoverySession(initialState: initialState) { request in
-            let response = try await appHost.api.discover(role: request.role, limit: request.limit, fast: request.fast, new: false)
+            let response = try await appHost.api.discover(
+                role: request.role, limit: request.limit, fast: request.fast, new: false,
+                sort: request.sort.rawValue, search: request.search
+            )
             return response.candidates ?? []
         })
     }
+
+    /// The first visit after launch loads the curated list; hosted tests never start live services.
+    private var loadsCuratedList: Bool { isRouteActive && appHost.liveServicesStarted }
 
     private var isScouting: Bool { session.state.isRunning }
 
@@ -119,6 +128,9 @@ struct ScoutView: View {
             .onChange(of: viewport.size.width, initial: true) { _, width in
                 layout = DiscoverLayout(viewportWidth: width, previous: layout)
             }
+        }
+        .task(id: loadsCuratedList) {
+            if loadsCuratedList, session.state == .notRun { discover() }
         }
     }
 
@@ -194,10 +206,20 @@ struct ScoutView: View {
             Text("Discovery")
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.muted)
-            Text("Choose a role to find Hugging Face repositories. Browsing reads metadata without downloading or loading models. Add from Hugging Face… opens a separate review before downloading.")
+            Text("The most downloaded, trending or newest MLX models on Hugging Face, a few per role, with the best fit for this Mac first. Search by name or narrow by role. Browsing reads metadata without downloading or loading models. Add from Hugging Face… opens a separate review before downloading.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
+                    searchControl
+                    sortControl
+                }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    searchControl
+                    sortControl
+                }
+            }
             switch layout.headerMode {
             case .oneLine:
                 HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
@@ -233,6 +255,31 @@ struct ScoutView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("discover-inspection-guidance")
         }
+    }
+
+    private var searchControl: some View {
+        TextField("Search", text: $search, prompt: Text("Search Hugging Face, e.g. qwen3 coder"))
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 220, maxWidth: 360)
+            .onSubmit { discover() }
+            .disabled(isScouting)
+            .accessibilityIdentifier("discover-search")
+            .help("Matches repository names on Hugging Face. Leave empty to browse.")
+    }
+
+    private var sortControl: some View {
+        Picker("Sort", selection: $sort) {
+            ForEach(DiscoverSort.allCases) { lens in
+                Text(lens.title).tag(lens).help(lens.help)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .disabled(isScouting)
+        .accessibilityIdentifier("discover-sort")
+        .help(sort.help)
+        .onChange(of: sort) { _, _ in discover() }
     }
 
     private var roleControl: some View {
@@ -311,7 +358,7 @@ struct ScoutView: View {
     }
 
     private func discover() {
-        session.start(DiscoveryRequest(role: role, limit: limit, fast: fast))
+        session.start(DiscoveryRequest(role: role, limit: limit, fast: fast, sort: sort, search: search))
     }
 
     private func statusRow(label: String, value: String) -> some View {

@@ -24,7 +24,7 @@ enum DiscoveryState: Equatable {
     }
     var message: String {
         switch self {
-        case .notRun: return "Discover models for this Mac. Choose a role, then select Discover."
+        case .notRun: return "Browse the most downloaded, trending or newest MLX models, or search Hugging Face by name, then select Discover."
         case .running: return "Discovering models…"
         case .completed: return "No candidates matched. Try another role or adjust the limit, then Discover again."
         case .failed(let message): return "Discovery failed. \(message) Try Discover again after resolving the issue."
@@ -37,11 +37,17 @@ struct DiscoveryRequest: Equatable {
     let role: String?
     let limit: Int
     let fast: Bool
+    let sort: DiscoverSort
+    /// Whitespace-collapsed search text; nil browses without a search.
+    let search: String?
 
-    init(role: String, limit: Int, fast: Bool) {
+    init(role: String, limit: Int, fast: Bool, sort: DiscoverSort = .downloads, search: String = "") {
         self.role = role.isEmpty ? nil : role
         self.limit = DiscoverLimit.clamped(limit)
         self.fast = fast
+        self.sort = sort
+        let text = search.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        self.search = text.isEmpty ? nil : text
     }
 }
 

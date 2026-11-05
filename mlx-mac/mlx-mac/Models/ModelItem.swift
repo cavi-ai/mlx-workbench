@@ -379,11 +379,14 @@ struct DiscoverCandidate: Codable, Equatable, Identifiable {
     let wiring: String?
     let downloads: Int?
     let likes: Int?
+    /// Position in the engine's Hugging Face listing for the requested sort; nil from older engines.
+    var listRank: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case repo, base, roles, license, wiring, downloads, likes
         case estRamGb = "est_ram_gb"
         case fits
+        case listRank = "list_rank"
     }
 
     var id: String { repo }
