@@ -12,7 +12,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pin-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out source
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # vendor/mlx-agent moves only through pin-engine.yml. The guard on main judges every pull request.
+      - name: Check pins
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if git cat-file -e "$BASE:scripts/pin_guard.py"; then
+            git show "$BASE:scripts/pin_guard.py" > "$RUNNER_TEMP/pin_guard.py"
+          else
+            cp scripts/pin_guard.py "$RUNNER_TEMP/pin_guard.py"
+          fi
+          python3 "$RUNNER_TEMP/pin_guard.py" "$BASE" "$HEAD" "$BRANCH"
+
   python-and-docs:
+    needs: [pin-guard]
     runs-on: macos-latest
     steps:
       - name: Check out source
@@ -41,6 +68,7 @@ jobs:
         run: make docs-test
 
   swift:
+    needs: [pin-guard]
     runs-on: macos-latest
     steps:
       - name: Check out source
