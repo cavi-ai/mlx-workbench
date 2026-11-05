@@ -60,3 +60,27 @@ jobs:
 
       - name: Run Swift unit tests
         run: make test-swift
+
+  merge-engine-pin:
+    needs: [python-and-docs, swift]
+    if: >-
+      github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'bot/pin-engine-') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The pin bot's pull request merges itself once both gates pass.
+      - name: Merge the engine pin
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for file in $(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only); do
+            case "$file" in
+              CHANGELOG.md|vendor/mlx-agent) ;;
+              *) echo "::error::$file is not part of an engine pin"; exit 1 ;;
+            esac
+          done
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$HEAD"
