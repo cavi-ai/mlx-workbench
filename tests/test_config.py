@@ -40,8 +40,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(saved["q_bits"], 4)
 
     def test_rejects_bad_q_bits(self):
-        with self.assertRaises(config.ConfigError):
-            config.save({"q_bits": 5}, self.path)
+        for bits in (3, 7, 16):
+            with self.assertRaises(config.ConfigError):
+                config.save({"q_bits": bits}, self.path)
+
+    def test_five_and_six_bit_defaults_round_trip(self):
+        for bits in (5, 6):
+            config.save({"q_bits": bits}, self.path)
+            self.assertEqual(config.load(self.path)["q_bits"], bits)
 
     def test_rejects_bad_port(self):
         with self.assertRaises(config.ConfigError):

@@ -36,10 +36,13 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     let draft: ModelDraft?
     var servingRuntime: String? = nil
     var backend: OutputBackend? = nil
+    /// The bit widths the engine converts this GGUF at; nil when the scan did not report them.
+    var qBits: [Int]? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, name, bytes, shard, architecture, quantization, parameters
         case structure, signature, companion, readable, status, outputs, error, task, draft, backend
+        case qBits = "q_bits"
         case modifiedAt = "modified_at"
         case modelKey = "model_key"
         case tensorCount = "tensor_count"

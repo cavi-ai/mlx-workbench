@@ -201,6 +201,60 @@ struct DecisionEvidence: Codable, Equatable, Sendable {
     }
 }
 
+/// One completed classification run a model answered in: its accuracy beside every other lane's.
+struct ClassificationResultRecord: Equatable, Identifiable {
+    struct Lane: Equatable {
+        let name: String
+        let accuracy: Double?
+        let correct: Int
+        let scored: Int
+    }
+
+    let runID: UUID
+    let promptSetName: String
+    let measuredAt: Date
+    /// The run came from Hosted & mixed; its lanes may include System One hosts.
+    let hosted: Bool
+    let model: Lane
+    let others: [Lane]
+    var id: UUID { runID }
+
+    /// Newest first. Lanes match the model's paths, and its signature when both sides recorded one.
+    static func records(modelPaths: [String], signature: String?, localRuns: [ComparisonRun],
+                        hostedRecords: [HostedComparisonRecord]) -> [ClassificationResultRecord] {
+        let paths = Set(modelPaths)
+        func matches(_ path: String?, _ recorded: String?) -> Bool {
+            guard let path, paths.contains(path) else { return false }
+            return signature == nil || recorded == nil || recorded == signature
+        }
+        func lane(_ result: VariantResult, name: String) -> Lane {
+            let evidence = result.samples.filter { $0.error == nil }.compactMap(\.decision)
+            return Lane(name: name, accuracy: result.aggregateMetric.flatMap { (0...1).contains($0) ? $0 : nil },
+                        correct: evidence.map(\.correctCount).reduce(0, +), scored: evidence.map(\.scoredCount).reduce(0, +))
+        }
+        func completed(_ run: ComparisonRun) -> Bool { run.state == .completed && run.effectiveMode == .classification }
+
+        var records: [ClassificationResultRecord] = []
+        for run in localRuns where completed(run) {
+            guard let own = run.results.first(where: { $0.error == nil && matches($0.modelPath, $0.modelSignature) }) else { continue }
+            records.append(ClassificationResultRecord(
+                runID: run.id, promptSetName: run.promptSetName, measuredAt: run.finishedAt ?? run.startedAt, hosted: false,
+                model: lane(own, name: URL(fileURLWithPath: own.modelPath).lastPathComponent),
+                others: run.results.filter { $0.id != own.id }.map { lane($0, name: URL(fileURLWithPath: $0.modelPath).lastPathComponent) }))
+        }
+        for record in hostedRecords where completed(record.run) {
+            guard let target = record.targets.first(where: { matches($0.localPath, $0.localSignature) }),
+                  let own = record.run.results.first(where: { $0.id == target.id && $0.error == nil }) else { continue }
+            let name: (String) -> String = { id in record.targets.first { $0.id == id }?.displayName ?? id }
+            records.append(ClassificationResultRecord(
+                runID: record.id, promptSetName: record.run.promptSetName, measuredAt: record.run.finishedAt ?? record.run.startedAt,
+                hosted: true, model: lane(own, name: target.displayName),
+                others: record.run.results.filter { $0.id != own.id }.map { lane($0, name: name($0.id)) }))
+        }
+        return records.sorted { $0.measuredAt > $1.measuredAt }
+    }
+}
+
 enum DecisionScoring {
     static func grade(_ questions: [DecisionQuestion], answers: [String: DecisionAnswer]) -> DecisionEvidence {
         DecisionEvidence(grades: questions.map { grade($0, answer: answers[$0.name]) })

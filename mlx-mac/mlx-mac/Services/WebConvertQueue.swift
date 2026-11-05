@@ -166,7 +166,7 @@ enum WebConvertQueue {
         }
         guard let qBitsValue = item["q_bits"], !(qBitsValue is Bool),
               let qBits = (qBitsValue as? NSNumber)?.intValue,
-              qBits == 4 || qBits == 8 else {
+              Config.Q_BITS_CHOICES.contains(qBits) else {
             throw LoadError.invalidSchema("queue item q_bits is invalid")
         }
         let out = try optionalString(item["out"], field: "out")

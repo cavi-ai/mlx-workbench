@@ -63,6 +63,22 @@ final class WebConvertQueueTests: XCTestCase {
         }
     }
 
+    func testEveryConversionWidthLoadsAndOthersAreRejected() throws {
+        func payload(_ bits: Int) -> [String: Any] {
+            ["schema_version": "1.1", "items": [[
+                "id": "cq-1", "kind": "repo", "preview_hash": "h", "q_bits": bits, "out": NSNull(), "path": NSNull(),
+                "repo": "org/model", "hf_cache": NSNull(), "label": "x", "state": "queued", "failure": NSNull(),
+            ]]]
+        }
+        for bits in [4, 5, 6, 8] {
+            let url = try writeTemp(String(decoding: try JSONSerialization.data(withJSONObject: payload(bits)), as: UTF8.self))
+            let snapshot = WebConvertQueue.load(from: url)
+            XCTAssertNil(snapshot.problem, "\(bits)-bit")
+            XCTAssertEqual(snapshot.items.map(\.qBits), [bits])
+        }
+        XCTAssertThrowsError(try WebConvertQueue.parse(try JSONSerialization.data(withJSONObject: payload(7))))
+    }
+
     // MARK: - helpers
 
     private func writeTemp(_ contents: String) throws -> URL {

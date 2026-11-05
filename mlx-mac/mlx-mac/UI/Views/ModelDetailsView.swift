@@ -65,6 +65,12 @@ struct ModelActions {
         }
         onRouteSelection(.run)
     }
+
+    /// Opens a recorded local comparison without replaying it.
+    func review(runID: UUID) {
+        appHost.handoffs.send(ComparisonResultsRequest(runID: runID), as: .reviewComparisonResults)
+        onRouteSelection(.compare)
+    }
 }
 
 // MARK: - ModelDetailsPresentation
@@ -575,17 +581,25 @@ struct ModelDetailsView: View {
                 )
             }
             .first
+        let classification = ClassificationResultRecord.records(
+            modelPaths: [model.item.path] + model.outputPaths, signature: model.item.signature,
+            localRuns: appHost.comparison.runs, hostedRecords: appHost.hostedComparison.records)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Performance")
             if let profile {
                 DetailGrid(rows: performanceRows(profile))
-            } else {
+            }
+            if !classification.isEmpty {
+                ClassificationResultsList(records: classification, onReview: actions.review(runID:))
+            }
+            if profile == nil && classification.isEmpty {
                 Text("No measured runs for this model yet.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
-                if actions.canServe {
+                if actions.canServe || model.item.task?.type == .classification {
                     Button("Measure in Compare") { actions.compare() }
                         .controlSize(.small)
+                        .disabled(!actions.canCompare)
                 }
             }
         }

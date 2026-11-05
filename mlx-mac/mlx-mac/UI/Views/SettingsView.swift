@@ -369,8 +369,7 @@ struct SettingsView: View {
         SettingsSection(title: "Conversion defaults") {
             SettingsRow(label: "Default quantization", stacked: layout.stacksRows) {
                 Picker("Default bits", selection: $qBits) {
-                    Text("4-bit").tag(4)
-                    Text("8-bit").tag(8)
+                    ForEach(Config.Q_BITS_CHOICES.sorted(), id: \.self) { bits in Text("\(bits)-bit").tag(bits) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

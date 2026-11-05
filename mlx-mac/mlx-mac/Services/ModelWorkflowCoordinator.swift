@@ -1076,11 +1076,13 @@ final class ModelWorkflowCoordinator: ObservableObject {
         message: String? = nil,
         errorMessage: String? = nil
     ) -> ConversionWorkflow {
-        makeWorkflow(
+        var record = makeWorkflow(
             sourcePath: source.path, sourceModelKey: source.modelKey, sourceSignature: source.signature,
             outputPath: outputPath, state: state, completedModelPath: completedModelPath,
             message: message, errorMessage: errorMessage
         )
+        record.allowedBits = source.qBits?.isEmpty == false ? source.qBits : nil
+        return record
     }
 
     private func makeWorkflow(

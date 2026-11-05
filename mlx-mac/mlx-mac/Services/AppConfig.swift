@@ -29,7 +29,7 @@ struct Config: Codable, Equatable {
     var comparisonMaxTokens: Int
 
     static let SCHEMA_VERSION = "1.0"
-    static let Q_BITS_CHOICES: Set<Int> = [4, 8]
+    static let Q_BITS_CHOICES: Set<Int> = [4, 5, 6, 8]
     static let MAX_ROOTS = 32
     static let LOOPBACK_HOSTS: Set<String> = ["127.0.0.1", "localhost", "::1"]
     static let FIT_RESERVE_RANGE: ClosedRange<Double> = 0...16
