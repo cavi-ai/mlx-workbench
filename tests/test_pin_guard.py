@@ -1,4 +1,4 @@
-"""Run the PR gates pin-guard step against pull requests in a scratch repository."""
+"""Run the pin-guard and pin-integrity steps against pull requests in a scratch repository."""
 
 import os
 from pathlib import Path
@@ -9,10 +9,18 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/pin_guard.py", ".github/workflows/pr.yml", ".github/workflows/pin-engine.yml", ".gitmodules")
-OLD, NEW = "d50e662bd207bc0a2beea845f0cdeddc85551b57", "063ee59" + "0" * 33
+COPIED = ("scripts/pin_guard.py", ".github/workflows/pr.yml", ".github/workflows/pin-engine.yml",
+          ".github/workflows/pin-integrity.yml", ".gitmodules")
+OLD, NEW = "a" * 40, "063ee59" + "0" * 33
 BOT = ("github-actions[bot]", "41898282+github-actions[bot]@users.noreply.github.com")
 PERSON = ("Pin Test", "pin@example.invalid")
+
+
+def step(workflow, job, after):
+    """The run script of a job's last step, as the workflow file holds it."""
+    text = (ROOT / ".github/workflows" / workflow).read_text()
+    block = text.split(f"  {job}:\n", 1)[1].split("        run: |\n", 1)[1]
+    return "\n".join(line[10:] for line in block.split(after, 1)[0].splitlines())
 
 
 class PinGuardTests(unittest.TestCase):
@@ -32,54 +40,79 @@ class PinGuardTests(unittest.TestCase):
         self.git("commit", "-q", "-m", "base")
         self.base = self.git("rev-parse", "HEAD")
 
-    def git(self, *args, env=None):
-        return subprocess.run(["git", *args], cwd=self.repo, env=env or self.env, check=True,
+    def git(self, *args, who=PERSON):
+        name, email = who
+        env = dict(self.env, GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email,
+                   GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
+        return subprocess.run(["git", *args], cwd=self.repo, env=env, check=True,
                               capture_output=True, text=True).stdout.strip()
 
     def edit(self, name, old, new):
         path = self.repo / name
         text = path.read_text()
         self.assertIn(old, text)
-        path.write_text(text.replace(old, new))
+        path.write_text(text.replace(old, new, 1))
 
     def move_engine(self):
         self.git("update-index", "--cacheinfo", f"160000,{NEW},vendor/mlx-agent")
 
-    def pull_request(self, branch, change, who=PERSON):
-        self.git("checkout", "-q", "-b", branch, self.base)
+    def commit(self, branch, change, who=PERSON):
+        self.git("checkout", "-q", "-B", branch, self.base)
         change()
         self.git("add", "-u", "--", ".", ":(exclude)vendor")
-        name, email = who
-        self.git("commit", "-q", "-m", "change", env=dict(
-            self.env, GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email,
-            GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email))
-        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
-        block = workflow.split("  pin-guard:\n", 1)[1].split("        run: |\n", 1)[1].split("\n\n  ", 1)[0]
-        script = "\n".join(line[10:] for line in block.splitlines())
+        self.git("commit", "-q", "-m", "change", who=who)
+        return self.git("rev-parse", "HEAD")
+
+    def run_step(self, script, **env):
         runner = self.root / "runner"
         runner.mkdir(exist_ok=True)
         return subprocess.run(["bash", "-e", "-c", script], cwd=self.repo, capture_output=True, text=True,
-                              check=False, env=dict(self.env, BASE=self.base, HEAD=self.git("rev-parse", "HEAD"),
-                                                    BRANCH=branch, RUNNER_TEMP=str(runner)))
+                              check=False, env={**self.env, "BASE": self.base, "RUNNER_TEMP": str(runner), **env})
+
+    def guard(self, branch, change, who=PERSON):
+        head = self.commit(branch, change, who)
+        return self.run_step(step("pr.yml", "pin-guard", "\n\n  "), HEAD=head, BRANCH=branch)
+
+    def integrity(self, change):
+        """Run pin-integrity as pull_request_target does: main checked out, the PR fetched."""
+        head = self.commit("change", change)
+        origin = self.root / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True, env=self.env)
+        self.git("push", "-q", str(origin), "main", f"{head}:refs/pull/7/head")
+        self.git("remote", "add", "origin", str(origin))
+        self.git("checkout", "-q", "main")
+        return self.run_step(step("pin-integrity.yml", "pin-integrity", "\0"), HEAD=head, NUMBER="7")
 
     def test_hand_pin_fails(self):
-        result = self.pull_request("chore/pin-engine", self.move_engine)
+        result = self.guard("chore/pin-engine", self.move_engine)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::error file=vendor/mlx-agent::", result.stdout)
 
     def test_pin_bot_moves_the_pin(self):
-        result = self.pull_request("bot/pin-engine-063ee59", self.move_engine, who=BOT)
+        result = self.guard("bot/pin-engine-063ee59", self.move_engine, who=BOT)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pin_bot_branch_updated_from_main_still_passes(self):
+        self.commit("bot/pin-engine-063ee59", self.move_engine, who=BOT)
+        self.git("checkout", "-q", "main")
+        (self.repo / "README.md").write_text("main moved\n")
+        self.git("add", "README.md")
+        self.git("commit", "-q", "-m", "main moved")
+        self.git("checkout", "-q", "bot/pin-engine-063ee59")
+        self.git("merge", "-q", "--no-edit", "main")
+        result = self.run_step(step("pr.yml", "pin-guard", "\n\n  "), BASE=self.git("rev-parse", "main"),
+                               HEAD=self.git("rev-parse", "HEAD"), BRANCH="bot/pin-engine-063ee59")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_bot_branch_from_a_person_fails(self):
-        result = self.pull_request("bot/pin-engine-063ee59", self.move_engine)
+        result = self.guard("bot/pin-engine-063ee59", self.move_engine)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_main_guard_judges_a_rewritten_guard(self):
         def disable_guard():
             (self.repo / "scripts/pin_guard.py").write_text("import sys\nsys.exit(0)\n")
             self.move_engine()
-        result = self.pull_request("chore/pin-engine", disable_guard)
+        result = self.guard("chore/pin-engine", disable_guard)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::error file=scripts/pin_guard.py::", result.stdout)
         self.assertIn("::error file=vendor/mlx-agent::", result.stdout)
@@ -89,16 +122,27 @@ class PinGuardTests(unittest.TestCase):
             self.edit(".github/workflows/pin-engine.yml", "fetch -q origin main", "fetch -q origin dev")
             self.edit(".github/workflows/pr.yml", 'is not part of an engine pin"; exit 1',
                       'is not part of an engine pin"')
-        result = self.pull_request("bot/pin-engine-063ee59", follow_a_branch, who=BOT)
+        result = self.guard("bot/pin-engine-063ee59", follow_a_branch, who=BOT)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::error file=.github/workflows/pin-engine.yml::", result.stdout)
         self.assertIn("changes the merge-engine-pin job", result.stdout)
 
+    def test_integrity_fails_a_gutted_guard_job(self):
+        result = self.integrity(lambda: self.edit(
+            ".github/workflows/pr.yml", 'python3 "$RUNNER_TEMP/pin_guard.py"', "true #"))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("changes the pin-guard job", result.stdout)
+
+    def test_integrity_passes_an_unrelated_change(self):
+        result = self.integrity(lambda: self.edit(
+            ".github/workflows/pr.yml", "        run: make docs-test",
+            "        run: make docs-test\n        timeout-minutes: 20"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_unrelated_change_passes(self):
-        def tune_a_gate():
-            self.edit(".github/workflows/pr.yml", "        run: make docs-test",
-                      "        run: make docs-test\n        timeout-minutes: 20")
-        result = self.pull_request("ci/docs-timeout", tune_a_gate)
+        result = self.guard("ci/docs-timeout", lambda: self.edit(
+            ".github/workflows/pr.yml", "        run: make docs-test",
+            "        run: make docs-test\n        timeout-minutes: 20"))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
