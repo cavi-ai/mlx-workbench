@@ -1041,6 +1041,9 @@ class AppHost {
         }
     }
 
+    /// Whether launch-time live work has started; views that fetch on their own wait for it.
+    private(set) var liveServicesStarted = false
+
     /// Launch-time live work against the user's real config and state: the
     /// quality gate, watch and endpoint supervision, resource sampling, GGUF
     /// folder discovery, and the first scan with workflow reconciliation. Skipped
@@ -1048,6 +1051,7 @@ class AppHost {
     @discardableResult
     func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) -> Task<Void, Never>? {
         guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return nil }
+        liveServicesStarted = true
         if isCheckingRuntime { refreshRuntimeReport() }
         applyFeatureToggles()
         let startup = Task {
