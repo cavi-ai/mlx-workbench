@@ -219,9 +219,10 @@ struct ClassificationResultRecord: Equatable, Identifiable {
     let others: [Lane]
     var id: UUID { runID }
 
-    /// Newest first. Lanes match the model's paths, and its signature when both sides recorded one.
+    /// Newest first. Lanes match the model's paths, and its signature when both sides recorded one;
+    /// local lanes are named as Compare names them, from `library`.
     static func records(modelPaths: [String], signature: String?, localRuns: [ComparisonRun],
-                        hostedRecords: [HostedComparisonRecord]) -> [ClassificationResultRecord] {
+                        hostedRecords: [HostedComparisonRecord], library: [LibraryModel]) -> [ClassificationResultRecord] {
         let paths = Set(modelPaths)
         func matches(_ path: String?, _ recorded: String?) -> Bool {
             guard let path, paths.contains(path) else { return false }
@@ -239,8 +240,8 @@ struct ClassificationResultRecord: Equatable, Identifiable {
             guard let own = run.results.first(where: { $0.error == nil && matches($0.modelPath, $0.modelSignature) }) else { continue }
             records.append(ClassificationResultRecord(
                 runID: run.id, promptSetName: run.promptSetName, measuredAt: run.finishedAt ?? run.startedAt, hosted: false,
-                model: lane(own, name: URL(fileURLWithPath: own.modelPath).lastPathComponent),
-                others: run.results.filter { $0.id != own.id }.map { lane($0, name: URL(fileURLWithPath: $0.modelPath).lastPathComponent) }))
+                model: lane(own, name: ComparePresentation.displayName(for: own.modelPath, models: library)),
+                others: run.results.filter { $0.id != own.id }.map { lane($0, name: ComparePresentation.displayName(for: $0.modelPath, models: library)) }))
         }
         for record in hostedRecords where completed(record.run) {
             guard let target = record.targets.first(where: { matches($0.localPath, $0.localSignature) }),

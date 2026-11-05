@@ -280,7 +280,7 @@ final class DecisionComparisonTests: XCTestCase {
         let hosted = HostedComparisonRecord(run: hostedRun, targets: [native, kev], temperature: 0, workflow: nil, submissions: [])
 
         let records = ClassificationResultRecord.records(modelPaths: [laya], signature: "sig", localRuns: [local, stale, unfinished],
-                                                         hostedRecords: [hosted])
+                                                         hostedRecords: [hosted], library: [])
 
         XCTAssertEqual(records.map(\.runID), [hosted.id, local.id], "newest first; other signatures and unfinished runs are left out")
         XCTAssertEqual(records[0].model, .init(name: "laya-MLX-8bit · MLX Workbench", accuracy: 0.6, correct: 3, scored: 5))
@@ -289,6 +289,15 @@ final class DecisionComparisonTests: XCTestCase {
         XCTAssertEqual(records[1].model, .init(name: "laya-MLX-8bit", accuracy: 0.8, correct: 4, scored: 5))
         XCTAssertEqual(records[1].others.map(\.name), ["laya-MLX-6bit"])
         XCTAssertEqual(ClassificationResultsList.score(records[0].model), "60% correct (3 of 5)")
+    }
+
+    func testLibraryLanesAreNamedAsCompareNamesThem() {
+        let snapshot = "/hub/models--cavi-ai--laya-MLX-8bit/snapshots/63ebab6e421811b6d44765fa81e08e413cb717ee"
+        let run = classificationRun([lane("/m/laya-MLX-6bit", grades: [[true]]), lane(snapshot, grades: [[false]])], at: 100)
+        let records = ClassificationResultRecord.records(modelPaths: ["/m/laya-MLX-6bit"], signature: nil, localRuns: [run],
+                                                         hostedRecords: [], library: [])
+        XCTAssertEqual(records.first?.model.name, "laya-MLX-6bit")
+        XCTAssertEqual(records.first?.others.map(\.name), ["cavi-ai/laya-MLX-8bit"])
     }
 
     func testClassificationDraftNeedsAStateAndValidQuestionsBeforeItSaves() throws {
