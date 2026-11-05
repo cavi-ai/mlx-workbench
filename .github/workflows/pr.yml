@@ -79,7 +79,7 @@ jobs:
         run: |
           for file in $(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only); do
             case "$file" in
-              CHANGELOG.md|vendor/mlx-agent) ;;
+              vendor/mlx-agent) ;;
               *) echo "::error::$file is not part of an engine pin"; exit 1 ;;
             esac
           done

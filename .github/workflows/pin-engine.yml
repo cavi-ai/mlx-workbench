@@ -30,7 +30,6 @@ jobs:
           to=$(git -C vendor/mlx-agent rev-parse FETCH_HEAD)
           if [ "$from" != "$to" ]; then
             git -C vendor/mlx-agent checkout -q "$to"
-            python3 scripts/pin_engine_changelog.py CHANGELOG.md vendor/mlx-agent/plugin.json "${to:0:7}"
             echo "branch=bot/pin-engine-${to:0:7}" >> "$GITHUB_OUTPUT"
             echo "body=- mlx-agent ${from:0:7} -> ${to:0:7}" >> "$GITHUB_OUTPUT"
           fi
@@ -46,7 +45,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git add vendor/mlx-agent CHANGELOG.md
+          git add vendor/mlx-agent
           git commit -q -m "chore: pin mlx-agent to main"
           git push -q origin "$BRANCH"
           for old in $(gh pr list --state open --json number,headRefName -q '.[] | select(.headRefName | startswith("bot/pin-engine-")) | .number'); do
