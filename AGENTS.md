@@ -18,7 +18,10 @@ server.
 
 ## Repository map
 
-- `vendor/mlx-agent`: git submodule, the execution engine.
+- `vendor/mlx-agent`: git submodule, the execution engine. It follows
+  mlx-agent `main`: a merge there dispatches `server-merged`,
+  `pin-engine.yml` opens the `bot/pin-engine-*` pull request, and `pr.yml`
+  merges it once both gates pass.
 - `scripts/mlx-workbench` → `mlx_workbench/__main__.py`: opens the built app
   (`--app`, `$MLX_WORKBENCH_APP`, or the Release build under `.run/swift-build`).
 - `mlx_workbench/`: Python configuration and compatibility utilities used by
