@@ -19,7 +19,7 @@ The native Library keeps model readiness and memory fit beside the selected mode
 
 ## Install
 
-Requires an Apple Silicon Mac, Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended) and Apple's Command Line Tools (`xcode-select --install`). Git is needed when using a source checkout.
+Requires macOS 14 or newer on Apple Silicon, Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended) and Apple's Command Line Tools (`xcode-select --install`). Git is needed when using a source checkout.
 
 Download `mlx-workbench-<version>.dmg` from the [latest release](https://github.com/cavi-ai/mlx-workbench/releases/latest) and drag **MLX Workbench** into **Applications**. In Setup Assistant, choose **Use bundled engine…**, confirm **Prepare engine**, then use **Install Runtime…** to install its Python dependencies. Preparing the engine copies the packaged sources; it does not install packages or download models.
 
@@ -36,6 +36,12 @@ Open the app and set **Settings → Engine → mlx-agent checkout** to the check
 To build from source instead, run `make start` in the checkout after `make install`; it builds the app with Xcode and opens it.
 
 ## First model
+
+Start with a model already on disk when possible. Open **Library**, select it,
+and inspect its readiness and memory-fit estimate; **Health** explains missing
+runtime prerequisites. This inspection does not download weights or start a server.
+Fit is an estimate, not reserved memory. Follow the verification steps below
+before serving a model that has not passed its engine canary.
 
 1. **Library** lists the GGUF and MLX weights already on disk, with whether each fits in memory now.
 2. Paste a Hugging Face link anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
@@ -73,7 +79,11 @@ make test-swift  # XCTest suite for the native app
 make docs-test   # documentation contract tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/mlx-workbench/source/pages/guides/development.md). The docs are built from `docs/mlx-workbench/source` with `make docs-build` into the release asset `mlx-workbench-docs-v<version>.tar.gz`; the [consumer contract](docs/mlx-workbench/CONSUMER.md) describes it.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/mlx-workbench/source/pages/guides/development.md).
+`make docs-build` builds `docs/mlx-workbench/source`, `make docs-verify` checks the
+result, and `make docs-release` creates `mlx-workbench-docs-v<version>.tar.gz`.
+The [consumer contract](docs/mlx-workbench/CONSUMER.md) describes that artifact;
+check the selected release's assets for its published documentation.
 
 ## License
 
