@@ -161,7 +161,7 @@ enum ComparisonMediaFixtures {
     static let meshGenerationSet = PromptSet(
         id: "builtin-mesh-generation", name: "3D shape", useCase: nil,
         prompts: [PromptEntry(id: "mesh-cube", text: "Cube", inputKind: .image,
-                             builtinInput: "cube-object", media: MediaParameters(steps: 50, seed: 42, meshResolution: 128))],
+                             builtinInput: "cube-object", media: MediaParameters(seed: 42))],
         origin: .builtin, mode: .meshGeneration
     )
 

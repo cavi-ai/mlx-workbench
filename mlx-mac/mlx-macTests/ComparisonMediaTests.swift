@@ -239,7 +239,21 @@ final class ComparisonMediaTests: XCTestCase {
         prompt.meshResolution = "512"
         XCTAssertNil(prompt.validationError(for: .meshGeneration))
         prompt.meshResolution = "1024"
+        XCTAssertNil(prompt.validationError(for: .meshGeneration))
+        prompt.meshResolution = "1536"
+        XCTAssertNil(prompt.validationError(for: .meshGeneration))
+        prompt.meshResolution = "2048"
         XCTAssertNotNil(prompt.validationError(for: .meshGeneration))
+    }
+
+    func testBuiltinMeshSetLeavesStepsAndResolutionToEachModel() throws {
+        let entry = try XCTUnwrap(ComparisonMediaFixtures.meshGenerationSet.prompts.first)
+        let parameters = try XCTUnwrap(entry.media)
+        XCTAssertEqual(WorkbenchAPI.meshArguments(path: "/Models/shape", image: "/Images/cube.png", out: "/Outputs/cube.glb", parameters: parameters),
+                       ["convert", "mesh", "--path", "/Models/shape", "--image", "/Images/cube.png", "--out", "/Outputs/cube.glb", "--timeout", "3600", "--seed", "42"])
+        let draft = PromptSetDraft(mode: .meshGeneration)
+        XCTAssertEqual(draft.prompts.first?.steps, "")
+        XCTAssertEqual(draft.prompts.first?.meshResolution, "")
     }
 
     @MainActor

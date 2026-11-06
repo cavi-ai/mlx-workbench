@@ -69,11 +69,11 @@ A choice answer is the model's chosen label. A score answer is the most likely l
 
 ### 3D generation
 
-Choose **3D generation** for ready TripoSG models converted by the engine's `mlx-3d` backend. Install that backend before conversion. Keep the converted directory under a model folder configured in Settings, then scan Library and use **Select for Compare**.
+Choose **3D generation** for ready TripoSG, TRELLIS.2 and Pixal3D models converted by the engine's `mlx-3d` backend. Install that backend before conversion. Keep the converted directory under a model folder configured in Settings, then scan Library and use **Select for Compare**.
 
-Each entry takes an image; its optional label is not a text-generation prompt. Use an isolated object on a white or transparent background. Set resolution (32, 64, 128, 256 or 512; the engine uses 512 when it is empty), steps and seed, or start with the built-in **3D shape** set. Each lane saves its input and generated GLB. Drag the mesh preview to rotate, scroll to zoom, and use **Reveal mesh** to locate the file.
+Each entry takes an image; its optional label is not a text-generation prompt. Use an isolated object on a white or transparent background. Resolution and steps left empty use each model's own defaults: TripoSG 512 and 50 steps, TRELLIS.2 1024 and 12 steps, Pixal3D 1536 and 12 steps. A resolution must be one the model supports (TripoSG 32, 64, 128, 256 or 512; TRELLIS.2 512, 1024 or 1536; Pixal3D 1024 or 1536), or that lane fails. The built-in **3D shape** set sets only the seed. Each lane saves its input and generated GLB. Drag the mesh preview to rotate, scroll to zoom, and use **Reveal mesh** to locate the file.
 
-The primary metric is generation time, excluding model loading. Compare like-for-like steps and inputs, then rate the geometry separately. TripoSG produces untextured shapes; 3D results do not become chat recommendations or endpoint promotions. GLB files follow the same retention rules as other media outputs.
+The primary metric is generation time, excluding model loading. Compare like-for-like inputs, then rate the geometry separately. All three models produce untextured shapes; 3D results do not become chat recommendations or endpoint promotions. GLB files follow the same retention rules as other media outputs.
 
 Local chat requests use the selected model's path, including its exact Hugging Face snapshot directory. Readiness checks prefer the server's lightweight health endpoint, falling back to the model endpoint when no health endpoint exists. MLX-LM's cache inventory does not have to finish listing before the comparison can proceed.
 
