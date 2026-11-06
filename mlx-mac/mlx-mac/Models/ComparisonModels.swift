@@ -394,9 +394,9 @@ struct PromptSetDraft: Identifiable {
                 var parameters = initialMedia ?? MediaParameters()
                 let stepValue = try IntegerSetting(title: "Steps", range: 1...100).value(steps)
                 let seedValue = try InferenceSettings.seed.value(seed)
-                let resolutionValue = try IntegerSetting(title: "Resolution", range: 32...512).value(meshResolution)
-                if let resolutionValue, ![32, 64, 128, 256, 512].contains(resolutionValue) {
-                    throw InvalidDraft(message: "Mesh resolution must be 32, 64, 128, 256 or 512.")
+                let resolutionValue = try IntegerSetting(title: "Resolution", range: 32...1536).value(meshResolution)
+                if let resolutionValue, ![32, 64, 128, 256, 512, 1024, 1536].contains(resolutionValue) {
+                    throw InvalidDraft(message: "Mesh resolution must be 32, 64, 128, 256, 512, 1024 or 1536.")
                 }
                 if steps != (initialMedia?.steps.map(String.init) ?? "") { parameters.steps = stepValue }
                 if seed != (initialMedia?.seed.map(String.init) ?? "") { parameters.seed = seedValue }
@@ -448,7 +448,7 @@ struct PromptSetDraft: Identifiable {
         switch mode {
         case .imageGeneration: MediaParameters(size: 512, steps: 20, seed: 42)
         case .videoGeneration: ComparisonMediaFixtures.videoGenerationParameters
-        case .meshGeneration: MediaParameters(steps: 50, seed: 42, meshResolution: 128)
+        case .meshGeneration: MediaParameters(seed: 42)
         case .musicGeneration: MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")
         default: nil
         }

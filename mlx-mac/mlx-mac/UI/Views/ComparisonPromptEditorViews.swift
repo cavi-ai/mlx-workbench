@@ -444,11 +444,11 @@ private struct ComparisonPromptCard: View {
                 }
             }
             if mode == .meshGeneration {
-                Text("Use an isolated object on a white or transparent background. TripoSG generates shape without textures.")
+                Text("Use an isolated object on a white or transparent background. Meshes are generated without textures; empty resolution and steps use each model's own defaults.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
-                    parameter("Resolution", placeholder: "32, 64, 128 or 256", value: $prompt.meshResolution)
-                    parameter("Steps", placeholder: "Default: 50", value: $prompt.steps)
+                    parameter("Resolution", placeholder: "Default: the model's", value: $prompt.meshResolution)
+                    parameter("Steps", placeholder: "Default: the model's", value: $prompt.steps)
                     parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
                 }
             }

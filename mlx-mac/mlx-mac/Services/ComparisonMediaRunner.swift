@@ -155,7 +155,7 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
             guard let input = request.inputURL else { throw ComparisonMediaError.missingInput }
             guard let out = request.outputURL else { throw ComparisonMediaError.missingOutputPath }
             let result = try await api.mesh(path: request.modelPath, image: input.path, out: out.path,
-                                            parameters: entry.media ?? MediaParameters(steps: 50, seed: 42))
+                                            parameters: entry.media ?? MediaParameters(seed: 42))
             let summary: String
             if let vertices = result.vertices, let faces = result.faces { summary = "\(vertices) vertices · \(faces) faces" }
             else { summary = "GLB mesh" }
