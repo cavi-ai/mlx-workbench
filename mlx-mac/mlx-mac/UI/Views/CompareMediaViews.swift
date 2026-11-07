@@ -662,7 +662,8 @@ struct MediaRunResultsView<LaneActions: View>: View {
         case .mesh:
             if let url = store.artifactURL(runID: run.id, artifact: sample.artifact ?? ""),
                FileManager.default.fileExists(atPath: url.path) {
-                ComparisonMeshPreview(url: url).frame(width: side, height: side)
+                ComparisonMeshPreview(url: url, inspection: ComparisonMeshInspection(url: url, title: name(modelPath)))
+                    .frame(width: side, height: side)
                 Text(sample.outputExcerpt).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 Button("Reveal mesh", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             } else {

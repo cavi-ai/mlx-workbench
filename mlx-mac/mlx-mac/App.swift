@@ -50,6 +50,11 @@ struct MlxWorkbenchApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 720, height: 640)
+        WindowGroup("3D mesh", id: ComparisonMeshInspection.windowID, for: ComparisonMeshInspection.self) { $inspection in
+            if let inspection { ComparisonMeshInspector(inspection: inspection).workbenchTheme() }
+        }
+        .defaultSize(width: WorkbenchSize.Compare.meshInspectorWidth, height: WorkbenchSize.Compare.meshInspectorHeight)
+        .commandsRemoved()
         Window("Served models", id: ServedModelsWindow.id) {
             ServedModelsView(appHost: appHost).workbenchTheme()
         }

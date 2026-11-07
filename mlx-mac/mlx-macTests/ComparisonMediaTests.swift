@@ -261,26 +261,7 @@ final class ComparisonMediaTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
-        var json = Data("""
-        {"asset":{"version":"2.0"},"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":3,"type":"SCALAR"}]}
-        """.utf8)
-        while json.count % 4 != 0 { json.append(32) }
-        var binary = Data()
-        for value: Float in [0, 0, 0, 1, 0, 0, 0, 1, 0] {
-            var bits = value.bitPattern.littleEndian
-            withUnsafeBytes(of: &bits) { binary.append(contentsOf: $0) }
-        }
-        for var index in [UInt32(0), 1, 2] {
-            withUnsafeBytes(of: &index) { binary.append(contentsOf: $0) }
-        }
-        var glb = Data()
-        func append(_ value: UInt32) {
-            var word = value.littleEndian
-            withUnsafeBytes(of: &word) { glb.append(contentsOf: $0) }
-        }
-        append(0x46546C67); append(2); append(UInt32(28 + json.count + binary.count))
-        append(UInt32(json.count)); append(0x4E4F534A); glb.append(json)
-        append(UInt32(binary.count)); append(0x004E4942); glb.append(binary)
+        let glb = Self.meshGLB(positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2])
         let fixture = root.appendingPathComponent("triangle.glb")
         try glb.write(to: fixture)
         let triangle = try ComparisonMeshData.read(fixture)
@@ -293,10 +274,10 @@ final class ComparisonMediaTests: XCTestCase {
             mesh = try ComparisonMeshData.read(URL(fileURLWithPath: path))
             XCTAssertGreaterThan(mesh.indices.count, 3)
         } else { mesh = triangle }
-        let scene = mesh.scene()
+        let stage = mesh.stage()
         let renderer = SCNRenderer(device: nil, options: nil)
-        renderer.scene = scene
-        renderer.pointOfView = scene.rootNode.childNodes.first { $0.camera != nil }
+        renderer.scene = stage.scene
+        renderer.pointOfView = stage.camera
         renderer.autoenablesDefaultLighting = true
         let rendered = renderer.snapshot(atTime: 0, with: CGSize(width: 640, height: 640), antialiasingMode: .multisampling4X)
         let attachment = XCTAttachment(image: rendered)
@@ -306,6 +287,85 @@ final class ComparisonMediaTests: XCTestCase {
            let png = bitmap.representation(using: .png, properties: [:]) {
             try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("mesh-preview.png"))
         }
+    }
+
+    @MainActor
+    func testMeshPreviewFramesTheMeshAndPinchZoomNeverClipsOrWidensIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A unit cube centered away from the origin.
+        let center = SIMD3<Float>(2.5, -0.5, 1)
+        let corners = [SIMD3<Float>(-1, -1, -1), [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
+            .flatMap { corner -> [Float] in let point = center + corner / 2; return [point.x, point.y, point.z] }
+        let faces: [UInt32] = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5]
+        let fixture = root.appendingPathComponent("cube.glb")
+        try Self.meshGLB(positions: corners, indices: faces).write(to: fixture)
+        let mesh = try ComparisonMeshData.read(fixture)
+        let view = ComparisonMeshSceneView(stage: mesh.stage())
+        view.frame = NSRect(x: 0, y: 0, width: 400, height: 400)
+        let framingLens = try XCTUnwrap(view.pointOfView?.camera?.fieldOfView)
+        func projected() -> [SCNVector3] { mesh.positions.map { view.projectPoint(SCNVector3($0)) } }
+        func nearestDepth() throws -> Float {
+            let camera = try XCTUnwrap(view.pointOfView)
+            return try XCTUnwrap(mesh.positions.map { -Float(camera.convertPosition(SCNVector3($0), from: nil).z) }.min())
+        }
+
+        let start = projected()
+        XCTAssertTrue(start.allSatisfy { (0...400).contains($0.x) && (0...400).contains($0.y) && (0...1).contains($0.z) },
+                      "the whole mesh is in view: \(start)")
+        let spans = [start.map(\.x), start.map(\.y)].map { ($0.max() ?? 0) - ($0.min() ?? 0) }
+        XCTAssertGreaterThan(spans.max() ?? 0, 200, "the mesh fills at least half the preview")
+
+        for step in 0..<40 { view.magnify(with: try Self.pinch(0.25, began: step == 0)) }
+        let lens = try XCTUnwrap(view.pointOfView?.camera)
+        XCTAssertGreaterThan(try nearestDepth(), Float(lens.zNear), "zooming in never puts the surface inside the near clip plane")
+        XCTAssertLessThan(lens.fieldOfView, framingLens, "zooming in past the mesh bounds narrows the lens")
+        XCTAssertTrue(projected().allSatisfy { (0...1).contains($0.z) }, "every vertex stays in the clip range")
+
+        for step in 0..<80 { view.magnify(with: try Self.pinch(-0.25, began: step == 0)) }
+        XCTAssertLessThanOrEqual(try XCTUnwrap(view.pointOfView?.camera?.fieldOfView), framingLens,
+                                 "zooming out never widens the lens past the framing lens")
+        XCTAssertTrue(projected().allSatisfy { (0...1).contains($0.z) }, "every vertex stays in the clip range")
+    }
+
+    /// A trackpad pinch step as AppKit delivers it: a gesture event of HID type zoom.
+    private static func pinch(_ magnification: Double, began: Bool) throws -> NSEvent {
+        let gesture = try XCTUnwrap(CGEvent(source: nil))
+        gesture.type = try XCTUnwrap(CGEventType(rawValue: 29))
+        gesture.setIntegerValueField(try XCTUnwrap(CGEventField(rawValue: 110)), value: 8)
+        gesture.setDoubleValueField(try XCTUnwrap(CGEventField(rawValue: 113)), value: magnification)
+        gesture.setIntegerValueField(try XCTUnwrap(CGEventField(rawValue: 132)), value: began ? 1 : 2)
+        let event = try XCTUnwrap(NSEvent(cgEvent: gesture))
+        XCTAssertEqual(event.type, .magnify)
+        return event
+    }
+
+    /// A single-buffer GLB with float positions and UInt32 indices, the layout `convert mesh` writes.
+    private static func meshGLB(positions: [Float], indices: [UInt32]) -> Data {
+        let positionBytes = positions.count * 4, indexBytes = indices.count * 4
+        var json = Data("""
+        {"asset":{"version":"2.0"},"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":\(positionBytes)},{"buffer":0,"byteOffset":\(positionBytes),"byteLength":\(indexBytes)}],"accessors":[{"bufferView":0,"componentType":5126,"count":\(positions.count / 3),"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":\(indices.count),"type":"SCALAR"}]}
+        """.utf8)
+        while json.count % 4 != 0 { json.append(32) }
+        var binary = Data()
+        for value in positions {
+            var bits = value.bitPattern.littleEndian
+            withUnsafeBytes(of: &bits) { binary.append(contentsOf: $0) }
+        }
+        for value in indices {
+            var index = value.littleEndian
+            withUnsafeBytes(of: &index) { binary.append(contentsOf: $0) }
+        }
+        var glb = Data()
+        func append(_ value: UInt32) {
+            var word = value.littleEndian
+            withUnsafeBytes(of: &word) { glb.append(contentsOf: $0) }
+        }
+        append(0x46546C67); append(2); append(UInt32(28 + json.count + binary.count))
+        append(UInt32(json.count)); append(0x4E4F534A); glb.append(json)
+        append(UInt32(binary.count)); append(0x004E4942); glb.append(binary)
+        return glb
     }
 
     func testMeshComparisonUsesImageInputAndRetainsGLBOutput() throws {

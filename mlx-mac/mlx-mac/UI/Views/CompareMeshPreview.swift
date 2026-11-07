@@ -68,7 +68,8 @@ struct ComparisonMeshData: Sendable {
         return Self(positions: positions, normals: normals, indices: indices)
     }
 
-    @MainActor func scene() -> SCNScene {
+    /// The mesh lit in the accent color with a camera that frames its bounds.
+    @MainActor func stage() -> ComparisonMeshStage {
         let geometry = SCNGeometry(sources: [SCNGeometrySource(vertices: positions.map { SCNVector3($0) }),
                                             SCNGeometrySource(normals: normals.map { SCNVector3($0) })],
                                    elements: [SCNGeometryElement(indices: indices, primitiveType: .triangles)])
@@ -78,36 +79,171 @@ struct ComparisonMeshData: Sendable {
         geometry.materials = [material]
         let scene = SCNScene()
         scene.rootNode.addChildNode(SCNNode(geometry: geometry))
-        let camera = SCNNode()
-        camera.camera = SCNCamera()
-        camera.position = SCNVector3(2.5, 1.5, 3)
-        camera.look(at: SCNVector3Zero)
-        scene.rootNode.addChildNode(camera)
-        return scene
+        let low = positions.dropFirst().reduce(positions[0], simd_min)
+        let high = positions.dropFirst().reduce(positions[0], simd_max)
+        let center = (low + high) / 2, radius = max(simd_length(high - low) / 2, 1e-3)
+        // Clip range and zoom limits scale with the mesh, so a close view shows the surface instead of slicing it.
+        let camera = SCNCamera()
+        camera.fieldOfView = 35
+        camera.zNear = Double(radius) * 0.001
+        camera.zFar = Double(radius) * 100
+        let distance = radius / sin(Float(camera.fieldOfView) * .pi / 360) * 1.05
+        let node = SCNNode()
+        node.camera = camera
+        node.simdPosition = center + simd_normalize(SIMD3<Float>(2.5, 1.5, 3)) * distance
+        node.simdLook(at: center)
+        scene.rootNode.addChildNode(node)
+        return ComparisonMeshStage(scene: scene, camera: node,
+                                   zoom: ComparisonMeshZoom(center: center, distances: radius...distance * 4,
+                                                            fieldsOfView: 5...camera.fieldOfView))
     }
+}
+
+struct ComparisonMeshStage {
+    let scene: SCNScene
+    let camera: SCNNode
+    let zoom: ComparisonMeshZoom
+}
+
+/// Pinch zoom with fixed limits. Zooming in moves the camera along its view axis to the mesh's bounding
+/// sphere, then narrows the lens; zooming out widens the lens back to the framing lens, then backs away.
+/// The camera never enters the mesh bounds and the lens never goes wider than the framing lens.
+struct ComparisonMeshZoom {
+    let center: SIMD3<Float>
+    let distances: ClosedRange<Float>
+    let fieldsOfView: ClosedRange<CGFloat>
+
+    func apply(_ magnification: CGFloat, to camera: SCNNode) {
+        guard let lens = camera.camera, magnification.isFinite, magnification > -0.9, magnification != 0 else { return }
+        let scale = 1 + magnification
+        let offset = camera.simdWorldPosition - center, front = camera.simdWorldFront
+        let distance = simd_length(offset)
+        let moves = scale > 1 ? distance > distances.lowerBound * 1.0001 : lens.fieldOfView >= fieldsOfView.upperBound
+        if moves {
+            let goal = min(max(distance / Float(scale), distances.lowerBound), distances.upperBound)
+            let lateral = offset - front * simd_dot(offset, front)
+            camera.simdWorldPosition = center + lateral - front * sqrt(max(goal * goal - simd_length_squared(lateral), 0))
+        } else {
+            let field = atan(tan(lens.fieldOfView * .pi / 360) / scale) * 360 / .pi
+            lens.fieldOfView = min(max(field, fieldsOfView.lowerBound), fieldsOfView.upperBound)
+        }
+    }
+}
+
+/// SceneKit camera control for rotate and pan, with pinch routed through `ComparisonMeshZoom`.
+final class ComparisonMeshSceneView: SCNView {
+    private var zoom: ComparisonMeshZoom?
+
+    convenience init(stage: ComparisonMeshStage) {
+        self.init(frame: .zero, options: nil)
+        allowsCameraControl = true
+        autoenablesDefaultLighting = true
+        antialiasingMode = .multisampling4X
+        show(stage)
+    }
+
+    func show(_ stage: ComparisonMeshStage) {
+        scene = stage.scene
+        pointOfView = stage.camera
+        zoom = stage.zoom
+    }
+
+    override func magnify(with event: NSEvent) {
+        guard let zoom, let camera = pointOfView else { return super.magnify(with: event) }
+        zoom.apply(event.magnification, to: camera)
+    }
+}
+
+private struct ComparisonMeshSceneRepresentable: NSViewRepresentable {
+    let stage: ComparisonMeshStage
+
+    func makeNSView(context: Context) -> ComparisonMeshSceneView { ComparisonMeshSceneView(stage: stage) }
+
+    func updateNSView(_ view: ComparisonMeshSceneView, context: Context) {
+        if view.scene !== stage.scene { view.show(stage) }
+    }
+}
+
+/// One mesh opened from a Compare cell into its own full-screen window.
+struct ComparisonMeshInspection: Codable, Hashable {
+    static let windowID = "comparison-mesh"
+    let url: URL
+    let title: String
 }
 
 struct ComparisonMeshPreview: View {
     let url: URL
-    @State private var scene: SCNScene?
+    /// Shows the full-screen button when set.
+    var inspection: ComparisonMeshInspection?
+    @Environment(\.openWindow) private var openWindow
+    @State private var stage: ComparisonMeshStage?
     @State private var error: String?
 
     var body: some View {
         Group {
-            if let scene {
-                SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting])
-                    .accessibilityLabel("3D mesh preview. Drag to rotate and scroll to zoom.")
+            if let stage {
+                ComparisonMeshSceneRepresentable(stage: stage)
+                    .accessibilityLabel("3D mesh preview. Drag to rotate, pinch to zoom and scroll to pan.")
+                    .overlay(alignment: .topTrailing) {
+                        if let inspection {
+                            Button { openWindow(value: inspection) } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .padding(WorkbenchSpacing.xs)
+                            .help("Open full screen")
+                            .accessibilityLabel("Open \(inspection.title) full screen")
+                        }
+                    }
             } else if let error {
                 Text(error).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             } else { ProgressView("Loading mesh") }
         }
         .task(id: url) {
-            scene = nil; error = nil
+            stage = nil; error = nil
             do {
                 let mesh = try await Task.detached(priority: .userInitiated) { try ComparisonMeshData.read(url) }.value
                 try Task.checkCancellation()
-                scene = mesh.scene()
+                stage = mesh.stage()
             } catch is CancellationError { } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+
+/// A Compare mesh at screen size, for grading surface detail.
+struct ComparisonMeshInspector: View {
+    let inspection: ComparisonMeshInspection
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Text(inspection.title).font(WorkbenchTypography.cardTitle).lineLimit(1)
+                Spacer()
+                Text("Drag to rotate, pinch to zoom, scroll to pan")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Button("Reveal mesh", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([inspection.url]) }
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            ComparisonMeshPreview(url: inspection.url).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(WorkbenchSpacing.pageInset)
+        .background(FullScreenOnOpen())
+        .navigationTitle(inspection.title)
+    }
+}
+
+/// Puts its window into macOS full screen when the window first appears.
+private struct FullScreenOnOpen: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, !window.styleMask.contains(.fullScreen) else { return }
+            DispatchQueue.main.async { window.toggleFullScreen(nil) }
         }
     }
 }

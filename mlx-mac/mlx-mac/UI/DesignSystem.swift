@@ -250,6 +250,9 @@ extension WorkbenchSize {
         static let musicPromptEditorHeight: CGFloat = promptEditorHeight
         static let filterPopoverWidth: CGFloat = 340
         static let emptyMinimumHeight: CGFloat = 200
+        /// Window size a mesh inspector restores to when it leaves full screen.
+        static let meshInspectorWidth: CGFloat = 1100
+        static let meshInspectorHeight: CGFloat = 820
     }
 }
 

@@ -20,7 +20,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ### Changed
 
 - Engine: `mlx-agent` moves to 0.11.1, which requires Python 3.11 or later, serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways, gives every Chat Completions tool call an id and drops the end-of-sequence token from unstreamed answers, converts Qwen3.5-family GGUFs to MLX with the matching vision projector from the same folder, generates TripoSG meshes on the upstream octree at resolution 32 to 512, lists unquantized TripoSG conversions in scans, and converts at 5 and 6 bits where the converter supports them.
-- Compare: **3D generation** accepts resolution 512, 1024 and 1536; new entries and the built-in **3D shape** set leave resolution and steps empty, so each model runs at its own defaults.
+- Compare: **3D generation** accepts resolution 512, 1024 and 1536; new entries and the built-in **3D shape** set leave resolution and steps empty, so each model runs at its own defaults; the mesh preview frames the whole mesh, stops zooming in at its bounds without clipping the surface, and opens full screen from its corner button.
 - Discover: **Browse candidates** opens on the most downloaded MLX models, four per role in one list in Hugging Face order, offers **Trending**, **Newest** and **Search Hugging Face**, leaves out GGUF-only repositories, marks the first tool-calling chat model that fits this Mac **Recommended for this Mac**, and inspects only the repositories it shows.
 - Library: weights that need converting offer **Convert to MLX…** instead of **Prepare to run**, and vision projector files and drafters no port converts offer no conversion.
 
