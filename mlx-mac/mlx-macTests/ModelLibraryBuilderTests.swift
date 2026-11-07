@@ -31,7 +31,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
                 gate.pauseOnce()
                 return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
             })
-        let original = host.config.ggufRoots
+        let original = host.config.ggufRoots + [host.config.outputDir]
         let task = Task { await host.rescan() }
         defer { gate.release.signal() }
         await fulfillment(of: [gate.started], timeout: 2)
@@ -40,9 +40,10 @@ final class ModelLibraryBuilderTests: XCTestCase {
         host.config.ggufRoots = ["/changed-model-root"]
         gate.release.signal()
         await task.value
-        XCTAssertEqual(host.scannedRoots?.gguf, ["/changed-model-root"])
+        XCTAssertEqual(host.scannedRoots?.gguf, ["/changed-model-root", "/mlx"])
+        XCTAssertEqual(host.scannedRoots?.mlx, ["/mlx"])
         let roots = await capturedRoots.values
-        XCTAssertEqual(roots, [original, ["/changed-model-root"]])
+        XCTAssertEqual(roots, [original, ["/changed-model-root", "/mlx"]])
     }
 
     @MainActor

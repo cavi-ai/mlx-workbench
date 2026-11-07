@@ -475,17 +475,17 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(Config.discoverGgufRoots(home: home), [])
     }
 
-    func testCoercionDiscoversGGUFRootsOnlyWithoutAValidStoredList() throws {
+    func testCoercionKeepsMissingOrInvalidGGUFRootsEmptyWithoutDiscovery() throws {
         let unexpected = { () -> [String] in
-            XCTFail("a stored gguf_roots list is not rediscovered")
+            XCTFail("coercing model locations must not discover folders")
             return []
         }
         XCTAssertEqual(coerce(["gguf_roots": ["/models/a"]], discoverGgufRoots: unexpected).ggufRoots, ["/models/a"])
         XCTAssertEqual(coerce(["gguf_roots": [String]()], discoverGgufRoots: unexpected).ggufRoots, [])
-        XCTAssertEqual(coerce([:], discoverGgufRoots: { ["/found"] }).ggufRoots, ["/found"])
-        XCTAssertEqual(coerce(["gguf_roots": 7], discoverGgufRoots: { ["/found"] }).ggufRoots, ["/found"])
+        XCTAssertEqual(coerce([:], discoverGgufRoots: unexpected).ggufRoots, [])
+        XCTAssertEqual(coerce(["gguf_roots": 7], discoverGgufRoots: unexpected).ggufRoots, [])
         let tooMany = Array(repeating: "/r", count: Config.MAX_ROOTS + 1)
-        XCTAssertEqual(coerce(["gguf_roots": tooMany], discoverGgufRoots: { ["/found"] }).ggufRoots, ["/found"])
+        XCTAssertEqual(coerce(["gguf_roots": tooMany], discoverGgufRoots: unexpected).ggufRoots, [])
 
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
