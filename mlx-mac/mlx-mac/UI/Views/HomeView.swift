@@ -246,7 +246,7 @@ struct HomeView: View {
 
     private var ggufRoots: [String] {
         if let roots = appHost.scanResult?.roots?.gguf, !roots.isEmpty { return roots }
-        return appHost.config.ggufRoots.isEmpty ? appHost.discoveredRoots : appHost.config.ggufRoots
+        return appHost.config.ggufRoots
     }
 
     private var mlxRoots: [String] {
@@ -262,7 +262,7 @@ struct HomeView: View {
         HomeNextAction.derive(
             workflow: modelWorkflow.workflow,
             snapshot: appHost.librarySnapshot,
-            rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty,
+            rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty || !appHost.config.outputDir.isEmpty,
             isScanning: appHost.isScanning,
             lastError: appHost.lastError,
             agentReady: agentReady,
