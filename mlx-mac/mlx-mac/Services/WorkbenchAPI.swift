@@ -565,7 +565,12 @@ actor WorkbenchAPI {
 
     /// Removal cannot treat an unreadable status response as an empty fleet.
     func servingPathsForRemoval() async throws -> [String] {
-        try Self.servingPathsForRemoval(from: await raw(["serve", "status", "--receipts-dir", receiptDirectory]))
+        let current = try await discoverServingServices()
+        guard current.supportsDiscovery, current.errors.isEmpty,
+              current.servers.allSatisfy({ !$0.modelIdentity.isEmpty }) else {
+            throw WorkflowEvidenceError.invalid("Serving ownership could not be checked across model servers. Update the engine or resolve inventory errors before removing models.")
+        }
+        return current.servers.filter { $0.state != "stopped" }.flatMap { [$0.modelIdentity] + [$0.repo].compactMap { $0 } }
     }
 
     static func servingPathsForRemoval(from data: [String: Any]) throws -> [String] {

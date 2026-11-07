@@ -82,12 +82,17 @@ final class IntakeCoordinator: ObservableObject {
     private let api: IntakeAPI
     private let pollInterval: Duration
     private let pollLimit: Int
+    private let validateDestination: (String) async throws -> Void
     private static let maxLogLines = 40
 
-    init(api: IntakeAPI, pollInterval: Duration = .seconds(2), pollLimit: Int = 1800) {
+    init(api: IntakeAPI, pollInterval: Duration = .seconds(2), pollLimit: Int = 1800,
+         validateDestination: @escaping (String) async throws -> Void = { path in
+             try await WorkbenchIO.perform { Result { try ManagedModelInstallStore.refuseLinks(in: path) } }.get()
+         }) {
         self.api = api
         self.pollInterval = pollInterval
         self.pollLimit = pollLimit
+        self.validateDestination = validateDestination
     }
 
     var isBusy: Bool {
@@ -247,12 +252,6 @@ final class IntakeCoordinator: ObservableObject {
 
     func download(resolution: IntakeResolution, localDir: String?, previewHash: String?) async throws -> String {
         guard !isBusy else { throw WorkflowEvidenceError.invalid("Another intake operation is active.") }
-        if let localDir {
-            try await WorkbenchIO.perform { Result { try ManagedModelInstallStore.refuseLinks(in: localDir) } }.get()
-            guard !FileManager.default.fileExists(atPath: localDir) else {
-                throw WorkflowEvidenceError.invalid("The destination already exists. Use the current library copy or review a separate update instead of overwriting it.")
-            }
-        }
         let request = IntakeFetchRequest(
             source: resolution.source.reference,
             revision: resolution.source.fetchRevision,
@@ -263,6 +262,12 @@ final class IntakeCoordinator: ObservableObject {
         activity = .downloading(repo: resolution.source.repo)
         logTail = []
         do {
+            if let localDir {
+                try await validateDestination(localDir)
+                guard !FileManager.default.fileExists(atPath: localDir) else {
+                    throw WorkflowEvidenceError.invalid("The destination already exists. Use the current library copy or review a separate update instead of overwriting it.")
+                }
+            }
             let hash: String
             if let previewHash { hash = previewHash }
             else {

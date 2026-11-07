@@ -18,6 +18,7 @@ final class ModelUpdateCoordinator: ObservableObject {
     @Published private(set) var activeRecordID: UUID?
 
     var onCompletion: ((UUID) async -> Void)?
+    var onDiscardReview: ((UUID) -> Void)?
     private var api: ModelUpdateAPI
     private let store: JSONStore<ModelUpdateRecord>
     private let now: () -> Date
@@ -47,11 +48,12 @@ final class ModelUpdateCoordinator: ObservableObject {
 
     func begin(repo: String, alertID: UUID? = nil) async {
         guard !isRunning else { isPresented = true; return }
+        discardReview()
         generation = UUID()
         let request = generation
         self.repo = repo; self.alertID = alertID
         candidates = []; selectedPreviousPath = nil; review = nil
-        activeRecordID = nil; error = nil; isLoading = true; isPresented = true
+        activeRecordID = nil; error = nil; isPreparing = false; isLoading = true; isPresented = true
         await waitForHistory()
         guard request == generation else { return }
         guard hasLoadedHistory else { isLoading = false; error = persistenceError; return }
@@ -70,20 +72,24 @@ final class ModelUpdateCoordinator: ObservableObject {
 
     func selectPrevious(path: String?) async {
         guard !isRunning else { return }
+        discardReview()
         generation = UUID()
         let request = generation
         selectedPreviousPath = path; review = nil; activeRecordID = nil; error = nil
         guard let candidate = candidates.first(where: { $0.path == path }) else { isPreparing = false; return }
         isPreparing = true
+        var preparedID: UUID?
         do {
             let prepared = try await api.prepare(repo, candidate)
-            guard request == generation else { return }
+            preparedID = prepared.id
+            guard request == generation else { onDiscardReview?(prepared.id); return }
             guard prepared.previous == candidate, prepared.repo.caseInsensitiveCompare(repo) == .orderedSame else {
                 throw ModelUpdateError.invalid("The update preview no longer matches the selected previous model. Review it again.")
             }
             try prepared.validate()
             review = prepared
         } catch {
+            if let preparedID { onDiscardReview?(preparedID) }
             if request == generation { self.error = AppHost.render(error) }
         }
         if request == generation { isPreparing = false }
@@ -93,7 +99,12 @@ final class ModelUpdateCoordinator: ObservableObject {
     /// under their captured review even if the presentation is closed.
     func close() {
         isPresented = false
-        if !isRunning { generation = UUID(); isLoading = false; isPreparing = false }
+        if !isRunning { discardReview(); generation = UUID(); isLoading = false; isPreparing = false }
+    }
+
+    private func discardReview() {
+        if let review { onDiscardReview?(review.id) }
+        review = nil
     }
 
     @discardableResult

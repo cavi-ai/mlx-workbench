@@ -387,7 +387,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         modelIdentity == other.modelIdentity && port == other.port && pid == other.pid &&
         runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt &&
         adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus && trainingBinding == other.trainingBinding &&
-        prefillKernel == other.prefillKernel && decodeProfile == other.decodeProfile
+        prefillKernel == other.prefillKernel && decodeProfile == other.decodeProfile && visionProfile == other.visionProfile &&
+        processStartedAt == other.processStartedAt
     }
 
     var residencySummary: String {

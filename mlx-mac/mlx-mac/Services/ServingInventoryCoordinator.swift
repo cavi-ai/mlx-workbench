@@ -41,6 +41,7 @@ final class ServingInventoryCoordinator: ObservableObject {
     private var hostTask: Task<Void, Never>?
     private var monitoring: Task<Void, Never>?
     private var lastEngine: ServingEngineSnapshot?
+    private var lastEngineCapturedAt: Date?
     private var engineError: String?
     private var lastHosts = ServingHostSnapshot()
     private var readingMemory = false
@@ -79,6 +80,7 @@ final class ServingInventoryCoordinator: ObservableObject {
                 let result = try await fetchEngine()
                 guard !Task.isCancelled else { return }
                 lastEngine = result
+                lastEngineCapturedAt = now()
                 engineError = nil
                 supportsEngineDiscovery = result.supportsDiscovery
             } catch {
@@ -110,7 +112,9 @@ final class ServingInventoryCoordinator: ObservableObject {
 
     private func publish() {
         var next = ServingInventorySnapshot.make(engine: engineError == nil ? lastEngine?.servers ?? [] : [],
-            hosts: lastHosts.inventories, managedReceipts: managedReceipts, capturedAt: now(), hostProcessIDs: lastHosts.processIDs)
+            hosts: lastHosts.inventories, managedReceipts: managedReceipts,
+            capturedAt: lastEngineCapturedAt ?? now(), hostProcessIDs: lastHosts.processIDs)
+        next.capturedAt = now()
         next.sourceErrors = lastHosts.errors.merging(lastEngine?.errors ?? [:]) { _, newer in newer }
         if let engineError { next.sourceErrors["engine"] = engineError }
         let freshIDs = Set(next.services.map(\.id))

@@ -53,7 +53,7 @@ struct ServingServiceObservation: Identifiable, Equatable {
         guard !stale else { return false }
         if let server {
             return residency == .loaded && server.state == "running" && server.jit == true && server.activeRequests == 0 &&
-                (server.pid.map { $0 > 0 && $0 <= Int(Int32.max) } ?? false) && (isWorkbenchManaged || (server.processStartedAt != nil && server.receiptsDirectory != nil))
+                (server.pid.map { $0 > 0 && $0 <= Int(Int32.max) } ?? false) && server.processStartedAt != nil && server.receiptsDirectory != nil
         }
         guard let host, let model = hostedModel else { return false }
         switch host.provider.adapter.releaseScope {
@@ -66,7 +66,7 @@ struct ServingServiceObservation: Identifiable, Equatable {
 
     var canStop: Bool {
         !stale && server?.state == "running" && (server?.pid.map { $0 > 0 && $0 <= Int(Int32.max) } ?? false) &&
-        (isWorkbenchManaged || (server?.processStartedAt != nil && server?.receiptsDirectory != nil))
+        server?.processStartedAt != nil && server?.receiptsDirectory != nil
     }
 
     var name: String {

@@ -1,5 +1,19 @@
 import Foundation
 
+@MainActor
+final class ModelUpdateCaptures {
+    struct Capture {
+        let endpoints: [EndpointSlot]
+        let cleanup: QuarantineFileSnapshot?
+    }
+    private var values: [UUID: Capture] = [:]
+    subscript(_ id: UUID) -> Capture? { values[id] }
+    func insert(_ id: UUID, endpoints: [EndpointSlot], cleanup: QuarantineFileSnapshot?) {
+        values[id] = Capture(endpoints: endpoints, cleanup: cleanup)
+    }
+    func discard(_ id: UUID) { values[id] = nil }
+}
+
 extension AppHost {
     func configureModelUpdates() {
         modelUpdates.configure(api: ModelUpdateAPI(
@@ -19,7 +33,7 @@ extension AppHost {
                 guard let self else { throw ModelUpdateError.unavailable }
                 try await self.verifyModelUpdate(review, installed: installed)
             }, switchEndpoints: { [weak self] review, installed in
-                guard let self, let slots = self.modelUpdateEndpointSnapshots[review.id] else { throw ModelUpdateError.unavailable }
+                guard let self, let slots = self.modelUpdateCaptures[review.id]?.endpoints else { throw ModelUpdateError.unavailable }
                 try installed.validate(for: review)
                 guard await self.endpoint.replaceModelForUpdate(expected: slots, modelPath: installed.path) else {
                     throw ModelUpdateError.invalid(self.endpoint.lastError ?? "The endpoints could not switch. The previous files remain in place.")
@@ -30,7 +44,7 @@ extension AppHost {
                     throw ModelUpdateError.invalid("The endpoint switched, but serving status could not be refreshed. The previous files were kept.")
                 }
             }, quarantinePrevious: { [weak self] review, installed in
-                guard let self, let expected = self.modelUpdateCleanupSnapshots[review.id] else { throw ModelUpdateError.unavailable }
+                guard let self, let expected = self.modelUpdateCaptures[review.id]?.cleanup else { throw ModelUpdateError.unavailable }
                 try installed.validate(for: review)
                 let protected = Array(self.occupancy.protectedPaths), root = self.config.outputDir, destination = self.config.quarantineDir
                 _ = try await WorkbenchIO.perform { Result {
@@ -42,6 +56,9 @@ extension AppHost {
         modelUpdates.onCompletion = { [weak self] alert in
             guard let self else { return }
             _ = await self.watch.dismiss(alert).value
+        }
+        modelUpdates.onDiscardReview = { [weak self] id in
+            self?.modelUpdateCaptures.discard(id)
         }
     }
 
@@ -130,22 +147,21 @@ extension AppHost {
             endpointSummary: slots.map { "Port \($0.port) · \($0.enabled ? "enabled" : "disabled")" + ($0.accelerationOptions.requested ? " · acceleration requires a new preview" : "") })
         try review.validate()
         try await WorkbenchIO.perform { Result { try ManagedModelInstallStore.refuseLinks(in: review.destinationPath) } }.get()
-        modelUpdateEndpointSnapshots.removeAll()
-        modelUpdateCleanupSnapshots.removeAll()
-        modelUpdateEndpointSnapshots[review.id] = slots
+        var cleanup: QuarantineFileSnapshot?
         if previous.canQuarantine {
             let path = previous.path, roots = [config.outputDir]
-            modelUpdateCleanupSnapshots[review.id] = try await WorkbenchIO.perform { Result {
+            cleanup = try await WorkbenchIO.perform { Result {
                 try Quarantine.folderSnapshot(target: path, roots: roots, protected: [])
             } }.get()
         }
+        modelUpdateCaptures.insert(review.id, endpoints: slots, cleanup: cleanup)
         return review
     }
 
     private func revalidateModelUpdate(_ review: ModelUpdateReview, mutation: ModelUpdateMutation) async throws {
         try review.validate()
         try await WorkbenchIO.perform { Result { try ManagedModelInstallStore.refuseLinks(in: review.destinationPath) } }.get()
-        guard let expected = modelUpdateEndpointSnapshots[review.id], !reclaim.isApplying,
+        guard let expected = modelUpdateCaptures[review.id]?.endpoints, !reclaim.isApplying,
               comparison.activeRunID == nil, hostedComparison.activeRunID == nil,
               !occupancy.blocksStop(modelIdentity: review.previous.path) else {
             throw ModelUpdateError.invalid("Finish work using these models before continuing the update.")

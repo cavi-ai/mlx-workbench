@@ -6,6 +6,27 @@ import XCTest
 
 @MainActor
 final class ServingInventoryCoordinatorTests: XCTestCase {
+    func testHostPublicationKeepsTheActualEngineCaptureTime() async throws {
+        var instant = Date(timeIntervalSince1970: 100)
+        let gate = InventoryTestGate()
+        let entered = expectation(description: "host refresh waiting")
+        let engine = server()
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, now: { instant },
+            fetchEngine: { ServingEngineSnapshot(servers: [engine]) }, fetchHosts: { _ in
+                entered.fulfill(); await gate.wait(); return ServingHostSnapshot()
+            }, readMemory: { _ in [:] })
+        let published = expectation(description: "engine published")
+        let observation = coordinator.$snapshot.dropFirst().filter { !$0.services.isEmpty }.first().sink { _ in published.fulfill() }
+        defer { observation.cancel(); gate.open() }
+        let refresh = Task { await coordinator.refresh(refreshHosts: true) }
+        await fulfillment(of: [entered, published], timeout: 2)
+        instant = Date(timeIntervalSince1970: 200)
+        gate.open()
+        await refresh.value
+        XCTAssertEqual(coordinator.snapshot.services.first?.capturedAt, Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(coordinator.snapshot.capturedAt, instant)
+    }
+
     private let capturedAt = Date(timeIntervalSince1970: 1_000)
     private let managedReceipts = "/receipts/workbench"
 

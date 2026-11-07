@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testObservedStopCarriesTheReviewedIdentityAfterDisablingRestart() async throws {
+        let (supervisor, world) = makeSupervisor()
+        await supervisor.enable(modelPath: "/Models/old", port: 8910, loadOnRequest: false)
+        let expected = try XCTUnwrap(try world.status().first)
+        var received: ServerInfo?
+        let stopped = await supervisor.stopObservedServer(expected) { selected in
+            received = selected
+            XCTAssertFalse(supervisor.fleet.slots[0].enabled)
+            try await world.lifecycle.stop(try XCTUnwrap(selected.port))
+        }
+        XCTAssertTrue(stopped, supervisor.lastError ?? "")
+        XCTAssertEqual(received, expected)
+        await supervisor.reconcile()
+        XCTAssertTrue(try world.status().isEmpty)
+    }
+
     func testRevisionUpdateWaitsForReadbackAndPreservesPortsAndPolicy() async throws {
         let (supervisor, world) = makeSupervisor()
         await supervisor.addSlot(modelPath: "/Models/old", port: 8911, role: .coding, loadOnRequest: false)

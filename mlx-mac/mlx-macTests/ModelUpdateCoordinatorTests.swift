@@ -5,6 +5,44 @@ import XCTest
 
 @MainActor
 final class ModelUpdateCoordinatorTests: XCTestCase {
+    func testSupersededPreparationDiscardsOnlyItsOwnCapturedReview() async throws {
+        let a = try makeReview()
+        let b = try makeReview(previous: .init(repo: "org/model", path: "/models/old-b", signature: "old-b-signature",
+            revision: oldRevision, displayName: "Model B", canQuarantine: true, retentionReason: nil))
+        let harness = try Harness(review: b)
+        addTeardownBlock { try? FileManager.default.removeItem(at: harness.root) }
+        let captures = ModelUpdateCaptures()
+        let gate = UpdatePreparationGate()
+        let entered = expectation(description: "first preparation entered")
+        var api = harness.api
+        api.candidates = { _ in [a.previous, b.previous] }
+        api.prepare = { _, candidate in
+            if candidate == a.previous { entered.fulfill(); await gate.wait() }
+            let review = candidate == a.previous ? a : b
+            captures.insert(review.id, endpoints: [], cleanup: nil)
+            return review
+        }
+        let originalRevalidate = api.revalidate
+        api.revalidate = { review, mutation in
+            guard captures[review.id] != nil else { throw ModelUpdateError.unavailable }
+            try await originalRevalidate(review, mutation)
+        }
+        let coordinator = ModelUpdateCoordinator(api: api, store: harness.store)
+        coordinator.onDiscardReview = { captures.discard($0) }
+        await coordinator.begin(repo: "org/model")
+        let first = Task { await coordinator.selectPrevious(path: a.previous.path) }
+        await fulfillment(of: [entered], timeout: 2)
+        defer { gate.open() }
+        await coordinator.selectPrevious(path: b.previous.path)
+        XCTAssertEqual(coordinator.review?.id, b.id)
+        gate.open()
+        await first.value
+        XCTAssertNil(captures[a.id])
+        XCTAssertNotNil(captures[b.id])
+        let completed = await coordinator.confirm(quarantinePrevious: false)
+        XCTAssertTrue(completed, coordinator.error ?? "")
+    }
+
     private let oldRevision = String(repeating: "a", count: 40)
     private let newRevision = String(repeating: "b", count: 40)
 
@@ -281,4 +319,15 @@ final class ModelUpdateCoordinatorTests: XCTestCase {
             if failure == event { throw ModelUpdateError.invalid("Failed \(event)") }
         }
     }
+}
+
+@MainActor
+private final class UpdatePreparationGate {
+    private var opened = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func open() { opened = true; continuation?.resume(); continuation = nil }
 }

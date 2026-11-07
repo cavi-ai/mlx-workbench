@@ -540,7 +540,7 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     /// Persist disabled desired state before stopping an observed owned server.
-    func stopObservedServer(_ expected: ServerInfo) async -> Bool {
+    func stopObservedServer(_ expected: ServerInfo, stop: (ServerInfo) async throws -> Void) async -> Bool {
         guard !isUnloading, !isReconciling, activeUserOperations == 0, let port = expected.port else {
             lastError = "Serving is changing. Wait for it to finish, then retry stop."
             return false
@@ -562,11 +562,31 @@ final class EndpointSupervisor: ObservableObject {
                 slotStates[slot.id] = .disabled
             }
             syncShim()
-            try await lifecycle.stop(port)
+            try await stop(expected)
             let after = try await statusProvider()
             guard !after.contains(where: { $0.port == port && $0.state == "running" }) else {
                 throw WorkflowEvidenceError.invalid("A server is still running on this port. Refresh before another action.")
             }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
+    }
+
+    func unloadObservedServer(_ expected: ServerInfo, unload: (ServerInfo) async throws -> Void) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        do {
+            let current = try await statusProvider()
+            guard let server = current.first(where: { $0.sameProcess(as: expected) }), server.state == "running",
+                  server.jit == true, server.activeRequests == 0 else {
+                throw WorkflowEvidenceError.invalid("The model changed or has active requests. Refresh before unloading it.")
+            }
+            try await unload(expected)
+            let after = try await statusProvider()
+            guard after.contains(where: { $0.sameProcess(as: expected) && $0.modelState == "unloaded" }) else {
+                throw WorkflowEvidenceError.invalid("Model unload could not be confirmed. Refresh serving status.")
+            }
+            for slot in fleet.slots where slot.port == expected.port { slotResidencies[slot.id] = "unloaded" }
             lastError = nil
             return true
         } catch { lastError = AppHost.render(error); return false }

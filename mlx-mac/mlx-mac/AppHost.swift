@@ -69,8 +69,7 @@ class AppHost {
     let intake: IntakeCoordinator
     let managedModels = ManagedModelInstallStore()
     let modelUpdates = ModelUpdateCoordinator(api: .unavailable)
-    var modelUpdateEndpointSnapshots: [UUID: [EndpointSlot]] = [:]
-    var modelUpdateCleanupSnapshots: [UUID: QuarantineFileSnapshot] = [:]
+    let modelUpdateCaptures = ModelUpdateCaptures()
     let trainedAdapters: TrainedAdapterServingCoordinator
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
@@ -282,7 +281,7 @@ class AppHost {
         self.servingInventory.mayChange = { [weak self] service in
             guard let self else { return false }
             return self.comparison.hasLoadedHistory && !self.occupancy.blocksStop(modelIdentity: service.modelID)
-                && !self.modelHosts.resourceBusy
+                && !self.modelHosts.resourceBusy && (!service.isWorkbenchManaged || !self.endpoint.isChanging)
         }
         self.servingInventory.mutate = { [weak self] service, action in
             guard let self, let server = service.server else {
@@ -292,7 +291,12 @@ class AppHost {
                 throw WorkflowEvidenceError.invalid("Finish work using this model before changing its server.")
             }
             if service.isWorkbenchManaged {
-                let changed = action == .unload ? await self.endpoint.unloadServer(server) : await self.endpoint.stopObservedServer(server)
+                let changed: Bool
+                if action == .unload {
+                    changed = await self.endpoint.unloadObservedServer(server) { try await api.changeDiscoveredService($0, action: "unload") }
+                } else {
+                    changed = await self.endpoint.stopObservedServer(server) { try await api.changeDiscoveredService($0, action: "stop") }
+                }
                 guard changed else { throw WorkflowEvidenceError.invalid(self.endpoint.lastError ?? "The server could not be changed. Refresh and review it again.") }
             } else {
                 try await api.changeDiscoveredService(server, action: action.rawValue)

@@ -34,12 +34,12 @@ final class ScanContractTests: XCTestCase {
     }
 
     func testHostedModelListingDoesNotInventResidencyOrLocalMemory() throws {
-        let host = ModelHost(name: "Remote", provider: .openAICompatible, baseURL: "http://host.example:8080")
+        let host = ModelHost(name: "Local", provider: .openAICompatible, baseURL: "http://127.0.0.1:8080")
         let model = HostedModel(hostID: host.id, modelID: "org/model", name: "Model")
         let inventory = HostInventory(host: host, models: [model], capturedAt: Date())
         let result = ServingInventorySnapshot.make(engine: [], hosts: [inventory], managedReceipts: "/Workbench", capturedAt: Date())
         XCTAssertEqual(result.services[0].residency, .unknown)
-        XCTAssertFalse(result.services[0].isLocal)
+        XCTAssertTrue(result.services[0].isLocal)
         XCTAssertNil(result.services[0].reportedMemoryBytes)
         XCTAssertFalse(result.services[0].canUnload)
     }

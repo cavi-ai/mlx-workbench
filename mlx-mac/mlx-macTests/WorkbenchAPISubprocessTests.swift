@@ -5,6 +5,23 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testDiscoveredStopPassesPidAndStartFencesToTheEngine() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            let stopped = recorder.values.contains { $0.argv.prefix(2) == ["serve", "stop"] }
+            let service: [String: Any] = ["path": "/models/a", "runtime": "strata", "port": 19080, "pid": 22,
+                "alive": true, "argv_match": true, "process_started_at": "process-start", "started_at": "receipt-start",
+                "receipt": "/service/.mlx-agent-receipts/serve/19080.json", "receipts_dir": "/service"]
+            return ["schema_version": 1, "services": stopped ? [] : [service], "errors": []]
+        })
+        let expected = ServerInfo(path: "/models/a", runtime: "strata", port: 19080, pid: 22, state: "running", startedAt: "receipt-start",
+            receipt: "/service/.mlx-agent-receipts/serve/19080.json", receiptsDirectory: "/service", processStartedAt: "process-start")
+        try await api.changeDiscoveredService(expected, action: "stop")
+        let argv = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["serve", "stop"] }?.argv)
+        XCTAssertEqual(Array(argv.suffix(4)), ["--expected-pid", "22", "--expected-start", "process-start"])
+    }
+
     func testContainedDoctorExcludesAnUnselectedCacheWhenSupported() async throws {
         let recorder = AgentCallRecorder()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
