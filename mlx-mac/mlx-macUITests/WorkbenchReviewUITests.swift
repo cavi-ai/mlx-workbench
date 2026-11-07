@@ -1636,6 +1636,11 @@ final class WorkbenchReviewUITests: XCTestCase {
             .buttons["Discover"].firstMatch
         XCTAssertTrue(discover.waitForExistence(timeout: 5))
         XCTAssertTrue(discover.isHittable)
+        let discoveryIdle = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: discover)
+        wait(for: [discoveryIdle], timeout: 15)
+        let initialCalls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        let initialDiscoverCalls = initialCalls.filter { $0.first == "discover" }.count
         discover.click()
         let empty = "No candidates matched. Try another role or adjust the limit, then Discover again."
         XCTAssertTrue(app.staticTexts[empty].waitForExistence(timeout: 15))
@@ -1646,7 +1651,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts[empty].exists)
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
             .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
-        XCTAssertEqual(calls.filter { $0.first == "discover" }.count, 2,
+        XCTAssertEqual(calls.filter { $0.first == "discover" }.count - initialDiscoverCalls, 2,
                        "Both Discover actions must reach the CLI")
         XCTAssertGreaterThanOrEqual(calls.filter { Array($0.prefix(2)) == ["backend", "list"] }.count, 3)
         XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["backend", "install"] })
@@ -3677,17 +3682,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: [service]).write(to: root.appendingPathComponent("discovered-services.json"))
         launch(appearance: "Dark")
         app.buttons["system-memory-header"].click()
-        let manage = app.popovers.buttons["Manage served models…"].firstMatch
+        let manage = app.popovers.buttons["Manage…"].firstMatch
         XCTAssertTrue(manage.waitForExistence(timeout: 10))
         manage.click()
         let manager = app.windows["Served models"]
         XCTAssertTrue(manager.waitForExistence(timeout: 10))
         XCTAssertTrue(manager.staticTexts["ExternalStrata"].waitForExistence(timeout: 15))
-        XCTAssertTrue(manager.staticTexts["MLX Agent"].exists)
+        XCTAssertTrue(manager.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "MLX Agent")).firstMatch.exists)
         XCTAssertTrue(manager.staticTexts["Model path: " + model].exists)
         XCTAssertTrue(manager.staticTexts["Receipts: " + receipts].exists)
         XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
-        manager.buttons["Unload model…"].firstMatch.click()
+        let unload = manager.buttons["Unload model…"].firstMatch
+        for _ in 0..<3 where !unload.isHittable { manager.scrollViews.firstMatch.scrollDown() }
+        XCTAssertTrue(unload.isHittable)
+        unload.click()
         let review = manager.sheets.firstMatch
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", model)).firstMatch.exists)
