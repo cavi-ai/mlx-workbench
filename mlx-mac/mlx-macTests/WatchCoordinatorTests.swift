@@ -239,6 +239,18 @@ final class WatchCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.alerts.count, 1)
     }
 
+    func testUnavailableScopedWatchIsVisibleAndDoesNotEstablishBaseline() async {
+        let coordinator = makeCoordinator(snapshot: {
+            throw BridgeError.remote(code: "engine_update_required", message: "Update the engine for contained Watch checks.", remediation: "Open Health.")
+        }, diff: { [] })
+        await coordinator.checkNow()
+        XCTAssertTrue(coordinator.alerts.isEmpty)
+        XCTAssertTrue(coordinator.upstreamIssue?.contains("contained Watch") == true)
+        coordinator.configureUpstream(watchDiff: { [] }, watchSnapshot: {})
+        await coordinator.checkNow()
+        XCTAssertNil(coordinator.upstreamIssue)
+    }
+
     func testOfflineDiffStaysSilent() async {
         struct Offline: Error {}
         let coordinator = makeCoordinator(

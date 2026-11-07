@@ -17,9 +17,11 @@ actor WorkbenchAPI {
     private let taskEnvelopeCommand: TaskEnvelopeCommand?
     private var agentPath: String
     private let receiptDirectory: String
+    private var engineGeneration = UUID()
     private var discoverySupported: Bool?
     private var discoveryCheckedAt: Date?
     private var scopedDoctorSupported = false
+    private var scopedWatchSupported = false
     private let taskStateDirectory: URL?
     nonisolated var taskArtifactsRoot: URL {
         taskStateDirectory ?? WorkbenchStatePaths.userHome().appendingPathComponent("Library/Application Support/mlx-agent/tasks", isDirectory: true)
@@ -43,9 +45,11 @@ actor WorkbenchAPI {
 
     func setAgentPath(_ path: String) {
         agentPath = path
+        engineGeneration = UUID()
         discoverySupported = nil
         discoveryCheckedAt = nil
         scopedDoctorSupported = false
+        scopedWatchSupported = false
     }
 
     var resolvedAgentPath: String { agentPath }
@@ -495,17 +499,20 @@ actor WorkbenchAPI {
     }
 
     func discoverServingServices() async throws -> ServingEngineSnapshot {
+        let generation = engineGeneration
         if discoverySupported == false, let discoveryCheckedAt, Date().timeIntervalSince(discoveryCheckedAt) < 60 {
             return ServingEngineSnapshot(servers: try await serveStatus(), supportsDiscovery: false)
         }
         do {
             let data = try await raw(["serve", "discover", "--receipts-dir", receiptDirectory], timeout: 15, cancellable: true)
+            try requireEngineGeneration(generation)
             guard data.int("schema_version") == 1, let servers = Self.servers(from: data, key: "services") else {
                 throw BridgeError.remote(code: "invalid_service_inventory", message: "The engine returned an unreadable service inventory.", remediation: "Update the engine and refresh serving status.")
             }
             discoverySupported = true
             discoveryCheckedAt = Date()
             scopedDoctorSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_doctor") == true
+            scopedWatchSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_watch") == true
             var errors: [String: String] = [:]
             for item in data["errors"] as? [[String: Any]] ?? [] {
                 if let source = item.string("source"), let message = item.string("message") { errors["engine:" + source] = message }
@@ -513,9 +520,16 @@ actor WorkbenchAPI {
             return ServingEngineSnapshot(servers: servers, errors: errors)
         } catch let error as BridgeError where error.code == "skill_output_unreadable" && error.message.contains("discover") &&
             (error.message.contains("invalid choice") || error.message.contains("unrecognized")) {
+            try requireEngineGeneration(generation)
             discoverySupported = false
             discoveryCheckedAt = Date()
             return ServingEngineSnapshot(servers: try await serveStatus(), supportsDiscovery: false)
+        }
+    }
+
+    private func requireEngineGeneration(_ generation: UUID) throws {
+        guard engineGeneration == generation else {
+            throw BridgeError.remote(code: "engine_changed", message: "The selected engine changed during the check.", remediation: "Refresh to check the selected engine.")
         }
     }
 
@@ -600,6 +614,38 @@ actor WorkbenchAPI {
         return DiscoverResult(candidates: Self.candidates(from: data))
     }
 
+    // MARK: - Watch
+
+    func watchDiff(stateDirectory: String, scope: WatchInventoryScope) async throws -> [[String: Any]] {
+        let data = try await scopedWatch("diff", stateDirectory: stateDirectory, scope: scope)
+        return (data["findings"] as? [[String: Any]]) ?? []
+    }
+
+    func watchSnapshot(stateDirectory: String, scope: WatchInventoryScope) async throws {
+        _ = try await scopedWatch("snapshot", stateDirectory: stateDirectory, scope: scope)
+    }
+
+    private func scopedWatch(_ action: String, stateDirectory: String, scope: WatchInventoryScope) async throws -> [String: Any] {
+        if !scopedWatchSupported {
+            _ = try await discoverServingServices()
+            guard scopedWatchSupported else {
+                throw BridgeError.remote(code: "engine_update_required", message: "This engine cannot contain Watch checks to selected model locations.", remediation: "Update the engine in Health to enable Watch.")
+            }
+        }
+        var argv = ["watch", action, "--state-dir", stateDirectory]
+        for root in clientConfigurationRoots {
+            argv.append(contentsOf: ["--wired-root", root])
+        }
+        if let cache = scope.hfCache { argv.append(contentsOf: ["--hf-cache", cache]) }
+        else { argv.append("--no-hf-cache") }
+        for repo in Set(scope.ownedRepos).sorted() { argv.append(contentsOf: ["--owned-repo", repo]) }
+        return try await raw(argv, isScout: true, timeout: 30, cancellable: true)
+    }
+
+    private var clientConfigurationRoots: [String] {
+        ClientAdapters.all.compactMap { $0.configurationInstallation(home: WorkbenchStatePaths.userHome())?.configPath } + [receiptDirectory]
+    }
+
     // MARK: - Doctor
 
     func doctor(wiredRoots: [String], hfCache: String?, excludeHFCache: Bool = false) async throws -> DoctorResult {
@@ -610,10 +656,7 @@ actor WorkbenchAPI {
             }
         }
         var argv = ["doctor", "models", "--project", receiptDirectory]
-        let home = WorkbenchStatePaths.userHome()
-        let roots = wiredRoots.isEmpty ? ClientAdapters.all.compactMap {
-            $0.configurationInstallation(home: home)?.configPath
-        } + [receiptDirectory] : wiredRoots
+        let roots = wiredRoots.isEmpty ? clientConfigurationRoots : wiredRoots
         for root in roots {
             argv.append(contentsOf: ["--wired-root", root])
         }

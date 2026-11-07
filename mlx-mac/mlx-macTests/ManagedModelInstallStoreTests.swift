@@ -20,6 +20,21 @@ final class ManagedModelInstallStoreTests: XCTestCase {
         XCTAssertEqual(ManagedModelInstallStore.directory(root: root.path, source: source("owner/model", revision: "main", resolved: revisionA)), first)
     }
 
+    func testManagedPresentationNamesIncludeRepositoryCheckpointAndRevision() throws {
+        let root = try temporaryRoot()
+        let directory = try XCTUnwrap(ManagedModelInstallStore.directory(root: root.path, source: source("owner/model", revision: revisionA)))
+        let identity = try XCTUnwrap(ManagedModelInstallStore.presentationIdentity(path: directory))
+        XCTAssertEqual(identity.displayName, "owner/model · aaaaaaaa")
+        XCTAssertEqual(identity.family, "owner/model")
+        let checkpoint = try XCTUnwrap(ManagedModelInstallStore.directory(root: root.path, source: source("owner/model", revision: revisionA, subfolder: "checkpoints/small")))
+        XCTAssertEqual(ManagedModelInstallStore.presentationIdentity(path: checkpoint + "/checkpoints/small")?.displayName, "owner/model/checkpoints/small · aaaaaaaa")
+        let pending = try XCTUnwrap(ManagedModelInstallStore.directory(root: root.path, source: source("owner/model", revision: "main")))
+        XCTAssertEqual(ManagedModelInstallStore.presentationIdentity(path: pending)?.displayName, "owner/model · local download")
+        for path in ["/models/managed/owner/model/main", "/models/managed/owner/model/selection-bad/\(revisionA)", "/models/other/owner/model/\(revisionA)"] {
+            XCTAssertNil(ManagedModelInstallStore.presentationIdentity(path: path))
+        }
+    }
+
     func testMalformedRepositoryDoesNotAliasAValidManagedDirectory() throws {
         let root = try temporaryRoot()
         for repo in ["owner//model", "/owner/model", "owner/model/", "../model", "owner/..", "owner/model/subfolder", "owner/model name"] {

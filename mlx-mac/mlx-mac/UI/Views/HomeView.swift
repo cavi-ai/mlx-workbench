@@ -324,6 +324,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
             hero
             ErrorBanner(text: watch.persistenceError)
+            ErrorBanner(text: watch.upstreamIssue)
             ErrorBanner(text: usage.persistenceError)
             FlightPathPanel(
                 model: selectedModel,

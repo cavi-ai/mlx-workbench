@@ -55,6 +55,37 @@ actor ManagedModelInstallStore {
         return destination.appendingPathComponent(component).path
     }
 
+    struct PresentationIdentity: Equatable {
+        let family: String
+        let displayName: String
+    }
+
+    /// Presentation only. Updates and cleanup still require the recorded signature and source selection.
+    nonisolated static func presentationIdentity(path: String) -> PresentationIdentity? {
+        let parts = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        for marker in parts.indices.reversed() where parts[marker] == "managed" {
+            guard marker + 3 < parts.count else { continue }
+            let repo = parts[marker + 1] + "/" + parts[marker + 2]
+            guard (try? sourceReference(repo: repo, file: nil, subfolder: nil)) != nil else { continue }
+            var revisionIndex = marker + 3
+            if parts[revisionIndex].hasPrefix("selection-") {
+                guard parts[revisionIndex].range(of: "^selection-[a-f0-9]{32}$", options: .regularExpression) != nil else { continue }
+                revisionIndex += 1
+            }
+            guard revisionIndex < parts.count else { continue }
+            let revision = parts[revisionIndex]
+            let suffix: String
+            if ModelUpdateReview.isCommit(revision) { suffix = String(revision.prefix(8)).lowercased() }
+            else if revision.hasPrefix("download-"), UUID(uuidString: String(revision.dropFirst(9))) != nil { suffix = "local download" }
+            else { continue }
+            let selection = Array(parts.dropFirst(revisionIndex + 1)).joined(separator: "/")
+            guard selection.isEmpty || validSourcePath(selection) else { continue }
+            let family = repo + (selection.isEmpty ? "" : "/" + selection)
+            return PresentationIdentity(family: family, displayName: family + " · " + suffix)
+        }
+        return nil
+    }
+
     nonisolated static func sourceReference(repo: String, file: String?, subfolder: String?) throws -> String {
         let repoParts = repo.split(separator: "/", omittingEmptySubsequences: false)
         guard repoParts.count == 2, repoParts.allSatisfy({ validSourceComponent(String($0), limit: 96) }),

@@ -269,7 +269,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args[:2] == ['serve', 'discover']:
             inventory = root / 'discovered-services.json'
             data = {'schema_version': 1, 'services': json.loads(inventory.read_text()) if inventory.exists() else [],
-                    'errors': [], 'capabilities': {'scoped_doctor': True, 'expected_pid_stop': True}}
+                    'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True}}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():
@@ -3693,8 +3693,12 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(manager.staticTexts["Receipts: " + receipts].exists)
         XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
         let unload = manager.buttons["Unload model…"].firstMatch
-        for _ in 0..<3 where !unload.isHittable { manager.scrollViews.firstMatch.scrollDown() }
-        XCTAssertTrue(unload.isHittable)
+        XCTAssertTrue(unload.waitForExistence(timeout: 10))
+        let managerScroll = manager.scrollViews.firstMatch
+        for _ in 0..<3 where !unload.isHittable {
+            managerScroll.scroll(byDeltaX: 0, deltaY: unload.frame.midY < managerScroll.frame.minY ? 250 : -250)
+        }
+        XCTAssertTrue(unload.isHittable, "The unload control must be visible before opening its review")
         unload.click()
         let review = manager.sheets.firstMatch
         XCTAssertTrue(review.waitForExistence(timeout: 10))

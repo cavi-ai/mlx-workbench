@@ -82,6 +82,8 @@ With **Settings → Advisors → Watch & regression alerts** on, the app checks 
 - **Upstream changes.** The engine's `watch diff` digests changes to the Hugging Face repositories your models came from. The first check sets a baseline silently, and network failures stay silent.
 - **Environment drift.** A macOS or MLX change makes verified models stale. The alert offers **Re-verify** to run the quality gate again for those models.
 
+Watch checks only the selected Hugging Face cache, existing downloads recorded in the managed model folder, known client configuration files and runtime inventories. It never searches the app’s working directory. Changing the scope establishes new ownership evidence before reporting a missing model. An engine that cannot honor this scope shows an update requirement on Overview.
+
 Alerts are deduplicated. **Snooze**, **Snooze 7 days** and **Mute** persist across launches.
 New alerts appear and send notifications after their batch is saved. Saving runs
 in the background; a failed save keeps the previous alerts and shows a storage

@@ -230,13 +230,8 @@ class AppHost {
             .appendingPathComponent("watch-state", isDirectory: true)
             .path
         self.watch = watch ?? WatchCoordinator(
-            watchDiff: {
-                let data = try await api.raw(["watch", "diff", "--state-dir", watchStateDir], isScout: true)
-                return (data["findings"] as? [[String: Any]]) ?? []
-            },
-            watchSnapshot: {
-                _ = try await api.raw(["watch", "snapshot", "--state-dir", watchStateDir], isScout: true)
-            },
+            watchDiff: { [] },
+            watchSnapshot: {},
             fingerprint: {
                 EnvironmentFingerprint.current(
                     hardware: hardwareProfile,
@@ -447,6 +442,35 @@ class AppHost {
             self?.watch.currentFingerprintDescription
         }
         configureModelUpdates()
+        if watch == nil {
+            self.watch.configureUpstream(watchDiff: { [weak self] in
+                guard let self else { throw CancellationError() }
+                let scope = try await self.watchInventoryScope()
+                return try await api.watchDiff(stateDirectory: watchStateDir, scope: scope)
+            }, watchSnapshot: { [weak self] in
+                guard let self else { throw CancellationError() }
+                let scope = try await self.watchInventoryScope()
+                try await api.watchSnapshot(stateDirectory: watchStateDir, scope: scope)
+            })
+        }
+    }
+
+    func watchInventoryScope() async throws -> WatchInventoryScope {
+        let cache = selectedHFCache
+        let selectedRoots = config.ggufRoots + config.mlxRoots
+        let root = config.outputDir
+        let records: [ManagedModelInstall]
+        do { records = try await managedModels.records() }
+        catch { throw ModelUpdateError.invalid("Watch cannot read managed model ownership. \(Self.render(error))") }
+        let repos = await WorkbenchIO.perform {
+            Set(records.filter { install in
+                ManagedModelInstallStore.matchesManagedSourcePath(install, root: root) && FileManager.default.fileExists(atPath: install.path)
+            }.map(\.repo)).sorted()
+        }
+        guard selectedRoots == config.ggufRoots + config.mlxRoots, root == config.outputDir else {
+            throw ModelUpdateError.invalid("Model locations changed during the Watch check. Check again to use the selected locations.")
+        }
+        return WatchInventoryScope(hfCache: cache, ownedRepos: repos)
     }
 
     /// Takes the pending Hosted models request once; a removed or edited connection must not select another host.

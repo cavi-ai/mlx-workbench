@@ -31,6 +31,8 @@ Switching sources preserves the main table's filters and selected model without 
 | Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
+Managed downloads display their repository, checkpoint and shortened revision in Library and Served Models.
+
 Scans stay within the selected model locations and managed output folder. A missing or unreadable root is reported separately while readable roots keep their results. Empty root lists do not enable automatic searches of other model folders.
 
 Model-folder metadata is read in the background. The previous inventory stays visible until the complete replacement is ready; a cancelled refresh cannot publish its result. Repeated refresh requests do not start overlapping scans.

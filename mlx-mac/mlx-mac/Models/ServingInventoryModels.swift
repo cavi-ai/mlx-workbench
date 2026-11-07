@@ -71,7 +71,9 @@ struct ServingServiceObservation: Identifiable, Equatable {
 
     var name: String {
         if modelID == "__inventory__" { return "Model inventory" }
-        return hostedModel?.name ?? modelPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? modelID
+        return hostedModel?.name ?? modelPath.map {
+            ManagedModelInstallStore.presentationIdentity(path: $0)?.displayName ?? URL(fileURLWithPath: $0).lastPathComponent
+        } ?? modelID
     }
 
     var statusText: String {

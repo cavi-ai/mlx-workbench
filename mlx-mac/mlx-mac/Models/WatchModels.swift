@@ -1,5 +1,11 @@
 import Foundation
 
+/// Explicit ownership inputs; Watch never expands the selected cache or searches a working directory.
+struct WatchInventoryScope: Sendable {
+    let hfCache: String?
+    let ownedRepos: [String]
+}
+
 // MARK: - Watch models
 //
 // Watch & Regression Alerts (premium spec 08): a low-noise notification layer

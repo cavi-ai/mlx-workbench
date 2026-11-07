@@ -169,6 +169,19 @@ final class ModelLibraryBuilderTests: XCTestCase {
 
     // MARK: - HF-cache outputs
 
+    func testManagedRevisionsKeepReadableNamesAndDistinctMatchingEvidence() {
+        let revisions = [String(repeating: "a", count: 40), String(repeating: "b", count: 40)]
+        let snapshot = ModelLibraryBuilder.build(scan: ScanResult(roots: nil, models: [], outputs: revisions.map { revision in
+            MLXOutput(path: "/models/managed/owner/model/" + revision, name: revision, modelKey: nil,
+                quantization: nil, provenance: nil)
+        }, pending: [], duplicates: [], totals: ScanTotals(gguf: 0, pending: 0, converted: 2, unreadable: 0, bytes: 0, reclaimableBytes: 0)),
+            hardware: fixtureHardware, now: fixtureDate)
+        XCTAssertEqual(snapshot.models.map(\.displayName), ["owner/model · aaaaaaaa", "owner/model · bbbbbbbb"])
+        XCTAssertEqual(snapshot.groups.count, 2)
+        XCTAssertEqual(Set(snapshot.models.map(\.normalizedFamilyKey)).count, 2)
+        XCTAssertFalse(snapshot.models.contains { $0.normalizedFamilyKey == "owner/model" })
+    }
+
     func testHFCacheSnapshotsGroupByRepoIdentityWithRealBytesAndArchitecture() throws {
         let fixture = try makeHFCacheFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
