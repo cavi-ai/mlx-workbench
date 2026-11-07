@@ -5,6 +5,55 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testContainedDoctorExcludesAnUnselectedCacheWhenSupported() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] {
+                return ["schema_version": 1, "services": [], "errors": [], "capabilities": ["scoped_doctor": true]]
+            }
+            return ["findings": [], "summary": ["hf_cache_checked": false]]
+        })
+        let result = try await api.doctor(wiredRoots: [], hfCache: nil, excludeHFCache: true)
+        XCTAssertEqual(result.summary?.hfCacheChecked, false)
+        let doctor = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["doctor", "models"] })
+        XCTAssertTrue(doctor.argv.contains("--no-hf-cache"))
+        XCTAssertFalse(doctor.argv.contains("--hf-cache"))
+        XCTAssertFalse(doctor.argv.contains("/"))
+    }
+
+    func testOldEngineCannotWidenAContainedDoctorRequest() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] {
+                throw BridgeError.remote(code: "skill_output_unreadable", message: "invalid choice: discover", remediation: "")
+            }
+            return ["servers": []]
+        })
+        do {
+            _ = try await api.doctor(wiredRoots: [], hfCache: nil, excludeHFCache: true)
+            XCTFail("Expected a scoped engine capability requirement")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.first == "doctor" })
+    }
+
+    func testExternalServerProcessDriftRefusesStop() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["schema_version": 1, "services": [["path": "/models/a", "port": 19080, "pid": 23,
+                "alive": true, "argv_match": true, "process_started_at": "new", "receipts_dir": "/service"]], "errors": []]
+        })
+        let expected = ServerInfo(path: "/models/a", port: 19080, pid: 22, state: "running",
+            receipt: "/service/.mlx-agent-receipts/serve/19080.json", receiptsDirectory: "/service", processStartedAt: "old")
+        do {
+            try await api.changeDiscoveredService(expected, action: "stop")
+            XCTFail("Expected process drift to refuse the action")
+        } catch { }
+        XCTAssertFalse(recorder.values.contains { $0.argv.prefix(2) == ["serve", "stop"] })
+    }
+
     func testDoctorUsesExplicitConfigFilesInsteadOfInheritedWorkingDirectory() async throws {
         let recorder = AgentCallRecorder()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
