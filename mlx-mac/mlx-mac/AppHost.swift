@@ -365,7 +365,7 @@ class AppHost {
                 let isRepoSource = PrepareWorkflowPresentation(workflow: record).isRepoSource
                 guard PrepareWorkflowPresentation.sourceCleanupIsPossible(
                     sourceLocation: record.localSourcePath ?? (isRepoSource ? nil : record.sourcePath),
-                    roots: self.config.ggufRoots + self.config.mlxRoots
+                    roots: self.modelStorageRoots
                 ) else { return }
                 await self.reclaim.previewSource(record)
                 guard let current = self.modelWorkflow.history.first(where: { $0.id == record.id }), current == record else { return }
@@ -381,7 +381,10 @@ class AppHost {
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.modelPurposes.canEdit = { [weak self] in self?.reclaim.isApplying == false }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
-        self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
+        self.reclaim.ggufRoots = { [weak self] in
+            guard let self else { return [] }
+            return Array(Set(self.config.ggufRoots + [self.config.outputDir].filter { !$0.isEmpty })).sorted()
+        }
         self.reclaim.mlxRoots = { [weak self] in
             guard let self else { return [] }
             return Self.scanMLXRoots(self.config, ggufRoots: self.config.ggufRoots)
@@ -462,6 +465,10 @@ class AppHost {
     var selectedHFCache: String? {
         Self.selectedHFCache(roots: config.ggufRoots + config.mlxRoots,
             home: WorkbenchStatePaths.userHome(), environment: ProcessInfo.processInfo.environment)
+    }
+
+    var modelStorageRoots: [String] {
+        Array(Set(config.ggufRoots + config.mlxRoots + [config.outputDir].filter { !$0.isEmpty })).sorted()
     }
 
     /// A default cache is eligible only inside a selected location. Custom hub

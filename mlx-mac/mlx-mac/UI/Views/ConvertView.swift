@@ -516,7 +516,7 @@ struct ConvertView: View {
         let workflow = modelWorkflow.workflow
         return PrepareWorkflowPresentation.sourceCleanupIsPossible(
             sourceLocation: workflow.localSourcePath ?? (presentation.isRepoSource ? nil : workflow.sourcePath),
-            roots: appHost.config.ggufRoots + appHost.config.mlxRoots
+            roots: appHost.modelStorageRoots
         )
     }
 

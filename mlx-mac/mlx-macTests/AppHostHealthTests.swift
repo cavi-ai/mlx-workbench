@@ -22,6 +22,21 @@ private final class LockedRoots: @unchecked Sendable {
 }
 
 final class AppHostHealthTests: XCTestCase {
+    @MainActor
+    func testManagedStorageRemainsInTheReviewedCleanupScope() {
+        var config = Config.defaults(ggufRoots: [])
+        config.mlxRoots = ["/external/mlx"]
+        config.outputDir = "/managed/models"
+        let app = AppHost(config: config, agentHealth: .notConfigured, runtimeReport: .checking)
+        XCTAssertEqual(app.config.ggufRoots, [])
+        XCTAssertEqual(app.reclaim.ggufRoots(), ["/managed/models"])
+        XCTAssertEqual(app.modelStorageRoots, ["/external/mlx", "/managed/models"])
+        XCTAssertTrue(PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: "/managed/models/managed/org/model/revision/source.gguf", roots: app.modelStorageRoots))
+        XCTAssertFalse(PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: "/unselected/model.gguf", roots: app.modelStorageRoots))
+    }
+
     func testNormalizeAgentPathTrimsWhitespace() async {
         let result = await MainActor.run { AppHost.normalizeAgentPath("  /tmp/mlx ") }
         XCTAssertEqual(result, "/tmp/mlx")
