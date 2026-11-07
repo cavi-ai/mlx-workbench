@@ -157,8 +157,8 @@ final class SettingsLedgerTests: XCTestCase {
     }
 
     func testEmptyStatesNameTheirResolution() {
-        XCTAssertEqual(SettingsPresentation.emptyGGUF, "Saving uses the detected folders")
-        XCTAssertEqual(SettingsPresentation.emptyMLX, "MLX models are found in the GGUF folders and the output directory")
+        XCTAssertEqual(SettingsPresentation.emptyGGUF, "Only the managed model folder is scanned")
+        XCTAssertEqual(SettingsPresentation.emptyMLX, "Only the managed model folder is scanned")
         let empty = F.make(saved: F.config(gguf: []), scanned: ScanRoots(gguf: [], mlx: ["/out/mlx"]))
         XCTAssertTrue(empty.gguf.isEmpty)
         XCTAssertTrue(empty.mlx.isEmpty)
@@ -366,24 +366,25 @@ final class SettingsScannedRootsTests: XCTestCase {
         }
     }
 
-    func testEmptyMLXRootsFallBackToTheGGUFRootsAndOutputOutsideThemIsAdded() async {
+    func testEmptyMLXRootsUseOnlyTheManagedFolder() async {
         let host = makeHost(SettingsFixtures.config(gguf: ["/m"], output: "/elsewhere/mlx"), recorder: Recorder())
         await host.rescan()
-        XCTAssertEqual(host.scannedRoots, ScanRoots(gguf: ["/m"], mlx: ["/m", "/elsewhere/mlx"]))
+        XCTAssertEqual(host.scannedRoots, ScanRoots(gguf: ["/m", "/elsewhere/mlx"], mlx: ["/elsewhere/mlx"]))
     }
 
     func testOutputInsideARootIsNotAppended() async {
         let host = makeHost(SettingsFixtures.config(gguf: ["/m"], output: "/m/mlx"), recorder: Recorder())
         await host.rescan()
-        XCTAssertEqual(host.scannedRoots, ScanRoots(gguf: ["/m"], mlx: ["/m"]))
+        XCTAssertEqual(host.scannedRoots, ScanRoots(gguf: ["/m"], mlx: ["/m/mlx"]))
     }
 
-    func testEmptyGGUFRootsFallBackToTheDetectedFolders() async {
+    func testEmptyGGUFRootsUseOnlyTheManagedFolder() async {
         let recorder = Recorder()
         let host = makeHost(SettingsFixtures.config(gguf: [], output: "/elsewhere/mlx"), recorder: recorder)
         await host.rescan()
         let call = await recorder.calls[0]
-        XCTAssertEqual(host.scannedRoots?.gguf, call.gguf)
+        XCTAssertEqual(host.scannedRoots?.gguf, ["/elsewhere/mlx"])
+        XCTAssertEqual(call.gguf, ["/elsewhere/mlx"])
     }
 
     func testAFailedScanKeepsTheRootsOfTheLastSnapshot() async {
@@ -467,6 +468,17 @@ final class SettingsProbeTests: XCTestCase {
 
 @MainActor
 final class SettingsEngineDetectionTests: XCTestCase {
+    func testConfiguredCheckoutWinsWhenInstalledDiscoveryHasNoSourceTree() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("scripts"), withIntermediateDirectories: true)
+        try Data("print('engine')".utf8).write(to: root.appendingPathComponent("scripts/mlx-agent"))
+        let detection = SettingsEngineDetection(discover: { throw CocoaError(.fileNoSuchFile) })
+        let selected = await detection.detect(currentPath: "  \(root.path)  ")
+        XCTAssertEqual(selected, root.path)
+        XCTAssertEqual(detection.state, .found(path: root.path))
+    }
+
     func testNoMatchRetainsTheDraftAndReportsTheOutcome() async {
         let detection = SettingsEngineDetection(discover: { "" })
         let path = await detection.detect(currentPath: "/chosen/engine")
@@ -907,9 +919,31 @@ final class SettingsSourceContractTests: XCTestCase {
         let text = try source("SettingsView.swift")
         XCTAssertFalse(text.contains("Config.discoverAgentPath()"))
         XCTAssertTrue(text.contains("detect: detectEngine"))
-        XCTAssertTrue(text.contains("await engineDetection.detect(currentPath: original)"))
-        XCTAssertEqual(text.components(separatedBy: "Config.discoverGgufRoots()").count - 1, 1)
+        let detectStart = try XCTUnwrap(text.range(of: "private func detectEngine()"))
+        let detectEnd = try XCTUnwrap(text.range(of: "// MARK: - Model locations"))
+        let detect = text[detectStart.lowerBound..<detectEnd.lowerBound]
+        XCTAssertTrue(detect.contains("await engineDetection.detect(currentPath: original)"))
+        XCTAssertEqual(text.components(separatedBy: "engineDetection.detect(").count - 1, 1)
+        XCTAssertFalse(text.contains("Config.discoverGgufRoots()"))
+        XCTAssertFalse(text.contains("refreshDiscoveredRoots("))
+        XCTAssertTrue(text.contains("appHost.discoveredRoots.filter"), "folder suggestions are cached AppHost values")
+
+        let detector = try String(contentsOf: SettingsProbeTests.viewsDirectory
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Services/SettingsEngineDetection.swift"), encoding: .utf8)
+        XCTAssertFalse(detector.contains(".onAppear"))
+        XCTAssertFalse(detector.contains(".task"))
+        let detectorAction = try XCTUnwrap(detector.range(of: "func detect(currentPath: String)"))
+        XCTAssertEqual(detector.components(separatedBy: "await discover()").count - 1, 1)
+        XCTAssertTrue(detector[detectorAction.lowerBound...].contains("await discover()"))
+
         XCTAssertEqual(text.components(separatedBy: "NSOpenPanel()").count - 1, 2)
+        let addStart = try XCTUnwrap(text.range(of: "private static func addDirectories("))
+        let addEnd = try XCTUnwrap(text.range(of: "// MARK: - Settings building blocks"))
+        XCTAssertEqual(String(text[addStart.lowerBound..<addEnd.lowerBound]).components(separatedBy: "NSOpenPanel()").count - 1, 1)
+        let chooseStart = try XCTUnwrap(text.range(of: "private func chooseDirectory()"))
+        let chooseEnd = try XCTUnwrap(text.range(of: "/// A ledger state"))
+        XCTAssertEqual(String(text[chooseStart.lowerBound..<chooseEnd.lowerBound]).components(separatedBy: "NSOpenPanel()").count - 1, 1)
     }
 }
 

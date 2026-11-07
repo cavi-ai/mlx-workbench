@@ -5,6 +5,153 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testDiscoveredStopPassesPidAndStartFencesToTheEngine() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            let stopped = recorder.values.contains { $0.argv.prefix(2) == ["serve", "stop"] }
+            let service: [String: Any] = ["path": "/models/a", "runtime": "strata", "port": 19080, "pid": 22,
+                "alive": true, "argv_match": true, "process_started_at": "process-start", "started_at": "receipt-start",
+                "receipt": "/service/.mlx-agent-receipts/serve/19080.json", "receipts_dir": "/service"]
+            return ["schema_version": 1, "services": stopped ? [] : [service], "errors": []]
+        })
+        let expected = ServerInfo(path: "/models/a", runtime: "strata", port: 19080, pid: 22, state: "running", startedAt: "receipt-start",
+            receipt: "/service/.mlx-agent-receipts/serve/19080.json", receiptsDirectory: "/service", processStartedAt: "process-start")
+        try await api.changeDiscoveredService(expected, action: "stop")
+        let argv = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["serve", "stop"] }?.argv)
+        XCTAssertEqual(Array(argv.suffix(4)), ["--expected-pid", "22", "--expected-start", "process-start"])
+    }
+
+    func testWatchUsesOnlyExactClientFilesSelectedCacheAndManagedRepositories() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] {
+                return ["schema_version": 1, "services": [], "capabilities": ["scoped_watch": true]]
+            }
+            return ["findings": [["repo": "owner/model", "code": "updated_tracked_repo"]]]
+        })
+        let findings = try await api.watchDiff(stateDirectory: "/state/watch", scope: WatchInventoryScope(hfCache: nil, ownedRepos: ["owner/model"]))
+        XCTAssertEqual(findings.first?["repo"] as? String, "owner/model")
+        let call = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["watch", "diff"] })
+        XCTAssertTrue(call.argv.contains("--no-hf-cache"))
+        XCTAssertFalse(call.argv.contains("--hf-cache"))
+        XCTAssertTrue(call.argv.contains("/state/workbench"))
+        XCTAssertTrue(call.argv.contains { $0.hasSuffix(".config/opencode/opencode.jsonc") })
+        XCTAssertFalse(call.argv.contains("/"))
+        XCTAssertEqual(Array(call.argv.suffix(2)), ["--owned-repo", "owner/model"])
+        XCTAssertEqual(call.timeout, 30)
+        try await api.watchSnapshot(stateDirectory: "/state/watch", scope: WatchInventoryScope(hfCache: "/chosen/hub", ownedRepos: []))
+        let snapshot = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["watch", "snapshot"] })
+        XCTAssertTrue(snapshot.argv.contains("/chosen/hub"))
+        XCTAssertFalse(snapshot.argv.contains("--no-hf-cache"))
+    }
+
+    func testLateDiscoveryCannotAuthorizeWatchForAnotherEngine() async throws {
+        let recorder = AgentCallRecorder()
+        let entered = expectation(description: "discovery started")
+        let release = DispatchSemaphore(value: 0)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/new", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if path == "/new" && argv.prefix(2) == ["serve", "discover"] {
+                entered.fulfill()
+                _ = release.wait(timeout: .now() + 5)
+            }
+            return ["schema_version": 1, "services": [], "capabilities": ["scoped_watch": path == "/new"]]
+        })
+        let check = Task { try await api.watchSnapshot(stateDirectory: "/state/watch", scope: WatchInventoryScope(hfCache: nil, ownedRepos: [])) }
+        await fulfillment(of: [entered], timeout: 2)
+        await api.setAgentPath("/old")
+        release.signal()
+        do { try await check.value; XCTFail("Expected engine drift to invalidate discovery") }
+        catch let error as BridgeError { XCTAssertEqual(error.code, "engine_changed") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.first == "watch" })
+        do {
+            try await api.watchSnapshot(stateDirectory: "/state/watch", scope: WatchInventoryScope(hfCache: nil, ownedRepos: []))
+            XCTFail("Old engine must remain scoped out")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.first == "watch" })
+    }
+
+    func testOldEngineCannotWidenWatchOrKeepCapabilityAfterEngineChange() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/new", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["schema_version": 1, "services": [], "capabilities": ["scoped_watch": path == "/new"]]
+        })
+        try await api.watchSnapshot(stateDirectory: "/state/watch", scope: WatchInventoryScope(hfCache: nil, ownedRepos: []))
+        await api.setAgentPath("/old")
+        do {
+            _ = try await api.watchDiff(stateDirectory: "/state/watch", scope: WatchInventoryScope(hfCache: nil, ownedRepos: []))
+            XCTFail("Expected a scoped engine capability requirement")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.path == "/old" && $0.argv.first == "watch" })
+    }
+
+    func testContainedDoctorExcludesAnUnselectedCacheWhenSupported() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] {
+                return ["schema_version": 1, "services": [], "errors": [], "capabilities": ["scoped_doctor": true]]
+            }
+            return ["findings": [], "summary": ["hf_cache_checked": false]]
+        })
+        let result = try await api.doctor(wiredRoots: [], hfCache: nil, excludeHFCache: true)
+        XCTAssertEqual(result.summary?.hfCacheChecked, false)
+        let doctor = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["doctor", "models"] })
+        XCTAssertTrue(doctor.argv.contains("--no-hf-cache"))
+        XCTAssertFalse(doctor.argv.contains("--hf-cache"))
+        XCTAssertFalse(doctor.argv.contains("/"))
+    }
+
+    func testOldEngineCannotWidenAContainedDoctorRequest() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] {
+                throw BridgeError.remote(code: "skill_output_unreadable", message: "invalid choice: discover", remediation: "")
+            }
+            return ["servers": []]
+        })
+        do {
+            _ = try await api.doctor(wiredRoots: [], hfCache: nil, excludeHFCache: true)
+            XCTFail("Expected a scoped engine capability requirement")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.first == "doctor" })
+    }
+
+    func testExternalServerProcessDriftRefusesStop() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["schema_version": 1, "services": [["path": "/models/a", "port": 19080, "pid": 23,
+                "alive": true, "argv_match": true, "process_started_at": "new", "receipts_dir": "/service"]], "errors": []]
+        })
+        let expected = ServerInfo(path: "/models/a", port: 19080, pid: 22, state: "running",
+            receipt: "/service/.mlx-agent-receipts/serve/19080.json", receiptsDirectory: "/service", processStartedAt: "old")
+        do {
+            try await api.changeDiscoveredService(expected, action: "stop")
+            XCTFail("Expected process drift to refuse the action")
+        } catch { }
+        XCTAssertFalse(recorder.values.contains { $0.argv.prefix(2) == ["serve", "stop"] })
+    }
+
+    func testDoctorUsesExplicitConfigFilesInsteadOfInheritedWorkingDirectory() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["findings": []]
+        })
+        _ = try await api.doctor(wiredRoots: [], hfCache: "/selected/hub")
+        let argv = try XCTUnwrap(recorder.values.first?.argv)
+        XCTAssertTrue(argv.contains("--wired-root"))
+        XCTAssertTrue(argv.contains("/state/workbench"))
+        XCTAssertFalse(argv.contains("/"))
+        XCTAssertTrue(argv.contains("/selected/hub"))
+        XCTAssertTrue(argv.contains { $0.hasSuffix(".config/opencode/opencode.jsonc") })
+    }
+
     func testScanTimeoutExplainsLibraryRecoveryAndRetainsErrorCode() async throws {
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
             throw BridgeError.skillTimeout

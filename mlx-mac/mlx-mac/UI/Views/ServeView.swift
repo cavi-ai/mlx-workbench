@@ -34,6 +34,7 @@ struct ServeView: View {
     @State private var runtime = "auto"
     @State private var m5Prefill = false
     @State private var promptLookup = false
+    @State private var visionCache = false
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
@@ -44,6 +45,7 @@ struct ServeView: View {
     @State private var showLoginItemPreview = false
     @State private var loginPlan: LoginItemPlan?
     @State private var accelerationSlot: EndpointSlot?
+    @State private var memoryReviewSlot: EndpointSlot?
     @State private var loginPlist = ""
     @State private var loginBusy = false
     @State private var expandedMemorySlots: Set<UUID> = []
@@ -122,6 +124,9 @@ struct ServeView: View {
         }
         .sheet(item: $accelerationSlot) { slot in
             EndpointAccelerationEditor(endpoint: endpoint, slot: slot)
+        }
+        .sheet(item: $memoryReviewSlot) { slot in
+            EndpointMemoryReviewSheet(slot: slot, endpoint: endpoint, api: appHost.api)
         }
         .task { await modelWorkflow.refreshServers() }
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
@@ -461,14 +466,18 @@ struct ServeView: View {
             })
         Toggle("Experimental M5 prompt acceleration", isOn: $m5Prefill)
             .toggleStyle(.checkbox)
-            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || modelWorkflow.isServeSubmissionInFlight)
+            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || visionCache || modelWorkflow.isServeSubmissionInFlight)
             .help("MLX-LM only. Unsupported hardware and models use native MLX. First load compiles the M5 Q4 prompt kernel.")
-            .onChange(of: runtime) { _, value in if value == "mlx-vlm" { m5Prefill = false; promptLookup = false } }
-            .onChange(of: modelWorkflow.servingProfile) { _, value in if value != nil { m5Prefill = false; promptLookup = false } }
+            .onChange(of: runtime) { _, value in if value == "mlx-vlm" { m5Prefill = false; promptLookup = false }; if value == "mlx_lm" { visionCache = false } }
+            .onChange(of: modelWorkflow.servingProfile) { _, value in if value != nil { m5Prefill = false; promptLookup = false; visionCache = false } }
         Toggle("Experimental code-edit acceleration", isOn: $promptLookup)
             .toggleStyle(.checkbox)
-            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || modelWorkflow.isServeSubmissionInFlight)
+            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || visionCache || modelWorkflow.isServeSubmissionInFlight)
             .help("For greedy edits that reuse source text in the prompt. Serves those requests one at a time. Other settings use native generation; speed depends on the workload.")
+        Toggle("Reuse image features", isOn: $visionCache)
+            .toggleStyle(.checkbox)
+            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx_lm" || m5Prefill || promptLookup || modelWorkflow.isServeSubmissionInFlight)
+            .help("MLX-VLM only. Reuses image features for repeated images; the engine preview checks model and runtime support.")
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
         }
@@ -523,7 +532,8 @@ struct ServeView: View {
         let runtime = runtime
         let m5Prefill = m5Prefill
         let promptLookup = promptLookup
-        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup) }
+        let visionCache = visionCache
+        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache) }
     }
 
     private func confirmServeAction() {
@@ -532,8 +542,9 @@ struct ServeView: View {
         let runtime = runtime
         let m5Prefill = m5Prefill
         let promptLookup = promptLookup
+        let visionCache = visionCache
         Task {
-            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup)
+            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
             if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
         }
     }
@@ -835,6 +846,7 @@ struct ServeView: View {
                         set: { enabled in
                             var updated = policy
                             updated.minimumHeadroomGB = enabled ? 2 : nil
+                            if !enabled { updated.unloadUnderPressure = nil; updated.contextTokens = nil; updated.modelMemoryBudgetGB = nil }
                             Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
                         }))
                         .toggleStyle(.checkbox)
@@ -855,6 +867,8 @@ struct ServeView: View {
                 Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
+                Button("Review memory policy…") { memoryReviewSlot = slot }
+                    .accessibilityIdentifier("endpoint-memory-review")
             }
             .padding(.top, WorkbenchSpacing.sm)
             .controlSize(.small)
@@ -877,6 +891,7 @@ struct ServeView: View {
                 set: { value in
                     var policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
                     policy[keyPath: keyPath] = value
+                    if policy.keepLoaded { policy.unloadUnderPressure = nil }
                     Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
                 })
     }
@@ -1124,6 +1139,10 @@ private struct EndpointAccelerationEditor: View {
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             Toggle("Code-edit acceleration", isOn: $options.promptLookup).toggleStyle(.checkbox)
             Text("Set temperature to 0 in your client. Greedy requests run one at a time; edits that copy source text can be faster. Other settings use native generation.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Toggle("Reuse image features (MLX-VLM)", isOn: $options.visionCache).toggleStyle(.checkbox)
+                .disabled(options.textRequested)
+            Text("For repeated images. Choose this separately from MLX-LM text acceleration; the launch preview checks compatibility.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             if let error { InlineMessage(kind: .error, text: error) }
             if busy { ProgressView("Checking launch configuration…") }

@@ -468,7 +468,9 @@ final class HostedIntegrationTests: XCTestCase {
 
     func testConnectionCheckUsesSavedCredentialUnlessReplacementIsSelected() async throws {
         let host = ModelHost(name: "Saved", provider: .ollama, baseURL: "http://localhost:11434")
-        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+        let store = JSONStore<ModelHost>(fileURL: try directory().appendingPathComponent("hosts.json"))
+        try store.replaceAll([host])
+        let coordinator = ModelHostsCoordinator(store: store,
             readToken: { _ in "saved-token" }, writeToken: { _, _ in XCTFail("Checking wrote credentials") },
             fetch: { received, token in
                 XCTAssertEqual(token, "saved-token")

@@ -39,7 +39,14 @@ final class SettingsEngineDetection: ObservableObject {
         generation = token
         state = .searching
         do {
-            let found = try await discover().trimmingCharacters(in: .whitespacesAndNewlines)
+            let configured = await Task.detached(priority: .userInitiated) {
+                let health = CLIProcess().agentHealth(agentPath: currentPath)
+                return health.ok ? health.path : nil
+            }.value
+            try Task.checkCancellation()
+            let found: String
+            if let configured { found = configured }
+            else { found = try await discover().trimmingCharacters(in: .whitespacesAndNewlines) }
             guard generation == token else { return nil }
             guard !Task.isCancelled else { cancel(); return nil }
             generation = nil

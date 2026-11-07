@@ -141,8 +141,8 @@ struct SettingsPresentation: Equatable {
     /// Models under no folder the last scan read from the rows above; zero when the roots are unknown.
     let outsideModels: Int
 
-    static let emptyGGUF = "Saving uses the detected folders"
-    static let emptyMLX = "MLX models are found in the GGUF folders and the output directory"
+    static let emptyGGUF = "Only the managed model folder is scanned"
+    static let emptyMLX = "Only the managed model folder is scanned"
 
     static func make(
         saved: Config,

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     private let appHost: AppHost
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var setup: SetupCoordinator
@@ -233,6 +234,9 @@ struct ContentView: View {
     private var contextToolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
             SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, hosts: appHost.modelHosts,
+                                 servingInventory: appHost.servingInventory, onManageServing: {
+                openWindow(id: ServedModelsWindow.id)
+            },
                                  onOpenHost: { host in
                 appHost.handoffs.send(HostedModelsRequest(host: host), as: .openHostedModels)
                 navigate(to: .library)

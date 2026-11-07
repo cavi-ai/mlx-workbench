@@ -45,10 +45,10 @@ struct ModelWorkflowAPI {
         workflowAPI.profilePreview = { profile, port in try await resolveProfile(profile).preview(api: api, port: port) }
         workflowAPI.profileStart = { profile, port, hash in try await resolveProfile(profile).start(api: api, port: port, hash: hash) }
         workflowAPI.accelerationPreview = { repo, runtime, port, options in
-            try await api.servePreview(repo: repo, runtime: runtime, port: port, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup)
+            try await api.servePreview(repo: repo, runtime: runtime, port: port, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
         }
         workflowAPI.accelerationStart = { repo, runtime, port, hash, options in
-            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup)
+            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
         }
         workflowAPI.convertRepoPreview = { request in
             try await api.convertRepoPreview(
@@ -590,7 +590,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         update(serveState: .idle, message: "Preview the selected serving configuration.", errorMessage: .some(nil))
     }
 
-    func previewServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false) async {
+    func previewServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
@@ -616,10 +616,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
 
         update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: .some(nil))
-        let acceleration = LocalAccelerationOptions(m5Prefill: m5Prefill, promptLookup: promptLookup)
+        let acceleration = LocalAccelerationOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
         do {
             if let profile = servingProfile, profile.modelPath != model { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            if acceleration.requested, servingProfile != nil || runtime == "mlx-vlm" { throw WorkflowEvidenceError.invalid("Local acceleration requires MLX-LM without a serving profile.") }
+            if (acceleration.requested && servingProfile != nil) || (acceleration.textRequested && (runtime == "mlx-vlm" || acceleration.visionCache)) || (acceleration.visionCache && runtime == "mlx_lm") { throw WorkflowEvidenceError.invalid("Choose text acceleration for MLX-LM or vision feature reuse for MLX-VLM, without a Strata profile.") }
             let response: [String: Any]
             if let profile = servingProfile { response = try await api.profilePreview(profile, port) }
             else if acceleration.requested { response = try await api.accelerationPreview(model, runtime, port, acceleration) }
@@ -636,7 +636,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
-    func confirmServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false) async {
+    func confirmServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
@@ -650,7 +650,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             update(serveState: .failed, message: "Preview serving before confirming it.", errorMessage: "Missing serve preview hash.")
             return
         }
-        let acceleration = LocalAccelerationOptions(m5Prefill: m5Prefill, promptLookup: promptLookup)
+        let acceleration = LocalAccelerationOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
         guard intent.runtime == runtime, intent.port == port, intent.profile == servingProfile, intent.acceleration == acceleration else {
             servePreviewHash = nil
             servePreviewIntent = nil

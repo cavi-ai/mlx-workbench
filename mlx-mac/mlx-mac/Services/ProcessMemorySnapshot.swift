@@ -20,8 +20,12 @@ struct ProcessMemorySnapshot: Equatable, Sendable {
         var pids = [Int32](repeating: 0, count: min(Int(estimate) + 1024, 65_536))
         let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
         guard count > 0 else { throw ReadError.unavailable }
+        return try probe(pids: Array(pids.prefix(min(Int(count), pids.count))))
+    }
+
+    static func probe(pids: [Int32]) throws -> Self {
         var entries: [Entry] = []
-        for pid in Set(pids.prefix(min(Int(count), pids.count))) where pid > 0 {
+        for pid in Set(pids) where pid > 0 {
             var info = proc_taskinfo()
             let size = MemoryLayout<proc_taskinfo>.size
             let bytes = withUnsafeMutablePointer(to: &info) { proc_pidinfo(pid, PROC_PIDTASKINFO, 0, $0, Int32(size)) }
@@ -33,7 +37,7 @@ struct ProcessMemorySnapshot: Equatable, Sendable {
                 : "Process \(pid)"
             entries.append(.init(pid: pid, name: name, residentBytes: info.pti_resident_size))
         }
-        guard !entries.isEmpty else { throw ReadError.unavailable }
+        guard !entries.isEmpty || pids.isEmpty else { throw ReadError.unavailable }
         entries.sort { $0.residentBytes == $1.residentBytes ? $0.pid < $1.pid : $0.residentBytes > $1.residentBytes }
         return Self(processes: entries)
     }

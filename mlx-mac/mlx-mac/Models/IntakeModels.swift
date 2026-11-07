@@ -37,6 +37,14 @@ struct IntakeSource: Codable, Equatable {
     /// A checkpoint folder inside the repository; nil for the root.
     let subfolder: String?
     let url: String
+    var resolvedRevision: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case input, repo, revision, file, subfolder, url
+        case resolvedRevision = "resolved_revision"
+    }
+
+    var fetchRevision: String { resolvedRevision ?? revision }
 
     /// The source as intake and fetch accept it: `org/name` or `org/name/folder`.
     var reference: String { subfolder.map { "\(repo)/\($0)" } ?? repo }

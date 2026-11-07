@@ -3,6 +3,11 @@ import Foundation
 @MainActor
 final class ModelHostsCoordinator: ObservableObject {
     @Published private(set) var hosts: [ModelHost] = []
+    @Published private(set) var discoveredHosts: [ModelHost] = []
+    private(set) var discoveredProcessIDs: [UUID: Int] = [:]
+    private var discovering = false
+    private var discoveryError: String?
+    var knownHosts: [ModelHost] { hosts + discoveredHosts.filter { discovered in !hosts.contains { $0.id == discovered.id } } }
     @Published private(set) var inventories: [UUID: HostInventory] = [:]
     @Published private(set) var refreshing: Set<UUID> = []
     @Published private(set) var errors: [UUID: String] = [:]
@@ -48,14 +53,60 @@ final class ModelHostsCoordinator: ObservableObject {
         } catch { storageError = "Model hosts could not be read. Resolve the saved host file before editing it." }
     }
 
-    func token(for id: UUID) throws -> String? { try readToken(id) }
+    func token(for id: UUID) throws -> String? {
+        guard hosts.contains(where: { $0.id == id }) else { return nil }
+        return try readToken(id)
+    }
+
+    func servingSnapshot(refreshLocal: Bool) async -> ServingHostSnapshot {
+        if refreshLocal, !discovering {
+            discovering = true
+            defer { discovering = false }
+            do {
+                let candidates = try await LocalModelHostDiscovery.discover()
+                discoveryError = nil
+                for candidate in candidates {
+                    let saved = hosts.first { (try? $0.validatedURL()) == (try? candidate.host.validatedURL()) }
+                    let host = saved ?? candidate.host
+                    discoveredProcessIDs[host.id] = candidate.processID
+                    if saved == nil, !discoveredHosts.contains(where: { $0.id == host.id }) { discoveredHosts.append(host) }
+                }
+                let detected = Set(candidates.compactMap { candidate in
+                    (hosts.first { (try? $0.validatedURL()) == (try? candidate.host.validatedURL()) } ?? candidate.host).id
+                })
+                for host in discoveredHosts where !detected.contains(host.id) {
+                    errors[host.id] = "This server is no longer listening. The last inventory is shown."
+                }
+                let targets = knownHosts.filter { host in
+                    let local = (try? host.validatedURL()).flatMap(\.host).map { ["127.0.0.1", "localhost", "::1", "[::1]"].contains($0) } ?? false
+                    return local && (hosts.contains(host) || detected.contains(host.id))
+                }
+                await withTaskGroup(of: Void.self) { group in
+                    for host in targets { group.addTask { [weak self] in _ = await self?.refresh(host.id) } }
+                }
+            } catch {
+                discoveryError = "Local server listeners could not be read. The last observations are shown."
+                for host in discoveredHosts { errors[host.id] = "Local server discovery is unavailable. The last inventory is shown." }
+            }
+        }
+        var sourceErrors: [String: String] = [:]
+        if let discoveryError { sourceErrors["local-listeners"] = discoveryError }
+        if let storageError { sourceErrors["host-settings"] = storageError }
+        for (id, message) in errors { sourceErrors["host:" + id.uuidString] = message }
+        var observed = Array(inventories.values)
+        for host in knownHosts where inventories[host.id] == nil {
+            observed.append(HostInventory(host: host, models: [], capturedAt: Date()))
+            sourceErrors["host:" + host.id.uuidString] = errors[host.id] ?? "Model inventory has not been read. Refresh this source."
+        }
+        return ServingHostSnapshot(inventories: observed, errors: sourceErrors, processIDs: discoveredProcessIDs)
+    }
 
     /// Checks the unsaved connection through the same read-only adapter as Refresh.
     /// Neither host state, published inventory nor Keychain is modified.
     func checkConnection(_ host: ModelHost, token: String?, replaceToken: Bool) async throws -> HostInventory {
         _ = try host.validatedURL()
         if let message = host.validationMessage { throw HostedIntegrationError.invalid(message) }
-        let credential = replaceToken ? (token?.isEmpty == true ? nil : token) : try readToken(host.id)
+        let credential = replaceToken ? (token?.isEmpty == true ? nil : token) : try self.token(for: host.id)
         let result = try await fetch(host, credential)
         try Task.checkCancellation()
         guard result.host == host, result.models.allSatisfy({ $0.hostID == host.id }),
@@ -70,7 +121,7 @@ final class ModelHostsCoordinator: ObservableObject {
         guard !host.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, host.name.count <= 120 else {
             throw HostedIntegrationError.invalid("Enter a host name of 1–120 characters.")
         }
-        let oldToken = replaceToken ? try readToken(host.id) : nil
+        let oldToken = replaceToken ? try self.token(for: host.id) : nil
         if replaceToken { try writeToken(token?.isEmpty == true ? nil : token, host.id) }
         do { try store.upsert(host, id: \.id) }
         catch {
@@ -106,13 +157,13 @@ final class ModelHostsCoordinator: ObservableObject {
         resourcePreview = nil; resourceMessage = nil
         resourceHostID = hostID
         guard storageError == nil else { resourceMessage = storageError; return }
-        guard let host = hosts.first(where: { $0.id == hostID }) else { resourceMessage = "This host connection is no longer saved."; return }
+        guard let host = knownHosts.first(where: { $0.id == hostID }) else { resourceMessage = "This host connection is no longer saved."; return }
         guard !resourceUseBlocked() else { resourceMessage = "Finish the active Workbench comparison before unloading models."; return }
         let generation = UUID(); resourceGeneration = generation; resourceBusy = true
         defer { if resourceGeneration == generation { resourceBusy = false } }
         do {
-            let preview = try await inspectResource(host, selection, readToken(host.id))
-            guard !Task.isCancelled, resourceGeneration == generation, hosts.contains(host) else { return }
+            let preview = try await inspectResource(host, selection, token(for: host.id))
+            guard !Task.isCancelled, resourceGeneration == generation, knownHosts.contains(host) else { return }
             guard !resourceUseBlocked() else { throw HostedIntegrationError.invalid("Finish the active Workbench comparison before unloading models.") }
             guard preview.host == host, preview.selection == selection else { throw HostHTTPError.invalidResponse }
             resourcePreview = preview
@@ -126,16 +177,16 @@ final class ModelHostsCoordinator: ObservableObject {
 
     func confirmResource() async {
         guard !resourceBusy, let preview = resourcePreview else { return }
-        guard storageError == nil, hosts.contains(preview.host), !resourceUseBlocked() else {
+        guard storageError == nil, knownHosts.contains(preview.host), !resourceUseBlocked() else {
             resourcePreview = nil
             resourceMessage = storageError ?? "The connection changed or a Workbench comparison is active. Check again before unloading."; return
         }
         let generation = UUID(); resourceGeneration = generation; resourceBusy = true; resourceMessage = nil
         defer { if resourceGeneration == generation { resourceBusy = false; resourceApplying = false } }
         do {
-            let token = try readToken(preview.host.id)
+            let token = try token(for: preview.host.id)
             let fresh = try await inspectResource(preview.host, preview.selection, token)
-            guard !Task.isCancelled, resourceGeneration == generation, hosts.contains(preview.host) else { return }
+            guard !Task.isCancelled, resourceGeneration == generation, knownHosts.contains(preview.host) else { return }
             guard fresh.host == preview.host, fresh.selection == preview.selection, !resourceUseBlocked() else {
                 throw HostedIntegrationError.invalid("The connection changed or a Workbench comparison is active. Check again before unloading.")
             }
@@ -180,15 +231,15 @@ final class ModelHostsCoordinator: ObservableObject {
     }
 
     private func readInventory(_ id: UUID, inspecting model: HostedModel? = nil) async -> Bool {
-        guard let host = hosts.first(where: { $0.id == id }), !refreshing.contains(id) else { return false }
+        guard let host = knownHosts.first(where: { $0.id == id }), !refreshing.contains(id) else { return false }
         let generation = UUID(); generations[id] = generation; refreshing.insert(id); errors[id] = nil
         defer { if generations[id] == generation { refreshing.remove(id) } }
         do {
-            let token = try readToken(id)
+            let token = try token(for: id)
             let result: HostInventory
             if let model { result = try await inspectModel(host, model, token) }
             else { result = try await fetch(host, token) }
-            guard !Task.isCancelled, generations[id] == generation, hosts.contains(host) else { return false }
+            guard !Task.isCancelled, generations[id] == generation, knownHosts.contains(host) else { return false }
             guard result.host == host, result.models.allSatisfy({ $0.hostID == id }),
                   Set(result.models.map(\.id)).count == result.models.count else {
                 throw HostedIntegrationError.invalid("The host returned inconsistent model identities.")
@@ -201,7 +252,7 @@ final class ModelHostsCoordinator: ObservableObject {
             inventories[id] = result
             return true
         } catch {
-            guard generations[id] == generation, hosts.contains(host) else { return false }
+            guard generations[id] == generation, knownHosts.contains(host) else { return false }
             let retained = inventories[id] == nil ? "No inventory is available yet." : "Previous inventory retained."
             let action = model == nil ? "Refresh" : "Model details read"
             var guidance = ModelHostConnectionCheck.guidance(for: error)

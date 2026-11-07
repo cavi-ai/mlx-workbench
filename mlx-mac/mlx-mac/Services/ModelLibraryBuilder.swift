@@ -64,7 +64,7 @@ enum ModelLibraryBuilder {
                 quantization: output.quantization.map { "q\($0.bits)" },
                 parameters: nil,
                 structure: nil,
-                signature: output.provenance,
+                signature: (try? ManagedModelInstallStore.signature(path: output.path)) ?? output.provenance,
                 companion: nil,
                 readable: true,
                 status: readiness == .ready ? "ready" : "needs_runtime",
@@ -240,6 +240,7 @@ enum ModelLibraryBuilder {
     }
 
     private static func displayName(path: String, fallbackName: String) -> String {
+        if let managed = ManagedModelInstallStore.presentationIdentity(path: path) { return managed.displayName }
         // HF-cache snapshots name their revision hash; the repo id is the
         // identity the user recognizes.
         if let repoID = HFRepoID.forPath(path) {

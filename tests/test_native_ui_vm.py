@@ -441,6 +441,7 @@ class NativeUIVMTests(unittest.TestCase):
             }))
             with patch.object(vm.os, "getuid", return_value=501), \
                     patch.object(vm.os, "chdir"), \
+                    patch.object(vm.shutil, "which", return_value="/usr/local/bin/python3.12"), \
                     patch.object(vm.subprocess, "check_output", side_effect=["VirtualMac2,1", "501", "Aqua", "{}", "{}"]), \
                     patch.object(vm, "checked"), \
                     patch.object(vm.subprocess, "run", side_effect=RuntimeError("build boundary")) as build:

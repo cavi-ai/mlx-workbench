@@ -5,6 +5,65 @@ import XCTest
 
 @MainActor
 final class IntakeCoordinatorTests: XCTestCase {
+    func testDownloadReservesActivityBeforeDestinationValidationSuspends() async throws {
+        let gate = IntakeValidationGate()
+        let entered = expectation(description: "destination validation entered")
+        let destination = "/intake-fixture-\(UUID().uuidString)"
+        let api = IntakeAPI.stub(resolve: { _ in try Self.resolution(verdict: "already_mlx", backend: "mlx-lm") },
+            fetchPreview: { _ in ["preview_hash": "f"] }, fetchStart: { request, _ in Self.receipt(request, slug: "r") },
+            fetchStatus: { [FetchJob(receipt: "/receipts/r.json", repo: "openai/whisper-tiny", revision: "main", file: nil,
+                subfolder: nil, localDir: destination, state: "done", path: destination, logPath: nil, startedAt: "now", completedAt: nil)] })
+        let intake = IntakeCoordinator(api: api, validateDestination: { _ in entered.fulfill(); await gate.wait() })
+        intake.sourceText = "openai/whisper-tiny"
+        await intake.resolve()
+        let first = Task { await intake.download(localDir: destination) }
+        await fulfillment(of: [entered], timeout: 2)
+        defer { gate.open() }
+        XCTAssertTrue(intake.isBusy)
+        intake.open(with: "other/model")
+        XCTAssertEqual(intake.sourceText, "openai/whisper-tiny")
+        let second = await intake.download(localDir: destination)
+        XCTAssertNil(second)
+        XCTAssertEqual(intake.activity, .downloading(repo: "openai/whisper-tiny"))
+        gate.open()
+        let result = await first.value
+        XCTAssertEqual(result, destination)
+    }
+
+    func testDestinationValidationFailureIsReportedByManualDownload() async throws {
+        let intake = IntakeCoordinator(api: .stub(resolve: { _ in try Self.resolution(verdict: "already_mlx", backend: "mlx-lm") }),
+            validateDestination: { _ in throw WorkflowEvidenceError.invalid("Fixture destination changed") })
+        intake.sourceText = "openai/whisper-tiny"
+        await intake.resolve()
+        let path = await intake.download(localDir: "/destination")
+        XCTAssertNil(path)
+        guard case .failed(let message) = intake.activity else { return XCTFail("Expected a visible destination error") }
+        XCTAssertTrue(message.contains("Fixture destination changed"))
+    }
+
+    private static func receipt(_ request: IntakeFetchRequest, slug: String) -> [String: Any] {
+        var receipt: [String: Any] = ["repo": "openai/whisper-tiny", "revision": request.revision, "slug": slug, "started_at": "now"]
+        receipt["file"] = request.file
+        receipt["local_dir"] = request.localDir
+        if request.source.hasSuffix("/multilingual") { receipt["subfolder"] = "multilingual" }
+        return ["receipt": receipt]
+    }
+
+    func testDownloadCannotReuseAnOlderCompletedReceipt() async throws {
+        let api = IntakeAPI.stub(
+            resolve: { _ in try Self.resolution(verdict: "already_mlx", backend: "mlx-lm") },
+            fetchPreview: { _ in ["preview_hash": "f"] },
+            fetchStart: { request, _ in Self.receipt(request, slug: "r") },
+            fetchStatus: { [FetchJob(receipt: "/receipts/r.json", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil,
+                state: "done", path: "/old/model", logPath: nil, startedAt: "old", completedAt: "old")] })
+        let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 2)
+        intake.sourceText = "openai/whisper-tiny"
+        await intake.resolve()
+        let path = await intake.download(localDir: nil)
+        XCTAssertNil(path)
+        guard case .failed = intake.activity else { return XCTFail("Expected unmatched-receipt failure") }
+    }
+
     func testExistingMLXIntakeUsesTheReadySnapshotOnly() throws {
         let result = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm")
         let path = "/cache/models--openai--whisper-tiny/snapshots/abc"
@@ -104,10 +163,10 @@ final class IntakeCoordinatorTests: XCTestCase {
         let api = IntakeAPI.stub(
             resolve: { _ in try Self.resolution(verdict: "convertible", backend: "mlx-lm") },
             fetchPreview: { _ in ["preview_hash": "f"] },
-            fetchStart: { _, _ in [:] },
+            fetchStart: { request, _ in Self.receipt(request, slug: "r") },
             fetchStatus: {
                 polls += 1
-                return [FetchJob(receipt: "r", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: polls < 2 ? "running" : "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
+                return [FetchJob(receipt: "/receipts/r.json", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: polls < 2 ? "running" : "done", path: "/hf/snap", logPath: nil, startedAt: "now", completedAt: nil)]
             }
         )
         let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 5)
@@ -124,10 +183,10 @@ final class IntakeCoordinatorTests: XCTestCase {
         let api = IntakeAPI.stub(
             resolve: { _ in try Self.resolution(verdict: "convertible", backend: "mlx-embeddings", subfolder: "multilingual") },
             fetchPreview: { request in requested = request; return ["preview_hash": "f"] },
-            fetchStart: { _, _ in [:] },
+            fetchStart: { request, _ in Self.receipt(request, slug: "ml") },
             fetchStatus: {
                 [FetchJob(receipt: "root", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: "done", path: "/hf/root", logPath: nil, startedAt: nil, completedAt: nil),
-                 FetchJob(receipt: "ml", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: "multilingual", localDir: nil, state: "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
+                 FetchJob(receipt: "/receipts/ml.json", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: "multilingual", localDir: nil, state: "done", path: "/hf/snap", logPath: nil, startedAt: "now", completedAt: nil)]
             }
         )
         let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 5)
@@ -197,4 +256,15 @@ final class IntakeCoordinatorTests: XCTestCase {
     static func entry(_ state: BackendState, log: String? = nil) -> BackendEntry {
         BackendEntry(id: "mlx-audio", version: "0.5.7", builtin: false, state: state, categories: ["speech_to_text"], modelTypes: 30, registrySource: "snapshot", target: "/b/mlx-audio", logPath: log, startedAt: nil, completedAt: nil)
     }
+}
+
+@MainActor
+private final class IntakeValidationGate {
+    private var opened = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func open() { opened = true; continuation?.resume(); continuation = nil }
 }

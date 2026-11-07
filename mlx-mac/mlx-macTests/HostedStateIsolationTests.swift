@@ -47,7 +47,7 @@ final class HostedStateIsolationTests: XCTestCase {
         XCTAssertEqual(usage.map(\.path), ["/models/winner"])
     }
 
-    func testDefaultGGUFDiscoveryReadsLMStudioSettingsBeneathTheHostedHome() async throws {
+    func testSuggestedGGUFDiscoveryUsesHostedHomeWithoutChangingConfiguredRoots() async throws {
         let home = WorkbenchStatePaths.userHome()
         XCTAssertTrue(Self.isWithin(home, WorkbenchStatePaths.hostedTestRoot))
         let shelf = home.appendingPathComponent("Volumes/External/lms", isDirectory: true)
@@ -58,11 +58,14 @@ final class HostedStateIsolationTests: XCTestCase {
         let expected = URL(fileURLWithPath: shelf.path).standardizedFileURL.path
 
         XCTAssertEqual(Config.discoverGgufRoots(), [expected])
-        XCTAssertEqual(Config.defaults().ggufRoots, [expected])
+        XCTAssertEqual(Config.defaults().ggufRoots, [], "default scopes require an explicit selection")
+        XCTAssertEqual(Config.defaults().mlxRoots, [])
         let host = AppHost(config: Config.defaults())
         XCTAssertEqual(host.discoveredRoots, [], "creating the host does not discover")
         await host.refreshDiscoveredRoots()
         XCTAssertEqual(host.discoveredRoots, [expected], "Settings suggests discovered roots")
+        XCTAssertEqual(host.config.ggufRoots, [], "discovery does not select suggested folders")
+        XCTAssertEqual(host.config.mlxRoots, [])
     }
 
     private func userStateDirectories() -> [URL] {

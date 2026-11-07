@@ -117,7 +117,7 @@ def discover_agent_path(start=None):
 def defaults():
     return {
         "schema_version": SCHEMA_VERSION,
-        "gguf_roots": discover_gguf_roots(),
+        "gguf_roots": [],
         "mlx_roots": [],
         "output_dir": str(Path.home() / "models" / "mlx"),
         "mlx_agent_path": discover_agent_path(),
@@ -230,4 +230,4 @@ def save(value, path=None):
 def scan_roots(value):
     """The roots a scan should walk, with a usable fallback."""
     roots = list(value.get("gguf_roots") or [])
-    return roots or discover_gguf_roots()
+    return roots

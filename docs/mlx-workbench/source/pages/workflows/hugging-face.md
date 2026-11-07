@@ -12,8 +12,8 @@ The **Add from Hugging Face** window resolves a Hugging Face Hub repository befo
 |---|---|
 | Convertible | Download, then the usual Prepare preview and confirmation |
 | Convertible after install | One click installs the backend (mlx-vlm or mlx-audio) into its own environment first |
-| Already MLX | Install its declared backend if needed, then download into the output directory |
-| GGUF repository | Pick a quant file; it downloads into your first GGUF root and opens in Prepare |
+| Already MLX | Install its declared backend if needed, then download into the managed model folder |
+| GGUF repository | Pick a quant file; it downloads into the managed model folder and opens in Prepare |
 | No MLX converter | Shows which parts already exist in MLX and which are missing; a locally served model can draft a porting plan |
 | Blocked or Hub unreachable | Gated, private or offline; nothing is downloaded |
 
@@ -23,7 +23,9 @@ Before fetching, intake checks your current ready models and matching conversion
 
 ## Downloads and conversion
 
-A download is its own confirmed step, separate from conversion. Downloaded directories are passed to the converter as a local source, and converter workers run offline.
+A download is its own confirmed step, separate from conversion. New files go beneath the output directory’s `managed` folder, with separate repository, revision and checkpoint locations. Existing Hugging Face, LM Studio and other caches stay in place. A resolved commit is used for the download when the engine reports it. A completed receipt must match the requested repository, revision, destination and start time before Workbench accepts its result. Existing managed folders are never overwritten by a new download.
+
+Downloaded directories are passed to the converter as a local source, and converter workers run offline.
 
 Prefer original floating-point weights when a repository offers them. Conversion cannot recover precision removed by an earlier quantization.
 

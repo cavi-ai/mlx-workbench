@@ -3,7 +3,21 @@ import Foundation
 struct LocalAccelerationOptions: Codable, Equatable, Sendable {
     var m5Prefill = false
     var promptLookup = false
-    var requested: Bool { m5Prefill || promptLookup }
+    var visionCache = false
+    var textRequested: Bool { m5Prefill || promptLookup }
+    var requested: Bool { textRequested || visionCache }
+
+    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) {
+        self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
+    }
+
+    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        m5Prefill = try values.decodeIfPresent(Bool.self, forKey: .m5Prefill) ?? false
+        promptLookup = try values.decodeIfPresent(Bool.self, forKey: .promptLookup) ?? false
+        visionCache = try values.decodeIfPresent(Bool.self, forKey: .visionCache) ?? false
+    }
 }
 
 struct EndpointAccelerationPreview {
@@ -39,6 +53,9 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
     var idleTimeoutSeconds: Int
     var keepLoaded: Bool
     var minimumHeadroomGB: Double?
+    var modelMemoryBudgetGB: Double? = nil
+    var unloadUnderPressure: Bool? = nil
+    var contextTokens: Int? = nil
 
     static let automatic = EndpointMemoryPolicy(idleTimeoutSeconds: 600, keepLoaded: false, minimumHeadroomGB: 2)
     static let legacy = EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: false, minimumHeadroomGB: nil)
@@ -47,17 +64,26 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
         case idleTimeoutSeconds = "idle_timeout_seconds"
         case keepLoaded = "keep_loaded"
         case minimumHeadroomGB = "minimum_headroom_gb"
+        case modelMemoryBudgetGB = "model_memory_budget_gb"
+        case unloadUnderPressure = "unload_under_pressure"
+        case contextTokens = "context_tokens"
     }
 
     var isValid: Bool {
         (0...86400).contains(idleTimeoutSeconds) &&
-        (minimumHeadroomGB.map { $0.isFinite && (0...1024).contains($0) } ?? true)
+        (minimumHeadroomGB.map { $0.isFinite && (0...1024).contains($0) } ?? true) &&
+        (modelMemoryBudgetGB.map { $0.isFinite && (1...1024).contains($0) } ?? true) &&
+        (unloadUnderPressure != true || (minimumHeadroomGB != nil && !keepLoaded)) &&
+        (contextTokens.map { (1024...1_048_576).contains($0) && minimumHeadroomGB != nil } ?? true)
     }
 
     var arguments: [String] {
         var result = ["--idle-timeout", String(idleTimeoutSeconds)]
         if keepLoaded { result.append("--keep-loaded") }
         if let minimumHeadroomGB { result += ["--min-headroom-gb", String(minimumHeadroomGB)] }
+        if let modelMemoryBudgetGB { result += ["--memory-budget-gb", String(modelMemoryBudgetGB)] }
+        if unloadUnderPressure == true { result.append("--unload-under-pressure") }
+        if let contextTokens { result += ["--context-tokens", String(contextTokens)] }
         return result
     }
 }
@@ -144,7 +170,8 @@ extension EndpointFleetConfig {
         var seenPorts = Set<Int>()
         var seenRoles = Set<UseCase>()
         for slot in slots {
-            if slot.servingProfile != nil, slot.accelerationOptions.requested {
+            if (slot.servingProfile != nil && slot.accelerationOptions.requested) ||
+                (slot.accelerationOptions.visionCache && slot.accelerationOptions.textRequested) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
             }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }

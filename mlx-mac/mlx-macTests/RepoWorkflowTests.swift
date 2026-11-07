@@ -181,14 +181,14 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/mlx", "/models/other"])
     }
 
-    /// With no MLX roots configured the agent scans the GGUF roots for MLX
-    /// outputs; adding the output directory must not replace that default.
-    func testEmptyMLXRootsKeepTheGGUFRootsDefault() {
+    /// GGUF selections do not widen the MLX scope; the managed destination
+    /// remains eligible without selecting any other folder.
+    func testEmptyMLXRootsIncludeOnlyTheManagedOutput() {
         var config = Config.defaults()
         config.mlxRoots = []
         config.outputDir = "/models/converted"
         let gguf = ["/models/gguf", "/cache/hub"]
-        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/gguf", "/cache/hub", "/models/converted"])
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/converted"])
         config.outputDir = ""
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), [])
     }
@@ -198,11 +198,12 @@ final class RepoWorkflowTests: XCTestCase {
     /// identity, so a case-variant spelling of the root counts as that root.
     func testOutputInsideARootIsNotScannedTwice() {
         var config = Config.defaults()
-        config.mlxRoots = []
+        config.mlxRoots = ["/Users/f/Models", "/cache/hub"]
         config.outputDir = "/Users/f/models/mlx"
         let sameDirectory = NSString(string: "inode-1")
         let identity: (String) -> NSObject? = { ["/Users/f/Models": sameDirectory, "/Users/f/models": sameDirectory][$0] }
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: ["/Users/f/Models", "/cache/hub"], fileIdentity: identity), ["/Users/f/Models", "/cache/hub"])
+        config.mlxRoots = ["/models/gguf"]
         config.outputDir = "/models/gguf/mlx"
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: ["/models/gguf"]), ["/models/gguf"])
         config.outputDir = "/models/ggufs"
@@ -217,7 +218,7 @@ final class RepoWorkflowTests: XCTestCase {
         let variant = base.appendingPathComponent("models").path
         try XCTSkipUnless(FileManager.default.fileExists(atPath: variant), "case-sensitive volume")
         var config = Config.defaults()
-        config.mlxRoots = []
+        config.mlxRoots = [root.path]
         config.outputDir = variant + "/mlx"
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: [root.path]), [root.path])
     }
@@ -245,7 +246,7 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertFalse(within(root.path, shelf.path))
 
         var config = Config.defaults()
-        config.mlxRoots = []
+        config.mlxRoots = [root.path]
         config.outputDir = alias.path + "/mlx"
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: [root.path]), [root.path])
     }

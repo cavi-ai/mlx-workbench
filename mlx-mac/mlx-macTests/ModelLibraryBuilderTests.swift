@@ -31,7 +31,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
                 gate.pauseOnce()
                 return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
             })
-        let original = host.config.ggufRoots
+        let original = host.config.ggufRoots + [host.config.outputDir]
         let task = Task { await host.rescan() }
         defer { gate.release.signal() }
         await fulfillment(of: [gate.started], timeout: 2)
@@ -40,9 +40,10 @@ final class ModelLibraryBuilderTests: XCTestCase {
         host.config.ggufRoots = ["/changed-model-root"]
         gate.release.signal()
         await task.value
-        XCTAssertEqual(host.scannedRoots?.gguf, ["/changed-model-root"])
+        XCTAssertEqual(host.scannedRoots?.gguf, ["/changed-model-root", "/mlx"])
+        XCTAssertEqual(host.scannedRoots?.mlx, ["/mlx"])
         let roots = await capturedRoots.values
-        XCTAssertEqual(roots, [original, ["/changed-model-root"]])
+        XCTAssertEqual(roots, [original, ["/changed-model-root", "/mlx"]])
     }
 
     @MainActor
@@ -167,6 +168,19 @@ final class ModelLibraryBuilderTests: XCTestCase {
     }
 
     // MARK: - HF-cache outputs
+
+    func testManagedRevisionsKeepReadableNamesAndDistinctMatchingEvidence() {
+        let revisions = [String(repeating: "a", count: 40), String(repeating: "b", count: 40)]
+        let snapshot = ModelLibraryBuilder.build(scan: ScanResult(roots: nil, models: [], outputs: revisions.map { revision in
+            MLXOutput(path: "/models/managed/owner/model/" + revision, name: revision, modelKey: nil,
+                quantization: nil, provenance: nil)
+        }, pending: [], duplicates: [], totals: ScanTotals(gguf: 0, pending: 0, converted: 2, unreadable: 0, bytes: 0, reclaimableBytes: 0)),
+            hardware: fixtureHardware, now: fixtureDate)
+        XCTAssertEqual(snapshot.models.map(\.displayName), ["owner/model · aaaaaaaa", "owner/model · bbbbbbbb"])
+        XCTAssertEqual(snapshot.groups.count, 2)
+        XCTAssertEqual(Set(snapshot.models.map(\.normalizedFamilyKey)).count, 2)
+        XCTAssertFalse(snapshot.models.contains { $0.normalizedFamilyKey == "owner/model" })
+    }
 
     func testHFCacheSnapshotsGroupByRepoIdentityWithRealBytesAndArchitecture() throws {
         let fixture = try makeHFCacheFixture()

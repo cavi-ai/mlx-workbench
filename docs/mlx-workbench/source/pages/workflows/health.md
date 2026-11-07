@@ -48,6 +48,8 @@ It also counts verified models whose verification still matches this environment
 
 **Setup Assistant…** reopens the first-launch assistant: a four-step sheet over the same engine, runtime and model-folder checks. **Review setup** summarizes the current base checks and links back to any engine or runtime step that needs attention. **Scan my library** is offered when those checks pass; otherwise **Finish for now** closes the review without claiming readiness or starting a scan. Finishing either way is remembered. **Skip setup** leaves it unfinished, so it returns on the next launch. Model-specific readiness remains separate from these base checks.
 
+Doctor checks explicit client configuration files and Workbench’s receipt directory. It does not walk the app’s inherited working directory. Hugging Face cache checks use a selected cache location; excluding an unselected cache requires an engine that supports scoped Doctor checks. Health explains when an engine update is needed. Missing-model findings are not inferred from a cache that was excluded.
+
 ## Activity recovery
 
 When Activity cannot read conversion, study, training, queue or server status,
@@ -80,7 +82,17 @@ With **Settings → Advisors → Watch & regression alerts** on, the app checks 
 - **Upstream changes.** The engine's `watch diff` digests changes to the Hugging Face repositories your models came from. The first check sets a baseline silently, and network failures stay silent.
 - **Environment drift.** A macOS or MLX change makes verified models stale. The alert offers **Re-verify** to run the quality gate again for those models.
 
+Watch checks only the selected Hugging Face cache, existing downloads recorded in the managed model folder, known client configuration files and runtime inventories. It never searches the app’s working directory. Changing the scope establishes new ownership evidence before reporting a missing model. An engine that cannot honor this scope shows an update requirement on Overview.
+
 Alerts are deduplicated. **Snooze**, **Snooze 7 days** and **Mute** persist across launches.
 New alerts appear and send notifications after their batch is saved. Saving runs
 in the background; a failed save keeps the previous alerts and shows a storage
 error. A later check retries unsaved findings.
+
+### Review a model update
+
+An alert names the repository and offers **Review update** for changes to a tracked repository. A related upload offers **Add from Hugging Face** as a separate model; it is not assumed to replace your current version.
+
+Choose the previous local installation, then review the exact old and new commit revisions, separate download destination and managed endpoints that would switch. **Download and verify update** downloads the pinned revision and runs verification before changing those endpoints. Their ports and memory policies are retained; acceleration requires a new source-bound preview. Models needing conversion or a new Strata profile open the existing Add and Prepare review.
+
+**Move the previous version to Quarantine after the update** is off by default and is available only for an unchanged managed copy. Cleanup rechecks file identity and current serving ownership. Shared provider caches stay in place. Failed or interrupted updates keep the previous files and retain the alert; saved progress identifies the stage needing review. Restarting Workbench never automatically repeats an update or cleanup. Opening or cancelling a review does not dismiss the alert.

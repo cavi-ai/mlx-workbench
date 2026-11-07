@@ -43,6 +43,7 @@ class AppHost {
     /// Measured Comparisons (prompt-set replay across variants).
     let comparison: ComparisonCoordinator
     let modelHosts: ModelHostsCoordinator
+    let servingInventory: ServingInventoryCoordinator
     let hostedComparison: HostedComparisonCoordinator
     var compareHostedModels = false
     var hostedComparisonTargets: [HostedComparisonTarget] = []
@@ -66,6 +67,9 @@ class AppHost {
     let runtimeInstaller: RuntimeInstaller
     /// Hugging Face intake sheet state (verdict, backend install, downloads).
     let intake: IntakeCoordinator
+    let managedModels = ManagedModelInstallStore()
+    let modelUpdates = ModelUpdateCoordinator(api: .unavailable)
+    let modelUpdateCaptures = ModelUpdateCaptures()
     let trainedAdapters: TrainedAdapterServingCoordinator
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
@@ -113,6 +117,7 @@ class AppHost {
         verification: VerificationCoordinator? = nil,
         comparison: ComparisonCoordinator? = nil,
         modelHosts: ModelHostsCoordinator? = nil,
+        servingInventory: ServingInventoryCoordinator? = nil,
         hostedComparison: HostedComparisonCoordinator? = nil,
         wiring: WiringCoordinator? = nil,
         endpoint: EndpointSupervisor? = nil,
@@ -187,6 +192,10 @@ class AppHost {
         )
         let hosts = modelHosts ?? ModelHostsCoordinator()
         self.modelHosts = hosts
+        self.servingInventory = servingInventory ?? ServingInventoryCoordinator(
+            managedReceipts: WorkbenchStatePaths.applicationSupport().path,
+            fetchEngine: { try await api.discoverServingServices() },
+            fetchHosts: { await hosts.servingSnapshot(refreshLocal: $0) })
         self.hostedComparison = hostedComparison ?? HostedComparisonCoordinator(
             nativeProbe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
             nativeDecide: { path, body in try await api.decide(path: path, requestBody: body) },
@@ -221,13 +230,8 @@ class AppHost {
             .appendingPathComponent("watch-state", isDirectory: true)
             .path
         self.watch = watch ?? WatchCoordinator(
-            watchDiff: {
-                let data = try await api.raw(["watch", "diff", "--state-dir", watchStateDir], isScout: true)
-                return (data["findings"] as? [[String: Any]]) ?? []
-            },
-            watchSnapshot: {
-                _ = try await api.raw(["watch", "snapshot", "--state-dir", watchStateDir], isScout: true)
-            },
+            watchDiff: { [] },
+            watchSnapshot: {},
             fingerprint: {
                 EnvironmentFingerprint.current(
                     hardware: hardwareProfile,
@@ -268,6 +272,30 @@ class AppHost {
         hosts.resourceUseBlocked = { [weak self] in
             guard let self else { return true }
             return self.hostedComparison.activeRunID != nil || self.comparison.activeRunID != nil
+        }
+        self.servingInventory.mayChange = { [weak self] service in
+            guard let self else { return false }
+            return self.comparison.hasLoadedHistory && !self.occupancy.blocksStop(modelIdentity: service.modelID)
+                && !self.modelHosts.resourceBusy && (!service.isWorkbenchManaged || !self.endpoint.isChanging)
+        }
+        self.servingInventory.mutate = { [weak self] service, action in
+            guard let self, let server = service.server else {
+                throw WorkflowEvidenceError.invalid("Review this model through its provider's memory controls.")
+            }
+            guard self.comparison.hasLoadedHistory, !self.occupancy.blocksStop(server) else {
+                throw WorkflowEvidenceError.invalid("Finish work using this model before changing its server.")
+            }
+            if service.isWorkbenchManaged {
+                let changed: Bool
+                if action == .unload {
+                    changed = await self.endpoint.unloadObservedServer(server) { try await api.changeDiscoveredService($0, action: "unload") }
+                } else {
+                    changed = await self.endpoint.stopObservedServer(server) { try await api.changeDiscoveredService($0, action: "stop") }
+                }
+                guard changed else { throw WorkflowEvidenceError.invalid(self.endpoint.lastError ?? "The server could not be changed. Refresh and review it again.") }
+            } else {
+                try await api.changeDiscoveredService(server, action: action.rawValue)
+            }
         }
         self.hostedComparison.validateTarget = { [weak self] target, mode in
             guard let self, self.comparison.activeRunID == nil, !self.modelHosts.resourceBusy else {
@@ -332,7 +360,7 @@ class AppHost {
                 let isRepoSource = PrepareWorkflowPresentation(workflow: record).isRepoSource
                 guard PrepareWorkflowPresentation.sourceCleanupIsPossible(
                     sourceLocation: record.localSourcePath ?? (isRepoSource ? nil : record.sourcePath),
-                    roots: self.config.ggufRoots + self.config.mlxRoots
+                    roots: self.modelStorageRoots
                 ) else { return }
                 await self.reclaim.previewSource(record)
                 guard let current = self.modelWorkflow.history.first(where: { $0.id == record.id }), current == record else { return }
@@ -348,11 +376,13 @@ class AppHost {
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.modelPurposes.canEdit = { [weak self] in self?.reclaim.isApplying == false }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
-        self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
+        self.reclaim.ggufRoots = { [weak self] in
+            guard let self else { return [] }
+            return Array(Set(self.config.ggufRoots + [self.config.outputDir].filter { !$0.isEmpty })).sorted()
+        }
         self.reclaim.mlxRoots = { [weak self] in
             guard let self else { return [] }
-            let roots = self.config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : self.config.ggufRoots
-            return Self.scanMLXRoots(self.config, ggufRoots: roots)
+            return Self.scanMLXRoots(self.config, ggufRoots: self.config.ggufRoots)
         }
         self.reclaim.protectedPaths = { [weak self] in
             guard let self else { return [] }
@@ -368,13 +398,21 @@ class AppHost {
             guard self?.modelPurposes.hasLoadedHistory == true, self?.modelPurposes.isSaving == false else {
                 throw WorkflowEvidenceError.invalid("Saved model purposes are unavailable or changing. Resolve that state before removing models.")
             }
-            return try await api.servingPathsForRemoval()
+            guard let self else { throw WorkflowEvidenceError.invalid("Serving inventory is unavailable.") }
+            await self.servingInventory.refresh(refreshHosts: true)
+            guard self.servingInventory.snapshot.sourceErrors.isEmpty else {
+                throw WorkflowEvidenceError.invalid("Resolve serving inventory errors before removing models.")
+            }
+            return try await api.servingPathsForRemoval() + self.servingInventory.snapshot.services.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
         }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
         // HF-cache reclaim rides the authoritative doctor prune flow.
-        self.reclaim.doctorScan = { try await api.doctor(wiredRoots: [], hfCache: nil) }
-        self.reclaim.doctorPrunePreview = { try await api.doctorPrunePreview(hfCache: nil) }
-        self.reclaim.doctorPruneConfirm = { hash in try await api.doctorPruneConfirm(previewHash: hash, hfCache: nil) }
+        self.reclaim.doctorScan = { [weak self] in
+            guard let self else { throw WorkflowEvidenceError.invalid("Model locations are unavailable.") }
+            return try await self.runDoctor()
+        }
+        self.reclaim.doctorPrunePreview = { [weak self] in try await api.doctorPrunePreview(hfCache: self?.selectedHFCache) }
+        self.reclaim.doctorPruneConfirm = { [weak self] hash in try await api.doctorPruneConfirm(previewHash: hash, hfCache: self?.selectedHFCache) }
         // Watch drift action: re-verify stale models one at a time (the gate
         // already serializes verification runs).
         self.watch.reverify = { [weak self] paths in
@@ -403,6 +441,36 @@ class AppHost {
         self.verification.environmentFingerprint = { [weak self] in
             self?.watch.currentFingerprintDescription
         }
+        configureModelUpdates()
+        if watch == nil {
+            self.watch.configureUpstream(watchDiff: { [weak self] in
+                guard let self else { throw CancellationError() }
+                let scope = try await self.watchInventoryScope()
+                return try await api.watchDiff(stateDirectory: watchStateDir, scope: scope)
+            }, watchSnapshot: { [weak self] in
+                guard let self else { throw CancellationError() }
+                let scope = try await self.watchInventoryScope()
+                try await api.watchSnapshot(stateDirectory: watchStateDir, scope: scope)
+            })
+        }
+    }
+
+    func watchInventoryScope() async throws -> WatchInventoryScope {
+        let cache = selectedHFCache
+        let selectedRoots = config.ggufRoots + config.mlxRoots
+        let root = config.outputDir
+        let records: [ManagedModelInstall]
+        do { records = try await managedModels.records() }
+        catch { throw ModelUpdateError.invalid("Watch cannot read managed model ownership. \(Self.render(error))") }
+        let repos = await WorkbenchIO.perform {
+            Set(records.filter { install in
+                ManagedModelInstallStore.matchesManagedSourcePath(install, root: root) && FileManager.default.fileExists(atPath: install.path)
+            }.map(\.repo)).sorted()
+        }
+        guard selectedRoots == config.ggufRoots + config.mlxRoots, root == config.outputDir else {
+            throw ModelUpdateError.invalid("Model locations changed during the Watch check. Check again to use the selected locations.")
+        }
+        return WatchInventoryScope(hfCache: cache, ownedRepos: repos)
     }
 
     /// Takes the pending Hosted models request once; a removed or edited connection must not select another host.
@@ -416,6 +484,41 @@ class AppHost {
 
     func requestRescan() {
         Task { await self.rescan() }
+    }
+
+    var selectedHFCache: String? {
+        Self.selectedHFCache(roots: config.ggufRoots + config.mlxRoots,
+            home: WorkbenchStatePaths.userHome(), environment: ProcessInfo.processInfo.environment)
+    }
+
+    var modelStorageRoots: [String] {
+        Array(Set(config.ggufRoots + config.mlxRoots + [config.outputDir].filter { !$0.isEmpty })).sorted()
+    }
+
+    /// A default cache is eligible only inside a selected location. Custom hub
+    /// folders are accepted explicitly, without searching parent directories.
+    nonisolated static func selectedHFCache(roots: [String], home: URL, environment: [String: String]) -> String? {
+        let path: String
+        if let configured = environment["HF_HUB_CACHE"] ?? environment["HUGGINGFACE_HUB_CACHE"], !configured.isEmpty {
+            path = configured
+        } else if let configured = environment["HF_HOME"], !configured.isEmpty {
+            path = URL(fileURLWithPath: configured).appendingPathComponent("hub").path
+        } else {
+            path = URL(fileURLWithPath: environment["XDG_CACHE_HOME"] ?? home.appendingPathComponent(".cache").path)
+                .appendingPathComponent("huggingface/hub").path
+        }
+        let normalized = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
+        for root in roots {
+            let selected = URL(fileURLWithPath: NSString(string: root).expandingTildeInPath).standardizedFileURL
+            if normalized == selected.path || normalized.hasPrefix(selected.path + "/") { return normalized }
+            if selected.lastPathComponent == "hub" { return selected.path }
+        }
+        return nil
+    }
+
+    func runDoctor() async throws -> DoctorResult {
+        let cache = selectedHFCache
+        return try await api.doctor(wiredRoots: [], hfCache: cache, excludeHFCache: cache == nil)
     }
 
     func modelRuntimeRecoveryIsCurrent(_ request: ModelRuntimeRecoveryRequest, source: String) -> Bool {
@@ -457,20 +560,10 @@ class AppHost {
         await finishCompletionReconciliationIfNeeded()
     }
 
-    /// Where intake downloads land: already-MLX repos into the (scanned)
-    /// output directory, GGUF files into the first GGUF root; convertible
-    /// repos go to the HF cache (nil).
+    /// New downloads share one managed root; existing provider caches stay in place.
     func intakeDownloadDirectory(for resolution: IntakeResolution) -> String? {
-        switch resolution.verdict {
-        case .alreadyMLX:
-            return URL(fileURLWithPath: config.outputDir).appendingPathComponent(resolution.repoName).path
-        case .gguf:
-            let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
-            let root = roots.first ?? config.outputDir
-            return URL(fileURLWithPath: root).appendingPathComponent(resolution.repoName).path
-        default:
-            return nil
-        }
+        ManagedModelInstallStore.directory(root: config.outputDir, source: resolution.source,
+            file: resolution.verdict == .gguf ? intake.selectedGGUF : nil)
     }
 
     /// Hands a finished download to the existing flows; returns the route to show.
@@ -497,9 +590,14 @@ class AppHost {
             modelWorkflow.inspect(intake: resolution, outputDirectory: config.outputDir, qBits: config.qBits, snapshot: librarySnapshot, downloadedPath: source)
             return .prepare
         case .alreadyMLX:
+            let modelPath = downloadedPath.map { path in resolution.source.subfolder.map { URL(fileURLWithPath: path).appendingPathComponent($0).path } ?? path }
             await rescan()
-            selectedModelPath = downloadedPath
-            if let downloadedPath { handoffs.send(LibraryRevealRequest(modelPath: downloadedPath), as: .revealModel) }
+            selectedModelPath = modelPath
+            if let modelPath {
+                do { try await recordManagedInstall(resolution, path: modelPath) }
+                catch { lastError = Self.render(error) }
+                handoffs.send(LibraryRevealRequest(modelPath: modelPath), as: .revealModel)
+            }
             return .library
         case .gguf:
             await rescan()
@@ -517,14 +615,11 @@ class AppHost {
         }
     }
 
-    /// MLX roots the scan reads: configured roots plus the intake output dir,
-    /// unless a root already contains it (scanning both lists every converted
-    /// model twice). With no MLX roots configured the agent falls back to
-    /// scanning the GGUF roots, so that fallback is spelled out first.
+    /// Explicit MLX locations plus the managed destination, without widening to GGUF folders.
     nonisolated static func scanMLXRoots(_ config: Config, ggufRoots: [String], fileIdentity: (String) -> NSObject? = AppHost.fileIdentity) -> [String] {
         let output = config.outputDir.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !output.isEmpty else { return config.mlxRoots }
-        var roots = config.mlxRoots.isEmpty ? ggufRoots : config.mlxRoots
+        var roots = config.mlxRoots
         if !roots.contains(where: { isPath(output, within: $0, fileIdentity: fileIdentity) }) {
             roots.append(output)
         }
@@ -585,7 +680,11 @@ class AppHost {
 
         do {
             let (roots, mlxRoots) = await WorkbenchIO.perform {
-                let roots = scanConfig.ggufRoots.isEmpty ? Config.discoverGgufRoots() : scanConfig.ggufRoots
+                var roots = scanConfig.ggufRoots
+                let managed = scanConfig.outputDir.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !managed.isEmpty, !roots.contains(where: { Self.isPath(managed, within: $0, fileIdentity: Self.fileIdentity) }) {
+                    roots.append(managed)
+                }
                 return (roots, Self.scanMLXRoots(scanConfig, ggufRoots: roots))
             }
             let scan = try await scanOperation(
@@ -1004,6 +1103,8 @@ class AppHost {
         var occupancy = ModelOccupancy(library: occupancyLibrary)
         occupancy.add(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }
             .flatMap { [$0.repo, $0.path].compactMap { $0 } }, for: .runningServer)
+        occupancy.add(servingInventory.snapshot.services.filter { $0.isLocal && ($0.server?.state == "running" || $0.residency == .loaded || $0.stale) }
+            .flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }, for: .runningServer)
         occupancy.add(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath), for: .endpoint)
         occupancy.add(recommendationPreferences.preferredModelIDs.values, for: .preference)
         occupancy.add(modelPurposes.protectedPaths, for: .retention)
@@ -1051,6 +1152,7 @@ class AppHost {
     @discardableResult
     func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) -> Task<Void, Never>? {
         guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return nil }
+        guard !liveServicesStarted else { return nil }
         liveServicesStarted = true
         if isCheckingRuntime { refreshRuntimeReport() }
         applyFeatureToggles()
@@ -1059,6 +1161,7 @@ class AppHost {
             if comparison.hasLoadedHistory { endpoint.startMonitoring() }
         }
         resources.startMonitoring()
+        servingInventory.startMonitoring()
         Task { await self.refreshDiscoveredRoots() }
         requestRescan()
         return startup

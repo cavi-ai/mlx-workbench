@@ -221,6 +221,7 @@ struct HomeView: View {
     let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var watch: WatchCoordinator
+    @ObservedObject private var modelUpdates: ModelUpdateCoordinator
     @ObservedObject private var usage: UsageTracker
     @ObservedObject private var reclaim: ReclaimCoordinator
     @ObservedObject private var verification: VerificationCoordinator
@@ -234,6 +235,7 @@ struct HomeView: View {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _watch = ObservedObject(wrappedValue: appHost.watch)
+        _modelUpdates = ObservedObject(wrappedValue: appHost.modelUpdates)
         _usage = ObservedObject(wrappedValue: appHost.usage)
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         _verification = ObservedObject(wrappedValue: appHost.verification)
@@ -244,7 +246,7 @@ struct HomeView: View {
 
     private var ggufRoots: [String] {
         if let roots = appHost.scanResult?.roots?.gguf, !roots.isEmpty { return roots }
-        return appHost.config.ggufRoots.isEmpty ? appHost.discoveredRoots : appHost.config.ggufRoots
+        return appHost.config.ggufRoots
     }
 
     private var mlxRoots: [String] {
@@ -260,7 +262,7 @@ struct HomeView: View {
         HomeNextAction.derive(
             workflow: modelWorkflow.workflow,
             snapshot: appHost.librarySnapshot,
-            rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty,
+            rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty || !appHost.config.outputDir.isEmpty,
             isScanning: appHost.isScanning,
             lastError: appHost.lastError,
             agentReady: agentReady,
@@ -310,12 +312,19 @@ struct HomeView: View {
         }
         .onPreferenceChange(OverviewContentWidthKey.self) { contentWidth = $0 }
         .onAppear { appHost.analyzeReclaim() }
+        .sheet(isPresented: $modelUpdates.isPresented) {
+            ModelUpdateReviewSheet(coordinator: modelUpdates) { repo in
+                appHost.intake.open(with: repo)
+                openWindow(id: IntakeWindow.id)
+            }
+        }
     }
 
     private var regions: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
             hero
             ErrorBanner(text: watch.persistenceError)
+            ErrorBanner(text: watch.upstreamIssue)
             ErrorBanner(text: usage.persistenceError)
             FlightPathPanel(
                 model: selectedModel,
@@ -429,7 +438,8 @@ struct HomeView: View {
         case .addFromHuggingFace(let repo):
             appHost.intake.open(with: repo)
             openWindow(id: IntakeWindow.id)
-            watch.dismiss(alert.id)
+        case .reviewModelUpdate(let repo):
+            Task { await modelUpdates.begin(repo: repo, alertID: alert.id) }
         case .openOnHuggingFace(let repo):
             if let url = URL(string: "https://huggingface.co/\(repo)") { NSWorkspace.shared.open(url) }
         case .reverify:

@@ -174,7 +174,7 @@ struct LMStudioView: View {
         let home = home
         await loader.load(isActive: isRouteActive) {
             await Task.detached(priority: .utility) {
-                let gguf = config.ggufRoots.isEmpty ? Config.discoverGgufRoots(home: home) : config.ggufRoots
+                let gguf = config.ggufRoots
                 return LMStudioShelfResolver.resolve(
                     home: home, scannedRoots: scannedRoots, configGGUFRoots: gguf,
                     configMLXRoots: AppHost.scanMLXRoots(config, ggufRoots: gguf)

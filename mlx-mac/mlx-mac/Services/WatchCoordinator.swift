@@ -80,11 +80,12 @@ final class WatchCoordinator: ObservableObject {
     @Published private(set) var lastCheckedAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
+    @Published private(set) var upstreamIssue: String?
     @Published private(set) var isLoadingHistory = true
     @Published private(set) var isChecking = false
 
-    private let watchDiff: @Sendable () async throws -> [[String: Any]]
-    private let watchSnapshot: @Sendable () async throws -> Void
+    private var watchDiff: @Sendable () async throws -> [[String: Any]]
+    private var watchSnapshot: @Sendable () async throws -> Void
     private let fingerprint: () -> EnvironmentFingerprint
     private let verifiedReports: () -> [VerificationReport]
     private let alertStore: JSONStore<WatchAlert>
@@ -125,6 +126,13 @@ final class WatchCoordinator: ObservableObject {
         self.notify = notify
         self.now = now
         historyTask = Task { await loadHistory() }
+    }
+
+    /// AppHost supplies current configuration after all shared coordinators are initialized.
+    func configureUpstream(watchDiff: @escaping @Sendable () async throws -> [[String: Any]],
+                           watchSnapshot: @escaping @Sendable () async throws -> Void) {
+        self.watchDiff = watchDiff
+        self.watchSnapshot = watchSnapshot
     }
 
     func waitForHistory() async { await historyTask?.value }
@@ -238,10 +246,12 @@ final class WatchCoordinator: ObservableObject {
         do {
             if !next.baselineEstablished {
                 try await watchSnapshot()
+                upstreamIssue = nil
                 next.baselineEstablished = true
                 return []
             }
             let findings = try await watchDiff()
+            upstreamIssue = nil
             return findings.compactMap { finding in
                 guard let repo = finding["repo"] as? String else { return nil }
                 let detail = (finding["detail"] as? String) ?? "upstream change detected"
@@ -258,7 +268,12 @@ final class WatchCoordinator: ObservableObject {
                 )
             }
         } catch {
-            // Watch is advisory: offline / HF unreachable stays silent.
+            // Network failure stays quiet; an unavailable local scope needs an actionable explanation.
+            if let error = error as? BridgeError, ["engine_update_required", "engine_changed"].contains(error.code) {
+                upstreamIssue = AppHost.render(error)
+            } else if let error = error as? ModelUpdateError {
+                upstreamIssue = error.localizedDescription
+            }
             return []
         }
     }

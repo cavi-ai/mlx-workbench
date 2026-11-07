@@ -82,12 +82,17 @@ final class IntakeCoordinator: ObservableObject {
     private let api: IntakeAPI
     private let pollInterval: Duration
     private let pollLimit: Int
+    private let validateDestination: (String) async throws -> Void
     private static let maxLogLines = 40
 
-    init(api: IntakeAPI, pollInterval: Duration = .seconds(2), pollLimit: Int = 1800) {
+    init(api: IntakeAPI, pollInterval: Duration = .seconds(2), pollLimit: Int = 1800,
+         validateDestination: @escaping (String) async throws -> Void = { path in
+             try await WorkbenchIO.perform { Result { try ManagedModelInstallStore.refuseLinks(in: path) } }.get()
+         }) {
         self.api = api
         self.pollInterval = pollInterval
         self.pollLimit = pollLimit
+        self.validateDestination = validateDestination
     }
 
     var isBusy: Bool {
@@ -107,7 +112,17 @@ final class IntakeCoordinator: ObservableObject {
 
     static func existingModelPath(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>) -> String? {
         if resolution.verdict == .alreadyMLX {
-            return readyCachePath(repo: resolution.source.repo, revision: resolution.source.revision, readyPaths: readyPaths)
+            let source = resolution.source
+            if ModelUpdateReview.isCommit(source.fetchRevision) {
+                if let directory = ManagedModelInstallStore.directory(root: "/intake", source: source) {
+                    let modelSuffix = String(directory.dropFirst("/intake".count)) + (source.subfolder.map { "/" + $0 } ?? "")
+                    if let path = readyPaths.sorted().first(where: { $0.hasSuffix(modelSuffix) }) { return path }
+                }
+            }
+            return readyCachePath(repo: source.repo, revision: source.fetchRevision, readyPaths: readyPaths).flatMap { path in
+                guard let subfolder = source.subfolder else { return path }
+                return path.hasSuffix("/" + subfolder) ? path : nil
+            }
         }
         return existingConversion(resolution, qBits: qBits, history: history, readyPaths: readyPaths)
             .map { $0.completedModelPath ?? $0.outputPath }
@@ -135,7 +150,7 @@ final class IntakeCoordinator: ObservableObject {
         let snapshot = URL(fileURLWithPath: snapshotPath)
         let snapshots = snapshot.deletingLastPathComponent()
         guard snapshots.lastPathComponent == "snapshots" else { return nil }
-        let revision = resolution.source.revision
+        let revision = resolution.source.fetchRevision
         let ref = snapshots.deletingLastPathComponent().appendingPathComponent("refs").appendingPathComponent(revision)
         let current = revision == snapshot.lastPathComponent
             ? revision
@@ -160,6 +175,7 @@ final class IntakeCoordinator: ObservableObject {
     }
 
     func open(with text: String?) {
+        guard !isBusy else { return }
         if let text { sourceText = text.trimmingCharacters(in: .whitespacesAndNewlines) }
         resolution = nil
         analysis = nil
@@ -174,6 +190,7 @@ final class IntakeCoordinator: ObservableObject {
     }
 
     func resolve() async {
+        guard !isBusy else { return }
         let text = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         activity = .resolving
@@ -230,9 +247,14 @@ final class IntakeCoordinator: ObservableObject {
 
     func download(localDir: String?) async -> String? {
         guard let resolution else { return nil }
+        return try? await download(resolution: resolution, localDir: localDir, previewHash: nil)
+    }
+
+    func download(resolution: IntakeResolution, localDir: String?, previewHash: String?) async throws -> String {
+        guard !isBusy else { throw WorkflowEvidenceError.invalid("Another intake operation is active.") }
         let request = IntakeFetchRequest(
             source: resolution.source.reference,
-            revision: resolution.source.revision,
+            revision: resolution.source.fetchRevision,
             file: resolution.verdict == .gguf ? selectedGGUF : nil,
             localDir: localDir,
             modelType: resolution.verdict == .gguf ? nil : resolution.modelType
@@ -240,34 +262,56 @@ final class IntakeCoordinator: ObservableObject {
         activity = .downloading(repo: resolution.source.repo)
         logTail = []
         do {
-            let plan = try await api.fetchPreview(request)
-            guard let hash = plan["preview_hash"] as? String, !hash.isEmpty else {
-                activity = .failed("The download preview did not include a preview hash.")
-                return nil
+            if let localDir {
+                try await validateDestination(localDir)
+                guard !FileManager.default.fileExists(atPath: localDir) else {
+                    throw WorkflowEvidenceError.invalid("The destination already exists. Use the current library copy or review a separate update instead of overwriting it.")
+                }
             }
-            _ = try await api.fetchStart(request, hash)
+            let hash: String
+            if let previewHash { hash = previewHash }
+            else {
+                let plan = try await api.fetchPreview(request)
+                guard let value = plan["preview_hash"] as? String, !value.isEmpty else {
+                    throw WorkflowEvidenceError.invalid("The download preview did not include a preview hash.")
+                }
+                hash = value
+            }
+            let started = try await api.fetchStart(request, hash)
+            guard let receipt = started["receipt"] as? [String: Any],
+                  let slug = receipt["slug"] as? String, !slug.isEmpty,
+                  let startedAt = receipt["started_at"] as? String, !startedAt.isEmpty,
+                  receipt["repo"] as? String == resolution.source.repo,
+                  receipt["revision"] as? String == request.revision,
+                  receipt["file"] as? String == request.file,
+                  receipt["subfolder"] as? String == resolution.source.subfolder,
+                  receipt["local_dir"] as? String == request.localDir else {
+                throw WorkflowEvidenceError.invalid("The download receipt did not match this request. Refresh download status before retrying.")
+            }
             for _ in 0..<pollLimit {
                 let job = try await api.fetchStatus().last {
-                    $0.repo == resolution.source.repo && $0.file == request.file && $0.subfolder == resolution.source.subfolder
+                    URL(fileURLWithPath: $0.receipt).deletingPathExtension().lastPathComponent == slug &&
+                    $0.startedAt == startedAt && $0.repo == resolution.source.repo && $0.revision == request.revision &&
+                    $0.file == request.file && $0.subfolder == resolution.source.subfolder && $0.localDir == request.localDir
                 }
                 logTail = Self.tail(of: job?.logPath)
                 switch job?.state {
                 case "done":
                     activity = .idle
-                    downloadedPath = job?.path
-                    return job?.path
+                    guard let path = job?.path else { throw WorkflowEvidenceError.invalid("The finished download has no path.") }
+                    downloadedPath = path
+                    return path
                 case "failed":
-                    activity = .failed("The download failed. See \(job?.logPath ?? "the download log").")
-                    return nil
+                    throw WorkflowEvidenceError.invalid("The download failed. See \(job?.logPath ?? "the download log").")
                 default:
                     try await Task.sleep(for: pollInterval)
                 }
             }
-            activity = .failed("The download did not finish in time.")
+            throw WorkflowEvidenceError.invalid("The download did not finish in time. Refresh its status before retrying.")
         } catch {
             activity = .failed(AppHost.render(error))
+            throw error
         }
-        return nil
     }
 
     func analyze() async {

@@ -3,6 +3,7 @@ import AppKit
 
 @main
 struct MlxWorkbenchApp: App {
+    @NSApplicationDelegateAdaptor(WorkbenchApplicationDelegate.self) private var appDelegate
     @State private var appHost = AppHost()
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
 
@@ -59,8 +60,10 @@ struct MlxWorkbenchApp: App {
             ServedModelsView(appHost: appHost).workbenchTheme()
         }
         .defaultSize(width: 640, height: 620)
-        MenuBarExtra("MLX Workbench", systemImage: MenuBarPresentation.fleetIcon(slots: appHost.endpoint.fleet.slots, states: appHost.endpoint.slotStates)) {
+        MenuBarExtra {
             MenuBarView(appHost: appHost)
+        } label: {
+            ServingInventoryMenuLabel(inventory: appHost.servingInventory, endpoint: appHost.endpoint)
         }
         .menuBarExtraStyle(.menu)
     }
@@ -68,4 +71,8 @@ struct MlxWorkbenchApp: App {
     private static var marketingVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     }
+}
+
+final class WorkbenchApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

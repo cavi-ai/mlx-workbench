@@ -17,6 +17,11 @@ actor WorkbenchAPI {
     private let taskEnvelopeCommand: TaskEnvelopeCommand?
     private var agentPath: String
     private let receiptDirectory: String
+    private var engineGeneration = UUID()
+    private var discoverySupported: Bool?
+    private var discoveryCheckedAt: Date?
+    private var scopedDoctorSupported = false
+    private var scopedWatchSupported = false
     private let taskStateDirectory: URL?
     nonisolated var taskArtifactsRoot: URL {
         taskStateDirectory ?? WorkbenchStatePaths.userHome().appendingPathComponent("Library/Application Support/mlx-agent/tasks", isDirectory: true)
@@ -40,6 +45,11 @@ actor WorkbenchAPI {
 
     func setAgentPath(_ path: String) {
         agentPath = path
+        engineGeneration = UUID()
+        discoverySupported = nil
+        discoveryCheckedAt = nil
+        scopedDoctorSupported = false
+        scopedWatchSupported = false
     }
 
     var resolvedAgentPath: String { agentPath }
@@ -485,12 +495,96 @@ actor WorkbenchAPI {
 
     func serveStatus() async throws -> [ServerInfo] {
         let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory])
-        return Self.servers(from: data) ?? []
+        return Self.servers(from: data, defaultReceiptsDirectory: receiptDirectory) ?? []
+    }
+
+    func discoverServingServices() async throws -> ServingEngineSnapshot {
+        let generation = engineGeneration
+        if discoverySupported == false, let discoveryCheckedAt, Date().timeIntervalSince(discoveryCheckedAt) < 60 {
+            return ServingEngineSnapshot(servers: try await serveStatus(), supportsDiscovery: false)
+        }
+        do {
+            let data = try await raw(["serve", "discover", "--receipts-dir", receiptDirectory], timeout: 15, cancellable: true)
+            try requireEngineGeneration(generation)
+            guard data.int("schema_version") == 1, let servers = Self.servers(from: data, key: "services") else {
+                throw BridgeError.remote(code: "invalid_service_inventory", message: "The engine returned an unreadable service inventory.", remediation: "Update the engine and refresh serving status.")
+            }
+            discoverySupported = true
+            discoveryCheckedAt = Date()
+            scopedDoctorSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_doctor") == true
+            scopedWatchSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_watch") == true
+            var errors: [String: String] = [:]
+            for item in data["errors"] as? [[String: Any]] ?? [] {
+                if let source = item.string("source"), let message = item.string("message") { errors["engine:" + source] = message }
+            }
+            return ServingEngineSnapshot(servers: servers, errors: errors)
+        } catch let error as BridgeError where error.code == "skill_output_unreadable" && error.message.contains("discover") &&
+            (error.message.contains("invalid choice") || error.message.contains("unrecognized")) {
+            try requireEngineGeneration(generation)
+            discoverySupported = false
+            discoveryCheckedAt = Date()
+            return ServingEngineSnapshot(servers: try await serveStatus(), supportsDiscovery: false)
+        }
+    }
+
+    private func requireEngineGeneration(_ generation: UUID) throws {
+        guard engineGeneration == generation else {
+            throw BridgeError.remote(code: "engine_changed", message: "The selected engine changed during the check.", remediation: "Refresh to check the selected engine.")
+        }
+    }
+
+    func changeDiscoveredService(_ expected: ServerInfo, action: String, policy: EndpointMemoryPolicy? = nil) async throws {
+        guard ["stop", "unload", "policy"].contains(action), let port = expected.port, (1...65535).contains(port),
+              let pid = expected.pid, pid > 0, let start = expected.processStartedAt, !start.isEmpty,
+              let root = expected.receiptsDirectory, root.hasPrefix("/"),
+              let receipt = expected.receipt,
+              URL(fileURLWithPath: receipt).standardizedFileURL.path ==
+                URL(fileURLWithPath: root).appendingPathComponent(".mlx-agent-receipts/serve/\(port).json").standardizedFileURL.path else {
+            throw WorkflowEvidenceError.invalid("Service ownership is unavailable. Refresh serving status.")
+        }
+        let current = try await discoverServingServices()
+        guard current.supportsDiscovery, current.errors["engine:" + root] == nil,
+              let live = current.servers.first(where: { $0.receiptsDirectory == root && $0.port == port }),
+              live.pid == pid, live.processStartedAt == start, live.startedAt == expected.startedAt,
+              live.modelIdentity == expected.modelIdentity, live.runtime == expected.runtime, live.state == "running" else {
+            throw WorkflowEvidenceError.invalid("The serving process changed. Refresh and review it again.")
+        }
+        if action == "unload", live.jit != true || live.activeRequests != 0 {
+            throw WorkflowEvidenceError.invalid("Finish active requests before unloading this model.")
+        }
+        var argv = ["serve", action, "--port", String(port), "--receipts-dir", root,
+                    "--expected-pid", String(pid), "--expected-start", start]
+        if action == "policy" {
+            guard live.jit == true, let policy, policy.isValid else { throw WorkflowEvidenceError.invalid("Review a valid load-on-request memory policy.") }
+            argv += policy.arguments
+            if policy.modelMemoryBudgetGB == nil, live.memoryPolicy?.modelMemoryBudgetGB != nil { argv.append("--clear-memory-budget") }
+        }
+        _ = try await raw(argv, timeout: 20)
+        let after = try await discoverServingServices()
+        guard after.errors["engine:" + root] == nil else { throw WorkflowEvidenceError.invalid("The service action could not be confirmed. Refresh serving status.") }
+        let remaining = after.servers.first { $0.receiptsDirectory == root && $0.port == port && $0.state == "running" }
+        switch action {
+        case "stop":
+            guard remaining == nil else { throw WorkflowEvidenceError.invalid("A server is still running on this port. Refresh before another action.") }
+        case "unload":
+            guard remaining?.pid == pid, remaining?.processStartedAt == start, remaining?.modelState == "unloaded" else {
+                throw WorkflowEvidenceError.invalid("Model unload could not be confirmed. Refresh serving status.")
+            }
+        default:
+            guard remaining?.pid == pid, remaining?.processStartedAt == start, remaining?.memoryPolicy == policy else {
+                throw WorkflowEvidenceError.invalid("Memory policy readback did not match. Refresh before changing it again.")
+            }
+        }
     }
 
     /// Removal cannot treat an unreadable status response as an empty fleet.
     func servingPathsForRemoval() async throws -> [String] {
-        try Self.servingPathsForRemoval(from: await raw(["serve", "status", "--receipts-dir", receiptDirectory]))
+        let current = try await discoverServingServices()
+        guard current.supportsDiscovery, current.errors.isEmpty,
+              current.servers.allSatisfy({ !$0.modelIdentity.isEmpty }) else {
+            throw WorkflowEvidenceError.invalid("Serving ownership could not be checked across model servers. Update the engine or resolve inventory errors before removing models.")
+        }
+        return current.servers.filter { $0.state != "stopped" }.flatMap { [$0.modelIdentity] + [$0.repo].compactMap { $0 } }
     }
 
     static func servingPathsForRemoval(from data: [String: Any]) throws -> [String] {
@@ -520,31 +614,73 @@ actor WorkbenchAPI {
         return DiscoverResult(candidates: Self.candidates(from: data))
     }
 
+    // MARK: - Watch
+
+    func watchDiff(stateDirectory: String, scope: WatchInventoryScope) async throws -> [[String: Any]] {
+        let data = try await scopedWatch("diff", stateDirectory: stateDirectory, scope: scope)
+        return (data["findings"] as? [[String: Any]]) ?? []
+    }
+
+    func watchSnapshot(stateDirectory: String, scope: WatchInventoryScope) async throws {
+        _ = try await scopedWatch("snapshot", stateDirectory: stateDirectory, scope: scope)
+    }
+
+    private func scopedWatch(_ action: String, stateDirectory: String, scope: WatchInventoryScope) async throws -> [String: Any] {
+        if !scopedWatchSupported {
+            _ = try await discoverServingServices()
+            guard scopedWatchSupported else {
+                throw BridgeError.remote(code: "engine_update_required", message: "This engine cannot contain Watch checks to selected model locations.", remediation: "Update the engine in Health to enable Watch.")
+            }
+        }
+        var argv = ["watch", action, "--state-dir", stateDirectory]
+        for root in clientConfigurationRoots {
+            argv.append(contentsOf: ["--wired-root", root])
+        }
+        if let cache = scope.hfCache { argv.append(contentsOf: ["--hf-cache", cache]) }
+        else { argv.append("--no-hf-cache") }
+        for repo in Set(scope.ownedRepos).sorted() { argv.append(contentsOf: ["--owned-repo", repo]) }
+        return try await raw(argv, isScout: true, timeout: 30, cancellable: true)
+    }
+
+    private var clientConfigurationRoots: [String] {
+        ClientAdapters.all.compactMap { $0.configurationInstallation(home: WorkbenchStatePaths.userHome())?.configPath } + [receiptDirectory]
+    }
+
     // MARK: - Doctor
 
-    func doctor(wiredRoots: [String], hfCache: String?) async throws -> DoctorResult {
-        var argv = ["doctor", "models"]
-        for root in wiredRoots {
+    func doctor(wiredRoots: [String], hfCache: String?, excludeHFCache: Bool = false) async throws -> DoctorResult {
+        if excludeHFCache && !scopedDoctorSupported {
+            _ = try await discoverServingServices()
+            guard scopedDoctorSupported else {
+                throw BridgeError.remote(code: "engine_update_required", message: "This engine cannot exclude unselected model caches.", remediation: "Update the engine in Health, or select the Hugging Face cache folder in Settings.")
+            }
+        }
+        var argv = ["doctor", "models", "--project", receiptDirectory]
+        let roots = wiredRoots.isEmpty ? clientConfigurationRoots : wiredRoots
+        for root in roots {
             argv.append(contentsOf: ["--wired-root", root])
         }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
-        let data = try await raw(argv)
+        if excludeHFCache { argv.append("--no-hf-cache") }
+        let data = try await raw(argv, timeout: 30, cancellable: true)
         return Self.doctor(from: data)
     }
 
     func doctorPrunePreview(hfCache: String?) async throws -> DoctorResult {
-        var argv = ["doctor", "models", "--prune"]
-        if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
+        guard let hfCache else { throw WorkflowEvidenceError.invalid("Select the Hugging Face cache folder in Settings before checking cache cleanup.") }
+        let argv = ["doctor", "models", "--project", receiptDirectory, "--wired-root", receiptDirectory, "--prune", "--hf-cache", hfCache]
         let data = try await raw(argv)
         return Self.doctor(from: data)
     }
 
     func doctorPruneConfirm(previewHash: String, hfCache: String?) async throws -> DoctorResult {
+        guard let hfCache else { throw WorkflowEvidenceError.invalid("Select the Hugging Face cache folder in Settings before checking cache cleanup.") }
         var argv = [
             "doctor", "models", "--prune",
+            "--project", receiptDirectory, "--wired-root", receiptDirectory,
             "--confirm", "--preview-hash", previewHash,
         ]
-        if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
+        argv.append(contentsOf: ["--hf-cache", hfCache])
         let data = try await raw(argv)
         return Self.doctor(from: data)
     }
@@ -667,13 +803,14 @@ actor WorkbenchAPI {
 
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                               previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false) -> [String] {
+                               previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
         if jit { args += ["--jit"] + (memoryPolicy?.arguments ?? []) }
         if m5Prefill { args += ["--m5-prefill"] }
         if promptLookup { args += ["--prompt-lookup"] }
+        if visionCache { args += ["--vision-cache"] }
         if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
         return args
     }
@@ -693,23 +830,23 @@ actor WorkbenchAPI {
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
                 jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy,
-                m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup)
+                m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup)
+            m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache)
         if let options { args += options.arguments }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
     }
 
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
-                      thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false) async throws -> [String: Any] {
+                      thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -721,9 +858,9 @@ actor WorkbenchAPI {
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
-                    thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false) async throws -> [String: Any] {
+                    thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -779,8 +916,10 @@ actor WorkbenchAPI {
     }
 
     func serveMemoryPolicy(port: Int, expectedPID: Int, policy: EndpointMemoryPolicy) async throws -> [String: Any] {
-        try await raw(["serve", "policy", "--port", String(port), "--expected-pid", String(expectedPID),
-                       "--receipts-dir", receiptDirectory] + policy.arguments)
+        var argv = ["serve", "policy", "--port", String(port), "--expected-pid", String(expectedPID),
+                    "--receipts-dir", receiptDirectory] + policy.arguments
+        if policy.modelMemoryBudgetGB == nil { argv.append("--clear-memory-budget") }
+        return try await raw(argv)
     }
 
     // MARK: - LoRA / Fuse
@@ -874,10 +1013,10 @@ actor WorkbenchAPI {
         }
     }
 
-    static func servers(from data: [String: Any], key: String = "servers") -> [ServerInfo]? {
+    static func servers(from data: [String: Any], key: String = "servers", defaultReceiptsDirectory: String? = nil) -> [ServerInfo]? {
         guard let raw = data[key] as? [[String: Any]] else { return nil }
         return raw.map { r in
-            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding", "prefill_kernel", "decode_profile"].contains($0.key) }
+            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding", "prefill_kernel", "decode_profile", "vision_profile", "memory_allocation"].contains($0.key) }
             let adapter = (try? JSONSerialization.data(withJSONObject: adapterFields))
                 .flatMap { try? JSONDecoder().decode(ServerInfo.self, from: $0) }
             return ServerInfo(
@@ -901,7 +1040,14 @@ actor WorkbenchAPI {
                 adapterStatus: adapter == nil ? "unknown" : adapter?.adapterStatus,
                 trainingBinding: adapter?.trainingBinding,
                 prefillKernel: adapter?.prefillKernel,
-                decodeProfile: adapter?.decodeProfile
+                decodeProfile: adapter?.decodeProfile,
+                visionProfile: adapter?.visionProfile,
+                receiptsDirectory: r.string("receipts_dir") ?? defaultReceiptsDirectory,
+                serviceID: r.string("service_id"),
+                processStartedAt: r.string("process_started_at"),
+                memoryAllocation: adapter?.memoryAllocation,
+                requestBlockedReason: r.string("request_blocked_reason"),
+                lastUnloadReason: r.string("last_unload_reason")
             )
         }
     }
@@ -995,7 +1141,8 @@ actor WorkbenchAPI {
                 models: raw.int("models"),
                 hfCacheBytes: raw.int("hf_cache_bytes").map(Int64.init),
                 wiredConfigs: raw.int("wired_configs"),
-                findings: raw.int("findings")
+                findings: raw.int("findings"),
+                hfCacheChecked: raw.bool("hf_cache_checked")
             )
         }
         var reclaimed: Int64?
@@ -1110,7 +1257,11 @@ actor WorkbenchAPI {
             outputs: outputs,
             pending: (data["pending"] as? [String]) ?? [],
             duplicates: dups,
-            totals: totals
+            totals: totals,
+            rootErrors: (data["root_errors"] as? [[String: Any]])?.compactMap { raw in
+                guard let path = raw.string("path"), let message = raw.string("message") else { return nil }
+                return ScanRootError(path: path, message: message)
+            }
         )
     }
 }

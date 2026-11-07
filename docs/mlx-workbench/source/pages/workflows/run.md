@@ -8,7 +8,7 @@
 2. Read the memory runway: what is already loaded, what this model needs (weights, KV cache and runtime overhead) and whether it **fits**, is **tight** or **won't fit** at the chosen context. A won't-fit verdict suggests a maximum context. Unavailable memory readings show as unknown.
 3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
-Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
+Run retains controls for its saved endpoints. **Manage served models…** shows the shared inventory of engine services and recognized local providers. Refreshing reads status without loading models.
 
 **Experimental M5 prompt acceleration** opts the server started with **Preview
 serve** into the engine's Q4 prompt kernel. It requires an M5 GPU, macOS 26,
@@ -205,3 +205,25 @@ Opening the panel never refreshes external hosts. The refresh button beside each
 Saved serving profiles carry runtime settings for one model through verification and the endpoint configuration. They are used by the optional Strata runtime; see [Strata](strata.md).
 
 If disabling or removing an endpoint cannot confirm its server stopped, Run keeps the failure visible. **Retry stopping servers** rechecks the server identity and retries the stop. Automatic starts for that endpoint remain paused until the stop is confirmed.
+
+## Local serving inventory and menu bar
+
+**Manage served models…** shows Workbench endpoints alongside services started by MLX Agent, including Strata, and recognized local Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible server processes. Discovery reads this user’s listening processes and provider APIs at their actual ports. Engine services are found through registered receipt locations and live engine process arguments. Discovery does not search model folders or add external servers to automatic restart supervision. An older engine reports that cross-location engine discovery needs an update.
+
+Rows distinguish loaded, unloaded, loading, failed and unknown residency. The same service reported through its engine receipt and listening process appears once. Failed sources retain dated observations and an error. Paths, runtime, active requests and process identity appear when available. Provider APIs may omit storage locations or residency.
+
+System headroom, observed process RAM, shared host process RAM, provider-reported model memory and source estimates are shown separately. They are not added into a model-memory total: shared pages, host processes and GPU allocations overlap. **Unload model…** and **Stop server…** review the selected process, recheck ownership before acting and read status afterwards. Provider unload uses that provider’s model, instance or whole-host scope; unsupported actions are unavailable.
+
+The menu bar lists observed models and residency and opens the same controls, Settings and main window. Closing the last window keeps serving controls available. **Quit MLX Workbench** exits the app; detached engine services keep their engine-owned lifecycle.
+
+### Vision feature reuse
+
+**Reuse image features** requests the engine’s MLX-VLM image-feature cache for repeated images. It is off by default and separate from MLX-LM text acceleration. A new launch preview checks runtime and model compatibility. Saved endpoints use the same source-bound setting; a reported request for acceleration does not establish that every inference used it.
+
+### Review memory policy
+
+For a load-on-request endpoint, **Review memory policy…** previews idle unloading, reserve, pressure handling and supported context or Strata budget settings before confirmation. A changed endpoint or launch preview requires reviewing again.
+
+Pressure handling checks reserve before new requests and unloads idle weights when headroom falls below it. Active requests finish first. Keep loaded disables automatic pressure unloading. For native text runtimes, admission context changes the KV-cache estimate used before loading; it does not change the runtime’s context limit. Strata uses the context from its serving profile.
+
+A Strata total model budget estimates fixed weights, runtime and context requirements, then assigns the remaining allowance to the expert cache. It cannot be combined with a fixed expert-memory profile. Changing a budget schedules a loaded worker to reload after active requests finish. This is an estimated allowance, not a measured allocation or an operating-system memory cap.

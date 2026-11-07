@@ -266,6 +266,10 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             candidates = root / 'discover-candidates.json'
             data = {'candidates': json.loads(candidates.read_text()) if candidates.exists() else []}
+        elif args[:2] == ['serve', 'discover']:
+            inventory = root / 'discovered-services.json'
+            data = {'schema_version': 1, 'services': json.loads(inventory.read_text()) if inventory.exists() else [],
+                    'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True}}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():
@@ -1632,6 +1636,11 @@ final class WorkbenchReviewUITests: XCTestCase {
             .buttons["Discover"].firstMatch
         XCTAssertTrue(discover.waitForExistence(timeout: 5))
         XCTAssertTrue(discover.isHittable)
+        let discoveryIdle = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: discover)
+        wait(for: [discoveryIdle], timeout: 15)
+        let initialCalls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        let initialDiscoverCalls = initialCalls.filter { $0.first == "discover" }.count
         discover.click()
         let empty = "No candidates matched. Try another role or adjust the limit, then Discover again."
         XCTAssertTrue(app.staticTexts[empty].waitForExistence(timeout: 15))
@@ -1642,7 +1651,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts[empty].exists)
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
             .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
-        XCTAssertEqual(calls.filter { $0.first == "discover" }.count, 2,
+        XCTAssertEqual(calls.filter { $0.first == "discover" }.count - initialDiscoverCalls, 2,
                        "Both Discover actions must reach the CLI")
         XCTAssertGreaterThanOrEqual(calls.filter { Array($0.prefix(2)) == ["backend", "list"] }.count, 3)
         XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["backend", "install"] })
@@ -3659,6 +3668,50 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(requests.contains { Array($0.prefix(2)) == command })
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
+
+    func testExternalStrataInventoryReviewAndWindowLifetime() throws {
+        let model = root.appendingPathComponent("ExternalStrata").path
+        let receipts = root.appendingPathComponent("external-service").path
+        let service: [String: Any] = ["path": model, "runtime": "strata", "port": 19080, "pid": 9876,
+            "alive": true, "argv_match": true, "state": "running", "jit": true, "model_state": "loaded",
+            "active_requests": 0, "receipts_dir": receipts,
+            "receipt": receipts + "/.mlx-agent-receipts/serve/19080.json",
+            "process_started_at": "Sat Nov 7 12:00:00 2026", "started_at": "2026-11-07T12:00:00Z",
+            "memory_allocation": ["budget_bytes": 24_000_000_000, "estimated_resident_bytes": 22_000_000_000]]
+        try JSONSerialization.data(withJSONObject: [service]).write(to: root.appendingPathComponent("discovered-services.json"))
+        launch(appearance: "Dark")
+        app.buttons["system-memory-header"].click()
+        let manage = app.popovers.buttons["Manage…"].firstMatch
+        XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        manage.click()
+        let manager = app.windows["Served models"]
+        XCTAssertTrue(manager.waitForExistence(timeout: 10))
+        XCTAssertTrue(manager.staticTexts["ExternalStrata"].waitForExistence(timeout: 15))
+        XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "MLX Agent", "MLX Agent")).firstMatch.exists)
+        for detail in ["Model path: " + model, "Receipts: " + receipts] {
+            XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", detail, detail)).firstMatch.exists)
+        }
+        XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
+        let unload = manager.buttons["Unload model…"].firstMatch
+        XCTAssertTrue(unload.waitForExistence(timeout: 10))
+        let managerScroll = manager.scrollViews.firstMatch
+        for _ in 0..<3 where !unload.isHittable {
+            managerScroll.scroll(byDeltaX: 0, deltaY: unload.frame.midY < managerScroll.frame.minY ? 250 : -250)
+        }
+        XCTAssertTrue(unload.isHittable, "The unload control must be visible before opening its review")
+        unload.click()
+        let review = manager.sheets.firstMatch
+        XCTAssertTrue(review.waitForExistence(timeout: 10))
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", model, model)).firstMatch.exists)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(review.waitForNonExistence(timeout: 10))
+        capture("External-Strata-serving-inventory")
+        for window in app.windows.allElementsBoundByIndex where window.title != "Served models" {
+            window.buttons[XCUIIdentifierCloseWindow].click()
+        }
+        manager.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertNotEqual(app.state, .notRunning)
     }
 
     func testProcessMemoryInspectorReadsWithoutStartingWork() throws {

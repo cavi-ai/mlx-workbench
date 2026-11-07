@@ -5,6 +5,53 @@ import XCTest
 @testable import mlx_workbench
 
 final class ScanContractTests: XCTestCase {
+    func testLocalHostDiscoveryUsesTheListeningPortAndRecognizedProcess() {
+        let listeners = "p42\ncPython\nn127.0.0.1:19080\np43\ncLM Studio\nn*:2345\np44\ncOther\nn127.0.0.1:9999\n"
+        let processes = "42 python /engine/src/mlx_agent/jit_serve.py --config /service/config.json\n43 /Applications/LM Studio.app/Contents/MacOS/LM Studio\n44 unrelated-app\n"
+        let candidates = LocalModelHostDiscovery.candidates(listeners: listeners, processes: processes)
+        XCTAssertEqual(candidates.map(\.host.baseURL).sorted(), ["http://127.0.0.1:19080", "http://127.0.0.1:2345"])
+        XCTAssertEqual(candidates.first { $0.processID == 43 }?.host.provider, .lmStudio)
+    }
+
+    func testDiscoveredStrataGatewayKeepsResidencyPathsAndMemoryPolicy() throws {
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [[
+            "path": "/Models/Strata", "port": 19080, "pid": 42, "alive": true, "argv_match": true,
+            "jit": true, "model_state": "unloaded", "receipts_dir": "/Services/Strata",
+            "process_started_at": "Sat Nov 7 10:00:00 2026", "service_id": "service-a",
+            "memory_policy": ["idle_timeout_seconds": 300, "keep_loaded": false,
+                              "minimum_headroom_gb": 24, "model_memory_budget_gb": 24, "unload_under_pressure": true],
+        ]]])?.first)
+        XCTAssertEqual(server.receiptsDirectory, "/Services/Strata")
+        XCTAssertEqual(server.processStartedAt, "Sat Nov 7 10:00:00 2026")
+        XCTAssertEqual(server.memoryPolicy?.modelMemoryBudgetGB, 24)
+        XCTAssertEqual(server.memoryPolicy?.unloadUnderPressure, true)
+        let result = ServingInventorySnapshot.make(engine: [server], hosts: [], managedReceipts: "/Workbench", capturedAt: Date())
+        XCTAssertEqual(result.services.count, 1)
+        XCTAssertEqual(result.services[0].residency, .unloaded)
+        XCTAssertEqual(result.services[0].modelPath, "/Models/Strata")
+        XCTAssertFalse(result.services[0].isWorkbenchManaged)
+        XCTAssertFalse(result.services[0].canUnload)
+    }
+
+    func testHostedModelListingDoesNotInventResidencyOrLocalMemory() throws {
+        let host = ModelHost(name: "Local", provider: .openAICompatible, baseURL: "http://127.0.0.1:8080")
+        let model = HostedModel(hostID: host.id, modelID: "org/model", name: "Model")
+        let inventory = HostInventory(host: host, models: [model], capturedAt: Date())
+        let result = ServingInventorySnapshot.make(engine: [], hosts: [inventory], managedReceipts: "/Workbench", capturedAt: Date())
+        XCTAssertEqual(result.services[0].residency, .unknown)
+        XCTAssertTrue(result.services[0].isLocal)
+        XCTAssertNil(result.services[0].reportedMemoryBytes)
+        XCTAssertFalse(result.services[0].canUnload)
+    }
+
+    func testLoadedJITGatewayWithoutWorkerIdentityDoesNotUseGatewayAsModelMemory() throws {
+        let server = ServerInfo(path: "/Models/A", runtime: "strata", port: 9000, pid: 7, state: "running", jit: true, modelState: "loaded")
+        let result = ServingInventorySnapshot.make(engine: [server, server], hosts: [], managedReceipts: "/Workbench", capturedAt: Date())
+        XCTAssertEqual(result.services.count, 1)
+        XCTAssertNil(result.services[0].modelProcessID)
+        XCTAssertEqual(result.services[0].residency, .loaded)
+    }
+
     func testOutputBackendDecodesAndAMissingBackendNeedsRuntime() throws {
         var payload = fixture(named: "convert-scan-valid")
         payload["outputs"] = [[

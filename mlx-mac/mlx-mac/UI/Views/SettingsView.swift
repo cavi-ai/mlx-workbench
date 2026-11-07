@@ -718,7 +718,7 @@ struct SettingsView: View {
         let roots = ggufRoots.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let mlx = mlxRoots.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         var newConfig = appHost.config
-        newConfig.ggufRoots = roots.isEmpty ? Config.discoverGgufRoots() : roots
+        newConfig.ggufRoots = roots
         newConfig.mlxRoots = mlx
         newConfig.outputDir = outputDir.isEmpty ? Config.defaults(ggufRoots: []).outputDir : outputDir
         newConfig.mlxAgentPath = mlxAgentPath

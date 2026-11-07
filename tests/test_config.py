@@ -21,6 +21,11 @@ class ConfigTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "config.json"
 
+    def test_explicit_empty_scan_roots_do_not_discover_other_folders(self):
+        with patch.object(config, "discover_gguf_roots", return_value=["/excluded"]):
+            self.assertEqual(config.scan_roots({"gguf_roots": []}), [])
+            self.assertEqual(config.defaults()["gguf_roots"], [])
+
     def test_missing_file_yields_defaults(self):
         value = config.load(self.path)
         self.assertEqual(value["schema_version"], config.SCHEMA_VERSION)
@@ -122,12 +127,12 @@ class ConfigTests(unittest.TestCase):
         for key, value in premium.items():
             self.assertEqual(reloaded[key], value)
 
-    def test_scan_roots_falls_back_to_discovery(self):
+    def test_scan_roots_preserves_an_explicit_empty_selection(self):
         self.assertEqual(
             config.scan_roots({"gguf_roots": ["/a"]}), ["/a"]
         )
         self.assertEqual(
-            config.scan_roots({"gguf_roots": []}), config.discover_gguf_roots()
+            config.scan_roots({"gguf_roots": []}), []
         )
 
     def test_discover_gguf_roots_includes_dot_models_when_present(self):

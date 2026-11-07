@@ -245,7 +245,7 @@ struct DoctorView: View {
         checkState = .running
         Task {
             do {
-                let result = try await appHost.api.doctor(wiredRoots: [], hfCache: nil)
+                let result = try await appHost.runDoctor()
                 lastCheckedAt = Date()
                 checkState = .completed(result)
             } catch let error as BridgeError {

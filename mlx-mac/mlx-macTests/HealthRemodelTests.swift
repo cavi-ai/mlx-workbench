@@ -757,7 +757,7 @@ final class HealthDoctorCopyTests: XCTestCase {
         let summary = DoctorSummary(models: 12, hfCacheBytes: 4_800_000_000, wiredConfigs: 3, findings: 0)
         let lines = HealthDoctor.cleanLines(summary)
         XCTAssertEqual(lines[0], "12 models checked across the Hugging Face cache and running local servers")
-        XCTAssertTrue(lines[1].hasSuffix("in the default Hugging Face cache"))
+        XCTAssertTrue(lines[1].hasSuffix("in the selected Hugging Face cache"))
         XCTAssertEqual(HealthDoctor.cleanLines(DoctorSummary(models: 1, hfCacheBytes: nil, wiredConfigs: nil, findings: nil)),
                        ["1 model checked across the Hugging Face cache and running local servers"])
         XCTAssertEqual(HealthDoctor.cleanLines(nil), [], "no summary, no number")
@@ -905,8 +905,30 @@ final class HealthSpawnSafetyTests: XCTestCase {
         let doctor = try Fixture.source("UI/Views/DoctorView.swift")
         XCTAssertFalse(doctor.contains(".onAppear"))
         XCTAssertFalse(doctor.contains(".task"))
-        XCTAssertEqual(doctor.components(separatedBy: "appHost.api.doctor(").count - 1, 1)
+        XCTAssertTrue(doctor.contains("Button(isRunning ? \"Checking…\" : \"Run doctor\") { runDoctor() }"))
+        XCTAssertFalse(doctor.contains("appHost.api.doctor("))
+        XCTAssertEqual(doctor.components(separatedBy: "appHost.runDoctor()").count - 1, 1)
+        let action = try XCTUnwrap(doctor.range(of: "private func runDoctor()"))
+        XCTAssertTrue(doctor[action.lowerBound...].contains("appHost.runDoctor()"))
         XCTAssertFalse(doctor.contains(".animation("))
+
+        let host = try Fixture.source("AppHost.swift")
+        let helper = try XCTUnwrap(host.range(of: "func runDoctor() async throws"))
+        let helperEnd = try XCTUnwrap(host.range(of: "func modelRuntimeRecoveryIsCurrent("))
+        let helperBody = host[helper.lowerBound..<helperEnd.lowerBound]
+        XCTAssertEqual(host.components(separatedBy: "api.doctor(").count - 1, 1)
+        XCTAssertTrue(helperBody.contains("api.doctor(wiredRoots: [], hfCache: cache, excludeHFCache: cache == nil)"))
+        let reclaim = try XCTUnwrap(host.range(of: "self.reclaim.doctorScan ="))
+        let reclaimEnd = try XCTUnwrap(host.range(of: "self.reclaim.doctorPrunePreview ="))
+        XCTAssertEqual(host.components(separatedBy: "self.runDoctor()").count - 1, 1)
+        XCTAssertTrue(host[reclaim.lowerBound..<reclaimEnd.lowerBound].contains("self.runDoctor()"))
+        let startup = try XCTUnwrap(host.range(of: "func startLiveServices("))
+        let startupEnd = try XCTUnwrap(host.range(of: "func refreshDiscoveredRoots()"))
+        XCTAssertFalse(host[startup.lowerBound..<startupEnd.lowerBound].contains("runDoctor("))
+
+        let duplicates = try Fixture.source("UI/Views/DuplicatesView.swift")
+        XCTAssertEqual(duplicates.components(separatedBy: "reclaim.checkCache()").count - 1, 1)
+        XCTAssertTrue(duplicates.contains("Button(\"Check HF cache\") { Task { await reclaim.checkCache() } }"))
     }
 
     func testRuntimeReportIsProducedOnlyByAppHost() throws {
