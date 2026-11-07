@@ -3688,7 +3688,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let manager = app.windows["Served models"]
         XCTAssertTrue(manager.waitForExistence(timeout: 10))
         XCTAssertTrue(manager.staticTexts["ExternalStrata"].waitForExistence(timeout: 15))
-        XCTAssertTrue(manager.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "MLX Agent")).firstMatch.exists)
+        XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "MLX Agent", "MLX Agent")).firstMatch.exists)
         XCTAssertTrue(manager.staticTexts["Model path: " + model].exists)
         XCTAssertTrue(manager.staticTexts["Receipts: " + receipts].exists)
         XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
@@ -3702,7 +3702,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         unload.click()
         let review = manager.sheets.firstMatch
         XCTAssertTrue(review.waitForExistence(timeout: 10))
-        XCTAssertTrue(review.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", model)).firstMatch.exists)
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", model, model)).firstMatch.exists)
         review.buttons["Cancel"].click()
         XCTAssertTrue(review.waitForNonExistence(timeout: 10))
         capture("External-Strata-serving-inventory")
