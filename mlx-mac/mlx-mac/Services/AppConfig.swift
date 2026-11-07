@@ -54,11 +54,11 @@ struct Config: Codable, Equatable {
         case comparisonMaxTokens = "comparison_max_tokens"
     }
 
-    /// `ggufRoots` nil discovers the default folders.
+    /// New installations scan the managed destination; other locations are explicit.
     static func defaults(ggufRoots: [String]? = nil) -> Config {
         return Config(
             schemaVersion: SCHEMA_VERSION,
-            ggufRoots: ggufRoots ?? discoverGgufRoots(),
+            ggufRoots: ggufRoots ?? [],
             mlxRoots: [],
             outputDir: Path.home().appendingPathComponent("models/mlx").path,
             mlxAgentPath: discoverAgentPath(),
@@ -252,7 +252,7 @@ struct ConfigModule {
     }
 
     func scanRoots(value: Config, home: URL = WorkbenchStatePaths.userHome()) -> [String] {
-        return value.ggufRoots.isEmpty ? Config.discoverGgufRoots(home: home) : value.ggufRoots
+        return value.ggufRoots
     }
 
     func discoverGgufRoots() -> [String] {
@@ -277,7 +277,7 @@ func coerce(_ dict: [String: Any], discoverGgufRoots: () -> [String] = { Config.
             storedGgufRoots = cleaned
         }
     }
-    var merged = Config.defaults(ggufRoots: storedGgufRoots ?? discoverGgufRoots())
+    var merged = Config.defaults(ggufRoots: storedGgufRoots ?? [])
 
     if let mlxRoots = dict["mlx_roots"] as? [String] {
         let cleaned = mlxRoots

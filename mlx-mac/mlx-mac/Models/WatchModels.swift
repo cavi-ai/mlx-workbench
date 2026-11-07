@@ -48,6 +48,7 @@ struct WatchAlert: Codable, Equatable, Identifiable, Sendable {
 struct WatchAlertPresentation: Equatable {
     enum ActionKind: Equatable {
         case addFromHuggingFace(repo: String)
+        case reviewModelUpdate(repo: String)
         case openOnHuggingFace(repo: String)
         case reverify
     }
@@ -74,14 +75,14 @@ struct WatchAlertPresentation: Equatable {
         let (code, detail) = Self.finding(of: alert)
         switch code {
         case "new_quant_of_owned":
-            title = "New upload of a model you have"
-            message = "\(repo) matches a model in your library."
+            title = "New related upload: \(repo)"
+            message = "This repository matches the family of a model in your library. Review it as a separate model."
             primary = Action(title: "Add from Hugging Face", kind: .addFromHuggingFace(repo: repo))
             muteTitle = "Mute"
         case "updated_tracked_repo":
-            title = "\(repo) was updated"
-            message = "Its weights changed on Hugging Face."
-            primary = Action(title: "Get update", kind: .addFromHuggingFace(repo: repo))
+            title = "\(repo) changed on Hugging Face"
+            message = "Its reported weight size changed. Review the local version and the new revision before updating."
+            primary = Action(title: "Review update", kind: .reviewModelUpdate(repo: repo))
             muteTitle = "Mute"
         case "owned_missing":
             title = "\(repo) is no longer on this Mac"

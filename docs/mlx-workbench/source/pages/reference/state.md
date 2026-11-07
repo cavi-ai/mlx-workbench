@@ -25,6 +25,8 @@ be saved.
 | `wiring-transactions.json` | Client wiring transactions, with the backup locations used for rollback |
 | `source-cleanup.json` | Original sources moved to the Trash after verification, with restore metadata |
 | `watch-state.json`, `watch-alerts.json` | Watch baselines, alerts, snooze and mute state |
+| `managed-models.json` | Completed managed downloads with repository, immutable revision, source selection and file identity |
+| `model-updates.json` | Confirmed update reviews and durable progress; interrupted operations require a new review |
 | `workflow-evidence.json` | Imported workflow reports |
 
 | Folder | Holds |
@@ -46,6 +48,7 @@ Existing `model-workflows.json`, `verification-reports.json`, `comparison-runs.j
 | `~/Library/Application Support/mlx-agent/lab` | Experiment database and artifacts | Engine |
 | `~/Library/LaunchAgents/ai.cavi.mlxworkbench.endpoint.plist` | Optional endpoint login item | App |
 | `~/.cache/mlx-agent/strata` | Optional Strata runtime | Engine |
+| `$XDG_STATE_HOME/mlx-agent/services` (default `~/.local/state/mlx-agent/services`) | Registered serving receipt locations | Engine |
 
 Conversion jobs, their queue, serving processes and training runs leave receipts in the engine's own state; the app reads them and never treats its own records as the authority on what is running.
 

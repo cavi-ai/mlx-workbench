@@ -505,10 +505,14 @@ enum HealthDoctor {
         guard let summary else { return [] }
         var lines: [String] = []
         if let models = summary.models {
-            lines.append("\(ReclaimFormat.count(models, "model")) checked across the Hugging Face cache and running local servers")
+            lines.append(summary.hfCacheChecked == false
+                         ? "\(ReclaimFormat.count(models, "model")) checked across running local servers"
+                         : "\(ReclaimFormat.count(models, "model")) checked across the Hugging Face cache and running local servers")
         }
-        if let bytes = summary.hfCacheBytes {
-            lines.append("\(ReclaimFormat.byteCount(bytes)) in the default Hugging Face cache")
+        if summary.hfCacheChecked == false {
+            lines.append("Hugging Face cache was outside the selected scope")
+        } else if let bytes = summary.hfCacheBytes {
+            lines.append("\(ReclaimFormat.byteCount(bytes)) in the selected Hugging Face cache")
         }
         return lines
     }

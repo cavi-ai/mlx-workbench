@@ -34,7 +34,7 @@ The app reads `~/.config/mlx-workbench/config.json`. A missing or unreadable fil
 
 | Key | Settings | Default | Meaning |
 |---|---|---|---|
-| `gguf_roots` | Model locations → GGUF roots | Discovered | Folders scanned for GGUF files, up to 32 |
+| `gguf_roots` | Model locations → GGUF roots | `[]` | Explicit folders scanned for GGUF files, up to 32 |
 | `mlx_roots` | Model locations → MLX roots | `[]` | Folders scanned for MLX models, up to 32 |
 | `output_dir` | Storage → Output directory | `~/models/mlx` | Where conversions are written; also scanned as an MLX root |
 | `mlx_agent_path` | Engine → mlx-agent checkout | Discovered | Engine checkout containing `scripts/mlx-agent`, not the script itself |
@@ -51,7 +51,7 @@ Values outside a key's range fall back to its default. Saving from Settings merg
 
 ## Discovery
 
-With no `gguf_roots` stored, the app uses whichever of these exist: `~/.cache/huggingface/hub`, `~/.cache/lm-studio/models`, `~/.lmstudio/models`, `~/.models`, `~/models`, `~/Models`, then LM Studio's configured downloads folder. A folder inside an earlier one is skipped.
+Scans use the saved GGUF and MLX locations plus the managed output directory. An empty list stays empty; it does not expand to other folders. Settings suggests known Hugging Face and LM Studio folders for explicit selection. Existing saved locations remain selected. New downloads go beneath `<output_dir>/managed`, separated by repository, revision and checkpoint selection; existing provider caches stay in place.
 
 With no `mlx_agent_path`, the engine is found in this order: `MLX_AGENT_HOME`, the checkout's `vendor/mlx-agent`, then a sibling `mlx-agent` checkout. Source builds find their own vendored engine; distribution builds contain no source path and need the setting.
 

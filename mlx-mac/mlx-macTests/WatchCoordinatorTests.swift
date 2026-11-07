@@ -195,12 +195,12 @@ final class WatchCoordinatorTests: XCTestCase {
             return value
         }
         let fresh = WatchAlertPresentation(alert: alert("new_quant_of_owned", "new tracked repository matching an owned model"))
-        XCTAssertEqual(fresh.title, "New upload of a model you have")
+        XCTAssertEqual(fresh.title, "New related upload: org/model")
         XCTAssertEqual(fresh.primary, WatchAlertPresentation.Action(title: "Add from Hugging Face", kind: .addFromHuggingFace(repo: "org/model")))
 
         let updated = WatchAlertPresentation(alert: alert("updated_tracked_repo", "weight bytes changed from 1000 to 2000"))
-        XCTAssertEqual(updated.primary?.kind, .addFromHuggingFace(repo: "org/model"))
-        XCTAssertEqual(updated.primary?.title, "Get update")
+        XCTAssertEqual(updated.primary?.kind, .reviewModelUpdate(repo: "org/model"))
+        XCTAssertEqual(updated.primary?.title, "Review update")
 
         let missing = WatchAlertPresentation(alert: alert("owned_missing", "previously owned via lmstudio; no longer present"))
         XCTAssertEqual(missing.title, "org/model is no longer on this Mac")

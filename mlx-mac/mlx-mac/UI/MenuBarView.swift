@@ -3,9 +3,7 @@ import SwiftUI
 
 // MARK: - MenuBarView
 //
-// Minimal menu-bar surface for the always-on endpoint (premium spec 06,
-// phase 3). Status and plumbing actions only — deliberately no chat, no
-// prompt field: the menu bar reports the endpoint, it is not a work surface.
+// Cached local serving observations and the same controls as Served Models.
 
 struct MenuBarView: View {
     let appHost: AppHost
@@ -13,19 +11,23 @@ struct MenuBarView: View {
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var workflow: ModelWorkflowCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
+    @ObservedObject private var inventory: ServingInventoryCoordinator
+    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
 
     init(appHost: AppHost) {
         self.appHost = appHost
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
     }
 
     var body: some View {
         Button {} label: {
-            Label(fleetSummary, systemImage: MenuBarPresentation.fleetIcon(slots: endpoint.fleet.slots, states: endpoint.slotStates))
+            Label(ServingInventoryPresentation.summary(inventory.snapshot), systemImage: ServingInventoryPresentation.icon(inventory.snapshot, slots: endpoint.fleet.slots, states: endpoint.slotStates))
         }
         .disabled(true)
+        ServingSystemHeadroom(resources: appHost.resources)
         if case .running = endpoint.state, let latest = latestBenchmark {
             Button {} label: { Label(latest, systemImage: "speedometer") }
                 .disabled(true)
@@ -34,10 +36,18 @@ struct MenuBarView: View {
             Button {} label: { Label(error, systemImage: "exclamationmark.triangle") }
                 .disabled(true)
         }
+        if !inventory.snapshot.sourceErrors.isEmpty {
+            Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Manage to inspect") { openManager() }
+        }
         Divider()
         ForEach(endpoint.fleet.slots) { slot in
             Menu("\(MenuBarPresentation.modelName(slot.modelPath, models: appHost.librarySnapshot?.models ?? [])) · :\(String(slot.port))") {
                 Text(MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id]))
+                Text("MLX Workbench")
+                if let service = ServingInventoryPresentation.service(for: slot, in: inventory.snapshot), service.canUnload {
+                    Button("Unload model…") { prepare(.unload, service: service) }
+                        .disabled(inventory.isChanging || !inventory.mayChange(service))
+                }
                 Button(slot.enabled ? "Stop" : "Start…") {
                     if slot.enabled {
                         Task {
@@ -53,19 +63,43 @@ struct MenuBarView: View {
             }
         }
         if endpoint.fleet.slots.isEmpty {
-            Button("No endpoints configured") {}.disabled(true)
+            Button("No Workbench endpoints configured") {}.disabled(true)
+        }
+        let otherServices = ServingInventoryPresentation.additionalServices(inventory.snapshot, slots: endpoint.fleet.slots)
+        if !otherServices.isEmpty {
+            Divider()
+            ForEach(otherServices) { service in
+                Menu(service.name + " · " + service.providerName + " · " + service.statusText) {
+                    Text(service.statusText)
+                    if let endpoint = service.baseURL { Text(endpoint) }
+                    if let path = service.modelPath { Text(path) }
+                    else { Text("Model/cache path not reported") }
+                    if service.canUnload {
+                        Button(ServingInventoryPresentation.unloadTitle(for: service)) { prepare(.unload, service: service) }
+                            .disabled(inventory.isChanging || !inventory.mayChange(service))
+                    }
+                    if service.canStop {
+                        Button("Stop server…") { prepare(.stop, service: service) }
+                            .disabled(inventory.isChanging || !inventory.mayChange(service))
+                    }
+                    if let endpoint = service.baseURL {
+                        Button("Copy base URL") { ServedModelsSelection.copy(endpoint) }
+                    }
+                    if service.server != nil || service.hostedModel != nil {
+                        Button("Copy model ID") { ServedModelsSelection.copy(service.modelID) }
+                    }
+                }
+            }
         }
         Divider()
         Button("Manage served models…") { openManager() }
+        Button("Refresh local services") { Task { await inventory.refresh(refreshHosts: true) } }
+            .disabled(inventory.isRefreshing)
         Button("Open MLX Workbench") { openApp() }
+        Button("Settings…") { selectedRouteID = AppRoute.settings.rawValue; openApp() }
         Divider()
         Button("Quit MLX Workbench") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
-    }
-
-    /// "N of M endpoints running" across the fleet.
-    private var fleetSummary: String {
-        MenuBarPresentation.fleetSummary(slots: endpoint.fleet.slots, states: endpoint.slotStates)
     }
 
     /// Last measured tok/s for the served model, when comparison evidence
@@ -85,11 +119,25 @@ struct MenuBarView: View {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func prepare(_ action: ServingActionKind, service: ServingServiceObservation) {
+        openManager()
+        Task { await inventory.prepare(action, service: service) }
+    }
+
     private func openApp() {
         openWindow(id: ServedModelsWindow.mainID)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+}
+
+struct ServingInventoryMenuLabel: View {
+    @ObservedObject var inventory: ServingInventoryCoordinator
+    @ObservedObject var endpoint: EndpointSupervisor
+
+    var body: some View {
+        Label("MLX Workbench", systemImage: ServingInventoryPresentation.icon(inventory.snapshot, slots: endpoint.fleet.slots, states: endpoint.slotStates))
+    }
 }
 
 /// Strings the menu draws; pure so no file-system lookup happens during rendering.

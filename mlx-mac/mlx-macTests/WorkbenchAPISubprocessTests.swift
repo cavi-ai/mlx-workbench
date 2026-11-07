@@ -5,6 +5,21 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testDoctorUsesExplicitConfigFilesInsteadOfInheritedWorkingDirectory() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["findings": []]
+        })
+        _ = try await api.doctor(wiredRoots: [], hfCache: "/selected/hub")
+        let argv = try XCTUnwrap(recorder.values.first?.argv)
+        XCTAssertTrue(argv.contains("--wired-root"))
+        XCTAssertTrue(argv.contains("/state/workbench"))
+        XCTAssertFalse(argv.contains("/"))
+        XCTAssertTrue(argv.contains("/selected/hub"))
+        XCTAssertTrue(argv.contains { $0.hasSuffix(".config/opencode/opencode.jsonc") })
+    }
+
     func testScanTimeoutExplainsLibraryRecoveryAndRetainsErrorCode() async throws {
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
             throw BridgeError.skillTimeout

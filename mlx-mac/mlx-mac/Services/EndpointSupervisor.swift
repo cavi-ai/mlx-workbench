@@ -282,6 +282,84 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Reconciliation
 
+    /// Replace reviewed model slots on their existing ports. Failed launches keep
+    /// the previous files and restore the captured desired state before returning.
+    func replaceModelForUpdate(expected: [EndpointSlot], modelPath: String) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        guard expected.allSatisfy({ fleet.slots.contains($0) }),
+              passesGate(modelPath: modelPath, allowUnverified: false, action: "update") else { return false }
+        guard expected.allSatisfy({ $0.servingProfile == nil }) else {
+            lastError = "Prepare a new source-bound serving profile before replacing a Strata model."
+            return false
+        }
+        if expected.isEmpty { return true }
+        var next = fleet
+        for old in expected {
+            guard let index = next.slots.firstIndex(where: { $0.id == old.id }) else { return false }
+            next.slots[index].modelPath = modelPath
+            next.slots[index].acceleration = nil
+            next.slots[index].accelerationPreviewHash = nil
+        }
+        guard commit(next) else { return false }
+        var problem: String?
+        var replacementAttempted = false
+        for old in expected where old.enabled {
+            if !(await stopServing(old)) { problem = lastError ?? "The previous endpoint could not stop."; break }
+        }
+        if problem == nil {
+            replacementAttempted = true
+            for slot in next.slots where expected.contains(where: { $0.id == slot.id }) && slot.enabled {
+                pendingUserServeBySlot[slot.id] = (slot.modelPath, slot.port)
+            }
+            await reconcile(userRequestedSlotID: nil)
+            for slot in next.slots where expected.contains(where: { $0.id == slot.id }) && slot.enabled {
+                let deadline = Date().addingTimeInterval(30)
+                var ready = false
+                repeat {
+                    do {
+                        let observed = try await statusProvider()
+                        if let server = observed.first(where: { $0.port == slot.port && $0.state == "running" && $0.matchesUnadaptedModel(modelPath) && ($0.jit == true) == slot.usesJIT }) {
+                            slotStates[slot.id] = .running(modelPath: modelPath, port: slot.port)
+                            slotResidencies[slot.id] = server.modelState
+                            ready = true
+                            break
+                        }
+                        try await Task.sleep(for: .milliseconds(250))
+                    } catch { problem = AppHost.render(error); break }
+                } while Date() < deadline
+                guard ready else {
+                    problem = lastError ?? "The new endpoint did not become available."
+                    break
+                }
+            }
+        }
+        if let problem {
+            var restored = fleet
+            for old in expected {
+                if let index = restored.slots.firstIndex(where: { $0.id == old.id }) { restored.slots[index] = old }
+            }
+            guard commit(restored) else {
+                lastError = problem + " Previous files remain in place; endpoint settings could not be restored."
+                return false
+            }
+            var cleanupFailed = false
+            if replacementAttempted {
+                do {
+                    let observed = try await statusProvider()
+                    for slot in next.slots where expected.contains(where: { $0.id == slot.id }) && slot.enabled &&
+                        observed.contains(where: { $0.port == slot.port && $0.state == "running" && $0.matchesUnadaptedModel(modelPath) }) {
+                        if !(await stopServing(slot)) { cleanupFailed = true }
+                    }
+                } catch { cleanupFailed = true }
+            }
+            if !cleanupFailed && pendingStops.isEmpty { await reconcile(userRequestedSlotID: nil) }
+            lastError = problem + " Previous files were kept. Review endpoint status before retrying."
+            return false
+        }
+        return true
+    }
+
     func retryPendingStops() async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
@@ -449,12 +527,49 @@ final class EndpointSupervisor: ObservableObject {
                     throw WorkflowEvidenceError.invalid("Memory management is unavailable in this runtime.")
                 }
                 try await configure(slot.port, pid, policy)
+                let readback = try await statusProvider()
+                guard let fresh = readback.first(where: { $0.sameProcess(as: current) }), fresh.memoryPolicy == policy else {
+                    throw WorkflowEvidenceError.invalid("The gateway did not report the reviewed policy. Refresh before another change.")
+                }
                 slotMemoryPolicies[id] = policy
             }
             lastError = nil
         } catch {
             lastError = "\(saved ? "Memory policy saved, but could not be applied" : "Could not save memory policy"): \(AppHost.render(error))"
         }
+    }
+
+    /// Persist disabled desired state before stopping an observed owned server.
+    func stopObservedServer(_ expected: ServerInfo) async -> Bool {
+        guard !isUnloading, !isReconciling, activeUserOperations == 0, let port = expected.port else {
+            lastError = "Serving is changing. Wait for it to finish, then retry stop."
+            return false
+        }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
+        do {
+            let current = try await statusProvider()
+            guard current.contains(where: { $0.sameProcess(as: expected) && $0.state == "running" }) else {
+                throw WorkflowEvidenceError.invalid("The serving process changed. Refresh before stopping it.")
+            }
+            var disabled = fleet
+            for index in disabled.slots.indices where disabled.slots[index].port == port {
+                disabled.slots[index].enabled = false
+            }
+            if disabled != fleet, !commit(disabled) { return false }
+            for slot in disabled.slots where slot.port == port {
+                pendingUserServeBySlot.removeValue(forKey: slot.id)
+                slotStates[slot.id] = .disabled
+            }
+            syncShim()
+            try await lifecycle.stop(port)
+            let after = try await statusProvider()
+            guard !after.contains(where: { $0.port == port && $0.state == "running" }) else {
+                throw WorkflowEvidenceError.invalid("A server is still running on this port. Refresh before another action.")
+            }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
     }
 
     /// Release a JIT worker while retaining its enabled gateway. Eager

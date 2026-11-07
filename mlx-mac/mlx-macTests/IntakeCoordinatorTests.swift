@@ -5,6 +5,29 @@ import XCTest
 
 @MainActor
 final class IntakeCoordinatorTests: XCTestCase {
+    private static func receipt(_ request: IntakeFetchRequest, slug: String) -> [String: Any] {
+        var receipt: [String: Any] = ["repo": "openai/whisper-tiny", "revision": request.revision, "slug": slug, "started_at": "now"]
+        receipt["file"] = request.file
+        receipt["local_dir"] = request.localDir
+        if request.source.hasSuffix("/multilingual") { receipt["subfolder"] = "multilingual" }
+        return ["receipt": receipt]
+    }
+
+    func testDownloadCannotReuseAnOlderCompletedReceipt() async throws {
+        let api = IntakeAPI.stub(
+            resolve: { _ in try Self.resolution(verdict: "already_mlx", backend: "mlx-lm") },
+            fetchPreview: { _ in ["preview_hash": "f"] },
+            fetchStart: { request, _ in Self.receipt(request, slug: "r") },
+            fetchStatus: { [FetchJob(receipt: "/receipts/r.json", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil,
+                state: "done", path: "/old/model", logPath: nil, startedAt: "old", completedAt: "old")] })
+        let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 2)
+        intake.sourceText = "openai/whisper-tiny"
+        await intake.resolve()
+        let path = await intake.download(localDir: nil)
+        XCTAssertNil(path)
+        guard case .failed = intake.activity else { return XCTFail("Expected unmatched-receipt failure") }
+    }
+
     func testExistingMLXIntakeUsesTheReadySnapshotOnly() throws {
         let result = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm")
         let path = "/cache/models--openai--whisper-tiny/snapshots/abc"
@@ -104,10 +127,10 @@ final class IntakeCoordinatorTests: XCTestCase {
         let api = IntakeAPI.stub(
             resolve: { _ in try Self.resolution(verdict: "convertible", backend: "mlx-lm") },
             fetchPreview: { _ in ["preview_hash": "f"] },
-            fetchStart: { _, _ in [:] },
+            fetchStart: { request, _ in Self.receipt(request, slug: "r") },
             fetchStatus: {
                 polls += 1
-                return [FetchJob(receipt: "r", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: polls < 2 ? "running" : "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
+                return [FetchJob(receipt: "/receipts/r.json", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: polls < 2 ? "running" : "done", path: "/hf/snap", logPath: nil, startedAt: "now", completedAt: nil)]
             }
         )
         let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 5)
@@ -124,10 +147,10 @@ final class IntakeCoordinatorTests: XCTestCase {
         let api = IntakeAPI.stub(
             resolve: { _ in try Self.resolution(verdict: "convertible", backend: "mlx-embeddings", subfolder: "multilingual") },
             fetchPreview: { request in requested = request; return ["preview_hash": "f"] },
-            fetchStart: { _, _ in [:] },
+            fetchStart: { request, _ in Self.receipt(request, slug: "ml") },
             fetchStatus: {
                 [FetchJob(receipt: "root", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: "done", path: "/hf/root", logPath: nil, startedAt: nil, completedAt: nil),
-                 FetchJob(receipt: "ml", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: "multilingual", localDir: nil, state: "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
+                 FetchJob(receipt: "/receipts/ml.json", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: "multilingual", localDir: nil, state: "done", path: "/hf/snap", logPath: nil, startedAt: "now", completedAt: nil)]
             }
         )
         let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 5)

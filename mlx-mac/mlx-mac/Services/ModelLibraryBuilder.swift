@@ -64,7 +64,7 @@ enum ModelLibraryBuilder {
                 quantization: output.quantization.map { "q\($0.bits)" },
                 parameters: nil,
                 structure: nil,
-                signature: output.provenance,
+                signature: (try? ManagedModelInstallStore.signature(path: output.path)) ?? output.provenance,
                 companion: nil,
                 readable: true,
                 status: readiness == .ready ? "ready" : "needs_runtime",

@@ -109,6 +109,17 @@ struct ScanResult: Codable, Equatable {
     let pending: [String]
     let duplicates: [DuplicateGroup]
     let totals: ScanTotals
+    var rootErrors: [ScanRootError]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case roots, models, outputs, pending, duplicates, totals
+        case rootErrors = "root_errors"
+    }
+}
+
+struct ScanRootError: Codable, Equatable {
+    let path: String
+    let message: String
 }
 
 struct ScanRoots: Codable, Equatable {
@@ -244,6 +255,13 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let trainingBinding: TrainedAdapterBinding?
     let prefillKernel: LabValue?
     let decodeProfile: LabValue?
+    let visionProfile: LabValue?
+    let receiptsDirectory: String?
+    let serviceID: String?
+    let processStartedAt: String?
+    let memoryAllocation: ServingMemoryAllocation?
+    let requestBlockedReason: String?
+    let lastUnloadReason: String?
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
@@ -259,6 +277,13 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case trainingBinding = "training_binding"
         case prefillKernel = "prefill_kernel"
         case decodeProfile = "decode_profile"
+        case visionProfile = "vision_profile"
+        case receiptsDirectory = "receipts_dir"
+        case serviceID = "service_id"
+        case processStartedAt = "process_started_at"
+        case memoryAllocation = "memory_allocation"
+        case requestBlockedReason = "request_blocked_reason"
+        case lastUnloadReason = "last_unload_reason"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -284,7 +309,14 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         adapterStatus: String? = nil,
         trainingBinding: TrainedAdapterBinding? = nil,
         prefillKernel: LabValue? = nil,
-        decodeProfile: LabValue? = nil
+        decodeProfile: LabValue? = nil,
+        visionProfile: LabValue? = nil,
+        receiptsDirectory: String? = nil,
+        serviceID: String? = nil,
+        processStartedAt: String? = nil,
+        memoryAllocation: ServingMemoryAllocation? = nil,
+        requestBlockedReason: String? = nil,
+        lastUnloadReason: String? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -307,6 +339,13 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.trainingBinding = trainingBinding
         self.prefillKernel = prefillKernel
         self.decodeProfile = decodeProfile
+        self.visionProfile = visionProfile
+        self.receiptsDirectory = receiptsDirectory
+        self.serviceID = serviceID
+        self.processStartedAt = processStartedAt
+        self.memoryAllocation = memoryAllocation
+        self.requestBlockedReason = requestBlockedReason
+        self.lastUnloadReason = lastUnloadReason
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -327,6 +366,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         }
         return matches(prefillKernel, requested: options.m5Prefill, name: "m5-q4-prefill-v1")
             && matches(decodeProfile, requested: options.promptLookup, name: "prompt-lookup-v1")
+            && matches(visionProfile, requested: options.visionCache, name: "vision-features-v1")
     }
 
     /// Model-only workflows cannot substitute an adapter server, including
@@ -419,6 +459,7 @@ struct DoctorSummary: Codable, Equatable {
     let hfCacheBytes: Int64?
     let wiredConfigs: Int?
     let findings: Int?
+    var hfCacheChecked: Bool? = nil
 }
 
 struct PrunedItem: Codable, Equatable, Identifiable {

@@ -7,6 +7,8 @@ struct SystemResourceHeader: View {
     @ObservedObject var resources: SystemResourceMonitor
     @ObservedObject var endpoint: EndpointSupervisor
     var hosts: ModelHostsCoordinator? = nil
+    var servingInventory: ServingInventoryCoordinator? = nil
+    var onManageServing: () -> Void = {}
     var onOpenHost: (ModelHost?) -> Void = { _ in }
     var occupancy = ModelOccupancy()
     let onUnload: (ServerInfo) async -> Bool
@@ -44,7 +46,11 @@ struct SystemResourceHeader: View {
         ScrollView {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             CardHeader("Memory & serving", systemImage: "memorychip") {
-                Button { Task { await resources.refreshMemory(); await resources.refreshServers() } } label: {
+                Button { Task {
+                    await resources.refreshMemory()
+                    if let servingInventory { await servingInventory.refresh(refreshHosts: true) }
+                    else { await resources.refreshServers() }
+                } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
@@ -80,53 +86,64 @@ struct SystemResourceHeader: View {
             Text("Used for model-fit reviews; does not change a running server’s context limit.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             Divider()
-            Text("Serving models").font(WorkbenchTypography.metadata.weight(.semibold))
-                .foregroundStyle(WorkbenchColor.muted)
-            if let error = resources.serverError {
-                Text(error).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
-            } else if let servers = resources.servers {
-                if servers.isEmpty { Text("No serving models").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
-                ForEach(servers) { server in
-                    HStack(spacing: WorkbenchSpacing.sm) {
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                            Text((HFRepoID.forPath(server.modelIdentity) ?? URL(fileURLWithPath: server.modelIdentity).lastPathComponent)
-                                + (server.adapterSummary.map { " · " + $0 } ?? ""))
-                                .font(WorkbenchTypography.label).lineLimit(1)
-                                .help(server.modelIdentity)
-                            Text("Port \(server.port.map(String.init) ?? "unknown") · PID \(server.pid.map(String.init) ?? "unknown")")
-                                .font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
-                            Text(server.residencySummary + ((server.activeRequests ?? 0) > 0 ? " · \(server.activeRequests ?? 0) active" : ""))
-                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                        }
-                        Spacer()
-                        Button(server.jit == true ? "Unload" : "Stop server") {
-                            Task {
-                                unloadError = nil
-                                if !(await onUnload(server)) { unloadError = endpoint.lastError ?? "Unload failed." }
-                                await resources.refreshServers()
-                                await resources.refreshMemory()
-                            }
-                        }
-                        .controlSize(.small)
-                        .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil ||
-                                  server.modelState == "unloaded" || server.modelState == "loading" || server.modelState == "unloading" ||
-                                  (server.activeRequests ?? 0) > 0 ||
-                                  occupancy.blocksStop(server))
-                        .help(server.jit == true
-                              ? "Release model weights while keeping this endpoint reachable. The next request loads the same local files."
-                              : "Stop this server and disable automatic restart. Enable Load on request in Run for JIT unload.")
-                    }
+            if let servingInventory {
+                ServingInventoryResourceSection(inventory: servingInventory, onManage: {
+                    expanded = false
+                    onManageServing()
+                })
+                if hosts != nil {
+                    Button("Manage host connections…") { expanded = false; onOpenHost(nil) }
+                        .buttonStyle(.borderless).font(WorkbenchTypography.secondary)
                 }
             } else {
-                Text("Reading serving status…").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Text("Serving models").font(WorkbenchTypography.metadata.weight(.semibold))
+                    .foregroundStyle(WorkbenchColor.muted)
+                if let error = resources.serverError {
+                    Text(error).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                } else if let servers = resources.servers {
+                    if servers.isEmpty { Text("No serving models").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
+                    ForEach(servers) { server in
+                        HStack(spacing: WorkbenchSpacing.sm) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                Text((HFRepoID.forPath(server.modelIdentity) ?? URL(fileURLWithPath: server.modelIdentity).lastPathComponent)
+                                    + (server.adapterSummary.map { " · " + $0 } ?? ""))
+                                    .font(WorkbenchTypography.label).lineLimit(1)
+                                    .help(server.modelIdentity)
+                                Text("Port \(server.port.map(String.init) ?? "unknown") · PID \(server.pid.map(String.init) ?? "unknown")")
+                                    .font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                                Text(server.residencySummary + ((server.activeRequests ?? 0) > 0 ? " · \(server.activeRequests ?? 0) active" : ""))
+                                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            }
+                            Spacer()
+                            Button(server.jit == true ? "Unload" : "Stop server") {
+                                Task {
+                                    unloadError = nil
+                                    if !(await onUnload(server)) { unloadError = endpoint.lastError ?? "Unload failed." }
+                                    await resources.refreshServers()
+                                    await resources.refreshMemory()
+                                }
+                            }
+                            .controlSize(.small)
+                            .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil ||
+                                      server.modelState == "unloaded" || server.modelState == "loading" || server.modelState == "unloading" ||
+                                      (server.activeRequests ?? 0) > 0 ||
+                                      occupancy.blocksStop(server))
+                            .help(server.jit == true
+                                  ? "Release model weights while keeping this endpoint reachable. The next request loads the same local files."
+                                  : "Stop this server and disable automatic restart. Enable Load on request in Run for JIT unload.")
+                        }
+                    }
+                } else {
+                    Text("Reading serving status…").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+                if resources.servers?.contains(where: { occupancy.blocksStop($0) }) == true {
+                    Text("Models in use by active operations cannot be unloaded here. Finish or cancel the operation first.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+                if endpoint.isUnloading { ProgressView("Unloading…").controlSize(.small) }
+                if let unloadError { Text(unloadError).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning) }
             }
-            if resources.servers?.contains(where: { occupancy.blocksStop($0) }) == true {
-                Text("Models in use by active operations cannot be unloaded here. Finish or cancel the operation first.")
-                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            }
-            if endpoint.isUnloading { ProgressView("Unloading…").controlSize(.small) }
-            if let unloadError { Text(unloadError).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning) }
-            if let hosts {
+            if let hosts, servingInventory == nil {
                 Divider()
                 SavedModelHostsSection(hosts: hosts) { host in
                     expanded = false
@@ -139,6 +156,7 @@ struct SystemResourceHeader: View {
         .frame(width: 420)
         .frame(maxHeight: 620)
         .task {
+            guard servingInventory == nil else { return }
             while !Task.isCancelled {
                 await resources.refreshServers()
                 do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
@@ -153,6 +171,40 @@ struct SystemResourceHeader: View {
                 .foregroundStyle(color)
                 .contentTransition(.numericText())
                 .workbenchAnimation(value: bytes)
+        }
+    }
+}
+
+private struct ServingInventoryResourceSection: View {
+    @ObservedObject var inventory: ServingInventoryCoordinator
+    let onManage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack {
+                Text("Local serving models").font(WorkbenchTypography.label)
+                Spacer()
+                Button("Manage…", action: onManage).buttonStyle(.borderless)
+            }
+            Text("Process RAM is observed resident memory and may share pages. Provider readings and source estimates are separate; none are added to system headroom.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if let date = inventory.processMemoryCapturedAt {
+                Text("Process RAM read " + date.formatted(date: .omitted, time: .standard))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+            ServingInventoryErrors(inventory: inventory)
+            let services = ServingInventoryPresentation.localServices(inventory.snapshot)
+            if services.isEmpty {
+                Text(inventory.isRefreshing ? "Reading local services…" : "No local serving models reported")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            ForEach(services) { service in
+                ServingServiceRow(service: service, inventory: inventory) { action in
+                    onManage()
+                    Task { await inventory.prepare(action, service: service) }
+                }
+                if service.id != services.last?.id { Divider() }
+            }
         }
     }
 }

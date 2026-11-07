@@ -122,3 +122,5 @@ make accept-release-candidate RELEASE_DMG=/absolute/path/to/candidate.dmg
 This uses the real download, digest, signature, disk-image mount and bundle-replacement path in an isolated directory, then prepares and reopens the packaged runtime source payload. The gate refuses skipped tests and records the candidate digest and source commit under `.run/release-candidate/`. It does not launch model inference or install Python packages.
 
 Before a version release, also run the existing packaged-runtime installation UI test in an isolated VM with the candidate disk image, and the model-specific native acceptance routes above. These cover setup and inference beyond the signed-image installation gate.
+
+The isolated native UI runner requires Python 3.12 in the prepared Tart VM and creates the checkout’s empty `.venv` before native tests. Packaged runtime installation acceptance keeps its separate clean-environment setup.

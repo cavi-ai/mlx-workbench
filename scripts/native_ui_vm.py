@@ -347,6 +347,11 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
             raise RuntimeError(f"Source snapshot link changed: {record['path']}")
     checkout = Path.home() / "native-ui" / manifest["run_id"]
     checked(["ditto", str(source), str(checkout)])
+    if not manifest.get("runtime_install_uv_sha256"):
+        python = shutil.which("python3.12", path="/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", ""))
+        if python is None:
+            raise RuntimeError("The native test VM requires Python 3.12 for the checkout engine environment.")
+        checked([python, "-m", "venv", "--without-pip", str(checkout / ".venv")])
     install_uv = None
     if manifest.get("runtime_install_uv_sha256"):
         install_uv = Path.home() / ".local/bin/uv"

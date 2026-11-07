@@ -266,6 +266,10 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             candidates = root / 'discover-candidates.json'
             data = {'candidates': json.loads(candidates.read_text()) if candidates.exists() else []}
+        elif args[:2] == ['serve', 'discover']:
+            inventory = root / 'discovered-services.json'
+            data = {'schema_version': 1, 'services': json.loads(inventory.read_text()) if inventory.exists() else [],
+                    'errors': [], 'capabilities': {'scoped_doctor': True, 'expected_pid_stop': True}}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():
@@ -3659,6 +3663,42 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(requests.contains { Array($0.prefix(2)) == command })
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
+
+    func testExternalStrataInventoryReviewAndWindowLifetime() throws {
+        let model = root.appendingPathComponent("ExternalStrata").path
+        let receipts = root.appendingPathComponent("external-service").path
+        let service: [String: Any] = ["path": model, "runtime": "strata", "port": 19080, "pid": 9876,
+            "alive": true, "argv_match": true, "state": "running", "jit": true, "model_state": "loaded",
+            "active_requests": 0, "receipts_dir": receipts,
+            "receipt": receipts + "/.mlx-agent-receipts/serve/19080.json",
+            "process_started_at": "Sat Nov 7 12:00:00 2026", "started_at": "2026-11-07T12:00:00Z",
+            "memory_allocation": ["budget_bytes": 24_000_000_000, "estimated_resident_bytes": 22_000_000_000]]
+        try JSONSerialization.data(withJSONObject: [service]).write(to: root.appendingPathComponent("discovered-services.json"))
+        launch(appearance: "Dark")
+        app.buttons["system-memory-header"].click()
+        let manage = app.popovers.buttons["Manage served models…"].firstMatch
+        XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        manage.click()
+        let manager = app.windows["Served models"]
+        XCTAssertTrue(manager.waitForExistence(timeout: 10))
+        XCTAssertTrue(manager.staticTexts["ExternalStrata"].waitForExistence(timeout: 15))
+        XCTAssertTrue(manager.staticTexts["MLX Agent"].exists)
+        XCTAssertTrue(manager.staticTexts["Model path: " + model].exists)
+        XCTAssertTrue(manager.staticTexts["Receipts: " + receipts].exists)
+        XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
+        manager.buttons["Unload model…"].firstMatch.click()
+        let review = manager.sheets.firstMatch
+        XCTAssertTrue(review.waitForExistence(timeout: 10))
+        XCTAssertTrue(review.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", model)).firstMatch.exists)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(review.waitForNonExistence(timeout: 10))
+        capture("External-Strata-serving-inventory")
+        for window in app.windows.allElementsBoundByIndex where window.title != "Served models" {
+            window.buttons[XCUIIdentifierCloseWindow].click()
+        }
+        manager.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertNotEqual(app.state, .notRunning)
     }
 
     func testProcessMemoryInspectorReadsWithoutStartingWork() throws {

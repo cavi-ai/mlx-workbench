@@ -578,6 +578,24 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             if let sourceSelection { LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts) }
             WorkbenchPageHeading(route: .library)
+            if let errors = appHost.scanResult?.rootErrors, !errors.isEmpty {
+                DisclosureGroup(errors.count == 1 ? "1 model folder could not be scanned" : "\(errors.count) model folders could not be scanned") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        ForEach(errors, id: \.path) { error in
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                Text(error.path).font(WorkbenchTypography.compactValue)
+                                Text(error.message).font(WorkbenchTypography.secondary)
+                            }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Button("Review model folders in Settings") { onRouteSelection(.settings) }
+                            .buttonStyle(.borderless)
+                    }.padding(.top, WorkbenchSpacing.xs)
+                }
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                .padding(.horizontal, WorkbenchSpacing.pageInset)
+                .padding(.bottom, WorkbenchSpacing.xs)
+                .accessibilityIdentifier("library-root-errors")
+            }
             if let revealError {
                 InlineMessage(kind: .warning, text: revealError,
                     action: (title: "Dismiss", perform: { self.revealError = nil }))
@@ -906,7 +924,13 @@ struct LibraryView: View {
     @ViewBuilder
     private var inspector: some View {
         if let selectedModel {
-            ModelDetailsView(appHost: appHost, model: selectedModel, onRouteSelection: onRouteSelection)
+            VStack(spacing: 0) {
+                LibraryServingLinks(model: selectedModel, inventory: appHost.servingInventory) {
+                    openWindow(id: ServedModelsWindow.id)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                ModelDetailsView(appHost: appHost, model: selectedModel, onRouteSelection: onRouteSelection)
+            }
         } else if let family = selectedFamily {
             ContentUnavailableView(family.name, systemImage: "square.stack.3d.up", description: Text("\(family.detail) · \(LibraryTablePresentation.byteCount(family.bytes)). Select a variant to inspect it."))
         } else {
@@ -1052,6 +1076,41 @@ private extension View {
             self.inspector(isPresented: isPresented) { content() }
         } else {
             self
+        }
+    }
+}
+
+private struct LibraryServingLinks: View {
+    let model: LibraryModel
+    @ObservedObject var inventory: ServingInventoryCoordinator
+    let onManage: () -> Void
+
+    var body: some View {
+        let services = ServingInventoryPresentation.linkedServices(for: model, in: inventory.snapshot)
+        if !services.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                DisclosureGroup("Serving connections · \(services.count)") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        ForEach(services) { service in
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                Text(service.providerName + " · " + service.statusText)
+                                    .font(WorkbenchTypography.label)
+                                if let endpoint = service.baseURL {
+                                    Text(endpoint).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                                }
+                                if let path = service.modelPath {
+                                    Text(path).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Button("Manage served models…", action: onManage).buttonStyle(.borderless)
+                    }.padding(.top, WorkbenchSpacing.xs)
+                }
+            }
+            .font(WorkbenchTypography.secondary)
+            .padding(WorkbenchSpacing.md)
+            .accessibilityIdentifier("library-serving-connections")
+            Divider()
         }
     }
 }

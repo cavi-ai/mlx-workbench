@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testRevisionUpdateWaitsForReadbackAndPreservesPortsAndPolicy() async throws {
+        let (supervisor, world) = makeSupervisor()
+        await supervisor.addSlot(modelPath: "/Models/old", port: 8911, role: .coding, loadOnRequest: false)
+        let expected = supervisor.fleet.slots
+        XCTAssertEqual(try world.status().first?.modelIdentity, "/Models/old")
+        let changed = await supervisor.replaceModelForUpdate(expected: expected, modelPath: "/Models/new")
+        XCTAssertTrue(changed, supervisor.lastError ?? "")
+        XCTAssertEqual(supervisor.fleet.slots.first?.port, 8911)
+        XCTAssertEqual(supervisor.fleet.slots.first?.role, .coding)
+        XCTAssertEqual(supervisor.fleet.slots.first?.memoryPolicy, expected.first?.memoryPolicy)
+        XCTAssertEqual(try world.status().first?.modelIdentity, "/Models/new")
+        XCTAssertEqual(supervisor.slotStates[expected[0].id], .running(modelPath: "/Models/new", port: 8911))
+    }
+
+    func testRevisionUpdateRejectsEndpointDriftBeforeStop() async throws {
+        let (supervisor, world) = makeSupervisor()
+        await supervisor.addSlot(modelPath: "/Models/old", port: 8912, loadOnRequest: false)
+        let expected = supervisor.fleet.slots
+        await supervisor.updateSlot(id: expected[0].id, modelPath: "/Models/old", port: 8913, role: nil)
+        let changed = await supervisor.replaceModelForUpdate(expected: expected, modelPath: "/Models/new")
+        XCTAssertFalse(changed)
+        XCTAssertEqual(try world.status().first?.modelIdentity, "/Models/old")
+        XCTAssertEqual(supervisor.fleet.slots.first?.port, 8913)
+    }
+
     func testFreshConfirmedLoginReceiptIsAdoptedAndPersisted() async throws {
         let hash = String(repeating: "b", count: 64)
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a")

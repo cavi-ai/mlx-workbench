@@ -221,6 +221,7 @@ struct HomeView: View {
     let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var watch: WatchCoordinator
+    @ObservedObject private var modelUpdates: ModelUpdateCoordinator
     @ObservedObject private var usage: UsageTracker
     @ObservedObject private var reclaim: ReclaimCoordinator
     @ObservedObject private var verification: VerificationCoordinator
@@ -234,6 +235,7 @@ struct HomeView: View {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _watch = ObservedObject(wrappedValue: appHost.watch)
+        _modelUpdates = ObservedObject(wrappedValue: appHost.modelUpdates)
         _usage = ObservedObject(wrappedValue: appHost.usage)
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         _verification = ObservedObject(wrappedValue: appHost.verification)
@@ -310,6 +312,12 @@ struct HomeView: View {
         }
         .onPreferenceChange(OverviewContentWidthKey.self) { contentWidth = $0 }
         .onAppear { appHost.analyzeReclaim() }
+        .sheet(isPresented: $modelUpdates.isPresented) {
+            ModelUpdateReviewSheet(coordinator: modelUpdates) { repo in
+                appHost.intake.open(with: repo)
+                openWindow(id: IntakeWindow.id)
+            }
+        }
     }
 
     private var regions: some View {
@@ -429,7 +437,8 @@ struct HomeView: View {
         case .addFromHuggingFace(let repo):
             appHost.intake.open(with: repo)
             openWindow(id: IntakeWindow.id)
-            watch.dismiss(alert.id)
+        case .reviewModelUpdate(let repo):
+            Task { await modelUpdates.begin(repo: repo, alertID: alert.id) }
         case .openOnHuggingFace(let repo):
             if let url = URL(string: "https://huggingface.co/\(repo)") { NSWorkspace.shared.open(url) }
         case .reverify:

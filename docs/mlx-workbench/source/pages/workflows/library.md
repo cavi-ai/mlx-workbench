@@ -31,6 +31,8 @@ Switching sources preserves the main table's filters and selected model without 
 | Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
+Scans stay within the selected model locations and managed output folder. A missing or unreadable root is reported separately while readable roots keep their results. Empty root lists do not enable automatic searches of other model folders.
+
 Model-folder metadata is read in the background. The previous inventory stays visible until the complete replacement is ready; a cancelled refresh cannot publish its result. Repeated refresh requests do not start overlapping scans.
 The last successful inventory stays visible during retries. A retry clears the
 previous scan error while it runs. If scanning times out repeatedly, check the
@@ -219,7 +221,7 @@ Testing never saves the host, changes Keychain, loads a model or publishes the
 inventory to Library. **Save host** remains the explicit persistence action;
 you can save a valid connection without testing it, then use **Refresh** later.
 
-**Refresh** reads inventory without loading models, generating outputs, downloading weights or changing the host's configuration. Refresh is manual. A failed refresh retains the previous inventory with its capture time and an error. Editing an address or provider clears that connection's cached inventory. Removing a connection leaves the host and its models untouched.
+**Refresh** reads inventory without loading models, generating outputs, downloading weights or changing the host's configuration. The shared serving inventory periodically refreshes local saved and discovered hosts while Workbench runs. **Refresh** is also available manually. A failed refresh retains the previous inventory with its capture time and an error. Editing an address or provider clears that connection's cached inventory. Removing a connection leaves the host and its models untouched.
 
 Failed refreshes distinguish authentication, missing API and connection errors.
 **Retry refresh** rereads only the inventory. **Edit connection…** opens the saved
@@ -261,3 +263,7 @@ Explicit confirmation checks the target and activity again. Changed activity or 
 The action uses the host's memory-management API. It never deletes model files, quits the application, clears queues or interrupts shared jobs. ComfyUI cleanup may be deferred until work finishes, and later jobs can reload models. Ollama and LM Studio unload requests may affect other clients using the selected model or instance.
 
 Workbench refreshes inventory after a request and distinguishes acceptance from observed unloaded state. ComfyUI does not expose cleanup completion, so acceptance does not establish released memory. Failed readback retains the dated inventory and reports that the effect could not be verified. A connection failure after submission can leave the outcome unknown; requests are never automatically retried.
+
+### Serving connections
+
+The selected model’s inspector links exact known local paths to their observed serving connections. **Manage served models…** opens the shared inventory with provider, endpoint, residency, model location and receipt location when reported. A provider that does not report a file path or loaded state is shown as unknown. Listing a model does not imply that its weights are loaded.
