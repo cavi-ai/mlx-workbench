@@ -3689,8 +3689,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(manager.waitForExistence(timeout: 10))
         XCTAssertTrue(manager.staticTexts["ExternalStrata"].waitForExistence(timeout: 15))
         XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "MLX Agent", "MLX Agent")).firstMatch.exists)
-        XCTAssertTrue(manager.staticTexts["Model path: " + model].exists)
-        XCTAssertTrue(manager.staticTexts["Receipts: " + receipts].exists)
+        for detail in ["Model path: " + model, "Receipts: " + receipts] {
+            XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", detail, detail)).firstMatch.exists)
+        }
         XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
         let unload = manager.buttons["Unload model…"].firstMatch
         XCTAssertTrue(unload.waitForExistence(timeout: 10))
