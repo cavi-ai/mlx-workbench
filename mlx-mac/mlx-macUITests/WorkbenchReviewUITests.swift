@@ -819,7 +819,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(open.waitForExistence(timeout: 15))
         let overviewScroll = app.scrollViews.containing(.button, identifier: "Review update").firstMatch
         let wheel = overviewScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5))
-        for _ in 0..<8 where !open.isHittable || open.frame.maxY > overviewScroll.frame.maxY || open.frame.minY < overviewScroll.frame.minY {
+        for _ in 0..<8 where open.frame.maxY > overviewScroll.frame.maxY || open.frame.minY < overviewScroll.frame.minY {
             wheel.scroll(byDeltaX: 0, deltaY: max(-350, min(350, overviewScroll.frame.midY - open.frame.midY)))
         }
         XCTAssertTrue(app.windows.firstMatch.frame.contains(open.frame), app.debugDescription)
@@ -829,7 +829,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         let sheet = app.sheets.firstMatch
         let previousPicker = sheet.popUpButtons["model-update-previous"]
         XCTAssertTrue(previousPicker.waitForExistence(timeout: 15)); previousPicker.click()
-        app.menuItems.matching(NSPredicate(format: "label CONTAINS %@", previous.path)).firstMatch.click()
+        let previousItem = previousPicker.menuItems.element(boundBy: 1)
+        XCTAssertTrue(previousItem.waitForExistence(timeout: 10))
+        previousItem.click()
         let download = sheet.buttons["model-update-download"]
         let mainPicker = sheet.popUpButtons["model-update-gguf-file"]
         XCTAssertTrue(mainPicker.waitForExistence(timeout: 15))
@@ -854,6 +856,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(fetched["additional_files"] as? [String], [projector, second].sorted())
         let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: support.appendingPathComponent("model-updates.json"))) as? [[String: Any]])
         XCTAssertEqual(saved.first?["stage"] as? String, "awaitingPreparation")
+        let savedReview = try XCTUnwrap(saved.first?["review"] as? [String: Any])
+        let oldSelection = try XCTUnwrap(savedReview["previous"] as? [String: Any])
+        XCTAssertEqual(oldSelection["path"] as? String, previous.path)
         XCTAssertTrue(fm.fileExists(atPath: previous.appendingPathComponent("model.safetensors").path))
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"--confirm\", \"--require-completion\""))
