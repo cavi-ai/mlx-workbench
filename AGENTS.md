@@ -34,7 +34,8 @@ server.
 - `mlx-mac/`: the native app. `project.pbxproj` has an explicit file list:
   register new sources there. `make test-swift` runs the XCTest suite;
   `make dmg` packages a distribution build (no source path compiled in);
-  `DEVELOPER_TEAM=<team id>` signs, notarizes and staples it. The app icon
+  `DEVELOPER_TEAM=<team id>` and `DEVELOPER_ID_IDENTITY=<certificate SHA-1>`
+  sign, notarize and staple it. The app icon
   master is `mlx-mac/assets/app-icon.svg`.
 - `.run/`, `.venv/`, `convert-queue.json`: generated runtime state, never a
   source of truth.

@@ -33,6 +33,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ### Fixed
 
+- Builds: distribution archives use the imported Developer ID certificate instead of requesting a development certificate.
 - Settings: engine detection recognizes the configured checkout and preserves its path when another engine cannot be found.
 - Health: Doctor checks explicit client files, receipts and selected cache locations instead of walking the app's working directory.
 

@@ -91,6 +91,7 @@ class DmgTargetTests(unittest.TestCase):
                 ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Developer ID Application: Example (OTHER12345)"', False, True),
                 ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Developer ID Application: Example (TEAM123456)" (CSSMERR_TP_CERT_EXPIRED)', False, True),
                 ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Developer ID Application: Example (TEAM123456)"', True, True),
+                ("cDEy", "password", '\n'.join('  1) ' + c * 40 + ' "Developer ID Application: Example (TEAM123456)"' for c in ("A", "B")), False, True),
             ]
             for index, (certificate, password, identities, accepted, imported) in enumerate(cases):
                 with self.subTest(case=index):
@@ -98,13 +99,19 @@ class DmgTargetTests(unittest.TestCase):
                     runner_temp = root / f"runner-{index}"
                     runner_temp.mkdir()
                     env = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
-                           "RUNNER_TEMP": str(runner_temp), "GITHUB_ENV": str(root / "env"),
+                           "RUNNER_TEMP": str(runner_temp), "GITHUB_ENV": str(root / f"env-{index}"),
                            "DEVELOPER_TEAM": "TEAM123456", "CALLS": str(calls),
                            "IDENTITIES": identities, "DEVELOPER_ID_P12_BASE64": certificate,
                            "DEVELOPER_ID_P12_PASSWORD": password}
                     result = subprocess.run(["/bin/bash", "-c", script], env=env,
                                             capture_output=True, text=True)
                     self.assertEqual(result.returncode == 0, accepted, result.stderr + result.stdout)
+                    environment_file = root / f"env-{index}"
+                    exported = environment_file.read_text() if environment_file.exists() else ""
+                    if accepted:
+                        self.assertIn("DEVELOPER_ID_IDENTITY=" + "A" * 40 + "\n", exported)
+                    else:
+                        self.assertNotIn("DEVELOPER_ID_IDENTITY=", exported)
                     commands = calls.read_text().splitlines() if calls.exists() else []
                     self.assertEqual("import" in commands, imported)
                     self.assertNotIn(password if password else "unused", result.stdout + result.stderr)
@@ -139,8 +146,8 @@ class DmgTargetTests(unittest.TestCase):
     def test_developer_id_dmg_ships_the_notarized_stapled_export(self):
         target = MAKEFILE.split("\nbuild-swift-devid:", 1)[1].split("\n\n", 1)[0]
         for phrase in (
-            "DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic",
-            "-allowProvisioningUpdates",
+            'DEVELOPMENT_TEAM="$(DEVELOPER_TEAM)" CODE_SIGN_STYLE=Manual',
+            'CODE_SIGN_IDENTITY="$(DEVELOPER_ID_IDENTITY)"',
             "method -string developer-id",
             'teamID -string "$(DEVELOPER_TEAM)"',
             "destination -string upload",
@@ -170,9 +177,10 @@ class DmgTargetTests(unittest.TestCase):
         # The updater matches nightly assets by name and commit.
         self.assertIn("mlx-workbench-nightly-$(DIST_COMMIT)", MAKEFILE)
 
-    def test_ci_signs_with_an_api_key_on_every_xcodebuild_step(self):
+    def test_api_auth_is_reserved_for_notarization(self):
         target = MAKEFILE.split("\nbuild-swift-devid:", 1)[1].split("\n\n", 1)[0]
-        self.assertEqual(target.count("$(XCODE_AUTH)"), 3)
+        self.assertEqual(target.count("$(XCODE_AUTH)"), 2)
+        self.assertNotIn("-allowProvisioningUpdates", target)
         self.assertIn('-authenticationKeyPath "$(ASC_KEY_PATH)"', MAKEFILE)
 
     def test_signed_dmg_workflow_publishes_what_the_updater_reads(self):
@@ -219,6 +227,15 @@ class DmgTargetTests(unittest.TestCase):
                 env = dict(os.environ, CHANNEL="candidate", CANDIDATE_COMMIT=invalid, GITHUB_OUTPUT=str(output))
                 result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, timeout=5)
                 self.assertNotEqual(result.returncode, 0)
+            for channel in ("nightly", "release"):
+                with self.subTest(candidate_commit_with_channel=channel):
+                    output.write_text("")
+                    env = dict(os.environ, CHANNEL=channel, CANDIDATE_COMMIT=commit,
+                               RELEASE_TAG="v3.2.1", GITHUB_OUTPUT=str(output))
+                    result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b"candidate_commit requires channel=candidate", result.stderr)
+                    self.assertEqual(output.read_text(), "")
         signing_source = (SWIFT_SOURCES / "Services/ReleaseUpdater.swift").read_text()
         configured_team = re.search(r'static let teamIdentifier = "([A-Z0-9]{10})"', signing_source)
         self.assertIsNotNone(configured_team)
