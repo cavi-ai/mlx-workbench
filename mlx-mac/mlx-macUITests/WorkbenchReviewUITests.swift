@@ -851,7 +851,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         download.click()
         let convert = sheet.buttons["model-update-confirm-preparation"]
         XCTAssertTrue(convert.waitForExistence(timeout: 30))
-        XCTAssertTrue(convert.isEnabled)
+        let preparationReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: convert)
+        XCTAssertEqual(XCTWaiter.wait(for: [preparationReady], timeout: 20), .completed)
         XCTAssertFalse(sheet.popUpButtons["model-update-gguf-file"].isEnabled)
         let fetched = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("update-fetch-job.json"))) as? [String: Any])
         XCTAssertEqual(fetched["file"] as? String, main)
