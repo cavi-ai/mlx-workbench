@@ -836,12 +836,14 @@ final class WorkbenchReviewUITests: XCTestCase {
         let mainPicker = sheet.popUpButtons["model-update-gguf-file"]
         XCTAssertTrue(mainPicker.waitForExistence(timeout: 15))
         XCTAssertFalse(download.isEnabled)
-        mainPicker.click(); app.menuItems[main].firstMatch.click()
+        mainPicker.click(); mainPicker.menuItems.element(boundBy: 1).click()
         let projectorPicker = sheet.popUpButtons["model-update-projector"]
         XCTAssertTrue(projectorPicker.waitForExistence(timeout: 15))
+        let projectorReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: projectorPicker)
+        XCTAssertEqual(XCTWaiter.wait(for: [projectorReady], timeout: 20), .completed)
         XCTAssertFalse(download.isEnabled, "A vision update must preserve its projector before downloading")
         projectorPicker.click()
-        app.menuItems[projector].firstMatch.click()
+        projectorPicker.menuItems.element(boundBy: 1).click()
         XCTAssertTrue(download.waitForExistence(timeout: 15))
         let enabled = NSPredicate(format: "enabled == true")
         expectation(for: enabled, evaluatedWith: download); waitForExpectations(timeout: 20)
