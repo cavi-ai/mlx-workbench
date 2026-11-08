@@ -11,18 +11,30 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-11-07
 ### Added
 
+- Serving: a shared inventory shows discovered engine and local provider services, reported model locations, residency and observed memory, with reviewed Stop and Unload controls.
+- Menu bar: observed models, serving controls, Settings and the main window remain accessible after closing the last window.
+- Watch: model updates review pinned revisions, GGUF bundles and vision projectors, prepare conversions, verify replacement Strata profiles, resume interrupted work and offer recoverable cleanup of previous or failed files.
+- Run: memory policy review covers idle unloading, reserves, pressure handling and supported Strata budgets. Vision endpoints can opt into reuse of image features.
 - Quality Gate: a text LLM that passes verification gets an agent-readiness check, a tool-call round trip over Chat Completions, Anthropic Messages and OpenAI Responses plus a 16,384-token prompt, shown in Prepare and the Library inspector without changing the verdict.
 - Compare: **Classification** grades classification models such as Laya against expected answers to choice, score and true-or-false questions, and **Hosted & mixed** runs them beside System One servers such as Kev, added in Library as **System One** hosts; the Library inspector lists each classification model's recorded results beside the other lanes'.
 - Prepare: 5- and 6-bit conversions where the model's converter supports them, including Laya at 6 bits, and **Settings → Default bits** offers 4, 5, 6 and 8.
 
 ### Changed
 
-- Engine: `mlx-agent` moves to 0.11.1, which requires Python 3.11 or later, serves the Anthropic Messages and OpenAI Responses APIs from JIT gateways, gives every Chat Completions tool call an id and drops the end-of-sequence token from unstreamed answers, converts Qwen3.5-family GGUFs to MLX with the matching vision projector from the same folder, generates TripoSG meshes on the upstream octree at resolution 32 to 512, lists unquantized TripoSG conversions in scans, and converts at 5 and 6 bits where the converter supports them.
+- Engine: `mlx-agent` advances to 0.12.0 with cross-folder service discovery, pinned source downloads, conversion completion checks and Anthropic Messages and OpenAI Responses support in JIT gateways. Python 3.11 or later is required.
+- Storage: new downloads and prepared updates use managed model folders; existing provider caches stay in place. Scans use selected locations and the managed output folder, with no automatic expansion from empty root lists.
 - Compare: **3D generation** accepts resolution 512, 1024 and 1536; new entries and the built-in **3D shape** set leave resolution and steps empty, so each model runs at its own defaults; the mesh preview frames the whole mesh, stops zooming in at its bounds without clipping the surface, and opens full screen from its corner button.
 - Discover: **Browse candidates** opens on the most downloaded MLX models, four per role in one list in Hugging Face order, offers **Trending**, **Newest** and **Search Hugging Face**, leaves out GGUF-only repositories, marks the first tool-calling chat model that fits this Mac **Recommended for this Mac**, and inspects only the repositories it shows.
 - Library: weights that need converting offer **Convert to MLX…** instead of **Prepare to run**, and vision projector files and drafters no port converts offer no conversion.
+
+### Fixed
+
+- Settings: engine detection recognizes the configured checkout and preserves its path when another engine cannot be found.
+- Health: Doctor checks explicit client files, receipts and selected cache locations instead of walking the app's working directory.
 
 ## [0.7.1] - 2026-10-22
 ### Fixed
@@ -511,7 +523,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.8.0
 [0.7.1]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.1
 [0.7.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.0
 [0.6.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.6.0
