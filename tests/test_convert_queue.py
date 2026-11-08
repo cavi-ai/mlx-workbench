@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_workbench import bridge, convert_queue
+from mlx_workbench import bridge
+from tests.engine_queue import convert_queue
 
 
 def envelope(status="ok", data=None, error=None):
@@ -165,7 +166,8 @@ class ConvertQueueTests(unittest.TestCase):
         store.save(items)
         self.assertEqual(store.load(), items)
         payload = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], "1.1")
+        self.assertIn(convert_queue.QUEUE_SCHEMA_VERSION, ("1.1", "1.2"))
+        self.assertEqual(payload["schema_version"], convert_queue.QUEUE_SCHEMA_VERSION)
 
     def test_store_migrates_schema_1_0_items_in_memory(self):
         path = self.root / "legacy" / "convert-queue.json"
@@ -215,10 +217,21 @@ class ConvertQueueTests(unittest.TestCase):
             },
         }
         store = convert_queue.QueueStore(path)
-
-        store.save([item])
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "schema_version": "1.1",
+            "items": [item],
+        }), encoding="utf-8")
 
         self.assertEqual(store.load(), [item])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["schema_version"], "1.1")
+
+        store.save([item])
+        self.assertEqual(store.load(), [item])
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8"))["schema_version"],
+            convert_queue.QUEUE_SCHEMA_VERSION,
+        )
 
     def test_store_rejects_invalid_state_failure_combinations(self):
         base = {
