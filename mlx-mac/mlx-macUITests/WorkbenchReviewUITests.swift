@@ -813,6 +813,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: [alert]).write(to: support.appendingPathComponent("watch-alerts.json"))
         launch(appearance: "Dark", route: "models", isolatedHome: true)
         XCTAssertTrue(app.staticTexts["Vision-language"].firstMatch.waitForExistence(timeout: 20))
+        resizeWindow(width: 1050, height: 920)
         select("Overview")
         let open = app.buttons["Review update"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15))
@@ -821,8 +822,10 @@ final class WorkbenchReviewUITests: XCTestCase {
         for _ in 0..<8 where !open.isHittable || open.frame.maxY > overviewScroll.frame.maxY || open.frame.minY < overviewScroll.frame.minY {
             wheel.scroll(byDeltaX: 0, deltaY: max(-350, min(350, overviewScroll.frame.midY - open.frame.midY)))
         }
-        XCTAssertTrue(open.isHittable, app.debugDescription)
-        open.click()
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(open.frame), app.debugDescription)
+        let frame = open.frame, window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY)).click()
         let sheet = app.sheets.firstMatch
         let previousPicker = sheet.popUpButtons["model-update-previous"]
         XCTAssertTrue(previousPicker.waitForExistence(timeout: 15)); previousPicker.click()
