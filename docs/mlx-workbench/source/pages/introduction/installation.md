@@ -58,7 +58,7 @@ make start
 
 `make start`, `make run` and `make open` build the app with Xcode and open it. `make build-swift` builds the Release app without opening it. A source build finds its own `vendor/mlx-agent` without configuration.
 
-`make dmg` packages a distribution build as `MLX Workbench.app` on a disk image under `.release/`. It is ad-hoc signed unless `DEVELOPER_TEAM=<team id>` is set, which archives, exports with Developer ID, notarizes and staples.
+`make dmg` packages a distribution build as `MLX Workbench.app` on a disk image under `.release/`. It is ad-hoc signed by default. Set `DEVELOPER_TEAM=<team id>` and `DEVELOPER_ID_IDENTITY=<certificate SHA-1>` to archive with an installed Developer ID identity, notarize and staple.
 
 ## Optional runtimes
 

@@ -321,12 +321,10 @@ build-swift-dist: prepare-runtime-bundle
 		-derivedDataPath $(MLX_DIST_DD) $(DIST_IDENTITY) $(RUNTIME_BUNDLE_SETTINGS) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' build
 
-# Developer ID build for the DMG: Xcode archives the distribution build,
-# exports it with the team's Developer ID certificate (cloud-managed or local),
-# notarizes it through the signed-in Xcode account, and staples the ticket.
-# CI passes an App Store Connect API key (ASC_KEY_PATH/ID, ASC_ISSUER_ID)
-# instead of a signed-in account.
+# Developer ID archives use an installed certificate identity. Only notarization
+# uses App Store Connect authentication; archiving never provisions certificates.
 DEVELOPER_TEAM ?=
+DEVELOPER_ID_IDENTITY ?=
 NOTARY_ATTEMPTS ?= 40
 MLX_DIST_ARCHIVE   = $(MLX_DIST_DD)/mlx-workbench.xcarchive
 MLX_DIST_NOTARIZED = $(MLX_DIST_DD)/notarized/mlx-workbench.app
@@ -337,24 +335,27 @@ XCODE_AUTH = $(if $(ASC_KEY_PATH),-authenticationKeyPath "$(ASC_KEY_PATH)" -auth
 
 build-swift-devid: prepare-runtime-bundle
 	@if [ -z "$(DEVELOPER_TEAM)" ]; then echo "DEVELOPER_TEAM is required" >&2; exit 2; fi
+	@if ! [[ "$(DEVELOPER_ID_IDENTITY)" =~ ^[0-9A-Fa-f]{40}$$ ]]; then echo "DEVELOPER_ID_IDENTITY must be the SHA-1 of an installed Developer ID Application identity" >&2; exit 2; fi
 	@case "$(DMG_CHANNEL)" in release|nightly) ;; *) echo "DMG_CHANNEL must be release or nightly" >&2; exit 2 ;; esac
 	@rm -rf "$(MLX_DIST_ARCHIVE)" "$(MLX_DIST_DD)/upload" "$(MLX_DIST_DD)/notarized"
 	@mkdir -p "$(MLX_DIST_DD)"
 	@plutil -create xml1 "$(MLX_DIST_DD)/ExportOptions.plist"
 	@plutil -insert method -string developer-id "$(MLX_DIST_DD)/ExportOptions.plist"
-	@plutil -insert signingStyle -string automatic "$(MLX_DIST_DD)/ExportOptions.plist"
+	@plutil -insert signingStyle -string manual "$(MLX_DIST_DD)/ExportOptions.plist"
+	@plutil -insert signingCertificate -string "$(DEVELOPER_ID_IDENTITY)" "$(MLX_DIST_DD)/ExportOptions.plist"
 	@plutil -insert teamID -string "$(DEVELOPER_TEAM)" "$(MLX_DIST_DD)/ExportOptions.plist"
 	@plutil -insert destination -string upload "$(MLX_DIST_DD)/ExportOptions.plist"
 	@echo "Archiving mlx-workbench (Swift, Developer ID)..."
 	@xcodebuild archive -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 \
-		-archivePath "$(MLX_DIST_ARCHIVE)" -derivedDataPath $(MLX_DIST_DD) \
-		DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic $(DIST_IDENTITY) $(RUNTIME_BUNDLE_SETTINGS) \
-		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' \
-		-allowProvisioningUpdates $(XCODE_AUTH)
+		-archivePath "$(MLX_DIST_ARCHIVE)" -derivedDataPath "$(MLX_DIST_DD)" \
+		DEVELOPMENT_TEAM="$(DEVELOPER_TEAM)" CODE_SIGN_STYLE=Manual \
+		CODE_SIGN_IDENTITY="$(DEVELOPER_ID_IDENTITY)" ENABLE_HARDENED_RUNTIME=YES \
+		CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO $(DIST_IDENTITY) $(RUNTIME_BUNDLE_SETTINGS) \
+		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION'
 	@xcodebuild -exportArchive -archivePath "$(MLX_DIST_ARCHIVE)" \
 		-exportOptionsPlist "$(MLX_DIST_DD)/ExportOptions.plist" \
-		-exportPath "$(MLX_DIST_DD)/upload" -allowProvisioningUpdates $(XCODE_AUTH)
+		-exportPath "$(MLX_DIST_DD)/upload" $(XCODE_AUTH)
 	@for i in $$(seq 1 $(NOTARY_ATTEMPTS)); do \
 		if xcodebuild -exportNotarizedApp -archivePath "$(MLX_DIST_ARCHIVE)" \
 			-exportPath "$(MLX_DIST_DD)/notarized" $(XCODE_AUTH) > /dev/null 2>&1; then \
@@ -367,7 +368,7 @@ build-swift-devid: prepare-runtime-bundle
 	exit 1
 
 # Package the distribution app into a DMG: ad-hoc signed by default, or the
-# notarized Developer ID export with DEVELOPER_TEAM=<team id>.
+# notarized Developer ID export with DEVELOPER_TEAM and DEVELOPER_ID_IDENTITY.
 DMG_DIR       := .release
 DMG_VOLUME    := MLX Workbench
 DMG_APP       := MLX Workbench.app

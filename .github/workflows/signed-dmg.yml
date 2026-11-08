@@ -19,7 +19,7 @@ on:
         type: choice
         options: [nightly, release, candidate]
       candidate_commit:
-        description: Full commit SHA for an unpublished candidate
+        description: Full commit SHA for channel=candidate; leave empty for release or nightly
         required: false
         type: string
 
@@ -47,6 +47,10 @@ jobs:
           CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
         run: |
           set -euo pipefail
+          if [[ -n "$CANDIDATE_COMMIT" && "$CHANNEL" != "candidate" ]]; then
+            echo "::error::candidate_commit requires channel=candidate" >&2
+            exit 2
+          fi
           build_channel="$CHANNEL"
           if [[ "$CHANNEL" == "candidate" ]]; then
             if ! [[ "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
@@ -158,9 +162,12 @@ jobs:
           python3 - <<'PY'
           import os, re, shlex, subprocess
           team = re.escape(os.environ["DEVELOPER_TEAM"])
-          pattern = rf'^\s*\d+\) [0-9A-Fa-f]{{40}} "Developer ID Application: .+ \({team}\)"$'
-          if len(re.findall(pattern, os.environ["SIGNING_IDENTITIES"], re.MULTILINE)) != 1:
+          pattern = rf'^\s*\d+\) ([0-9A-Fa-f]{{40}}) "Developer ID Application: .+ \({team}\)"$'
+          identities = re.findall(pattern, os.environ["SIGNING_IDENTITIES"], re.MULTILINE)
+          if len(identities) != 1:
               raise SystemExit("Expected one valid Developer ID Application identity for the configured team")
+          with open(os.environ["GITHUB_ENV"], "a") as environment:
+              environment.write("DEVELOPER_ID_IDENTITY=" + identities[0] + "\n")
           current = subprocess.check_output(["security", "list-keychains", "-d", "user"], text=True)
           keychains = dict.fromkeys([os.environ["SIGNING_KEYCHAIN"], *shlex.split(current)])
           subprocess.run(["security", "list-keychains", "-d", "user", "-s", *keychains], check=True)
@@ -188,6 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$BUILD_CHANNEL" \
+            DEVELOPER_ID_IDENTITY="$DEVELOPER_ID_IDENTITY" \
             MLX_SWIFT_DD="$RUNNER_TEMP/mlx-build" \
             ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" ASC_KEY_ID="$ASC_KEY_ID" ASC_ISSUER_ID="$ASC_ISSUER_ID"
 
