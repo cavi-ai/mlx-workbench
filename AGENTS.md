@@ -108,7 +108,10 @@ Behavior detail for each area is in the operator guide; this lists owners.
 - Studies and Training: `LabCoordinator`, `TrainingSession`.
 - Watch, notifications, setup and updates: `WatchCoordinator`,
   `AlertNotifier`, `SetupCoordinator`, `UpdateCoordinator` (checkout
-  installs), `Services/ReleaseUpdater.swift` (installed builds).
+  installs), `Services/ReleaseUpdater.swift` (installed builds). Model revision updates use
+  `ModelUpdateCoordinator`, `AppHostModelUpdates`, `AppHostModelUpdateSources`
+  and `AppHostModelUpdatePreparation`; downloads and conversion completion
+  remain engine-owned, and `ManagedModelInstallStore` records source evidence.
 - Workflow evidence: `WorkflowReport` (schema 1) in `workflow-evidence.json`,
   `AgentTaskAdvisor`, `LineageIndexer`.
 

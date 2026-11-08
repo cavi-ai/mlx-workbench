@@ -10,6 +10,10 @@ struct ManagedModelInstall: Codable, Equatable, Sendable {
     let installedAt: Date
     var file: String? = nil
     var subfolder: String? = nil
+    var preparation: ModelUpdateConvertedOrigin? = nil
+    var additionalFiles: [String]? = nil
+    var projectorFile: String? = nil
+    var requiresProjector: Bool? = nil
 }
 
 /// Provenance for completed Workbench downloads. Provider caches stay in place.
@@ -55,6 +59,23 @@ actor ManagedModelInstallStore {
         return destination.appendingPathComponent(component).path
     }
 
+    nonisolated static func preparedDirectory(root: String, source: IntakeSource, recipe: ModelUpdateConversionRecipe) -> String? {
+        guard ModelUpdateReview.isCommit(source.fetchRevision),
+              (try? sourceReference(repo: source.repo, file: source.file, subfolder: source.subfolder)) != nil,
+              (try? recipe.validate()) != nil else { return nil }
+        let parts = source.repo.split(separator: "/").map(String.init)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let encoded = try? encoder.encode(recipe)
+        guard let encoded else { return nil }
+        var digest = SHA256(); digest.update(data: encoded)
+        digest.update(data: Data((source.file ?? source.subfolder ?? "").utf8))
+        let selection = digest.finalize().map { String(format: "%02x", $0) }.joined()
+        return URL(fileURLWithPath: root).appendingPathComponent("managed-prepared")
+            .appendingPathComponent(parts[0]).appendingPathComponent(parts[1])
+            .appendingPathComponent("recipe-" + String(selection.prefix(32)))
+            .appendingPathComponent(source.fetchRevision.lowercased()).path
+    }
+
     struct PresentationIdentity: Equatable {
         let family: String
         let displayName: String
@@ -63,13 +84,13 @@ actor ManagedModelInstallStore {
     /// Presentation only. Updates and cleanup still require the recorded signature and source selection.
     nonisolated static func presentationIdentity(path: String) -> PresentationIdentity? {
         let parts = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
-        for marker in parts.indices.reversed() where parts[marker] == "managed" {
+        for marker in parts.indices.reversed() where ["managed", "managed-prepared"].contains(parts[marker]) {
             guard marker + 3 < parts.count else { continue }
             let repo = parts[marker + 1] + "/" + parts[marker + 2]
             guard (try? sourceReference(repo: repo, file: nil, subfolder: nil)) != nil else { continue }
             var revisionIndex = marker + 3
-            if parts[revisionIndex].hasPrefix("selection-") {
-                guard parts[revisionIndex].range(of: "^selection-[a-f0-9]{32}$", options: .regularExpression) != nil else { continue }
+            if parts[revisionIndex].hasPrefix("selection-") || parts[revisionIndex].hasPrefix("recipe-") {
+                guard parts[revisionIndex].range(of: "^(selection|recipe)-[a-f0-9]{32}$", options: .regularExpression) != nil else { continue }
                 revisionIndex += 1
             }
             guard revisionIndex < parts.count else { continue }
@@ -124,6 +145,14 @@ actor ManagedModelInstallStore {
     nonisolated static func matchesManagedSourcePath(_ install: ManagedModelInstall, root: String) -> Bool {
         let source = IntakeSource(input: install.repo, repo: install.repo, revision: install.revision,
             file: install.file, subfolder: install.subfolder, url: "https://huggingface.co/\(install.repo)")
+        if let preparation = install.preparation {
+            guard let output = preparedDirectory(root: root, source: source, recipe: preparation.recipe),
+                  install.path == output, !preparation.sourceSignature.isEmpty,
+                  preparation.conversionReceipt.hasPrefix("/"),
+                  let directory = directory(root: root, source: source) else { return false }
+            let input = (install.file ?? install.subfolder).map { URL(fileURLWithPath: directory).appendingPathComponent($0).path } ?? directory
+            return preparation.sourcePath == input
+        }
         guard let directory = directory(root: root, source: source),
               (try? sourceReference(repo: install.repo, file: install.file, subfolder: install.subfolder)) != nil else { return false }
         let suffix = install.file ?? install.subfolder

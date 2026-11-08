@@ -1109,6 +1109,10 @@ class AppHost {
         occupancy.add(recommendationPreferences.preferredModelIDs.values, for: .preference)
         occupancy.add(modelPurposes.protectedPaths, for: .retention)
         occupancy.add([verification.activeModelPath].compactMap { $0 }, for: .verification)
+        if let id = servingProfiles.activeID, let profile = servingProfiles.profiles.first(where: { $0.id == id }) {
+            occupancy.add([profile.modelPath], for: .verification)
+        }
+        occupancy.add(modelUpdates.protectedPaths, for: .modelUpdate)
         occupancy.add(inferenceTasks.activeModelPaths, for: .inferenceTask)
         occupancy.add([endpointTest.activeServer?.modelIdentity].compactMap { $0 }, for: .promptTest)
         if let id = hostedComparison.activeRunID, let record = hostedComparison.records.first(where: { $0.id == id }) {

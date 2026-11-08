@@ -821,8 +821,132 @@ final class VerificationCoordinatorTests: XCTestCase {
         await assertAsyncThrows(try await coordinator.selectChoice(choice, modelPath: original.modelPath))
         XCTAssertNil(coordinator.rename(original, name: "Other"))
         XCTAssertFalse(coordinator.remove(original))
+        await assertAsyncThrows(try await coordinator.createUpdateReplacements(expected: [original], modelPath: "/Models/revision"))
         XCTAssertEqual(try store.load(), [original])
         await verification.value
+    }
+
+    func testProfileRevisionUpdateCreatesFreshVerifiedCopiesAndKeepsOriginals() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("update-profiles.json"))
+        var first = managementProfile()
+        first.sourceRunID = UUID(); first.sourceLaneID = "old-lane"
+        var second = managementProfile()
+        second.name = "Another setting"; second.options.contextTokens = 16384
+        second.verification = nil
+        try store.replaceAll([first, second])
+        let recorder = LifecycleRecorder()
+        let coordinator = ServingProfileCoordinator(store: store, probe: { options in
+            Self.updateProfileProbe(options: options, beforePreview: { path in recorder.record(path) })
+        })
+        let replacements = try await coordinator.createUpdateReplacements(expected: [first, second, first], modelPath: "/Models/revision")
+        XCTAssertEqual(Set(replacements.keys), Set([first.id, second.id]))
+        let saved = try store.load()
+        XCTAssertEqual(saved.count, 4)
+        XCTAssertEqual(saved.first { $0.id == first.id }, first)
+        XCTAssertEqual(saved.first { $0.id == second.id }, second)
+        for source in [first, second] {
+            let replacement = try XCTUnwrap(replacements[source.id])
+            XCTAssertNotEqual(replacement.id, source.id)
+            XCTAssertEqual(replacement.name, source.name)
+            XCTAssertEqual(replacement.modelPath, "/Models/revision")
+            XCTAssertEqual(replacement.options, source.options)
+            XCTAssertNil(replacement.sourceRunID); XCTAssertNil(replacement.sourceLaneID)
+            XCTAssertTrue(replacement.hasPassedVerification)
+            XCTAssertEqual(replacement.verification?.modelFingerprint, "fingerprint:/Models/revision")
+            XCTAssertEqual(replacement.verification?.runtimeFingerprint, "update-runtime")
+            XCTAssertEqual(replacement.verification?.answerBudget, 1024)
+            XCTAssertEqual(replacement.verification?.canaries.count, CanarySuite.cases.count)
+        }
+        XCTAssertEqual(recorder.events, ["/Models/revision", "/Models/revision"])
+        XCTAssertNil(coordinator.activeID); XCTAssertNil(coordinator.lastError)
+    }
+
+    func testProfileRevisionUpdateRejectsSourceDriftBeforeCreatingCopies() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("update-profiles.json"))
+        let original = managementProfile()
+        var changed = original; changed.options.contextTokens = 32768
+        try store.replaceAll([changed])
+        let coordinator = managementCoordinator(store)
+        await assertAsyncThrows(try await coordinator.createUpdateReplacements(expected: [original], modelPath: "/Models/revision"))
+        XCTAssertEqual(try store.load(), [changed])
+        XCTAssertEqual(coordinator.profiles, [changed])
+        XCTAssertNotNil(coordinator.lastError)
+    }
+
+    func testProfileRevisionUpdateDoesNotPublishProofAfterSourceChangesDuringCanaries() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("update-profiles.json"))
+        let original = managementProfile()
+        try store.replaceAll([original])
+        let finalCanary = try XCTUnwrap(CanarySuite.cases.last?.id)
+        let coordinator = ServingProfileCoordinator(store: store, probe: { options in
+            Self.updateProfileProbe(options: options, beforeSample: { id in
+                if id == finalCanary {
+                    try store.update(id: original.id, keyPath: \.id) { source in
+                        var changed = source; changed.name = "Changed during verification"; return changed
+                    }
+                }
+            })
+        })
+        await assertAsyncThrows(try await coordinator.createUpdateReplacements(expected: [original], modelPath: "/Models/revision"))
+        let saved = try store.load()
+        XCTAssertEqual(saved.count, 2)
+        XCTAssertEqual(saved.first { $0.id == original.id }?.name, "Changed during verification")
+        let replacement = try XCTUnwrap(saved.first { $0.id != original.id })
+        XCTAssertNil(replacement.verification)
+        XCTAssertFalse(replacement.hasPassedVerification)
+        XCTAssertEqual(coordinator.profiles, saved)
+        XCTAssertTrue(coordinator.lastError?.contains("source profile changed") == true)
+    }
+
+    func testProfileRevisionUpdateKeepsFailedNewCanariesVisibleWithoutChangingOldProof() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("update-profiles.json"))
+        let original = managementProfile()
+        try store.replaceAll([original])
+        let coordinator = ServingProfileCoordinator(store: store, probe: { options in
+            Self.updateProfileProbe(options: options, failingCanary: "echo")
+        })
+        await assertAsyncThrows(try await coordinator.createUpdateReplacements(expected: [original], modelPath: "/Models/revision"))
+        let saved = try store.load()
+        XCTAssertEqual(saved.first { $0.id == original.id }, original)
+        let failed = try XCTUnwrap(saved.first { $0.id != original.id })
+        XCTAssertEqual(failed.modelPath, "/Models/revision")
+        XCTAssertFalse(failed.hasPassedVerification)
+        XCTAssertEqual(failed.verification?.canaries.first { $0.id == "echo" }?.passed, false)
+        XCTAssertNotNil(coordinator.lastError)
+    }
+
+    func testProfileRevisionUpdateRejectsChangedVerifierSettings() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("update-profiles.json"))
+        let original = managementProfile()
+        try store.replaceAll([original])
+        let coordinator = ServingProfileCoordinator(store: store, probe: { options in
+            var changed = options; changed.contextTokens = 32768
+            return Self.updateProfileProbe(options: changed)
+        })
+        await assertAsyncThrows(try await coordinator.createUpdateReplacements(expected: [original], modelPath: "/Models/revision"))
+        XCTAssertEqual(try store.load().first { $0.id == original.id }, original)
+        XCTAssertNil(try store.load().first { $0.id != original.id }?.verification)
+        XCTAssertTrue(coordinator.lastError?.contains("selected settings") == true)
+    }
+
+    private nonisolated static func updateProfileProbe(options: StrataComparisonOptions,
+        beforePreview: @escaping @Sendable (String) async throws -> Void = { _ in },
+        beforeSample: @escaping @Sendable (String) async throws -> Void = { _ in },
+        failingCanary: String? = nil) -> ServeProbe {
+        ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "update-preview" }, start: { _, _, _ in }, stop: { _ in },
+            reviewedPreview: { path, _ in
+                try await beforePreview(path)
+                var plan: [String: Any] = ["runtime": "strata", "preview_hash": "update-preview",
+                    "strata_model_fingerprint": "fingerprint:" + path, "strata_runtime_fingerprint": "update-runtime",
+                    "strata_speculation": options.speculation, "strata_context_tokens": options.contextTokens]
+                if let expert = options.expertMemoryGB { plan["strata_expert_memory_gb"] = expert }
+                return ProbeServePreview(hash: "update-preview", evidence: ProbeServingEvidence(plan: plan))
+            }), prober: StubVerificationProber(responder: { id in
+                try await beforeSample(id)
+                let sample = Self.passingSample(id)
+                return ProbeSample(text: id == failingCanary ? "Wrong answer" : sample.text, completionTokens: 50,
+                    timeToFirstTokenSeconds: 0.1, durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+            }), readyPollIntervalNanoseconds: 1_000_000, pickPort: { 9999 })
     }
 
     private func managementProfile() -> ServingProfile {

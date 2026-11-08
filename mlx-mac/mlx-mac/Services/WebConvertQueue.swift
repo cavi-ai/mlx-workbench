@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 /// One item in the web UI's durable convert queue, shown read-only in the
 /// native app. Field contract mirrors mlx_workbench/convert_queue.py and is
@@ -51,7 +52,8 @@ enum WebConvertQueue {
     }
 
     static let fileName = "convert-queue.json"
-    static let currentSchemaVersion = "1.1"
+    static let currentSchemaVersion = "1.2"
+    static let previousSchemaVersion = "1.1"
     static let legacySchemaVersion = "1.0"
 
     /// Mirrors convert_queue.queue_path: beside an explicit
@@ -117,6 +119,7 @@ enum WebConvertQueue {
         "id", "kind", "preview_hash", "q_bits", "out", "path", "repo",
         "hf_cache", "label", "state", "failure",
     ]
+    private static let preparationKeys: Set<String> = ["backend", "model_type", "subfolder", "source_path", "projector", "require_projector", "fetch_receipt", "dependency_fetch_receipts", "require_completion", "downloads_dir", "attempt_id"]
     private static let failureKeys: Set<String> = ["code", "message", "remediation"]
 
     static func parse(_ data: Data) throws -> [WebQueueItem] {
@@ -133,22 +136,22 @@ enum WebConvertQueue {
             throw LoadError.invalidSchema("queue state fields do not match schema")
         }
         guard let version = payload["schema_version"] as? String,
-              version == currentSchemaVersion || version == legacySchemaVersion else {
+              version == currentSchemaVersion || version == previousSchemaVersion || version == legacySchemaVersion else {
             throw LoadError.invalidSchema("queue schema version is unsupported")
         }
         let legacy = version == legacySchemaVersion
         guard let rawItems = payload["items"] as? [Any] else {
             throw LoadError.invalidSchema("queue items must be a list")
         }
-        return try rawItems.map { try parseItem($0, legacy: legacy) }
+        return try rawItems.map { try parseItem($0, legacy: legacy, preparation: version == currentSchemaVersion) }
     }
 
-    private static func parseItem(_ raw: Any, legacy: Bool) throws -> WebQueueItem {
+    private static func parseItem(_ raw: Any, legacy: Bool, preparation: Bool) throws -> WebQueueItem {
         guard let item = raw as? [String: Any] else {
             throw LoadError.invalidSchema("queue item fields do not match schema")
         }
         let expected = legacy ? itemKeys.subtracting(["failure"]) : itemKeys
-        guard Set(item.keys) == expected else {
+        guard expected.isSubset(of: Set(item.keys)), Set(item.keys).isSubset(of: expected.union(preparation ? preparationKeys : [])) else {
             throw LoadError.invalidSchema("queue item fields do not match schema")
         }
         guard let id = item["id"] as? String,
@@ -165,9 +168,27 @@ enum WebConvertQueue {
             throw LoadError.invalidSchema("queue item preview_hash is invalid")
         }
         guard let qBitsValue = item["q_bits"], !(qBitsValue is Bool),
-              let qBits = (qBitsValue as? NSNumber)?.intValue,
-              Config.Q_BITS_CHOICES.contains(qBits) else {
+              let number = qBitsValue as? NSNumber, let qBits = Int(exactly: number.doubleValue),
+              Config.Q_BITS_CHOICES.contains(qBits) || preparation && qBits == 32 && item["kind"] as? String == "repo" else {
             throw LoadError.invalidSchema("queue item q_bits is invalid")
+        }
+        if preparation {
+            for field in ["backend", "model_type", "subfolder", "source_path", "projector", "fetch_receipt", "downloads_dir", "attempt_id"] {
+                _ = try optionalString(item[field], field: field)
+            }
+            if let attempt = try optionalString(item["attempt_id"], field: "attempt_id") {
+                guard attempt.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil else {
+                    throw LoadError.invalidSchema("queue item attempt_id is invalid")
+                }
+            }
+            for field in ["require_projector", "require_completion"] where item[field] != nil {
+                guard let value = item[field] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { throw LoadError.invalidSchema("queue item \(field) is invalid") }
+            }
+            if let receipts = item["dependency_fetch_receipts"] {
+                guard let values = receipts as? [String], values.count <= 32, values.allSatisfy({ !$0.isEmpty }) else {
+                    throw LoadError.invalidSchema("queue dependency receipts are invalid")
+                }
+            }
         }
         let out = try optionalString(item["out"], field: "out")
         let path = try optionalString(item["path"], field: "path")

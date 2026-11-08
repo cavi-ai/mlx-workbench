@@ -46,6 +46,288 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(supervisor.fleet.slots.first?.port, 8913)
     }
 
+    func testRevisionUpdateFencesTheSelectedProcessWhenThePortIsReusedDuringStop() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let slot = EndpointSlot(enabled: true, port: 8914, modelPath: "/Models/old", loadOnRequest: false)
+        let original = ServerInfo(path: slot.modelPath, runtime: "mlx", port: slot.port, pid: 41,
+            state: "running", startedAt: "receipt-original", receipt: "/receipts/8914.json", processStartedAt: "process-original")
+        let replacement = ServerInfo(path: slot.modelPath, runtime: "mlx", port: slot.port, pid: 42,
+            state: "running", startedAt: "receipt-replacement", receipt: "/receipts/8914.json", processStartedAt: "process-replacement")
+        let world = RevisionStopFenceWorld(original: original, replacement: replacement)
+        let fleet = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { world.status() },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: fleet)
+        supervisor.isVerified = { _ in true }
+
+        let changed = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: "/Models/new")
+
+        XCTAssertFalse(changed)
+        XCTAssertEqual(world.observedStops, [original], "The engine must receive the PID and start identity selected by status")
+        XCTAssertEqual(world.observedStops.first?.pid, 41)
+        XCTAssertEqual(world.observedStops.first?.processStartedAt, "process-original")
+        XCTAssertTrue(world.portOnlyStops.isEmpty, "A failed identity fence must never fall back to stopping the reused port")
+        XCTAssertEqual(world.status(), [replacement], "The newly observed process must remain untouched")
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+        XCTAssertEqual(try fleet.load().first?.slots, [slot])
+        XCTAssertEqual(supervisor.pendingStops[slot.id], slot)
+        XCTAssertNotNil(supervisor.lastError)
+    }
+
+    func testJITRevisionUpdateRestoresOldDesiredSlotsWhenReadbackDropsMemoryPolicy() async throws {
+        try await assertRevisionPolicyReadbackRefused(nil)
+    }
+
+    func testJITRevisionUpdateRestoresOldDesiredSlotsWhenReadbackChangesMemoryPolicy() async throws {
+        try await assertRevisionPolicyReadbackRefused(.automatic)
+    }
+
+    private func assertRevisionPolicyReadbackRefused(_ reported: EndpointMemoryPolicy?,
+                                                    file: StaticString = #filePath, line: UInt = #line) async throws {
+        for useProfile in [false, true] {
+            let root = try makeHome()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+            let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+            let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 77, keepLoaded: false, minimumHeadroomGB: 3,
+                unloadUnderPressure: true, contextTokens: 8192)
+            var slot = EndpointSlot(enabled: true, port: 8915, modelPath: original.modelPath, role: .coding,
+                loadOnRequest: true, memoryPolicy: policy)
+            if useProfile {
+                slot.servingProfile = original
+                slot.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: slot.port)
+            }
+            let (supervisor, world, _) = try revisionSupervisor(root: root, slots: [slot], profiles: [original, replacement])
+            supervisor.isVerified = { _ in true }
+            try world.preload(slot)
+            world.memoryPolicyOverride = (replacement.modelPath, reported)
+
+            let changed = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: replacement.modelPath,
+                profileReplacements: useProfile ? [original.id: replacement] : [:])
+
+            XCTAssertFalse(changed, "JIT readback must retain the reviewed policy (profile: \(useProfile))", file: file, line: line)
+            XCTAssertEqual(supervisor.fleet.slots, [slot], file: file, line: line)
+            let persisted = try JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json")).load()
+            XCTAssertEqual(persisted.first?.slots, [slot], file: file, line: line)
+            let restored = try XCTUnwrap(try world.status().first, file: file, line: line)
+            XCTAssertEqual(restored.modelIdentity, original.modelPath, file: file, line: line)
+            XCTAssertEqual(restored.memoryPolicy, policy, file: file, line: line)
+            XCTAssertEqual(restored.jit, true, file: file, line: line)
+            XCTAssertTrue(supervisor.pendingStops.isEmpty, file: file, line: line)
+            XCTAssertTrue(supervisor.lastError?.contains("reviewed memory policy") == true, file: file, line: line)
+            XCTAssertEqual(world.events, ["stop:/Models/old:8915", "start:/Models/new:8915",
+                "stop:/Models/new:8915", "start:/Models/old:8915"], file: file, line: line)
+        }
+    }
+
+    func testProfileRevisionUpdatePreservesFleetSettingsAndUsesFreshProof() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+        let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+        var active = EndpointSlot(enabled: true, port: 8920, modelPath: original.modelPath, role: .coding,
+            loadOnRequest: true, memoryPolicy: .automatic)
+        active.servingProfile = original; active.acceleration = .init()
+        active.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: active.port)
+        var inactive = EndpointSlot(enabled: false, port: 8921, modelPath: original.modelPath, role: .generalChat,
+            loadOnRequest: false, memoryPolicy: .legacy)
+        inactive.servingProfile = original; inactive.profilePreviewHash = "previous-disabled-preview"
+        let expected = [active, inactive]
+        let (supervisor, world, _) = try revisionSupervisor(root: root, slots: expected, profiles: [original, replacement])
+        try world.preload(active)
+        let changed = await supervisor.replaceModelForUpdate(expected: expected, modelPath: replacement.modelPath,
+            profileReplacements: [original.id: replacement])
+        XCTAssertTrue(changed, supervisor.lastError ?? "")
+        for old in expected {
+            let updated = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == old.id })
+            XCTAssertEqual(updated.modelPath, replacement.modelPath)
+            XCTAssertEqual(updated.servingProfile, replacement)
+            XCTAssertEqual(updated.port, old.port); XCTAssertEqual(updated.role, old.role)
+            XCTAssertEqual(updated.enabled, old.enabled); XCTAssertEqual(updated.loadOnRequest, old.loadOnRequest)
+            XCTAssertEqual(updated.memoryPolicy, old.memoryPolicy)
+            XCTAssertNil(updated.acceleration); XCTAssertNil(updated.accelerationPreviewHash)
+            if old.enabled {
+                XCTAssertEqual(updated.profilePreviewHash, ProfileRevisionServeWorld.hash(replacement, port: old.port))
+            } else { XCTAssertNil(updated.profilePreviewHash) }
+        }
+        let current = try XCTUnwrap(try world.status().first)
+        XCTAssertEqual(current.modelIdentity, replacement.modelPath)
+        XCTAssertEqual(current.jit, true); XCTAssertEqual(current.memoryPolicy, .automatic)
+        XCTAssertTrue(ServingProfile.matchesReceipt(current, previewHash: supervisor.fleet.slots[0].profilePreviewHash))
+    }
+
+    func testProfileRevisionUpdateRefusesMissingUnverifiedReusedOrChangedReplacements() async throws {
+        let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+        let fresh = revisionProfile(path: "/Models/new", fingerprint: "new")
+        var unverified = fresh; unverified.verification = nil
+        var reused = fresh; reused.verification = original.verification
+        var differentOptions = fresh
+        differentOptions.options.contextTokens = 32768
+        differentOptions.verification = revisionProof(options: differentOptions.options, fingerprint: "new")
+        let sameIdentity = ServingProfile(id: original.id, name: original.name, modelPath: fresh.modelPath,
+            options: original.options, verification: fresh.verification)
+        let wrongSource = revisionProfile(path: "/Models/other", fingerprint: "other")
+        for replacement in [nil, unverified, reused, differentOptions, sameIdentity, wrongSource] as [ServingProfile?] {
+            let root = try makeHome()
+            defer { try? FileManager.default.removeItem(at: root) }
+            var slot = EndpointSlot(enabled: true, port: 8922, modelPath: original.modelPath, loadOnRequest: false)
+            slot.servingProfile = original; slot.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: slot.port)
+            let (supervisor, world, _) = try revisionSupervisor(root: root, slots: [slot], profiles: [original, fresh])
+            try world.preload(slot)
+            let mappings = replacement.map { [original.id: $0] } ?? [:]
+            let changed = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: fresh.modelPath, profileReplacements: mappings)
+            XCTAssertFalse(changed)
+            XCTAssertEqual(supervisor.fleet.slots, [slot])
+            XCTAssertTrue(world.events.isEmpty, "Invalid replacement proof must not stop or start a server")
+            XCTAssertEqual(try world.status().first?.modelIdentity, original.modelPath)
+        }
+    }
+
+    func testProfileRevisionUpdateChecksCurrentResolverBeforeStoppingOldEndpoint() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+        let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+        var slot = EndpointSlot(enabled: true, port: 8923, modelPath: original.modelPath, loadOnRequest: false)
+        slot.servingProfile = original; slot.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: slot.port)
+        let (supervisor, world, profiles) = try revisionSupervisor(root: root, slots: [slot], profiles: [original, replacement])
+        try world.preload(slot)
+        var changed = replacement; changed.options.contextTokens = 32768
+        try profiles.upsert(changed, id: \.id)
+        let updated = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: replacement.modelPath,
+            profileReplacements: [original.id: replacement])
+        XCTAssertFalse(updated)
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+        XCTAssertTrue(world.events.isEmpty)
+        XCTAssertNotNil(supervisor.lastError)
+    }
+
+    func testMixedRevisionUpdateRetainsTheStandardVerificationGateForPlainSlots() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+        let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+        var profiled = EndpointSlot(enabled: true, port: 8924, modelPath: original.modelPath, loadOnRequest: false)
+        profiled.servingProfile = original; profiled.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: profiled.port)
+        let plain = EndpointSlot(enabled: false, port: 8925, modelPath: original.modelPath, loadOnRequest: false)
+        let expected = [profiled, plain]
+        let (supervisor, world, _) = try revisionSupervisor(root: root, slots: expected, profiles: [original, replacement])
+        try world.preload(profiled)
+        let changed = await supervisor.replaceModelForUpdate(expected: expected, modelPath: replacement.modelPath,
+            profileReplacements: [original.id: replacement])
+        XCTAssertFalse(changed)
+        XCTAssertEqual(supervisor.fleet.slots, expected)
+        XCTAssertTrue(world.events.isEmpty)
+        XCTAssertTrue(supervisor.lastError?.contains("not verified") == true)
+    }
+
+    func testProfileRevisionUpdateRefusesSourceOrReplacementDriftDuringPreview() async throws {
+        for changeSource in [false, true] {
+            let root = try makeHome()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+            let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+            var slot = EndpointSlot(enabled: true, port: 8929, modelPath: original.modelPath, loadOnRequest: false)
+            slot.servingProfile = original; slot.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: slot.port)
+            let (supervisor, world, profiles) = try revisionSupervisor(root: root, slots: [slot], profiles: [original, replacement])
+            try world.preload(slot)
+            let currentResolver = try XCTUnwrap(supervisor.profileLifecycle)
+            supervisor.profileLifecycle = { profile in
+                var lifecycle = try currentResolver(profile)
+                if profile.id == replacement.id {
+                    lifecycle.preview = { _, port in
+                        var changed = changeSource ? original : replacement
+                        changed.options.contextTokens = 32768
+                        try profiles.upsert(changed, id: \.id)
+                        return ProfileRevisionServeWorld.hash(replacement, port: port)
+                    }
+                }
+                return lifecycle
+            }
+            let changed = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: replacement.modelPath,
+                profileReplacements: [original.id: replacement])
+            XCTAssertFalse(changed)
+            XCTAssertEqual(supervisor.fleet.slots, [slot])
+            XCTAssertTrue(world.events.isEmpty)
+            XCTAssertNotNil(supervisor.lastError)
+        }
+    }
+
+    func testProfileRevisionLaunchFailureRestoresOldProfilesAndCleansOnlyConfirmedNewServers() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+        let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+        let expected = [8926, 8927].map { port -> EndpointSlot in
+            var slot = EndpointSlot(enabled: true, port: port, modelPath: original.modelPath, loadOnRequest: false)
+            slot.servingProfile = original; slot.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: port)
+            return slot
+        }
+        let (supervisor, world, _) = try revisionSupervisor(root: root, slots: expected, profiles: [original, replacement])
+        for slot in expected { try world.preload(slot) }
+        world.failStart = (replacement.modelPath, 8927)
+        let changed = await supervisor.replaceModelForUpdate(expected: expected, modelPath: replacement.modelPath,
+            profileReplacements: [original.id: replacement])
+        XCTAssertFalse(changed)
+        XCTAssertEqual(supervisor.fleet.slots, expected)
+        XCTAssertEqual(try world.status().map(\.modelIdentity), [original.modelPath, original.modelPath])
+        XCTAssertTrue(world.events.contains("stop:\(replacement.modelPath):8926"), "Cleanup must use the new server's confirmed profile hash")
+        XCTAssertTrue(supervisor.pendingStops.isEmpty)
+        XCTAssertTrue(supervisor.lastError?.contains("Previous files were kept") == true)
+    }
+
+    func testProfileRevisionUpdateKeepsForeignReceiptUntouchedDuringRollback() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = revisionProfile(path: "/Models/old", fingerprint: "old")
+        let replacement = revisionProfile(path: "/Models/new", fingerprint: "new")
+        var slot = EndpointSlot(enabled: true, port: 8928, modelPath: original.modelPath, loadOnRequest: false)
+        slot.servingProfile = original; slot.profilePreviewHash = "unowned-preview"
+        let (supervisor, world, _) = try revisionSupervisor(root: root, slots: [slot], profiles: [original, replacement])
+        try world.preload(slot, hash: "different-preview")
+        let changed = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: replacement.modelPath,
+            profileReplacements: [original.id: replacement])
+        XCTAssertFalse(changed)
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+        XCTAssertEqual(try world.status().first?.modelIdentity, original.modelPath)
+        XCTAssertTrue(world.events.isEmpty)
+        XCTAssertEqual(supervisor.pendingStops[slot.id], slot)
+    }
+
+    private func revisionProof(options: StrataComparisonOptions, fingerprint: String) -> ServingProfileVerification {
+        ServingProfileVerification(options: options, modelFingerprint: fingerprint, runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: CanarySuite.cases.map {
+                CanaryResult(id: $0.id, title: $0.title, passed: true, failureReason: nil, responseExcerpt: "fixture",
+                    tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+            }, verifiedAt: Date())
+    }
+
+    private func revisionProfile(path: String, fingerprint: String) -> ServingProfile {
+        let options = StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)
+        return ServingProfile(id: UUID(), name: "Paged", modelPath: path, options: options,
+            verification: revisionProof(options: options, fingerprint: fingerprint))
+    }
+
+    private func revisionSupervisor(root: URL, slots: [EndpointSlot], profiles: [ServingProfile]) throws
+        -> (EndpointSupervisor, ProfileRevisionServeWorld, JSONStore<ServingProfile>) {
+        let world = ProfileRevisionServeWorld(root: root)
+        let savedProfiles = JSONStore<ServingProfile>(fileURL: root.appendingPathComponent("profiles.json"))
+        try savedProfiles.replaceAll(profiles)
+        let coordinator = ServingProfileCoordinator(store: savedProfiles, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in throw WorkflowEvidenceError.invalid("Unexpected verification") },
+                start: { _, _, _ in XCTFail("Endpoint replacement must not invoke profile verification") }, stop: { _ in }),
+                prober: OpenAIEndpointProber())
+        })
+        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: slots, installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle(), statusProvider: { try world.status() },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
+        supervisor.profileLifecycle = { profile in world.lifecycle(try coordinator.resolve(profile)) }
+        supervisor.isVerified = { _ in false }
+        return (supervisor, world, savedProfiles)
+    }
+
     func testFreshConfirmedLoginReceiptIsAdoptedAndPersisted() async throws {
         let hash = String(repeating: "b", count: 64)
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a")
@@ -1138,5 +1420,110 @@ private actor RetryableEndpointStop {
     func stop(_ port: Int) async throws {
         guard allowed else { throw CocoaError(.fileReadUnknown) }
         try await operation(port)
+    }
+}
+
+private final class ProfileRevisionServeWorld: @unchecked Sendable {
+    private let lock = NSLock()
+    private let root: URL
+    private var servers: [ServerInfo] = []
+    private var recorded: [String] = []
+    var failStart: (String, Int)?
+    var memoryPolicyOverride: (path: String, policy: EndpointMemoryPolicy?)?
+
+    init(root: URL) { self.root = root }
+
+    var events: [String] { lock.withLock { recorded } }
+
+    static func hash(_ profile: ServingProfile, port: Int) -> String { "profile-\(profile.id.uuidString)-\(port)" }
+
+    func status() throws -> [ServerInfo] { lock.withLock { servers } }
+
+    func preload(_ slot: EndpointSlot, hash: String? = nil) throws {
+        try publish(path: slot.modelPath, port: slot.port,
+            hash: hash ?? slot.servingProfile.map { Self.hash($0, port: slot.port) } ?? "plain",
+            jit: slot.usesJIT, policy: slot.memoryPolicy)
+    }
+
+    func lifecycle(_ profile: ServingProfile? = nil) -> ServeLifecycle {
+        let preview: @Sendable (String, Int) async throws -> String = { path, port in
+            if let profile {
+                guard profile.modelPath == path, profile.hasPassedVerification else {
+                    throw WorkflowEvidenceError.invalid("Profile source changed")
+                }
+                return Self.hash(profile, port: port)
+            }
+            return "plain"
+        }
+        return ServeLifecycle(preview: preview, start: { path, port, hash in
+            try self.start(path: path, port: port, hash: hash, jit: false, policy: nil)
+        }, stop: { port in
+            self.lock.withLock {
+                if let server = self.servers.first(where: { $0.port == port }) {
+                    self.recorded.append("stop:\(server.modelIdentity):\(port)")
+                }
+                self.servers.removeAll { $0.port == port }
+            }
+        }, jitPreview: { path, port, _ in try await preview(path, port) }, jitStart: { path, port, hash, policy in
+            try self.start(path: path, port: port, hash: hash, jit: true, policy: policy)
+        })
+    }
+
+    private func start(path: String, port: Int, hash: String, jit: Bool, policy: EndpointMemoryPolicy?) throws {
+        try lock.withLock {
+            recorded.append("start:\(path):\(port)")
+            if let failStart, failStart.0 == path && failStart.1 == port {
+                throw WorkflowEvidenceError.invalid("New profile launch failed")
+            }
+        }
+        let reportedPolicy = lock.withLock {
+            if let override = memoryPolicyOverride, override.path == path { return override.policy }
+            return policy
+        }
+        try publish(path: path, port: port, hash: hash, jit: jit, policy: reportedPolicy)
+    }
+
+    private func publish(path: String, port: Int, hash: String, jit: Bool, policy: EndpointMemoryPolicy?) throws {
+        try lock.withLock {
+            let receipt = root.appendingPathComponent("receipt-\(port).json")
+            try JSONSerialization.data(withJSONObject: ["pid": port, "port": port, "path": path, "preview_hash": hash])
+                .write(to: receipt, options: .atomic)
+            servers.removeAll { $0.port == port }
+            servers.append(ServerInfo(path: path, runtime: "strata", port: port, pid: port, state: "running",
+                receipt: receipt.path, jit: jit, modelState: jit ? "unloaded" : "loaded", activeRequests: 0, memoryPolicy: policy))
+        }
+    }
+}
+
+private final class RevisionStopFenceWorld: @unchecked Sendable {
+    private let lock = NSLock()
+    private let replacement: ServerInfo
+    private var current: ServerInfo
+    private var selectedStops: [ServerInfo] = []
+    private var fallbackStops: [Int] = []
+
+    init(original: ServerInfo, replacement: ServerInfo) {
+        current = original; self.replacement = replacement
+    }
+
+    var observedStops: [ServerInfo] { lock.withLock { selectedStops } }
+    var portOnlyStops: [Int] { lock.withLock { fallbackStops } }
+    func status() -> [ServerInfo] { lock.withLock { [current] } }
+
+    var lifecycle: ServeLifecycle {
+        ServeLifecycle(preview: { _, _ in "new-preview" }, start: { _, _, _ in
+            XCTFail("A refused process stop must prevent replacement launch")
+        }, stop: { port in
+            self.lock.withLock { self.fallbackStops.append(port) }
+        }, stopObserved: { selected in
+            try self.lock.withLock {
+                self.selectedStops.append(selected)
+                self.current = self.replacement
+                guard selected.sameProcess(as: self.current) else {
+                    throw WorkflowEvidenceError.invalid("The process changed after status was observed")
+                }
+                XCTFail("The reused port must not match the selected process")
+            }
+        })
     }
 }

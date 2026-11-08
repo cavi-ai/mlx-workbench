@@ -25,8 +25,8 @@ be saved.
 | `wiring-transactions.json` | Client wiring transactions, with the backup locations used for rollback |
 | `source-cleanup.json` | Original sources moved to the Trash after verification, with restore metadata |
 | `watch-state.json`, `watch-alerts.json` | Watch baselines, alerts, snooze and mute state |
-| `managed-models.json` | Completed managed downloads with repository, immutable revision, source selection and file identity |
-| `model-updates.json` | Confirmed update reviews and durable progress; interrupted operations require a new review |
+| `managed-models.json` | Completed managed downloads and prepared outputs with repository, immutable revision, source selection, file identity and conversion evidence |
+| `model-updates.json` | Confirmed update reviews, pinned source and preparation receipts, endpoint captures and durable progress; interrupted operations require explicit continuation |
 | `workflow-evidence.json` | Imported workflow reports |
 
 | Folder | Holds |
@@ -57,5 +57,7 @@ Conversion jobs, their queue, serving processes and training runs leave receipts
 Before the engine owned the conversion queue, Workbench kept `convert-queue.json` beside its configuration or under `$XDG_STATE_HOME/mlx-workbench` (default `~/.local/state/mlx-workbench`). Those files remain explicit import sources in Activity. Stop the former server before importing; the source and an exact backup are preserved.
 
 ## Model files
+
+New revision inputs use `<output_dir>/managed/<owner>/<repository>/…/<revision>`; prepared outputs use `<output_dir>/managed-prepared/<owner>/<repository>/recipe-…/<revision>`. Required Hugging Face components use `<output_dir>/managed-dependencies/<update-id>/…`, and HTTP support assets stay in the source revision's `support` folder. The saved review records every location.
 
 The app never moves model files on its own. Conversions write to the output directory. Deletion, quarantine, Trash and source cleanup happen only through their reviewed actions in Library and Reclaim.

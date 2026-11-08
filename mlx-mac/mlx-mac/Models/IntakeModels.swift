@@ -192,6 +192,7 @@ struct IntakeFetchRequest: Equatable {
     let localDir: String?
     /// Intake's model type; a port's files narrow a snapshot download (`--model-type`).
     var modelType: String? = nil
+    var additionalFiles: [String] = []
 }
 
 struct FetchJob: Codable, Equatable {
@@ -206,9 +207,14 @@ struct FetchJob: Codable, Equatable {
     let logPath: String?
     let startedAt: String?
     let completedAt: String?
+    var additionalFiles: [String]? = nil
+    var previewHash: String? = nil
+    var files: [ModelUpdateFetchFile]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case receipt, repo, revision, file, subfolder, state, path
+        case receipt, repo, revision, file, subfolder, state, path, files
+        case additionalFiles = "additional_files"
+        case previewHash = "preview_hash"
         case localDir = "local_dir"
         case logPath = "log_path"
         case startedAt = "started_at"
@@ -314,4 +320,10 @@ struct PortPlanResult: Codable, Equatable {
         case analysisSha256 = "analysis_sha256"
         case promptChars = "prompt_chars"
     }
+}
+
+struct ModelUpdateFetchFile: Codable, Equatable {
+    let path: String
+    let bytes: Int64
+    let signature: String
 }

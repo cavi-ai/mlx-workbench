@@ -22,6 +22,7 @@ actor WorkbenchAPI {
     private var discoveryCheckedAt: Date?
     private var scopedDoctorSupported = false
     private var scopedWatchSupported = false
+    private var preparedUpdatesSupported = false
     private let taskStateDirectory: URL?
     nonisolated var taskArtifactsRoot: URL {
         taskStateDirectory ?? WorkbenchStatePaths.userHome().appendingPathComponent("Library/Application Support/mlx-agent/tasks", isDirectory: true)
@@ -50,6 +51,7 @@ actor WorkbenchAPI {
         discoveryCheckedAt = nil
         scopedDoctorSupported = false
         scopedWatchSupported = false
+        preparedUpdatesSupported = false
     }
 
     var resolvedAgentPath: String { agentPath }
@@ -435,8 +437,10 @@ actor WorkbenchAPI {
         try await runOffActor(MeshResult.self, Self.meshArguments(path: path, image: image, out: out, parameters: parameters), timeout: 3700)
     }
 
-    func intakeResolve(source: String) async throws -> IntakeResolution {
-        try Self.decode(IntakeResolution.self, from: await raw(["intake", "resolve", source], timeout: 45))
+    func intakeResolve(source: String, revision: String? = nil) async throws -> IntakeResolution {
+        var argv = ["intake", "resolve", source]
+        if let revision { argv += ["--revision", revision] }
+        return try Self.decode(IntakeResolution.self, from: await raw(argv, timeout: 45))
     }
 
     func backendList() async throws -> BackendList {
@@ -455,6 +459,7 @@ actor WorkbenchAPI {
     private static func fetchArguments(_ request: IntakeFetchRequest) -> [String] {
         var argv = ["intake", "fetch", request.source, "--revision", request.revision]
         if let file = request.file { argv += ["--file", file] }
+        for file in request.additionalFiles { argv += ["--additional-file", file] }
         if let localDir = request.localDir { argv += ["--local-dir", localDir] }
         if request.file == nil, let modelType = request.modelType { argv += ["--model-type", modelType] }
         return argv
@@ -513,6 +518,7 @@ actor WorkbenchAPI {
             discoveryCheckedAt = Date()
             scopedDoctorSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_doctor") == true
             scopedWatchSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_watch") == true
+            preparedUpdatesSupported = (data["capabilities"] as? [String: Any])?.bool("model_update_preparation") == true
             var errors: [String: String] = [:]
             for item in data["errors"] as? [[String: Any]] ?? [] {
                 if let source = item.string("source"), let message = item.string("message") { errors["engine:" + source] = message }
@@ -612,6 +618,31 @@ actor WorkbenchAPI {
         if let search { argv.append(contentsOf: ["--search", search]) }
         let data = try await raw(argv, isScout: true, cancellable: true)
         return DiscoverResult(candidates: Self.candidates(from: data))
+    }
+
+    func requireModelUpdatePreparation() async throws {
+        if !preparedUpdatesSupported { _ = try await discoverServingServices() }
+        guard preparedUpdatesSupported else {
+            throw BridgeError.remote(code: "engine_update_required", message: "This engine cannot safely prepare model revision updates.", remediation: "Update the engine in Health, then review the update again.")
+        }
+    }
+
+    func modelUpdateConversionPreview(_ preparation: ModelUpdatePreparationReview, subfolder: String?) async throws -> [String: Any] {
+        try await requireModelUpdatePreparation()
+        var argv = ["convert", "start", "--q-bits", String(preparation.recipe.qBits), "--out", preparation.outputPath,
+            "--fetch-receipt", preparation.fetchReceipt, "--require-completion", "--receipts-dir", receiptDirectory]
+        if preparation.recipe.kind == .gguf { argv += ["--gguf", preparation.sourcePath] }
+        else {
+            argv += ["--repo", preparation.repo, "--source-path", preparation.sourcePath]
+            if let backend = preparation.recipe.backend { argv += ["--backend", backend] }
+            if let modelType = preparation.recipe.modelType { argv += ["--model-type", modelType] }
+            if let subfolder { argv += ["--subfolder", subfolder] }
+        }
+        if let downloads = preparation.downloadsDirectory { argv += ["--downloads-dir", downloads] }
+        if let projector = preparation.projectorPath { argv += ["--projector", projector] }
+        if preparation.requireProjector { argv += ["--require-projector"] }
+        for receipt in preparation.dependencyFetchReceipts { argv += ["--dependency-fetch-receipt", receipt] }
+        return Self.unwrapPlan(try await raw(argv, timeout: 90, cancellable: true))
     }
 
     // MARK: - Watch
@@ -998,18 +1029,11 @@ actor WorkbenchAPI {
     static func jobs(from data: [String: Any], key: String = "jobs") -> [Job]? {
         guard let rawJobs = data[key] as? [[String: Any]] else { return nil }
         return rawJobs.map { raw in
-            Job(
-                receipt: raw.string("receipt"),
-                repo: raw.string("repo"),
-                source: raw.string("source"),
-                qBits: raw.int("q_bits"),
-                out: raw.string("out"),
-                pid: raw.int("pid"),
-                logPath: raw.string("log_path"),
-                startedAt: raw.string("started_at"),
-                completedAt: raw.string("completed_at"),
-                state: raw.string("state") ?? "unknown"
-            )
+            Job(receipt: raw.string("receipt"), repo: raw.string("repo"), source: raw.string("source"),
+                qBits: raw.int("q_bits"), out: raw.string("out"), pid: raw.int("pid"), logPath: raw.string("log_path"),
+                startedAt: raw.string("started_at"), completedAt: raw.string("completed_at"), state: raw.string("state") ?? "unknown",
+                previewHash: raw.string("preview_hash"), sourceDetails: (raw["source_details"] as? [String: Any]).flatMap { try? Self.decode(ModelConversionSourceDetails.self, from: $0) },
+                backend: raw.string("backend"), modelType: raw.string("model_type"), completionObserved: raw.bool("completion_observed"), exitCode: raw.int("exit_code"), processesQuiescent: raw.bool("processes_quiescent"))
         }
     }
 

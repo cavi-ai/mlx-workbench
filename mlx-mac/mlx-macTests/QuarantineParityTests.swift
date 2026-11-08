@@ -80,6 +80,43 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertFalse(plan.paths.contains(alias.path))
     }
 
+    func testFailedUpdateStagingHasRecoverableMoveAndDriftFence() throws {
+        let fm = FileManager.default, root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let source = root.appendingPathComponent("managed/partial"), destination = root.appendingPathComponent("quarantine")
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: source.appendingPathComponent("unfinished.bin"))
+        let snapshot = try Quarantine.updateStagingSnapshot(target: source.path, roots: [root.path], protected: [])
+        XCTAssertThrowsError(try Quarantine.updateStagingSnapshot(target: source.path, roots: [root.path], protected: [source.path]))
+        XCTAssertThrowsError(try Quarantine.updateStagingSnapshot(target: root.path, roots: [root.path], protected: []))
+        try Data("changed".utf8).write(to: source.appendingPathComponent("unfinished.bin"))
+        XCTAssertThrowsError(try Quarantine.moveUpdateStaging(expected: snapshot, roots: [root.path], protected: [], quarantineDir: destination.path))
+        let fresh = try Quarantine.updateStagingSnapshot(target: source.path, roots: [root.path], protected: [])
+        let moved = try Quarantine.moveUpdateStaging(expected: fresh, roots: [root.path], protected: [], quarantineDir: destination.path)
+        XCTAssertEqual(moved.kind, .updateStaging)
+        XCTAssertTrue(try Quarantine.confirmModelUpdateMove(expected: fresh, quarantineDir: destination.path))
+        try Quarantine.restore(moved)
+        XCTAssertEqual(try String(contentsOf: source.appendingPathComponent("unfinished.bin"), encoding: .utf8), "changed")
+        XCTAssertFalse(try Quarantine.confirmModelUpdateMove(expected: fresh, quarantineDir: destination.path))
+    }
+
+    func testStagingRecoveryRefusesLinksAndReplacedQuarantineObjects() throws {
+        let fm = FileManager.default, root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let source = root.appendingPathComponent("partial"), destination = root.appendingPathComponent("quarantine")
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: source.appendingPathComponent("part"))
+        try fm.createSymbolicLink(at: source.appendingPathComponent("link"), withDestinationURL: source.appendingPathComponent("part"))
+        XCTAssertThrowsError(try Quarantine.updateStagingSnapshot(target: source.path, roots: [root.path], protected: []))
+        try fm.removeItem(at: source.appendingPathComponent("link"))
+        let snapshot = try Quarantine.updateStagingSnapshot(target: source.path, roots: [root.path], protected: [])
+        let moved = try Quarantine.moveUpdateStaging(expected: snapshot, roots: [root.path], protected: [], quarantineDir: destination.path)
+        try fm.moveItem(atPath: moved.to, toPath: root.appendingPathComponent("original-object").path)
+        try fm.createDirectory(atPath: moved.to, withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: URL(fileURLWithPath: moved.to).appendingPathComponent("part"))
+        XCTAssertFalse(try Quarantine.confirmModelUpdateMove(expected: snapshot, quarantineDir: destination.path))
+    }
+
     private func cleanupFixture() throws -> (root: URL, repo: URL, blob: URL, workflow: ConversionWorkflow) {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -362,6 +399,225 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertThrowsError(try Quarantine.previewModelTrash(file.path, roots: roots, protected: [file.path]))
         try Data("changed".utf8).write(to: file)
         XCTAssertThrowsError(try Quarantine.trashModel(plan, roots: roots, protected: [], trash: { _ in XCTFail("changed file reached Trash"); return file }))
+    }
+
+    func testModelUpdateGGUFMoveRechecksProtectionAndKeepsSingleFileRestore() throws {
+        let root = try makeRoot(), hold = try makeRoot()
+        let file = root.appendingPathComponent("old.gguf")
+        try Data("weights".utf8).write(to: file)
+        let snapshot = try Quarantine.modelUpdateSnapshot(target: file.path, roots: [root.path], protected: [])
+        XCTAssertEqual(snapshot.path, file.path)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: snapshot, roots: [], protected: [], quarantineDir: hold.path))
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: snapshot, roots: [root.path], protected: [file.path], quarantineDir: hold.path))
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: file.path, roots: [file.path], protected: []))
+        let record = try Quarantine.moveModelUpdate(expected: snapshot, roots: [root.path], protected: [], quarantineDir: hold.path)
+        XCTAssertNil(record.kind)
+        XCTAssertEqual(Quarantine.ledger(quarantineDir: hold.path), [record])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        try Quarantine.restore(record)
+        XCTAssertEqual(try Data(contentsOf: file), Data("weights".utf8))
+    }
+
+    func testModelUpdateGGUFRefusesContentAndInodeChangesAfterPreview() throws {
+        let root = try makeRoot(), hold = try makeRoot()
+        let file = root.appendingPathComponent("old.gguf")
+        try Data("weights".utf8).write(to: file)
+        let snapshot = try Quarantine.modelUpdateSnapshot(target: file.path, roots: [root.path], protected: [])
+        try Data("changed".utf8).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: snapshot.modifiedAt], ofItemAtPath: file.path)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: snapshot, roots: [root.path], protected: [], quarantineDir: hold.path))
+        let fresh = try Quarantine.modelUpdateSnapshot(target: file.path, roots: [root.path], protected: [])
+        let other = root.appendingPathComponent("replacement.gguf")
+        try Data("changed".utf8).write(to: other)
+        try FileManager.default.setAttributes([.modificationDate: fresh.modifiedAt], ofItemAtPath: other.path)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: other, to: file)
+        let replaced = try Quarantine.modelUpdateSnapshot(target: file.path, roots: [root.path], protected: [])
+        XCTAssertNotEqual(fresh.inode, replaced.inode)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: fresh, roots: [root.path], protected: [], quarantineDir: hold.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(Quarantine.ledger(quarantineDir: hold.path).isEmpty)
+    }
+
+    func testModelUpdateGGUFRefusesProviderCacheAndSourceLinks() throws {
+        let root = try makeRoot()
+        let cache = root.appendingPathComponent("models--org--model/snapshots/revision")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let file = cache.appendingPathComponent("model.gguf")
+        try Data("weights".utf8).write(to: file)
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: file.path, roots: [root.path], protected: []))
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: file.path, roots: [root.path], protected: [], managedBundle: cache.path, bundleFiles: ["model.gguf"]))
+        let link = root.appendingPathComponent("alias.gguf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: link.path, roots: [root.path], protected: []))
+    }
+
+    func testModelUpdateBundleMovesMainAndProjectorTogetherAndRestoresTypedRecord() throws {
+        let fixture = try modelUpdateBundle()
+        let hold = try makeRoot()
+        let snapshot = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        XCTAssertEqual(snapshot.path, fixture.bundle.path)
+        XCTAssertEqual(snapshot.fileCount, 3)
+        XCTAssertNotNil(snapshot.treeFingerprint)
+        let record = try Quarantine.moveModelUpdate(expected: snapshot, roots: [fixture.root.path], protected: [],
+            quarantineDir: hold.path, managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        XCTAssertEqual(record.kind, .ggufBundle)
+        XCTAssertEqual(Quarantine.ledger(quarantineDir: hold.path), [record])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.bundle.path))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: record.to).appendingPathComponent("main.gguf")), Data("main weights".utf8))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: record.to).appendingPathComponent("vision/mmproj.gguf")), Data("projector weights".utf8))
+        try Quarantine.restore(record)
+        XCTAssertEqual(try Data(contentsOf: fixture.main), Data("main weights".utf8))
+        XCTAssertEqual(try Data(contentsOf: fixture.bundle.appendingPathComponent("vision/mmproj.gguf")), Data("projector weights".utf8))
+    }
+
+    func testModelUpdateBundleTrashUsesWholeTreeFingerprintAndKeepsHistory() throws {
+        let fixture = try modelUpdateBundle(), hold = try makeRoot(), trash = try makeRoot()
+        let snapshot = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        let record = try Quarantine.moveModelUpdate(expected: snapshot, roots: [fixture.root.path], protected: [],
+            quarantineDir: hold.path, managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        let expected = try Quarantine.trashSnapshot(record, quarantineDir: hold.path)
+        let destination = trash.appendingPathComponent("old-bundle")
+        let result = try Quarantine.trash(record, quarantineDir: hold.path, expected: expected, trashFile: {
+            try FileManager.default.moveItem(at: $0, to: destination)
+        })
+        XCTAssertEqual(result.bytes, snapshot.bytes)
+        XCTAssertNil(result.ledgerWarning)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent("vision/mmproj.gguf").path))
+        XCTAssertEqual(Quarantine.ledger(quarantineDir: hold.path).first?.kind, .ggufBundle)
+        XCTAssertNotNil(Quarantine.ledger(quarantineDir: hold.path).first?.deletedAt)
+    }
+
+    func testModelUpdateBundleRefusesUndeclaredGGUFAndOtherModelPayloads() throws {
+        for extra in ["unrelated.gguf", "other/model.safetensors", "other/model.bin", "other/model.npz", "other/unknown.weights"] {
+            let fixture = try modelUpdateBundle()
+            let path = fixture.bundle.appendingPathComponent(extra)
+            try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("another model".utf8).write(to: path)
+            XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+                managedBundle: fixture.bundle.path, bundleFiles: fixture.files), extra)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+        }
+    }
+
+    func testModelUpdateCanReviewOneGGUFWithoutMovingAnUndeclaredModelOrProjector() throws {
+        let fixture = try modelUpdateBundle(), hold = try makeRoot()
+        let extra = fixture.bundle.appendingPathComponent("unrelated.gguf")
+        try Data("unrelated weights".utf8).write(to: extra)
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        let single = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [])
+        XCTAssertEqual(single.path, fixture.main.path)
+        let record = try Quarantine.moveModelUpdate(expected: single, roots: [fixture.root.path], protected: [], quarantineDir: hold.path)
+        XCTAssertNil(record.kind)
+        XCTAssertEqual(try Data(contentsOf: extra), Data("unrelated weights".utf8))
+        XCTAssertEqual(try Data(contentsOf: fixture.bundle.appendingPathComponent(fixture.files[1])), Data("projector weights".utf8))
+        try Quarantine.restore(record)
+    }
+
+    func testModelUpdateBundleRefusesLinksHardLinksAndProtectedCompanions() throws {
+        let fixture = try modelUpdateBundle()
+        let projector = fixture.bundle.appendingPathComponent("vision/mmproj.gguf")
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [projector.path],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        let linked = fixture.bundle.appendingPathComponent("linked.json")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: projector)
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        try FileManager.default.removeItem(at: linked)
+        try FileManager.default.linkItem(at: projector, to: fixture.root.appendingPathComponent("shared-projector.gguf"))
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+    }
+
+    func testModelUpdateBundleRequiresExactMainFilesAndIndependentSelectedRoot() throws {
+        let fixture = try modelUpdateBundle()
+        XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.bundle.appendingPathComponent(fixture.files[1]).path,
+            roots: [fixture.root.path], protected: [], managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        for files in [[], ["main.gguf", "../shared.gguf"], ["main.gguf", "/outside.gguf"], ["main.gguf", "main.gguf"], ["main.gguf", "missing.gguf"]] {
+            XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+                managedBundle: fixture.bundle.path, bundleFiles: files))
+        }
+        for roots in [[fixture.bundle.path], [fixture.root.path, fixture.bundle.appendingPathComponent("vision").path]] {
+            XCTAssertThrowsError(try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: roots, protected: [],
+                managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        }
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: fixture.bundle.path, roots: [fixture.root.path], protected: []),
+            "GGUF bundle support must not make an arbitrary directory an MLX output")
+    }
+
+    func testModelUpdateBundleConfirmationRefusesAddedModelsCompanionChangesAndSelectionDrift() throws {
+        let fixture = try modelUpdateBundle(), hold = try makeRoot()
+        let roots = [fixture.root.path]
+        let snapshot = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: roots, protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        let other = fixture.bundle.appendingPathComponent("other.gguf")
+        try Data("other weights".utf8).write(to: other)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: snapshot, roots: roots, protected: [], quarantineDir: hold.path,
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        try FileManager.default.removeItem(at: other)
+        var fresh = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: roots, protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        let link = fixture.bundle.appendingPathComponent("late-link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.main)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: fresh, roots: roots, protected: [], quarantineDir: hold.path,
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        try FileManager.default.removeItem(at: link)
+        fresh = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: roots, protected: [],
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: fresh, roots: roots, protected: [], quarantineDir: hold.path,
+            managedBundle: fixture.bundle.path, bundleFiles: Array(fixture.files.reversed())))
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: fresh, roots: roots,
+            protected: [fixture.bundle.appendingPathComponent(fixture.files[1]).path], quarantineDir: hold.path,
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        let projector = fixture.bundle.appendingPathComponent(fixture.files[1])
+        let modified = try FileManager.default.attributesOfItem(atPath: projector.path)[.modificationDate]
+        try Data("different weights".utf8).write(to: projector)
+        try FileManager.default.setAttributes([.modificationDate: try XCTUnwrap(modified)], ofItemAtPath: projector.path)
+        XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: fresh, roots: roots, protected: [], quarantineDir: hold.path,
+            managedBundle: fixture.bundle.path, bundleFiles: fixture.files))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.main.path))
+        XCTAssertTrue(Quarantine.ledger(quarantineDir: hold.path).isEmpty)
+    }
+
+    func testModelUpdateMovesRestoreSourceWhenLedgerWriteFailsAfterRename() throws {
+        for bundle in [false, true] {
+            let fixture = try modelUpdateBundle(), hold = try makeRoot()
+            let snapshot = try Quarantine.modelUpdateSnapshot(target: fixture.main.path, roots: [fixture.root.path], protected: [],
+                managedBundle: bundle ? fixture.bundle.path : nil, bundleFiles: bundle ? fixture.files : [])
+            let manager = ModelUpdateLedgerFailureFileManager(source: snapshot.path, quarantine: hold)
+            XCTAssertThrowsError(try Quarantine.moveModelUpdate(expected: snapshot, roots: [fixture.root.path], protected: [],
+                quarantineDir: hold.path, managedBundle: bundle ? fixture.bundle.path : nil,
+                bundleFiles: bundle ? fixture.files : [], fileManager: manager))
+            XCTAssertTrue(manager.movedBeforeLedgerFailure)
+            XCTAssertEqual(try Data(contentsOf: fixture.main), Data("main weights".utf8))
+            XCTAssertEqual(try Data(contentsOf: fixture.bundle.appendingPathComponent(fixture.files[1])), Data("projector weights".utf8))
+            XCTAssertTrue(Quarantine.ledger(quarantineDir: hold.path).isEmpty)
+        }
+    }
+
+    func testModelUpdateMLXSnapshotAndMoveUseTheExistingFolderContract() throws {
+        let root = try makeRoot(), hold = try makeRoot()
+        let model = try modelFolder(in: root)
+        let snapshot = try Quarantine.modelUpdateSnapshot(target: model.path, roots: [root.path], protected: [])
+        XCTAssertEqual(snapshot, try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: []))
+        let record = try Quarantine.moveModelUpdate(expected: snapshot, roots: [root.path], protected: [], quarantineDir: hold.path)
+        XCTAssertEqual(record.kind, .mlxDirectory)
+        try Quarantine.restore(record)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.appendingPathComponent("model.safetensors").path))
+    }
+
+    private func modelUpdateBundle() throws -> (root: URL, bundle: URL, main: URL, files: [String]) {
+        let root = try makeRoot()
+        let bundle = root.appendingPathComponent("managed/org/model/selection-old/revision")
+        try FileManager.default.createDirectory(at: bundle.appendingPathComponent("vision"), withIntermediateDirectories: true)
+        let main = bundle.appendingPathComponent("main.gguf")
+        try Data("main weights".utf8).write(to: main)
+        try Data("projector weights".utf8).write(to: bundle.appendingPathComponent("vision/mmproj.gguf"))
+        try Data("metadata".utf8).write(to: bundle.appendingPathComponent("README.md"))
+        return (root, bundle, main, ["main.gguf", "vision/mmproj.gguf"])
     }
 
     func testRemovalStatusRequiresAnExplicitFleetAndModelIdentities() throws {
@@ -752,5 +1008,25 @@ final class QuarantineParityTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url
+    }
+}
+
+private final class ModelUpdateLedgerFailureFileManager: FileManager, @unchecked Sendable {
+    private let source: String
+    private let ledger: URL
+    private(set) var movedBeforeLedgerFailure = false
+
+    init(source: String, quarantine: URL) {
+        self.source = source
+        ledger = quarantine.appendingPathComponent(Quarantine.ledgerName)
+        super.init()
+    }
+
+    override func moveItem(atPath srcPath: String, toPath dstPath: String) throws {
+        try super.moveItem(atPath: srcPath, toPath: dstPath)
+        if srcPath == source, !movedBeforeLedgerFailure {
+            movedBeforeLedgerFailure = true
+            try FileManager.default.createDirectory(at: ledger, withIntermediateDirectories: false)
+        }
     }
 }

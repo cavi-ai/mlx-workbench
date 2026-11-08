@@ -37,7 +37,7 @@ enum QuarantineError: LocalizedError {
         case .symlinkRefused(let path):
             return "\(path) is a symbolic link; refusing to move or write through it."
         case .notInQuarantine(let path):
-            return "\(path) is not a recorded GGUF file or MLX folder in the configured quarantine directory."
+            return "\(path) is not a recorded GGUF file, GGUF bundle or MLX folder in the configured quarantine directory."
         case .changedSincePreview:
             return "The item or its configuration changed after preview. Review it again before moving it."
         case .trashFailed(let detail):
@@ -48,7 +48,12 @@ enum QuarantineError: LocalizedError {
     }
 }
 
-enum QuarantineKind: String, Codable, Sendable { case mlxDirectory }
+enum QuarantineKind: String, Codable, Sendable {
+    case mlxDirectory, ggufBundle, updateStaging
+    var isDirectory: Bool {
+        switch self { case .mlxDirectory, .ggufBundle, .updateStaging: true }
+    }
+}
 
 struct QuarantineRecord: Codable, Equatable, Sendable {
     let movedAt: String
@@ -65,7 +70,7 @@ struct QuarantineRecord: Codable, Equatable, Sendable {
     }
 }
 
-struct QuarantineFileSnapshot: Equatable, Sendable {
+struct QuarantineFileSnapshot: Codable, Equatable, Sendable {
     let path: String
     let bytes: Int64
     let device: UInt64
@@ -91,6 +96,169 @@ struct LibraryTrashPlan: Equatable, Sendable {
 enum Quarantine {
     static let ledgerName = "quarantine-ledger.jsonl"
     static let maxLedgerBytes = 4 * 1024 * 1024
+
+    /// Update cleanup keeps provider caches in place. A managed bundle requires its exact main-first selection.
+    static func modelUpdateSnapshot(target: String, roots: [String], protected: [String],
+                                    managedBundle: String? = nil, bundleFiles: [String] = [],
+                                    fileManager: FileManager = .default) throws -> QuarantineFileSnapshot {
+        if let managedBundle {
+            return try ggufBundleSnapshot(target: target, bundle: managedBundle, files: bundleFiles,
+                roots: roots, protected: protected, fileManager: fileManager)
+        }
+        guard bundleFiles.isEmpty else { throw QuarantineError.unsafeFolder("the managed bundle selection is missing.") }
+        let expanded = NSString(string: target).expandingTildeInPath
+        try refuseLinks(in: expanded, fileManager: fileManager)
+        guard HFRepoID.forPath(expanded) == nil, HFRepoID.forPath(resolve(expanded)) == nil else {
+            throw QuarantineError.unsafeFolder("Hugging Face cache files must be kept or cleaned through Check HF cache.")
+        }
+        if expanded.lowercased().hasSuffix(".gguf") {
+            let plan = try previewModelTrash(target, roots: roots, protected: protected, fileManager: fileManager)
+            guard !plan.includesCacheRepository else { throw QuarantineError.unsafeFolder("provider caches cannot be quarantined by a model update.") }
+            return plan.snapshot
+        }
+        return try folderSnapshot(target: target, roots: roots, protected: protected, fileManager: fileManager)
+    }
+
+    static func moveModelUpdate(expected: QuarantineFileSnapshot, roots: [String], protected: [String], quarantineDir: String,
+                                managedBundle: String? = nil, bundleFiles: [String] = [],
+                                now: Date = Date(), fileManager: FileManager = .default) throws -> QuarantineRecord {
+        if let managedBundle {
+            guard let main = bundleFiles.first, expected.path == resolve(managedBundle) else { throw QuarantineError.changedSincePreview }
+            let target = URL(fileURLWithPath: resolve(managedBundle)).appendingPathComponent(main).path
+            let recheck = {
+                try modelUpdateSnapshot(target: target, roots: roots, protected: protected,
+                    managedBundle: managedBundle, bundleFiles: bundleFiles, fileManager: fileManager)
+            }
+            return try moveGGUFBundle(expected: expected, quarantineDir: quarantineDir, now: now,
+                fileManager: fileManager, recheck: recheck)
+        }
+        let current = try modelUpdateSnapshot(target: expected.path, roots: roots, protected: protected,
+            bundleFiles: bundleFiles, fileManager: fileManager)
+        guard current == expected else { throw QuarantineError.changedSincePreview }
+        if expected.path.lowercased().hasSuffix(".gguf") {
+            guard !quarantineDir.isEmpty else { throw QuarantineError.unsafeFolder("configure a quarantine directory first.") }
+            try refuseLinks(in: NSString(string: quarantineDir).expandingTildeInPath, fileManager: fileManager)
+            return try move(target: current.path, roots: roots, quarantineDir: quarantineDir, now: now, fileManager: fileManager)
+        }
+        return try moveFolder(expected: expected, roots: roots, protected: protected, quarantineDir: quarantineDir,
+            now: now, fileManager: fileManager)
+    }
+
+    /// Incomplete update output has no usable model config. Its exact bounded
+    /// tree still receives the same atomic move, ledger and rollback protections.
+    static func updateStagingSnapshot(target: String, roots: [String], protected: [String],
+                                      fileManager: FileManager = .default) throws -> QuarantineFileSnapshot {
+        try refuseLinks(in: target, fileManager: fileManager)
+        let path = resolve(target)
+        let allowed = roots.filter { !$0.isEmpty }.map(resolve)
+        guard allowed.contains(where: { path != $0 && isWithin(path, parent: $0) }),
+              !allowed.contains(where: { isWithin($0, parent: path) }), HFRepoID.forPath(path) == nil,
+              !protected.filter({ $0.hasPrefix("/") }).map(resolve).contains(where: {
+                  isWithin(path, parent: $0) || isWithin($0, parent: path)
+              }) else { throw QuarantineError.unsafeFolder("the incomplete update is outside its managed root or is still in use.") }
+        return try directorySnapshot(path, fileManager: fileManager)
+    }
+
+    static func moveUpdateStaging(expected: QuarantineFileSnapshot, roots: [String], protected: [String], quarantineDir: String,
+                                  now: Date = Date(), fileManager: FileManager = .default) throws -> QuarantineRecord {
+        try moveGGUFBundle(expected: expected, quarantineDir: quarantineDir, now: now, fileManager: fileManager, kind: .updateStaging) {
+            try updateStagingSnapshot(target: expected.path, roots: roots, protected: protected, fileManager: fileManager)
+        }
+    }
+
+    private static func ggufBundleSnapshot(target: String, bundle: String, files: [String], roots: [String], protected: [String],
+                                           fileManager: FileManager) throws -> QuarantineFileSnapshot {
+        let expanded = NSString(string: bundle).expandingTildeInPath
+        try refuseLinks(in: expanded, fileManager: fileManager)
+        try refuseLinks(in: NSString(string: target).expandingTildeInPath, fileManager: fileManager)
+        let path = resolve(expanded)
+        let allowed = roots.filter { !$0.isEmpty }.map(resolve)
+        guard allowed.contains(where: { path != $0 && isWithin(path, parent: $0) }),
+              !allowed.contains(where: { isWithin($0, parent: path) }) else { throw QuarantineError.outsideRoots(path) }
+        guard HFRepoID.forPath(path) == nil, HFRepoID.forPath(target) == nil else {
+            throw QuarantineError.unsafeFolder("Hugging Face cache selections must be kept or cleaned through Check HF cache.")
+        }
+        guard !protected.filter({ $0.hasPrefix("/") }).map(resolve).contains(where: {
+            isWithin(path, parent: $0) || isWithin($0, parent: path)
+        }) else { throw QuarantineError.unsafeFolder("the bundle is in use, preferred, or contains a protected model.") }
+        guard !files.isEmpty, files.count <= 10000, Set(files).count == files.count,
+              files.allSatisfy({ file in
+                  !file.hasPrefix("/") && !file.contains("\\") && file.lowercased().hasSuffix(".gguf") &&
+                  !file.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) &&
+                  file.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+              }), let main = files.first,
+              resolve(target) == URL(fileURLWithPath: path).appendingPathComponent(main).path else {
+            throw QuarantineError.unsafeFolder("the selected GGUF does not match the declared main file and companion selection.")
+        }
+        let snapshot = try directorySnapshot(path, fileManager: fileManager)
+        let permitted = Set(files)
+        var found = Set<String>(), pending = [path], inspected = 0
+        let metadataExtensions: Set<String> = ["json", "jsonl", "txt", "md", "rst", "yaml", "yml", "toml", "ini", "cfg", "metadata", "lock"]
+        let metadataNames: Set<String> = ["license", "notice", "readme", ".gitattributes", ".gitignore"]
+        while let directory = pending.popLast() {
+            for name in try fileManager.contentsOfDirectory(atPath: directory) {
+                inspected += 1
+                guard inspected <= 10000 else { throw QuarantineError.unsafeFolder("more than 10,000 entries; review this bundle in Finder.") }
+                let child = directory + "/" + name
+                let attributes = try fileManager.attributesOfItem(atPath: child)
+                if attributes[.type] as? FileAttributeType == .typeDirectory { pending.append(child); continue }
+                guard attributes[.type] as? FileAttributeType == .typeRegular else { throw QuarantineError.symlinkRefused(child) }
+                let relative = String(child.dropFirst(path.count + 1))
+                if name.lowercased().hasSuffix(".gguf") {
+                    guard permitted.contains(relative) else { throw QuarantineError.unsafeFolder("the bundle contains an undeclared GGUF: \(relative). Keep it or review a single file instead.") }
+                    found.insert(relative)
+                } else {
+                    let suffix = URL(fileURLWithPath: name).pathExtension.lowercased()
+                    guard metadataExtensions.contains(suffix) || metadataNames.contains(name.lowercased()) else {
+                        throw QuarantineError.unsafeFolder("the bundle contains a non-metadata payload: \(relative). Keep it or review a single file instead.")
+                    }
+                }
+            }
+        }
+        guard found == permitted else { throw QuarantineError.unsafeFolder("a declared GGUF main file or companion is missing.") }
+        guard try directorySnapshot(path, fileManager: fileManager) == snapshot else { throw QuarantineError.changedSincePreview }
+        var bound = snapshot
+        let context = [main, files.sorted().joined(separator: "\n"), snapshot.treeFingerprint ?? ""].joined(separator: "\n")
+        bound.treeFingerprint = "gguf-bundle:" + SHA256.hash(data: Data(context.utf8)).map { String(format: "%02x", $0) }.joined()
+        return bound
+    }
+
+    private static func moveGGUFBundle(expected: QuarantineFileSnapshot, quarantineDir: String, now: Date,
+                                       fileManager: FileManager, kind: QuarantineKind = .ggufBundle, recheck: () throws -> QuarantineFileSnapshot) throws -> QuarantineRecord {
+        guard !quarantineDir.isEmpty else { throw QuarantineError.unsafeFolder("configure a quarantine directory first.") }
+        try refuseLinks(in: NSString(string: quarantineDir).expandingTildeInPath, fileManager: fileManager)
+        let destinationRoot = resolve(quarantineDir)
+        guard !isWithin(destinationRoot, parent: expected.path), !isWithin(expected.path, parent: destinationRoot) else {
+            throw QuarantineError.alreadyQuarantined(expected.path)
+        }
+        try fileManager.createDirectory(atPath: destinationRoot, withIntermediateDirectories: true)
+        guard try fileManager.attributesOfItem(atPath: destinationRoot)[.systemNumber] as? UInt64 == expected.device else {
+            throw QuarantineError.unsafeFolder("quarantine must be on the same volume for an atomic bundle move.")
+        }
+        let ledgerURL = URL(fileURLWithPath: destinationRoot).appendingPathComponent(ledgerName)
+        try JSONStore<QuarantineRecord>.refuseSymlink(ledgerURL, fileManager: fileManager)
+        if fileManager.fileExists(atPath: ledgerURL.path) {
+            let attributes = try fileManager.attributesOfItem(atPath: ledgerURL.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular, fileManager.isWritableFile(atPath: ledgerURL.path),
+                  let size = attributes[.size] as? Int64, size < maxLedgerBytes - 4096 else {
+                throw QuarantineError.unsafeFolder("quarantine history is full or unwritable.")
+            }
+        }
+        guard try recheck() == expected else { throw QuarantineError.changedSincePreview }
+        try refuseLinks(in: destinationRoot, fileManager: fileManager)
+        let destination = URL(fileURLWithPath: destinationRoot)
+            .appendingPathComponent(UUID().uuidString + "-" + URL(fileURLWithPath: expected.path).lastPathComponent).path
+        try fileManager.moveItem(atPath: expected.path, toPath: destination)
+        let record = QuarantineRecord(movedAt: isoFormatter.string(from: now), from: expected.path, to: destination,
+            bytes: expected.bytes, kind: kind)
+        do { try appendLedger(record, quarantineDir: destinationRoot, fileManager: fileManager) }
+        catch {
+            do { try fileManager.moveItem(atPath: destination, toPath: expected.path) }
+            catch { throw QuarantineError.unsafeFolder("history and rollback failed; recover the bundle at \(destination). \(error.localizedDescription)") }
+            throw QuarantineError.unsafeFolder("could not record the move; the bundle was put back.")
+        }
+        return record
+    }
 
     /// Explicit Library removal. Trash remains recoverable in Finder. A cache
     /// repository moves as one unit, retaining its relative blob references.
@@ -352,6 +520,21 @@ enum Quarantine {
         return record
     }
 
+    /// Reconcile a completed rename after interruption without replaying a move.
+    static func confirmModelUpdateMove(expected: QuarantineFileSnapshot, quarantineDir: String,
+                                      fileManager: FileManager = .default) throws -> Bool {
+        guard !fileManager.fileExists(atPath: expected.path) else { return false }
+        for record in ledger(quarantineDir: quarantineDir, limit: 10000, fileManager: fileManager)
+            where record.from == expected.path && record.deletedAt == nil {
+            let actual = try trashSnapshot(record, quarantineDir: quarantineDir, fileManager: fileManager)
+            if actual.device == expected.device && actual.inode == expected.inode &&
+                actual.bytes == expected.bytes && actual.modifiedAt == expected.modifiedAt && actual.createdAt == expected.createdAt {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Recent quarantine records, newest first.
     static func ledger(quarantineDir: String, limit: Int = 200, fileManager: FileManager = .default) -> [QuarantineRecord] {
         let ledgerURL = URL(fileURLWithPath: resolve(quarantineDir)).appendingPathComponent(ledgerName)
@@ -371,7 +554,7 @@ enum Quarantine {
     static func trashSnapshot(_ record: QuarantineRecord, quarantineDir: String, fileManager: FileManager = .default) throws -> QuarantineFileSnapshot {
         let path = try guardQuarantinedPath(record.to, quarantineDir: quarantineDir, kind: record.kind, fileManager: fileManager)
         guard record.deletedAt == nil, ledger(quarantineDir: quarantineDir, limit: 10000, fileManager: fileManager).contains(record) else { throw QuarantineError.notInQuarantine(record.to) }
-        if record.kind == .mlxDirectory { return try directorySnapshot(path, fileManager: fileManager) }
+        if record.kind?.isDirectory == true { return try directorySnapshot(path, fileManager: fileManager) }
         let attributes = try fileManager.attributesOfItem(atPath: path)
         guard record.deletedAt == nil,
               let bytes = attributes[.size] as? Int64,
@@ -387,7 +570,7 @@ enum Quarantine {
 
     static func guardQuarantinedPath(_ path: String, quarantineDir: String, kind: QuarantineKind? = nil, fileManager: FileManager = .default) throws -> String {
         let expandedRoot = NSString(string: quarantineDir).expandingTildeInPath
-        if kind == .mlxDirectory { try refuseLinks(in: path, fileManager: fileManager); try refuseLinks(in: expandedRoot, fileManager: fileManager) }
+        if kind?.isDirectory == true { try refuseLinks(in: path, fileManager: fileManager); try refuseLinks(in: expandedRoot, fileManager: fileManager) }
         guard expandedRoot.hasPrefix("/"), resolve(expandedRoot) != "/", path.hasPrefix("/") else {
             throw QuarantineError.notInQuarantine(path)
         }
@@ -396,7 +579,7 @@ enum Quarantine {
         }
         let root = resolve(expandedRoot)
         let target = URL(fileURLWithPath: path).standardizedFileURL
-        guard target.lastPathComponent != ledgerName, (kind == .mlxDirectory || target.path.lowercased().hasSuffix(".gguf")),
+        guard target.lastPathComponent != ledgerName, (kind?.isDirectory == true || target.path.lowercased().hasSuffix(".gguf")),
               target.path != root, isWithin(target.path, parent: root) else {
             throw QuarantineError.notInQuarantine(path)
         }
@@ -408,7 +591,7 @@ enum Quarantine {
             component.deleteLastPathComponent()
         }
         let attributes = try fileManager.attributesOfItem(atPath: target.path)
-        guard attributes[.type] as? FileAttributeType == (kind == .mlxDirectory ? .typeDirectory : .typeRegular) else {
+        guard attributes[.type] as? FileAttributeType == (kind?.isDirectory == true ? .typeDirectory : .typeRegular) else {
             throw QuarantineError.notInQuarantine(path)
         }
         return target.path
@@ -460,15 +643,15 @@ enum Quarantine {
     static func restore(_ record: QuarantineRecord, fileManager: FileManager = .default) throws {
         let quarantined = resolve(record.to)
         var isDirectory = ObjCBool(false)
-        if record.kind == .mlxDirectory { try refuseLinks(in: record.to, fileManager: fileManager) }
-        guard fileManager.fileExists(atPath: quarantined, isDirectory: &isDirectory), isDirectory.boolValue == (record.kind == .mlxDirectory) else {
+        if record.kind?.isDirectory == true { try refuseLinks(in: record.to, fileManager: fileManager) }
+        guard fileManager.fileExists(atPath: quarantined, isDirectory: &isDirectory), isDirectory.boolValue == (record.kind?.isDirectory == true) else {
             throw QuarantineError.notFound(quarantined)
         }
         let original = resolve(record.from)
         // Never write through a symlink when putting a file back; resolve()
         // follows links, so the check must use the unresolved path.
         let expandedOriginal = NSString(string: record.from).expandingTildeInPath
-        if record.kind == .mlxDirectory { try refuseLinks(in: expandedOriginal, fileManager: fileManager) }
+        if record.kind?.isDirectory == true { try refuseLinks(in: expandedOriginal, fileManager: fileManager) }
         if (try? fileManager.destinationOfSymbolicLink(atPath: expandedOriginal)) != nil {
             throw QuarantineError.symlinkRefused(original)
         }
