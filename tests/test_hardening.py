@@ -10,7 +10,8 @@ import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_workbench import audit, bridge, config, convert_queue, quarantine
+from mlx_workbench import audit, bridge, config, quarantine
+from tests.engine_queue import convert_queue
 from mlx_workbench.atomicio import write_text_atomic
 
 

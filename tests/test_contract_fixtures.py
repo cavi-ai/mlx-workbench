@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_workbench import bridge, config, convert_queue, quarantine
+from mlx_workbench import bridge, config, quarantine
+from tests.engine_queue import convert_queue
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
