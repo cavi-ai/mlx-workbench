@@ -8,6 +8,22 @@ final class ManagedModelInstallStoreTests: XCTestCase {
     private let revisionA = String(repeating: "a", count: 40)
     private let revisionB = String(repeating: "b", count: 40)
 
+    func testDependencyStorageIsStableAndBindsTheExactSelection() throws {
+        let root = try temporaryRoot()
+        let component = source("owner/component", revision: revisionA, file: "weights.safetensors")
+        let first = try XCTUnwrap(ManagedModelInstallStore.dependencyDirectory(root: root.path, source: component,
+            additionalFiles: ["tokenizer.json", "config.json"]))
+        XCTAssertEqual(ManagedModelInstallStore.dependencyDirectory(root: root.path, source: component,
+            additionalFiles: ["config.json", "tokenizer.json"]), first)
+        XCTAssertTrue(first.hasPrefix(root.appendingPathComponent("managed-components/owner/component").path + "/"))
+        XCTAssertTrue(first.hasSuffix("/" + revisionA))
+        XCTAssertNotEqual(ManagedModelInstallStore.dependencyDirectory(root: root.path,
+            source: source("owner/component", revision: revisionB, file: "weights.safetensors"), additionalFiles: ["config.json", "tokenizer.json"]), first)
+        XCTAssertNotEqual(ManagedModelInstallStore.dependencyDirectory(root: root.path, source: component, additionalFiles: []), first)
+        XCTAssertNil(ManagedModelInstallStore.dependencyDirectory(root: root.path, source: component, additionalFiles: ["../outside"]))
+        XCTAssertNil(ManagedModelInstallStore.dependencyDirectory(root: root.path, source: source("owner/component", revision: "main"), additionalFiles: []))
+    }
+
     func testManagedDirectoriesSeparateRepositoryComponentsAndRevisions() throws {
         let root = try temporaryRoot()
         let first = try XCTUnwrap(ManagedModelInstallStore.directory(root: root.path, source: source("owner/model", revision: revisionA)))

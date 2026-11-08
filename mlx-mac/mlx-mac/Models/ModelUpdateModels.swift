@@ -49,6 +49,8 @@ struct ModelUpdateReview: Codable, Equatable, Identifiable {
     var cleanupBundle: String? = nil
     var cleanupFiles: [String]? = nil
     var downloadsDirectory: String? = nil
+    var downloadFetchReceipt: String? = nil
+    var downloadAdmissionPreviewHash: String? = nil
 
     var missingSelectionReason: String? {
         if let selectionProblem { return selectionProblem }

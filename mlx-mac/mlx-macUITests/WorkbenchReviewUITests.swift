@@ -303,7 +303,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args[:2] == ['serve', 'discover']:
             inventory = root / 'discovered-services.json'
             data = {'schema_version': 1, 'services': json.loads(inventory.read_text()) if inventory.exists() else [],
-                    'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True, 'model_update_preparation': True}}
+                    'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True, 'model_update_preparation': True, 'model_storage_admission': True}}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():

@@ -4,11 +4,12 @@ extension AppHost {
     func downloadCompleteModelUpdate(_ review: ModelUpdateReview) async throws -> ModelUpdateInstallation {
         try review.validateForDownload()
         let selection = review.resolution.source
-        guard ManagedModelInstallStore.directory(root: config.outputDir, source: selection) == review.sourceDirectory else {
-            throw ModelUpdateError.invalid("The managed source location changed. Review the update again.")
-        }
+        try await validateUpdateDownloadLocation(review)
         let fetched = try await fetchModelUpdateComponent(resolution: review.resolution, directory: review.sourceDirectory,
-            extras: review.additionalFiles ?? [], previewHash: review.previewHash)
+            extras: review.additionalFiles ?? [], previewHash: review.previewHash, admissionPreviewHash: review.downloadAdmissionPreviewHash)
+        guard review.downloadFetchReceipt == nil || fetched.receipt == review.downloadFetchReceipt else {
+            throw ModelUpdateError.invalid("The reused source receipt changed. Review the update again.")
+        }
         try Self.validateUpdateFetch(fetched, resolution: review.resolution, directory: review.sourceDirectory,
             extras: review.additionalFiles ?? [], previewHash: review.previewHash)
         var identities = [try await updateSourceIdentity(review.downloadedModelPath)]
@@ -19,7 +20,10 @@ extension AppHost {
         var dependencyReceipts: [String] = []
         for component in review.dependencies ?? [] {
             let completed = try await fetchModelUpdateComponent(resolution: component.resolution, directory: component.directory,
-                extras: component.additionalFiles, previewHash: component.previewHash)
+                extras: component.additionalFiles, previewHash: component.previewHash, admissionPreviewHash: component.admissionPreviewHash)
+            guard component.fetchReceipt == nil || completed.receipt == component.fetchReceipt else {
+                throw ModelUpdateError.invalid("The required component receipt changed. Review the update again.")
+            }
             try Self.validateUpdateFetch(completed, resolution: component.resolution, directory: component.directory,
                 extras: component.additionalFiles, previewHash: component.previewHash)
             identities.append(try await updateSourceIdentity(component.modelPath))
@@ -36,7 +40,13 @@ extension AppHost {
     }
 
     private func fetchModelUpdateComponent(resolution: IntakeResolution, directory: String,
-                                            extras: [String], previewHash: String) async throws -> FetchJob {
+                                            extras: [String], previewHash: String, admissionPreviewHash: String? = nil) async throws -> FetchJob {
+        if let admissionPreviewHash {
+            _ = try await intake.download(resolution: resolution, localDir: directory, previewHash: admissionPreviewHash, additionalFiles: extras)
+            guard let job = intake.completedFetch else { throw ModelUpdateError.unavailable }
+            try Self.validateUpdateFetch(job, resolution: resolution, directory: directory, extras: extras, previewHash: previewHash)
+            return job
+        }
         // A directory is never overwritten. Only its exact immutable receipt can be reattached.
         if FileManager.default.fileExists(atPath: directory) {
             let deadline = Date().addingTimeInterval(86_400)

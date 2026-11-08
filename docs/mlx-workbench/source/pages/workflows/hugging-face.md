@@ -45,3 +45,22 @@ GGUF projector and companion files are never converted on their own.
 Run, verification, chat comparisons and endpoints read the local model's architecture and select its serving backend automatically (`--runtime auto`). Optional backends run from their isolated environments, including models already published in MLX format. Prism's published 2-bit packs use the pinned MLX-VLM adapter; their weights stay in the published format.
 
 Unsupported loaders are refused. Repository runtime code is never executed, and intake never passes `--trust-remote-code`.
+
+## Reuse and storage safeguards
+
+Reuse matches the resolved immutable revision and selected checkpoint or GGUF
+file. A moving `main` reference cannot select an older cached snapshot. Converted
+outputs need a matching recorded source revision before intake offers reuse.
+
+Managed downloads require an engine with source-admission support. Its shared
+index coordinates downloads across processes and receipt locations. A verified
+completed source keeps its original path and receipt. Changed, incomplete or
+overlapping sources block another copy. If a matching Hugging Face snapshot is
+already cached, use that cache in place rather than creating a managed copy.
+
+Model updates reuse verified required components, including components from
+older update folders. New shared components use stable `managed-components`
+locations under the output directory. Cleanup for one failed update keeps completed or reused shared components.
+A newly failed shared download can be reviewed for Quarantine after its worker
+is confirmed stopped; retry keeps the same source approval and location. Existing caches and model files are not moved or
+deleted by these safeguards.

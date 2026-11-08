@@ -209,12 +209,14 @@ struct FetchJob: Codable, Equatable {
     let completedAt: String?
     var additionalFiles: [String]? = nil
     var previewHash: String? = nil
+    var processesQuiescent: Bool? = nil
     var files: [ModelUpdateFetchFile]? = nil
 
     enum CodingKeys: String, CodingKey {
         case receipt, repo, revision, file, subfolder, state, path, files
         case additionalFiles = "additional_files"
         case previewHash = "preview_hash"
+        case processesQuiescent = "processes_quiescent"
         case localDir = "local_dir"
         case logPath = "log_path"
         case startedAt = "started_at"

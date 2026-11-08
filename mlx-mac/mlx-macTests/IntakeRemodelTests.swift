@@ -11,7 +11,7 @@ private enum IntakeFixtures {
     static let totalBytes: Int64 = 137_438_953_472
     static let hardware = HardwareProfile(chip: "Apple M4 Max", model: nil, memoryBytes: totalBytes, macOSVersion: nil)
     static let repo = "mlx-community/Qwen3-8B-4bit"
-    static let cachePath = "/render/.cache/huggingface/hub/models--mlx-community--Qwen3-8B-4bit/snapshots/abc123"
+    static let cachePath = "/render/.cache/huggingface/hub/models--mlx-community--Qwen3-8B-4bit/snapshots/" + String(repeating: "a", count: 40)
     static let live = MemorySnapshot(totalBytes: totalBytes, availableBytes: 60_000_000_000)
 
     struct Spec {
@@ -33,6 +33,7 @@ private enum IntakeFixtures {
         var warnings = "[]"
         var gguf = "[]"
         var cached: Bool?
+        var resolvedRevision: String? = String(repeating: "a", count: 40)
     }
 
     static func resolution(_ spec: Spec = Spec()) throws -> IntakeResolution {
@@ -42,7 +43,8 @@ private enum IntakeFixtures {
             : "null"
         let json = """
         {"schema":"intake/1","source":{"input":"\(spec.repo)","repo":"\(spec.repo)","revision":"\(spec.revision)","file":null,
-         "subfolder":\(spec.subfolder.map { "\"\($0)\"" } ?? "null"),"url":"https://huggingface.co/\(spec.repo)"},
+         "subfolder":\(spec.subfolder.map { "\"\($0)\"" } ?? "null"),"url":"https://huggingface.co/\(spec.repo)",
+         "resolved_revision":\(spec.resolvedRevision.map { "\"\($0)\"" } ?? "null")},
          "verdict":"\(spec.verdict)","reasons":\(spec.reasons),"backend":\(spec.backend.map { "\"\($0)\"" } ?? "null"),
          "backend_installed":\(spec.backendInstalled),"model_type":\(spec.modelType.map { "\"\($0)\"" } ?? "null"),
          "components":\(spec.components),"task":\(task),"custom_code":false,"gated":false,"library_name":null,
@@ -162,17 +164,20 @@ final class IntakeRemodelTests: XCTestCase {
     func testReusedConversionKeepsItsDownloadWhileItIsTheResolvedRevision() throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("intake-reuse-\(UUID().uuidString)/models--a--b")
         defer { try? FileManager.default.removeItem(at: repo.deletingLastPathComponent()) }
-        let snapshot = repo.appendingPathComponent("snapshots/abc123")
+        let revision = String(repeating: "a", count: 40)
+        let snapshot = repo.appendingPathComponent("snapshots/" + revision)
         try FileManager.default.createDirectory(at: snapshot.appendingPathComponent("multilingual"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("refs"), withIntermediateDirectories: true)
-        try "abc123".write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
-        let main = try F.resolution(F.Spec())
+        try revision.write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
+        let main = try F.resolution(F.Spec(repo: "a/b", resolvedRevision: nil))
         XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: main), snapshot.path)
-        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: try F.resolution(F.Spec(revision: "abc123"))), snapshot.path)
+        let pinned = try F.resolution(F.Spec(repo: "a/b", revision: revision, resolvedRevision: nil))
+        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: pinned), snapshot.path)
         let nested = snapshot.appendingPathComponent("multilingual").path
-        XCTAssertEqual(IntakeCoordinator.reusableSource(nested, for: try F.resolution(F.Spec(subfolder: "multilingual"))), nested)
-        try "def456".write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(IntakeCoordinator.reusableSource(nested, for: try F.resolution(F.Spec(repo: "a/b", subfolder: "multilingual", resolvedRevision: nil))), nested)
+        try String(repeating: "b", count: 40).write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
         XCTAssertNil(IntakeCoordinator.reusableSource(snapshot.path, for: main))
+        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: pinned), snapshot.path)
         XCTAssertNil(IntakeCoordinator.reusableSource(repo.appendingPathComponent("snapshots/gone").path, for: try F.resolution(F.Spec(revision: "gone"))))
         XCTAssertNil(IntakeCoordinator.reusableSource(nil, for: main))
     }
@@ -337,11 +342,47 @@ final class IntakeRemodelTests: XCTestCase {
 
     func testLibraryMatchNeedsTheReadyModelAtTheRequestedRevision() throws {
         let ready = IntakeLibraryMatch.readyPaths(in: F.snapshot([F.model(F.cachePath)]))
-        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(revision: "def")), readyPaths: ready))
-        XCTAssertEqual(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(revision: "abc123")), readyPaths: ready), F.cachePath)
+        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(revision: String(repeating: "b", count: 40), resolvedRevision: nil)), readyPaths: ready))
+        XCTAssertEqual(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(revision: String(repeating: "a", count: 40), resolvedRevision: nil)), readyPaths: ready), F.cachePath)
         let incomplete = IntakeLibraryMatch.readyPaths(in: F.snapshot([F.model(F.cachePath, readiness: .incompleteCache)]))
         XCTAssertTrue(incomplete.isEmpty)
         XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(), readyPaths: incomplete))
+    }
+
+    func testLibraryMatchCannotSubstituteAnOlderSnapshotForResolvedMain() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(F.resolution())) as? [String: Any])
+        var source = try XCTUnwrap(object["source"] as? [String: Any])
+        source["resolved_revision"] = String(repeating: "b", count: 40)
+        object["source"] = source
+        let resolution = try JSONDecoder().decode(IntakeResolution.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(IntakeLibraryMatch.path(for: resolution, readyPaths: [F.cachePath]))
+    }
+
+    func testLibraryMatchDoesNotGuessARevisionWhenMainWasNotResolved() throws {
+        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(resolvedRevision: nil)), readyPaths: [F.cachePath]))
+    }
+
+    @MainActor
+    func testCompleteUnconvertedGGUFUsesItsSourceInPrepare() async throws {
+        let path = F.cachePath + "/model.gguf"
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(F.model(path).item)) as? [String: Any])
+        object["status"] = "needs_conversion"
+        let item = try JSONDecoder().decode(ModelItem.self, from: JSONSerialization.data(withJSONObject: object))
+        let scan = ScanResult(roots: nil, models: [item], outputs: [], pending: [path], duplicates: [],
+            totals: .init(gguf: 1, pending: 1, converted: 0, unreadable: 0, bytes: 1, reclaimableBytes: 0))
+        let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: F.hardware, now: Date())
+        XCTAssertEqual(snapshot.models.first?.readiness, .needsConversion)
+        let resolution = try F.resolution(F.Spec(verdict: "gguf", gguf: #"[{"name":"model.gguf","bytes":1}]"#))
+        let paths = IntakeLibraryMatch.sourcePaths(in: snapshot)
+        XCTAssertEqual(IntakeLibraryMatch.path(for: resolution, readyPaths: paths, selectedFile: "model.gguf"), path)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/unused", command: { _, _, _, _ in throw IntakeStubError.unused })
+        let host = AppHost(config: .defaults(), discoveredRoots: [], agentHealth: .notConfigured, runtimeReport: .checking,
+            hardwareProfile: F.hardware, scanOperation: { _, _, _, _ in scan }, workbenchAPI: api)
+        host.intake.selectedGGUF = "model.gguf"
+        let route = await host.reuseIntake(resolution)
+        XCTAssertEqual(route, .prepare)
+        XCTAssertEqual(host.selectedModelPath, path)
+        XCTAssertTrue(IntakeLibraryMatch.sourcePaths(in: F.snapshot([F.model(path, readiness: .incompleteCache)])).isEmpty)
     }
 
     func testAnAlreadyDownloadedModelSaysSo() throws {

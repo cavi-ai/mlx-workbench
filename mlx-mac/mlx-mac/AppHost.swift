@@ -67,7 +67,7 @@ class AppHost {
     let runtimeInstaller: RuntimeInstaller
     /// Hugging Face intake sheet state (verdict, backend install, downloads).
     let intake: IntakeCoordinator
-    let managedModels = ManagedModelInstallStore()
+    let managedModels: ManagedModelInstallStore
     let modelUpdates = ModelUpdateCoordinator(api: .unavailable)
     let modelUpdateCaptures = ModelUpdateCaptures()
     let trainedAdapters: TrainedAdapterServingCoordinator
@@ -131,6 +131,8 @@ class AppHost {
         updater: UpdateCoordinator? = nil,
         preferencesStore: JSONStore<RecommendationPreferences>? = nil,
         intakeAPI: IntakeAPI? = nil,
+        workbenchAPI: WorkbenchAPI? = nil,
+        managedModels: ManagedModelInstallStore? = nil,
         inferenceTasks: InferenceTaskCoordinator? = nil,
         endpointTest: EndpointTestCoordinator? = nil,
         runtimeProbe: @escaping @Sendable () -> RuntimeReport = { RuntimeChecker.report() }
@@ -138,6 +140,7 @@ class AppHost {
         self.configModule = configModule
         self.runtimeProbe = runtimeProbe
         self.cli = cli
+        self.managedModels = managedModels ?? ManagedModelInstallStore()
         self.catalogStore = catalogStore
         self.catalogClient = catalogClient
         self.catalogTTL = catalogTTL
@@ -149,7 +152,7 @@ class AppHost {
         }
         let loadedConfig = config ?? configModule.load()
         self.config = loadedConfig
-        let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
+        let api = workbenchAPI ?? WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
         self.inferenceTasks = inferenceTasks ?? InferenceTaskCoordinator(api: api, artifactRoot: api.taskArtifactsRoot)
         self.endpointTest = endpointTest ?? EndpointTestCoordinator(client: .live(api: api))
@@ -569,9 +572,14 @@ class AppHost {
     /// Hands a finished download to the existing flows; returns the route to show.
     func reuseIntake(_ resolution: IntakeResolution) async -> AppRoute? {
         await rescan()
-        let ready = IntakeLibraryMatch.readyPaths(in: librarySnapshot)
-        guard let path = IntakeCoordinator.existingModelPath(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready) else { return nil }
+        let ready = resolution.verdict == .gguf ? IntakeLibraryMatch.sourcePaths(in: librarySnapshot) : IntakeLibraryMatch.readyPaths(in: librarySnapshot)
+        guard let path = IntakeCoordinator.existingModelPath(resolution, qBits: config.qBits, history: modelWorkflow.history,
+            readyPaths: ready, selectedFile: intake.selectedGGUF) else { return nil }
         selectedModelPath = path
+        if resolution.verdict == .gguf, let model = librarySnapshot?.models.first(where: { $0.item.path == path }) {
+            modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot)
+            return .prepare
+        }
         if resolution.verdict == .convertible {
             let conversion = IntakeCoordinator.existingConversion(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready)
             modelWorkflow.inspect(intake: resolution, outputDirectory: URL(fileURLWithPath: path).deletingLastPathComponent().path,

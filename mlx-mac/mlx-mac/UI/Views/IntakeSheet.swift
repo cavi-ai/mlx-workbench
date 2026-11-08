@@ -124,7 +124,7 @@ struct IntakeSheet: View {
             minHeight: WorkbenchSize.Intake.minHeight, idealHeight: WorkbenchSize.Intake.idealHeight
         )
         .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
-            readyPaths = IntakeLibraryMatch.readyPaths(in: appHost.librarySnapshot)
+            readyPaths = IntakeLibraryMatch.sourcePaths(in: appHost.librarySnapshot)
         }
         .onChange(of: intake.activity) {
             logOverride = IntakeLogPresentation.override(logOverride, after: intake.activity)
@@ -132,7 +132,7 @@ struct IntakeSheet: View {
     }
 
     private func isInLibrary(_ resolution: IntakeResolution) -> Bool {
-        IntakeLibraryMatch.path(for: resolution, readyPaths: readyPaths) != nil
+        IntakeLibraryMatch.path(for: resolution, readyPaths: readyPaths, selectedFile: intake.selectedGGUF) != nil
     }
 
     private var logBinding: Binding<Bool> {

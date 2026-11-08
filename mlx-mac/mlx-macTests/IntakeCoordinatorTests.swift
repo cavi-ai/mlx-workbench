@@ -5,6 +5,182 @@ import XCTest
 
 @MainActor
 final class IntakeCoordinatorTests: XCTestCase {
+    func testPrimaryUpdateKeepsTheReusedSourceAndOriginalReceipt() async throws {
+        let root = try storageRoot()
+        let old = root.appendingPathComponent("hub/models--openai--whisper-tiny/snapshots/" + String(repeating: "a", count: 40))
+        let current = root.appendingPathComponent("existing-source")
+        try storageModel(at: old); try storageModel(at: current)
+        let revision = String(repeating: "b", count: 40), receiptPath = "/original/source.json"
+        let resolution = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm", resolvedRevision: revision)
+        let resolved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(resolution)) as? [String: Any])
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            if argv.prefix(2) == ["serve", "discover"] {
+                return ["schema_version": 1, "services": [], "capabilities": ["model_storage_admission": true, "model_update_preparation": true]]
+            }
+            if argv.prefix(2) == ["intake", "resolve"] { return resolved }
+            if argv.prefix(2) == ["intake", "fetch"] {
+                if !argv.contains("--confirm") {
+                    return ["plan": ["preview_hash": "reuse-approval", "local_dir": current.path,
+                        "storage": ["mode": "reuse", "receipt": receiptPath, "fetch_preview_hash": "original-approval"]]]
+                }
+                return ["status": "reused", "receipt": ["repo": resolution.source.repo, "revision": revision,
+                    "slug": "source", "started_at": "original", "local_dir": current.path, "preview_hash": "original-approval"],
+                    "reused_fetch": ["receipt": receiptPath, "repo": resolution.source.repo, "revision": revision,
+                        "local_dir": current.path, "state": "done", "path": current.path, "started_at": "original", "preview_hash": "original-approval"]]
+            }
+            return ["jobs": [], "servers": []]
+        })
+        let host = storageHost(root: root, api: api, previous: old.path)
+        let candidates = try await host.updateCandidates(repo: resolution.source.repo)
+        let previous = try XCTUnwrap(candidates.first)
+        let review = try await host.prepareCompleteModelUpdate(repo: resolution.source.repo, previous: previous, settings: .init())
+        XCTAssertEqual(review.sourceDirectory, current.path)
+        XCTAssertEqual(review.previewHash, "original-approval")
+        XCTAssertEqual(review.downloadAdmissionPreviewHash, "reuse-approval")
+        XCTAssertEqual(review.downloadFetchReceipt, receiptPath)
+        let installed = try await host.downloadCompleteModelUpdate(review)
+        XCTAssertEqual(installed.path, current.path)
+        XCTAssertEqual(installed.fetchReceipt, receiptPath)
+        let records = try await host.managedModels.records()
+        XCTAssertEqual(records.first?.path, current.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: old.path))
+    }
+
+    func testFailedNewSharedComponentCanRecoverWithoutMovingCompletedSharedSources() async throws {
+        let root = try storageRoot()
+        let old = root.appendingPathComponent("hub/models--openai--whisper-tiny/snapshots/" + String(repeating: "a", count: 40))
+        try storageModel(at: old)
+        let revision = String(repeating: "b", count: 40)
+        let resolution = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm", resolvedRevision: revision)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(resolution)) as? [String: Any])
+        var source = try XCTUnwrap(object["source"] as? [String: Any]); source["repo"] = "org/component"; object["source"] = source
+        let component = try JSONDecoder().decode(IntakeResolution.self, from: JSONSerialization.data(withJSONObject: object))
+        let output = root.appendingPathComponent("output").path
+        let primary = try XCTUnwrap(ManagedModelInstallStore.directory(root: output, source: resolution.source))
+        let shared = try XCTUnwrap(ManagedModelInstallStore.dependencyDirectory(root: output, source: component.source, additionalFiles: []))
+        try storageModel(at: URL(fileURLWithPath: primary)); try storageModel(at: URL(fileURLWithPath: shared))
+        let fetches: [[String: Any]] = [
+            ["receipt": "/state/primary.json", "repo": resolution.source.repo, "revision": revision, "local_dir": primary,
+             "state": "done", "path": primary, "preview_hash": "primary-approval"],
+            ["receipt": "/state/component.json", "repo": component.source.repo, "revision": revision, "local_dir": shared,
+             "state": "failed", "preview_hash": "component-approval", "processes_quiescent": true]]
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            argv.prefix(2) == ["intake", "status"] ? ["jobs": fetches] : ["jobs": [], "servers": []]
+        })
+        let host = storageHost(root: root, api: api, previous: old.path)
+        let previous = ModelUpdatePreviousModel(repo: resolution.source.repo, path: old.path,
+            signature: try ManagedModelInstallStore.signature(path: old.path), revision: String(repeating: "a", count: 40),
+            displayName: "Previous", canQuarantine: false, retentionReason: nil)
+        var review = ModelUpdateReview(id: UUID(), repo: resolution.source.repo, previous: previous, resolution: resolution,
+            targetRevision: revision, destinationPath: primary, previewHash: "primary-approval", endpointSummary: [],
+            downloadDirectory: primary, dependencies: [.init(resolution: component, directory: shared, modelPath: shared,
+                previewHash: "component-approval", shared: true)], reviewedEndpoints: [])
+        func record(_ value: ModelUpdateReview) -> ModelUpdateRecord {
+            .init(id: value.id, alertID: nil, review: value, quarantinePrevious: false, createdAt: Date(), updatedAt: Date(),
+                  stage: .downloading, state: .failed, installation: nil, error: "Synthetic failed dependency")
+        }
+        let failed = record(review)
+        let recovery = try await host.previewModelUpdateRecovery(failed)
+        XCTAssertEqual(recovery.snapshots.map(\.path), [shared])
+        XCTAssertTrue(recovery.resetsDownload)
+        review.dependencies?[0].fetchReceipt = "/original/completed-component.json"
+        do { _ = try await host.previewModelUpdateRecovery(record(review)); XCTFail("A reused shared source must remain protected") } catch {}
+        let recovered = try await host.applyModelUpdateRecovery(failed, preview: recovery)
+        XCTAssertEqual(recovered.stage, .downloading)
+        XCTAssertEqual(recovered.state, .interrupted)
+        XCTAssertEqual(recovered.review.previewHash, failed.review.previewHash)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: shared))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: primary))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: old.path))
+    }
+
+    private func storageRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("storage-tests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return root
+    }
+
+    private func storageModel(at path: URL) throws {
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: path.appendingPathComponent("config.json"))
+        try Data("synthetic fixture".utf8).write(to: path.appendingPathComponent("model.safetensors"))
+    }
+
+    private func storageHost(root: URL, api: WorkbenchAPI, previous: String) -> AppHost {
+        var config = Config.defaults(ggufRoots: [])
+        config.outputDir = root.appendingPathComponent("output").path
+        config.quarantineDir = root.appendingPathComponent("quarantine").path
+        let item = ModelItem(path: previous, name: "Previous", bytes: 1, modifiedAt: nil, shard: nil,
+            modelKey: "previous", architecture: nil, quantization: "4bit", parameters: nil, structure: nil,
+            signature: nil, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil, task: nil)
+        let scan = ScanResult(roots: nil, models: [item], outputs: [], pending: [], duplicates: [],
+            totals: .init(gguf: 0, pending: 0, converted: 1, unreadable: 0, bytes: 1, reclaimableBytes: 0))
+        let host = AppHost(config: config, discoveredRoots: [], agentHealth: .notConfigured, runtimeReport: .checking,
+            scanOperation: { _, _, _, _ in scan },
+            modelPurposes: ModelPurposeStore(store: JSONStore(fileURL: root.appendingPathComponent("purposes.json"))),
+            workbenchAPI: api, managedModels: ManagedModelInstallStore(store: JSONStore(fileURL: root.appendingPathComponent("models.json"))))
+        host.librarySnapshot = ModelLibraryBuilder.build(scan: scan, hardware: host.hardwareProfile, now: Date())
+        return host
+    }
+
+    func testGGUFReuseRequiresTheSelectedFileAndResolvedRevision() throws {
+        let revision = String(repeating: "a", count: 40)
+        let resolution = try Self.resolution(verdict: "gguf", backend: nil, resolvedRevision: revision)
+        let path = "/cache/models--openai--whisper-tiny/snapshots/\(revision)/model-Q4.gguf"
+        XCTAssertEqual(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [], readyPaths: [path], selectedFile: "model-Q4.gguf"), path)
+        XCTAssertNil(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [], readyPaths: [path], selectedFile: "model-Q8.gguf"))
+        let newer = try Self.resolution(verdict: "gguf", backend: nil, resolvedRevision: String(repeating: "b", count: 40))
+        XCTAssertNil(IntakeCoordinator.existingModelPath(newer, qBits: 4, history: [], readyPaths: [path], selectedFile: "model-Q4.gguf"))
+    }
+
+    func testManagedReuseNeedsTheReviewedOriginalReceipt() async throws {
+        let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let revision = String(repeating: "a", count: 40)
+        let canonical = temporary.path, receiptPath = "/original-receipts/original.json"
+        for corrupt in [false, true] {
+            let api = IntakeAPI.stub(fetchPreview: { _ in
+                ["preview_hash": "reuse-review", "local_dir": canonical,
+                 "storage": ["mode": "reuse", "receipt": receiptPath]]
+            }, fetchStart: { _, _ in
+                ["status": "reused", "receipt": ["repo": "openai/whisper-tiny", "revision": revision,
+                    "slug": "original", "started_at": "old-launch", "local_dir": canonical, "preview_hash": "original-review"],
+                 "reused_fetch": ["receipt": corrupt ? "/another-receipt.json" : receiptPath, "repo": "openai/whisper-tiny",
+                    "revision": revision, "local_dir": canonical, "state": "done", "path": canonical,
+                    "started_at": "old-launch", "preview_hash": "original-review"]]
+            })
+            let intake = IntakeCoordinator(api: api)
+            let resolution = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm", resolvedRevision: revision)
+            do {
+                let result = try await intake.download(resolution: resolution, localDir: temporary.appendingPathComponent("copy").path, previewHash: nil)
+                XCTAssertFalse(corrupt)
+                XCTAssertEqual(result, canonical)
+                XCTAssertEqual(intake.completedFetch?.receipt, receiptPath)
+            } catch { XCTAssertTrue(corrupt, "\(error)") }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.appendingPathComponent("copy").path))
+        }
+    }
+
+    func testUpdateComponentReusesOneVerifiedLegacyLocation() throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        let legacy = root.appendingPathComponent("managed-dependencies/previous-review/0").path
+        let revision = String(repeating: "a", count: 40)
+        let resolution = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm", resolvedRevision: revision)
+        let job = FetchJob(receipt: "/state/original.json", repo: resolution.source.repo, revision: revision,
+            file: nil, subfolder: nil, localDir: legacy, state: "done", path: legacy, logPath: nil,
+            startedAt: "original", completedAt: "done", previewHash: "original-hash")
+        let reused = try XCTUnwrap(AppHost.reusableUpdateDependency(resolution, extras: [], root: root.path, fetches: [job]))
+        XCTAssertEqual(reused.directory, legacy)
+        XCTAssertEqual(reused.previewHash, "original-hash")
+        XCTAssertEqual(reused.fetchReceipt, job.receipt)
+        XCTAssertEqual(reused.shared, true)
+        XCTAssertThrowsError(try AppHost.reusableUpdateDependency(resolution, extras: [], root: root.path, fetches: [job, job]))
+        XCTAssertNil(try AppHost.reusableUpdateDependency(resolution, extras: ["different.bin"], root: root.path, fetches: [job]))
+        XCTAssertNil(try AppHost.reusableUpdateDependency(resolution, extras: [], root: root.appendingPathComponent("other").path, fetches: [job]))
+    }
+
     func testDownloadReservesActivityBeforeDestinationValidationSuspends() async throws {
         let gate = IntakeValidationGate()
         let entered = expectation(description: "destination validation entered")
@@ -65,19 +241,22 @@ final class IntakeCoordinatorTests: XCTestCase {
     }
 
     func testExistingMLXIntakeUsesTheReadySnapshotOnly() throws {
-        let result = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm")
-        let path = "/cache/models--openai--whisper-tiny/snapshots/abc"
+        let result = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm", resolvedRevision: String(repeating: "a", count: 40))
+        let path = "/cache/models--openai--whisper-tiny/snapshots/" + String(repeating: "a", count: 40)
         XCTAssertEqual(IntakeCoordinator.existingModelPath(result, qBits: 4, history: [], readyPaths: [path]), path)
         XCTAssertNil(IntakeCoordinator.existingModelPath(result, qBits: 4, history: [], readyPaths: []))
         XCTAssertNil(IntakeCoordinator.existingModelPath(result, qBits: 4, history: [], readyPaths: ["/cache/models--other--model/snapshots/abc"]))
     }
 
     func testConvertibleIntakeReusesOnlyMatchingCurrentOutputAndWidth() throws {
-        let resolution = try Self.resolution(verdict: "convertible", backend: "mlx-lm")
+        let revision = String(repeating: "a", count: 40)
+        let resolution = try Self.resolution(verdict: "convertible", backend: "mlx-lm", resolvedRevision: revision)
         let path = "/models/whisper-tiny-MLX-4bit"
-        let record = ConversionWorkflow(id: UUID(), sourcePath: "hf://openai/whisper-tiny", sourceModelKey: nil, sourceSignature: nil,
+        var record = ConversionWorkflow(id: UUID(), sourcePath: "hf://openai/whisper-tiny", sourceModelKey: nil, sourceSignature: nil,
             outputPath: path, previewHash: nil, jobReceipt: nil, completedModelPath: path,
             state: .verified, serveState: .idle, message: nil, errorMessage: nil, createdAt: Date(), updatedAt: Date(), lastKnownAgentState: nil)
+        XCTAssertNil(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [record], readyPaths: [path]))
+        record.localSourcePath = "/cache/models--openai--whisper-tiny/snapshots/" + revision
         XCTAssertEqual(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [record], readyPaths: [path]), path)
         XCTAssertNil(IntakeCoordinator.existingModelPath(resolution, qBits: 8, history: [record], readyPaths: [path]))
         XCTAssertNil(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [record], readyPaths: []))
@@ -233,10 +412,10 @@ final class IntakeCoordinatorTests: XCTestCase {
         XCTAssertNil(intake.draft)
     }
 
-    static func resolution(verdict: String, backend: String?, subfolder: String? = nil) throws -> IntakeResolution {
+    static func resolution(verdict: String, backend: String?, subfolder: String? = nil, resolvedRevision: String? = nil) throws -> IntakeResolution {
         let json = """
         {"schema":"intake/1","source":{"input":"x","repo":"openai/whisper-tiny","revision":"main","file":null,
-         "subfolder":\(subfolder.map { "\"\($0)\"" } ?? "null"),"url":"u"},
+         "subfolder":\(subfolder.map { "\"\($0)\"" } ?? "null"),"url":"u","resolved_revision":\(resolvedRevision.map { "\"\($0)\"" } ?? "null")},
          "verdict":"\(verdict)","reasons":[],"backend":\(backend.map { "\"\($0)\"" } ?? "null"),"backend_installed":\(verdict == "convertible"),
          "model_type":"whisper","components":[],"task":null,"custom_code":false,"gated":false,"library_name":null,"pipeline_tag":null,
          "transformers_version":null,"bytes":0,"files":{"safetensors":1,"gguf":[],"python":[]},"warnings":[]}

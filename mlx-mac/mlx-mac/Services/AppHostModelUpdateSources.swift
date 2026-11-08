@@ -35,8 +35,20 @@ extension AppHost {
         let projector = bundleSelection.projector, additional = bundleSelection.additionalFiles
         let needsProjector = resolution.verdict == .gguf && bundleSelection.requiresProjector
         try await api.requireModelUpdatePreparation()
-        guard let directory = ManagedModelInstallStore.directory(root: config.outputDir, source: resolution.source) else {
+        guard let proposedDirectory = ManagedModelInstallStore.directory(root: config.outputDir, source: resolution.source) else {
             throw ModelUpdateError.invalid("The managed source directory is unavailable.")
+        }
+        let plan = try await api.intakeFetchPreview(.init(source: resolution.source.reference, revision: resolution.source.fetchRevision,
+            file: resolution.source.file, localDir: proposedDirectory, modelType: resolution.modelType, additionalFiles: resolution.source.file == nil ? [] : additional))
+        guard let admissionHash = plan.string("preview_hash"), !admissionHash.isEmpty else { throw ModelUpdateError.unavailable }
+        let storage = plan["storage"] as? [String: Any]
+        let reusing = storage?["mode"] as? String == "reuse"
+        let directory = plan.string("local_dir") ?? proposedDirectory
+        let originalHash = storage?["fetch_preview_hash"] as? String
+        let originalReceipt = storage?["receipt"] as? String
+        guard directory == proposedDirectory || reusing,
+              !reusing || originalHash?.isEmpty == false && originalReceipt?.hasPrefix("/") == true else {
+            throw ModelUpdateError.invalid("The engine did not bind the existing source to its original receipt.")
         }
         let downloadedPath = (resolution.source.file ?? resolution.source.subfolder).map {
             URL(fileURLWithPath: directory).appendingPathComponent($0).path
@@ -52,13 +64,12 @@ extension AppHost {
             try ManagedModelInstallStore.refuseLinks(in: directory)
             try ManagedModelInstallStore.refuseLinks(in: output)
         } }.get()
-        guard !FileManager.default.fileExists(atPath: directory), !FileManager.default.fileExists(atPath: output) else {
+        guard (reusing || !FileManager.default.fileExists(atPath: directory)),
+              (!FileManager.default.fileExists(atPath: output) || reusing && conversion == nil) else {
             throw ModelUpdateError.invalid("This revision already has files. Continue its saved update, or review those files in Library before starting another download.")
         }
         let reviewID = UUID()
-        let plan = try await api.intakeFetchPreview(.init(source: resolution.source.reference, revision: resolution.source.fetchRevision,
-            file: resolution.source.file, localDir: directory, modelType: resolution.modelType, additionalFiles: resolution.source.file == nil ? [] : additional))
-        guard let hash = plan.string("preview_hash"), !hash.isEmpty else { throw ModelUpdateError.unavailable }
+        let hash = reusing ? originalHash! : admissionHash
         var requestedDependencies: [(repo: String, revision: String?, files: [String])] = []
         if let recipe = resolution.recipe { requestedDependencies.append((recipe.base, recipe.baseRevision, [])) }
         if let required = plan["required_dependencies"] {
@@ -72,6 +83,7 @@ extension AppHost {
             }
         }
         var dependencies: [ModelUpdateDependency] = []
+        let existingFetches = requestedDependencies.isEmpty ? [] : try await api.intakeStatus()
         for requested in requestedDependencies {
             _ = try ManagedModelInstallStore.sourceReference(repo: requested.repo, file: nil, subfolder: nil)
             let files = requested.files.sorted()
@@ -84,8 +96,14 @@ extension AppHost {
             }
             if let first = files.first { component = try Self.updateResolution(component, selecting: first, requireGGUF: false) }
             if dependencies.contains(where: { $0.resolution.source == component.source && $0.additionalFiles == Array(files.dropFirst()) }) { continue }
-            let location = URL(fileURLWithPath: config.outputDir).appendingPathComponent("managed-dependencies")
-                .appendingPathComponent(reviewID.uuidString.lowercased()).appendingPathComponent(String(dependencies.count)).path
+            let extras = Array(files.dropFirst())
+            if let existing = try Self.reusableUpdateDependency(component, extras: extras, root: config.outputDir, fetches: existingFetches) {
+                dependencies.append(existing)
+                continue
+            }
+            guard let location = ManagedModelInstallStore.dependencyDirectory(root: config.outputDir, source: component.source, additionalFiles: extras) else {
+                throw ModelUpdateError.invalid("The required component has no valid immutable storage identity.")
+            }
             try ManagedModelInstallStore.refuseLinks(in: location)
             let plan = try await api.intakeFetchPreview(.init(source: component.source.reference, revision: component.source.fetchRevision,
                 file: component.source.file, localDir: location, modelType: component.modelType, additionalFiles: Array(files.dropFirst())))
@@ -93,8 +111,13 @@ extension AppHost {
                   (plan["required_dependencies"] as? [Any] ?? []).isEmpty else {
                 throw ModelUpdateError.invalid("A required component needs additional unresolved dependencies.")
             }
-            dependencies.append(.init(resolution: component, directory: location, modelPath: location,
-                previewHash: hash, additionalFiles: Array(files.dropFirst())))
+            let selectedLocation = plan.string("local_dir") ?? location
+            let reuse = plan["storage"] as? [String: Any]
+            guard selectedLocation == location || reuse?["mode"] as? String == "reuse" else { throw ModelUpdateError.unavailable }
+            try ManagedModelInstallStore.refuseLinks(in: selectedLocation)
+            dependencies.append(.init(resolution: component, directory: selectedLocation, modelPath: selectedLocation,
+                previewHash: reuse?["fetch_preview_hash"] as? String ?? hash, additionalFiles: extras, shared: true,
+                fetchReceipt: reuse?["receipt"] as? String, admissionPreviewHash: reuse?["mode"] as? String == "reuse" ? hash : nil))
         }
         let downloads = plan["downloads"] as? [[String: Any]] ?? []
         let downloadsDirectory = plan["downloads_dir"] as? String
@@ -119,10 +142,44 @@ extension AppHost {
         review.cleanupPath = cleanup?.path; review.cleanupSnapshot = cleanup; review.previousInstall = ledger
         review.cleanupBundle = bundle?.directory; review.cleanupFiles = bundle?.files
         review.downloadsDirectory = downloadsDirectory
+        review.downloadFetchReceipt = reusing ? originalReceipt : nil
+        review.downloadAdmissionPreviewHash = reusing ? admissionHash : nil
         try review.validate()
         modelUpdateCaptures.insert(review.id, endpoints: slots, cleanup: cleanup, sourceInstall: ledger,
             managedBundle: bundle?.directory, bundleFiles: bundle?.files ?? [])
         return review
+    }
+
+    nonisolated static func reusableUpdateDependency(_ resolution: IntakeResolution, extras: [String], root: String,
+                                                     fetches: [FetchJob]) throws -> ModelUpdateDependency? {
+        let matches = fetches.filter {
+            $0.state == "done" && $0.repo == resolution.source.repo && $0.revision == resolution.source.fetchRevision &&
+            $0.file == resolution.source.file && $0.subfolder == resolution.source.subfolder &&
+            ($0.additionalFiles ?? []).sorted() == extras.sorted() && $0.previewHash?.isEmpty == false &&
+            $0.localDir == $0.path && $0.path?.hasPrefix(URL(fileURLWithPath: root).standardizedFileURL.path + "/") == true
+        }
+        guard matches.count <= 1 else { throw ModelUpdateError.invalid("Several completed sources claim this required component. Review their storage before continuing.") }
+        guard let job = matches.first, let path = job.path, let hash = job.previewHash else { return nil }
+        try ManagedModelInstallStore.refuseLinks(in: path)
+        return .init(resolution: resolution, directory: path, modelPath: path, previewHash: hash,
+                     additionalFiles: extras.sorted(), shared: true, fetchReceipt: job.receipt)
+    }
+
+    func validateUpdateDownloadLocation(_ review: ModelUpdateReview) async throws {
+        if review.downloadFetchReceipt == nil,
+           ManagedModelInstallStore.directory(root: config.outputDir, source: review.resolution.source) == review.sourceDirectory { return }
+        guard review.downloadAdmissionPreviewHash != nil, let receipt = review.downloadFetchReceipt else {
+            throw ModelUpdateError.invalid("The managed source location changed. Review the update again.")
+        }
+        let plan = try await api.intakeFetchPreview(.init(source: review.resolution.source.reference,
+            revision: review.targetRevision, file: review.resolution.source.file, localDir: review.sourceDirectory,
+            modelType: review.resolution.modelType, additionalFiles: review.additionalFiles ?? []))
+        let storage = plan["storage"] as? [String: Any]
+        guard storage?["mode"] as? String == "reuse", storage?["receipt"] as? String == receipt,
+              storage?["fetch_preview_hash"] as? String == review.previewHash,
+              plan.string("local_dir") == review.sourceDirectory else {
+            throw ModelUpdateError.invalid("The reused source changed. Review its original receipt before continuing.")
+        }
     }
 
     static func validUpdateDependencyFile(_ file: String) -> Bool {
@@ -151,10 +208,32 @@ extension AppHost {
     func recoverModelUpdate(_ saved: ModelUpdateRecord) async throws -> ModelUpdateRecord {
         let review = saved.review
         try review.validateForDownload()
+        try await validateUpdateDownloadLocation(review)
+        let completedFetches = review.dependencies?.contains(where: { $0.shared == true }) == true ? try await api.intakeStatus() : []
+        var verifiedShared = Set<String>()
+        for component in review.dependencies ?? [] where component.shared == true {
+            if component.directory == ManagedModelInstallStore.dependencyDirectory(root: config.outputDir,
+                source: component.resolution.source, additionalFiles: component.additionalFiles) {
+                verifiedShared.insert(component.directory)
+            } else if (try? Self.reusableUpdateDependency(component.resolution, extras: component.additionalFiles,
+                       root: config.outputDir, fetches: completedFetches)) == component {
+                verifiedShared.insert(component.directory)
+            } else if component.admissionPreviewHash != nil {
+                let plan = try await api.intakeFetchPreview(.init(source: component.resolution.source.reference,
+                    revision: component.resolution.source.fetchRevision, file: component.resolution.source.file,
+                    localDir: component.directory, modelType: component.resolution.modelType, additionalFiles: component.additionalFiles))
+                let storage = plan["storage"] as? [String: Any]
+                if storage?["mode"] as? String == "reuse", storage?["receipt"] as? String == component.fetchReceipt,
+                   storage?["fetch_preview_hash"] as? String == component.previewHash,
+                   plan.string("local_dir") == component.directory { verifiedShared.insert(component.directory) }
+            }
+        }
         guard let expected = review.reviewedEndpoints,
-              ManagedModelInstallStore.directory(root: config.outputDir, source: review.resolution.source) == review.sourceDirectory,
               review.dependencies?.enumerated().allSatisfy({ index, component in
-                  component.directory == URL(fileURLWithPath: config.outputDir).appendingPathComponent("managed-dependencies")
+                  if component.shared == true {
+                      return verifiedShared.contains(component.directory)
+                  }
+                  return component.directory == URL(fileURLWithPath: config.outputDir).appendingPathComponent("managed-dependencies")
                     .appendingPathComponent(review.id.uuidString.lowercased()).appendingPathComponent(String(index)).path
               }) ?? true else {
             throw ModelUpdateError.invalid("This saved update has no complete endpoint or managed-source capture. Review it again from Watch.")
@@ -274,6 +353,8 @@ extension AppHost {
 
 extension AppHost {
     func previewModelUpdateRecovery(_ record: ModelUpdateRecord) async throws -> ModelUpdateRecoveryReview {
+        await modelUpdates.waitForHistory()
+        guard modelUpdates.persistenceError == nil else { throw ModelUpdateError.invalid("Saved update ownership is unavailable. Restore its history before moving shared files.") }
         let review = record.review
         try review.validateForDownload()
         guard record.endpointsSwitched != true, !reclaim.isApplying, !intake.isBusy,
@@ -286,8 +367,22 @@ extension AppHost {
         }
         let fetches = try await api.intakeStatus()
         var paths: [String] = [], receipts: [String] = [], resetDownload = false
-        let components = [(review.resolution, review.sourceDirectory, review.additionalFiles ?? [], review.previewHash)] +
-            (review.dependencies ?? []).map { ($0.resolution, $0.directory, $0.additionalFiles, $0.previewHash) }
+        var components: [(IntakeResolution, String, [String], String)] = []
+        if review.downloadFetchReceipt == nil {
+            components.append((review.resolution, review.sourceDirectory, review.additionalFiles ?? [], review.previewHash))
+        }
+        let retainedComponents = modelUpdates.records.filter { $0.id != record.id }.flatMap {
+            $0.downloadedSource?.sourceFiles?.map(\.path) ?? []
+        }
+        for component in review.dependencies ?? [] {
+            let failedNewShared = component.shared == true && component.fetchReceipt == nil && record.downloadedSource == nil &&
+                component.directory == ManagedModelInstallStore.dependencyDirectory(root: config.outputDir,
+                    source: component.resolution.source, additionalFiles: component.additionalFiles) &&
+                !retainedComponents.contains(where: { $0 == component.directory || $0.hasPrefix(component.directory + "/") || component.directory.hasPrefix($0 + "/") })
+            if component.shared != true || failedNewShared {
+                components.append((component.resolution, component.directory, component.additionalFiles, component.previewHash))
+            }
+        }
         for (resolution, directory, extras, hash) in components {
             let matches = fetches.filter {
                 $0.repo == resolution.source.repo && $0.revision == resolution.source.fetchRevision &&
@@ -299,6 +394,9 @@ extension AppHost {
             }
             if matches.contains(where: { $0.state == "done" }) { continue }
             if let failed = matches.max(by: { ($0.startedAt ?? "") < ($1.startedAt ?? "") }), failed.state == "failed" {
+                guard failed.processesQuiescent == true else {
+                    throw ModelUpdateError.invalid("The source download has not been confirmed stopped. Refresh Jobs before moving its files.")
+                }
                 receipts.append(failed.receipt); resetDownload = true
                 if FileManager.default.fileExists(atPath: directory) { paths.append(directory) }
             }
