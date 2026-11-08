@@ -207,6 +207,40 @@ final class WorkbenchReviewUITests: XCTestCase {
             if action in ('start', 'status', 'cancel'):
                 records_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 records_path.write_text(json.dumps(records)); records_path.chmod(0o600)
+        elif args[:2] == ['intake', 'resolve'] and (root / 'update-resolution.json').exists():
+            data = json.loads((root / 'update-resolution.json').read_text())
+        elif args[:2] == ['intake', 'fetch'] and (root / 'update-resolution.json').exists():
+            directory = pathlib.Path(args[args.index('--local-dir') + 1])
+            selected = args[args.index('--file') + 1] if '--file' in args else None
+            extras = [args[index + 1] for index, value in enumerate(args) if value == '--additional-file']
+            if '--confirm' not in args:
+                data = {'status':'preview', 'plan':{'preview_hash':'update-download', 'required_dependencies':[], 'downloads':[]}}
+            else:
+                assert selected is not None and '--preview-hash' in args and args[args.index('--preview-hash') + 1] == 'update-download'
+                assert not directory.exists()
+                directory.mkdir(parents=True)
+                for name in [selected] + extras:
+                    path = directory / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b'GGUF fixture source; no model execution')
+                receipt = dict(slug='fixture-update-fetch', repo='org/model', revision='b' * 40, file=selected,
+                    additional_files=sorted(extras), subfolder=None, local_dir=str(directory), started_at='2026-11-07T12:00:00Z')
+                job = dict(receipt=str(root / 'fixture-update-fetch.json'), path=str(directory), state='done',
+                    preview_hash='update-download', **{key:value for key,value in receipt.items() if key != 'slug'})
+                (root / 'update-fetch-job.json').write_text(json.dumps(job))
+                data = {'receipt':receipt}
+        elif args[:2] == ['intake', 'status'] and (root / 'update-fetch-job.json').exists():
+            data = {'jobs':[json.loads((root / 'update-fetch-job.json').read_text())]}
+        elif args[:2] == ['convert', 'start'] and (root / 'update-resolution.json').exists():
+            assert '--confirm' not in args, 'Preparation must require its separate UI confirmation'
+            fetched = json.loads((root / 'update-fetch-job.json').read_text())
+            source = dict(path=str(pathlib.Path(fetched['local_dir']) / fetched['file']), fetch_receipt=fetched['receipt'],
+                origin=dict(repo='org/model', revision='b' * 40, file=fetched['file'], subfolder=None, additional_files=fetched['additional_files']),
+                dependencies=[])
+            if '--projector' in args:
+                source['projector'] = dict(path=args[args.index('--projector') + 1], signature='fixture-projector')
+            data = {'status':'preview', 'plan':dict(out=args[args.index('--out') + 1], q_bits=int(args[args.index('--q-bits') + 1]),
+                preview_hash='update-conversion', source=source)}
         elif args[:2] == ['convert', 'scan']:
             if (root / 'fail-scan').exists():
                 print('Fixture scan failed: choose a readable model root.', file=sys.stderr)
@@ -269,7 +303,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args[:2] == ['serve', 'discover']:
             inventory = root / 'discovered-services.json'
             data = {'schema_version': 1, 'services': json.loads(inventory.read_text()) if inventory.exists() else [],
-                    'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True}}
+                    'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True, 'model_update_preparation': True}}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():
@@ -753,6 +787,87 @@ final class WorkbenchReviewUITests: XCTestCase {
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"intake\", \"fetch\""))
         XCTAssertFalse(calls.contains("\"backend\", \"install\""))
+    }
+
+    func testVisionGGUFUpdateReviewsExactBundleBeforePreparation() throws {
+        let fm = FileManager.default
+        let previous = root.appendingPathComponent("hub/models--org--model/snapshots/" + String(repeating: "a", count: 40))
+        try fm.createDirectory(at: previous, withIntermediateDirectories: true)
+        try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: previous.appendingPathComponent("config.json"))
+        try Data("fixture previous weights".utf8).write(to: previous.appendingPathComponent("model.safetensors"))
+        let main = "vision-00001-of-00002.gguf", second = "vision-00002-of-00002.gguf", projector = "mmproj.gguf"
+        let resolution: [String: Any] = ["schema":"intake/1", "source":["input":"org/model", "repo":"org/model", "revision":"main",
+            "resolved_revision":String(repeating: "b", count: 40), "url":"https://huggingface.co/org/model"],
+            "verdict":"gguf", "reasons":[], "backend_installed":true, "components":[], "custom_code":false, "gated":false,
+            "bytes":300, "download_bytes":300, "files":["safetensors":0, "gguf":[main, second, projector].map { ["name":$0, "bytes":100] as [String:Any] }, "python":[]], "warnings":[]]
+        try JSONSerialization.data(withJSONObject: resolution).write(to: root.appendingPathComponent("update-resolution.json"))
+        let scan: [String: Any] = ["models":[], "outputs":[["path":previous.path, "name":"Previous vision model", "model_key":"org/model", "bytes":100,
+            "task":["type":"vision_language", "use_cases":[], "source":"registry", "confidence":"confirmed"]]],
+            "pending":[], "duplicates":[], "totals":["gguf":0, "pending":0, "converted":1, "unreadable":0, "bytes":100, "reclaimable_bytes":0]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: root.appendingPathComponent("scan-result.json"))
+        let support = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try fm.createDirectory(at: support, withIntermediateDirectories: true)
+        let alert: [String: Any] = ["id":UUID().uuidString, "kind":"upstreamChange", "fingerprint":"new-model-revision", "modelKey":"org/model",
+            "title":"Model updated", "body":"Review the new revision", "route":"convert", "createdAt":Date().timeIntervalSinceReferenceDate,
+            "muted":false, "code":"updated_tracked_repo"]
+        try JSONSerialization.data(withJSONObject: [alert]).write(to: support.appendingPathComponent("watch-alerts.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        XCTAssertTrue(app.staticTexts["Vision-language"].firstMatch.waitForExistence(timeout: 20))
+        resizeWindow(width: 1050, height: 920)
+        select("Overview")
+        let open = app.buttons["Review update"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        let overviewScroll = app.scrollViews.containing(.button, identifier: "Review update").firstMatch
+        let wheel = overviewScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5))
+        for _ in 0..<8 where open.frame.maxY > overviewScroll.frame.maxY || open.frame.minY < overviewScroll.frame.minY {
+            wheel.scroll(byDeltaX: 0, deltaY: max(-350, min(350, overviewScroll.frame.midY - open.frame.midY)))
+        }
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(open.frame), app.debugDescription)
+        let frame = open.frame, window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY)).click()
+        let sheet = app.sheets.firstMatch
+        let previousPicker = sheet.popUpButtons["model-update-previous"]
+        XCTAssertTrue(previousPicker.waitForExistence(timeout: 15)); previousPicker.click()
+        let previousItem = previousPicker.menuItems.element(boundBy: 1)
+        XCTAssertTrue(previousItem.waitForExistence(timeout: 10))
+        previousItem.click()
+        let download = sheet.buttons["model-update-download"]
+        let mainPicker = sheet.popUpButtons["model-update-gguf-file"]
+        XCTAssertTrue(mainPicker.waitForExistence(timeout: 15))
+        XCTAssertFalse(download.isEnabled)
+        mainPicker.click(); mainPicker.menuItems.element(boundBy: 1).click()
+        let projectorPicker = sheet.popUpButtons["model-update-projector"]
+        XCTAssertTrue(projectorPicker.waitForExistence(timeout: 15))
+        let projectorReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: projectorPicker)
+        XCTAssertEqual(XCTWaiter.wait(for: [projectorReady], timeout: 20), .completed)
+        XCTAssertFalse(download.isEnabled, "A vision update must preserve its projector before downloading")
+        projectorPicker.click()
+        projectorPicker.menuItems.element(boundBy: 1).click()
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        let enabled = NSPredicate(format: "enabled == true")
+        expectation(for: enabled, evaluatedWith: download); waitForExpectations(timeout: 20)
+        capture("Model-update-vision-bundle-review")
+        download.click()
+        let convert = sheet.buttons["model-update-confirm-preparation"]
+        XCTAssertTrue(convert.waitForExistence(timeout: 30))
+        let preparationReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: convert)
+        XCTAssertEqual(XCTWaiter.wait(for: [preparationReady], timeout: 20), .completed)
+        XCTAssertFalse(sheet.popUpButtons["model-update-gguf-file"].isEnabled)
+        let fetched = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("update-fetch-job.json"))) as? [String: Any])
+        XCTAssertEqual(fetched["file"] as? String, main)
+        XCTAssertEqual(fetched["additional_files"] as? [String], [projector, second].sorted())
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: support.appendingPathComponent("model-updates.json"))) as? [[String: Any]])
+        XCTAssertEqual(saved.first?["stage"] as? String, "awaitingPreparation")
+        let savedReview = try XCTUnwrap(saved.first?["review"] as? [String: Any])
+        let oldSelection = try XCTUnwrap(savedReview["previous"] as? [String: Any])
+        XCTAssertEqual(oldSelection["path"] as? String, previous.path)
+        XCTAssertTrue(fm.fileExists(atPath: previous.appendingPathComponent("model.safetensors").path))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"--confirm\", \"--require-completion\""))
+        capture("Model-update-separate-preparation-confirmation")
+        sheet.buttons["Close"].firstMatch.click()
+        XCTAssertTrue(app.buttons["Review update"].firstMatch.waitForExistence(timeout: 15))
     }
 
     private func installTaskModel(kind: String, name: String) throws -> URL {

@@ -5,6 +5,179 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testPreparedGGUFPreviewKeepsSourceProjectorAndFetchEvidenceAsArgvTokens() async throws {
+        let recorder = AgentCallRecorder()
+        let preparation = updatePreparation(kind: .gguf)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] { return Self.preparationCapabilities }
+            return ["plan": ["preview_hash": "fresh-preparation", "out": preparation.outputPath]]
+        })
+        let plan = try await api.modelUpdateConversionPreview(preparation, subfolder: nil)
+        XCTAssertEqual(plan["preview_hash"] as? String, "fresh-preparation")
+        let call = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["convert", "start"] })
+        XCTAssertEqual(call.argv, ["convert", "start", "--q-bits", "8", "--out", preparation.outputPath,
+            "--fetch-receipt", preparation.fetchReceipt, "--require-completion", "--receipts-dir", "/state/workbench",
+            "--gguf", preparation.sourcePath, "--downloads-dir", "/models/downloads", "--projector", preparation.projectorPath!,
+            "--require-projector", "--dependency-fetch-receipt", "/state/base-fetch.json"])
+        XCTAssertFalse(call.argv.contains("--confirm"))
+        XCTAssertFalse(call.argv.contains("--repo"))
+        XCTAssertFalse(call.argv.contains("--trust-remote-code"))
+        XCTAssertEqual(call.timeout, 90)
+        XCTAssertFalse(call.isScout)
+    }
+
+    func testPreparedRepositoryPreviewUsesTheCapturedLocalSourceAndBackend() async throws {
+        let recorder = AgentCallRecorder()
+        var preparation = updatePreparation(kind: .repository)
+        preparation.projectorPath = nil; preparation.requireProjector = false
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.prefix(2) == ["serve", "discover"] { return Self.preparationCapabilities }
+            return ["plan": ["preview_hash": "preparation"]]
+        })
+        _ = try await api.modelUpdateConversionPreview(preparation, subfolder: "multilingual")
+        let argv = try XCTUnwrap(recorder.values.first { $0.argv.prefix(2) == ["convert", "start"] }?.argv)
+        XCTAssertEqual(argv, ["convert", "start", "--q-bits", "8", "--out", preparation.outputPath,
+            "--fetch-receipt", preparation.fetchReceipt, "--require-completion", "--receipts-dir", "/state/workbench",
+            "--repo", preparation.repo, "--source-path", preparation.sourcePath, "--backend", "mlx-embeddings",
+            "--model-type", "laya", "--subfolder", "multilingual", "--downloads-dir", "/models/downloads",
+            "--dependency-fetch-receipt", "/state/base-fetch.json"])
+        XCTAssertFalse(argv.contains("--hf-cache"))
+        XCTAssertFalse(argv.contains("--gguf"))
+    }
+
+    func testPreparedUpdateCapabilityCannotSurviveAnEngineChange() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/new", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["schema_version": 1, "services": [], "capabilities": ["model_update_preparation": path == "/new"]]
+        })
+        try await api.requireModelUpdatePreparation()
+        await api.setAgentPath("/old")
+        do {
+            _ = try await api.modelUpdateConversionPreview(updatePreparation(kind: .gguf), subfolder: nil)
+            XCTFail("An old engine must not prepare a source-bound revision update")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.prefix(2) == ["convert", "start"] })
+    }
+
+    func testLatePreparedUpdateDiscoveryCannotAuthorizeAnotherEngine() async throws {
+        let recorder = AgentCallRecorder()
+        let entered = expectation(description: "preparation discovery entered")
+        let release = DispatchSemaphore(value: 0)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/new", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if path == "/new", argv.prefix(2) == ["serve", "discover"] {
+                entered.fulfill(); _ = release.wait(timeout: .now() + 5)
+            }
+            return ["schema_version": 1, "services": [], "capabilities": ["model_update_preparation": path == "/new"]]
+        })
+        let preparation = updatePreparation(kind: .gguf)
+        let request = Task { try await api.modelUpdateConversionPreview(preparation, subfolder: nil) }
+        await fulfillment(of: [entered], timeout: 2)
+        await api.setAgentPath("/old")
+        release.signal()
+        do { _ = try await request.value; XCTFail("Changed engine must invalidate preparation discovery") }
+        catch let error as BridgeError { XCTAssertEqual(error.code, "engine_changed") }
+        do { try await api.requireModelUpdatePreparation(); XCTFail("Stale capability must not be retained") }
+        catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.prefix(2) == ["convert", "start"] })
+    }
+
+    func testCompanionFetchPreviewAndConfirmationUseTheSamePinnedSelection() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["plan": ["preview_hash": "pinned-fetch"]]
+        })
+        let revision = String(repeating: "b", count: 40)
+        let request = IntakeFetchRequest(source: "org/model", revision: revision, file: "weights/main Q8.gguf",
+            localDir: "/models/pinned download", additionalFiles: ["vision/mmproj.gguf", "weights/part-2.gguf"])
+        _ = try await api.intakeFetchPreview(request)
+        _ = try await api.intakeFetchStart(request, previewHash: "pinned-fetch")
+        let prefix = ["intake", "fetch", "org/model", "--revision", revision, "--file", "weights/main Q8.gguf",
+            "--additional-file", "vision/mmproj.gguf", "--additional-file", "weights/part-2.gguf", "--local-dir", "/models/pinned download"]
+        XCTAssertEqual(recorder.values[0].argv, prefix + ["--receipts-dir", "/state/workbench"])
+        XCTAssertEqual(recorder.values[1].argv, prefix + ["--confirm", "--preview-hash", "pinned-fetch", "--receipts-dir", "/state/workbench"])
+    }
+
+    func testPreparedQueueRequestRetainsSourceDependenciesAndCompletionRequirement() async throws {
+        let recorder = AgentCallRecorder()
+        let preparation = updatePreparation(kind: .repository)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            let index = try XCTUnwrap(argv.firstIndex(of: "--request"))
+            let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: argv[index + 1]))) as? [String: Any])
+            XCTAssertEqual(request["operation"] as? String, "enqueue")
+            XCTAssertEqual(request["kind"] as? String, "repo")
+            XCTAssertEqual(request["source_path"] as? String, preparation.sourcePath)
+            XCTAssertEqual(request["fetch_receipt"] as? String, preparation.fetchReceipt)
+            XCTAssertEqual(request["projector"] as? String, preparation.projectorPath)
+            XCTAssertEqual(request["require_projector"] as? Bool, true)
+            XCTAssertEqual(request["require_completion"] as? Bool, true)
+            XCTAssertEqual(request["dependency_fetch_receipts"] as? [String], preparation.dependencyFetchReceipts)
+            XCTAssertEqual(request["downloads_dir"] as? String, preparation.downloadsDirectory)
+            XCTAssertEqual(request["backend"] as? String, "mlx-embeddings")
+            XCTAssertEqual(request["model_type"] as? String, "laya")
+            return ["queue_path": "/state/workbench/convert-queue.json", "conversion_queue": ["schema_version": "1.2", "items": []]]
+        })
+        let response = try await api.conversionQueue(preparation.enqueueRequest)
+        XCTAssertTrue(try response.snapshot().items.isEmpty)
+        let call = try XCTUnwrap(recorder.values.first)
+        XCTAssertEqual(Array(call.argv.prefix(4)), ["lab", "queue", "--receipts-dir", "/state/workbench"])
+        XCTAssertEqual(call.timeout, 300)
+        let requestIndex = try XCTUnwrap(call.argv.firstIndex(of: "--request"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: call.argv[requestIndex + 1]), "The transient request must be removed after the engine consumes it")
+    }
+
+    func testConversionStatusPreservesSourceRecipeAndObservedExitWithoutInferringSuccess() async throws {
+        let details: [String: Any] = ["kind": "repo", "repo": "org/model", "path": "/models/pinned source", "signature": "source-signature",
+            "origin": ["repo": "org/model", "revision": String(repeating: "b", count: 40), "file": NSNull(), "subfolder": "multilingual",
+                "additional_files": ["vision/mmproj.gguf"]], "fetch_receipt": "/state/fetch.json",
+            "projector": ["path": "/models/pinned source/mmproj.gguf", "signature": "projector-signature"],
+            "recipe": ["base": "org/base", "base_revision": String(repeating: "c", count: 40)],
+            "dependencies": [["fetch_receipt": "/state/base-fetch.json", "path": "/models/base", "signature": "base-signature"]]]
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
+            ["jobs": [["state": "done", "source_details": details, "backend": "mlx-embeddings", "model_type": "laya",
+                       "preview_hash": "prepared-plan", "completion_observed": true, "exit_code": 0, "processes_quiescent": true],
+                      ["state": "done"], ["state": "failed", "completion_observed": true, "exit_code": 9, "processes_quiescent": false]]]
+        })
+        let jobs = try await api.convertStatus()
+        XCTAssertEqual(jobs.count, 3)
+        let source = try XCTUnwrap(jobs[0].sourceDetails)
+        XCTAssertEqual(source.path, "/models/pinned source")
+        XCTAssertEqual(source.signature, "source-signature")
+        XCTAssertEqual(source.fetchReceipt, "/state/fetch.json")
+        XCTAssertEqual(source.origin?.subfolder, "multilingual")
+        XCTAssertEqual(source.origin?.additionalFiles, ["vision/mmproj.gguf"])
+        XCTAssertEqual(source.projector?.signature, "projector-signature")
+        XCTAssertEqual(source.recipe?.object?["base"]?.text, "org/base")
+        XCTAssertEqual(source.dependencies?.first?.object?["fetch_receipt"]?.text, "/state/base-fetch.json")
+        XCTAssertEqual(jobs[0].completionObserved, true); XCTAssertEqual(jobs[0].exitCode, 0)
+        XCTAssertEqual(jobs[0].processesQuiescent, true)
+        XCTAssertEqual(jobs[0].backend, "mlx-embeddings"); XCTAssertEqual(jobs[0].modelType, "laya")
+        XCTAssertNil(jobs[1].sourceDetails); XCTAssertNil(jobs[1].completionObserved); XCTAssertNil(jobs[1].exitCode)
+        XCTAssertNil(jobs[1].processesQuiescent)
+        XCTAssertEqual(jobs[2].state, "failed"); XCTAssertEqual(jobs[2].exitCode, 9)
+        XCTAssertEqual(jobs[2].processesQuiescent, false)
+    }
+
+    private static var preparationCapabilities: [String: Any] {
+        ["schema_version": 1, "services": [], "errors": [], "capabilities": ["model_update_preparation": true]]
+    }
+
+    private func updatePreparation(kind: ModelUpdateConversionRecipe.Kind) -> ModelUpdatePreparationReview {
+        ModelUpdatePreparationReview(id: UUID(), previewHash: "prepared-plan",
+            recipe: .init(kind: kind, qBits: 8, backend: kind == .repository ? "mlx-embeddings" : nil,
+                modelType: kind == .repository ? "laya" : nil), repo: "org/model", sourcePath: "/models/pinned source/main.gguf",
+            outputPath: "/models/prepared output", fetchReceipt: "/state/source-fetch.json",
+            sourceFiles: [.init(path: "/models/pinned source/main.gguf", signature: "source-signature")],
+            projectorPath: "/models/pinned source/vision/mmproj.gguf", requireProjector: true,
+            dependencyFetchReceipts: ["/state/base-fetch.json"], subfolder: kind == .repository ? "multilingual" : nil,
+            downloadsDirectory: "/models/downloads")
+    }
+
     func testDiscoveredStopPassesPidAndStartFencesToTheEngine() async throws {
         let recorder = AgentCallRecorder()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in

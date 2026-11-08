@@ -5,7 +5,7 @@ import Foundation
 struct ModelOccupancy: Equatable, Sendable {
     enum Holder: Equatable, Sendable {
         case verification, comparison, hostedComparison, promptTest
-        case runningServer, endpoint, preference, retention, inferenceTask, conversion
+        case runningServer, endpoint, preference, retention, inferenceTask, conversion, modelUpdate
 
         /// Runs that serve the model themselves and fail if its server stops.
         var needsServer: Bool { self == .verification || self == .comparison || self == .hostedComparison || self == .promptTest }
@@ -49,6 +49,12 @@ struct ModelOccupancy: Equatable, Sendable {
 
     func blocksStop(_ server: ServerInfo, excluding holder: Holder? = nil) -> Bool {
         blocksStop(modelIdentity: server.modelIdentity, excluding: holder)
+    }
+
+    func excluding(_ holder: Holder) -> ModelOccupancy {
+        var filtered = self
+        filtered.claims.removeAll { $0.holder == holder }
+        return filtered
     }
 
     /// Claimed identities plus every library path one of them matches; reclaim and

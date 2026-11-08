@@ -74,6 +74,7 @@ final class IntakeCoordinator: ObservableObject {
     @Published private(set) var resolution: IntakeResolution?
     @Published private(set) var activity: Activity = .idle
     @Published private(set) var logTail: [String] = []
+    @Published private(set) var completedFetch: FetchJob?
     @Published private(set) var downloadedPath: String?
     @Published private(set) var analysis: PortAnalysis?
     @Published private(set) var draft: PortPlanResult?
@@ -250,16 +251,18 @@ final class IntakeCoordinator: ObservableObject {
         return try? await download(resolution: resolution, localDir: localDir, previewHash: nil)
     }
 
-    func download(resolution: IntakeResolution, localDir: String?, previewHash: String?) async throws -> String {
+    func download(resolution: IntakeResolution, localDir: String?, previewHash: String?, additionalFiles: [String] = []) async throws -> String {
         guard !isBusy else { throw WorkflowEvidenceError.invalid("Another intake operation is active.") }
         let request = IntakeFetchRequest(
             source: resolution.source.reference,
             revision: resolution.source.fetchRevision,
-            file: resolution.verdict == .gguf ? selectedGGUF : nil,
+            file: resolution.source.file ?? (resolution.verdict == .gguf ? selectedGGUF : nil),
             localDir: localDir,
-            modelType: resolution.verdict == .gguf ? nil : resolution.modelType
+            modelType: resolution.verdict == .gguf ? nil : resolution.modelType,
+            additionalFiles: additionalFiles.sorted()
         )
         activity = .downloading(repo: resolution.source.repo)
+        completedFetch = nil
         logTail = []
         do {
             if let localDir {
@@ -284,6 +287,7 @@ final class IntakeCoordinator: ObservableObject {
                   receipt["repo"] as? String == resolution.source.repo,
                   receipt["revision"] as? String == request.revision,
                   receipt["file"] as? String == request.file,
+                  (receipt["additional_files"] as? [String] ?? []) == request.additionalFiles,
                   receipt["subfolder"] as? String == resolution.source.subfolder,
                   receipt["local_dir"] as? String == request.localDir else {
                 throw WorkflowEvidenceError.invalid("The download receipt did not match this request. Refresh download status before retrying.")
@@ -292,7 +296,8 @@ final class IntakeCoordinator: ObservableObject {
                 let job = try await api.fetchStatus().last {
                     URL(fileURLWithPath: $0.receipt).deletingPathExtension().lastPathComponent == slug &&
                     $0.startedAt == startedAt && $0.repo == resolution.source.repo && $0.revision == request.revision &&
-                    $0.file == request.file && $0.subfolder == resolution.source.subfolder && $0.localDir == request.localDir
+                    $0.file == request.file && ($0.additionalFiles ?? []) == request.additionalFiles &&
+                    $0.subfolder == resolution.source.subfolder && $0.localDir == request.localDir
                 }
                 logTail = Self.tail(of: job?.logPath)
                 switch job?.state {
@@ -300,6 +305,7 @@ final class IntakeCoordinator: ObservableObject {
                     activity = .idle
                     guard let path = job?.path else { throw WorkflowEvidenceError.invalid("The finished download has no path.") }
                     downloadedPath = path
+                    completedFetch = job
                     return path
                 case "failed":
                     throw WorkflowEvidenceError.invalid("The download failed. See \(job?.logPath ?? "the download log").")

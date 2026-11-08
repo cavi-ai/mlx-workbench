@@ -165,3 +165,153 @@ final class DesignLintTests: XCTestCase {
         }
     }
 }
+
+final class ModelUpdateReviewPresentationTests: XCTestCase {
+    func testUpdateBitsUseRepositoryLimitsAndTheConfiguredGGUFConversionChoices() {
+        let repository = review(kind: .repository, bits: 4, supported: [8])
+        XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(repository), [8])
+        XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: repository, settingsLocked: false))
+        let gguf = review(kind: .gguf, bits: 4, supported: [32])
+        XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(gguf), Config.Q_BITS_CHOICES.filter { $0 != 32 }.sorted())
+        XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(review()), [])
+    }
+
+    func testRequiredFileProjectorAndSourceConfirmationBlockTheDownloadAction() {
+        XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: nil, settingsLocked: false))
+        XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: review(file: nil), settingsLocked: false))
+        var missingProjector = review()
+        missingProjector.requiresProjector = true
+        XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: missingProjector, settingsLocked: false))
+        missingProjector.projectorFile = "vision/mmproj.gguf"
+        missingProjector.additionalFiles = ["vision/mmproj.gguf"]
+        XCTAssertTrue(ModelUpdateReviewPresentation.canDownload(review: missingProjector, settingsLocked: false))
+        var unrecorded = review()
+        var previous = unrecorded.previous
+        previous.needsSourceConfirmation = true
+        unrecorded = ModelUpdateReview(id: unrecorded.id, repo: unrecorded.repo, previous: previous,
+            resolution: unrecorded.resolution, targetRevision: unrecorded.targetRevision,
+            destinationPath: unrecorded.destinationPath, previewHash: unrecorded.previewHash, endpointSummary: [])
+        XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: unrecorded, settingsLocked: false))
+        unrecorded.sourceConfirmed = true
+        XCTAssertTrue(ModelUpdateReviewPresentation.canDownload(review: unrecorded, settingsLocked: false))
+    }
+
+    func testAcceptedOrBusyUpdateSettingsStayFrozen() {
+        XCTAssertFalse(ModelUpdateReviewPresentation.settingsLocked(isLoading: false, isPreparing: false, isRunning: false, accepted: false))
+        for state in [(true, false, false, false), (false, true, false, false), (false, false, true, false), (false, false, false, true)] {
+            let locked = ModelUpdateReviewPresentation.settingsLocked(isLoading: state.0, isPreparing: state.1,
+                isRunning: state.2, accepted: state.3)
+            XCTAssertTrue(locked)
+            XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: review(), settingsLocked: locked))
+        }
+    }
+
+    func testCompanionChoicesExcludeMainProjectorAndAutomaticSplitShards() {
+        var split = review(file: "weights-00001-of-00002.gguf", files: [
+            "weights-00001-of-00002.gguf", "weights-00002-of-00002.gguf",
+            "vision/mmproj.gguf", "audio/encoder.gguf", "audio/decoder.gguf",
+        ])
+        split.projectorFile = "vision/mmproj.gguf"
+        XCTAssertEqual(ModelUpdateReviewPresentation.companionChoices(split).map(\.name), ["audio/encoder.gguf", "audio/decoder.gguf"])
+        XCTAssertEqual(ModelUpdateGGUFSelection.shards(main: split.resolution.source.file,
+            available: split.resolution.files.gguf.map(\.name)).files, ["weights-00002-of-00002.gguf"])
+    }
+
+    func testCompanionSelectionPreservesExplicitEmptyAndFiltersToFiniteChoices() {
+        var selected = review(files: ["model.gguf", "vision/mmproj.gguf", "audio/encoder.gguf"])
+        selected.projectorFile = "vision/mmproj.gguf"
+        selected.additionalFiles = ["vision/mmproj.gguf", "audio/encoder.gguf"]
+        XCTAssertEqual(ModelUpdateReviewPresentation.companionSelection(selected, selected: nil), ["audio/encoder.gguf"])
+        XCTAssertEqual(ModelUpdateReviewPresentation.companionSelection(selected, selected: []), [])
+        XCTAssertEqual(ModelUpdateReviewPresentation.companionSelection(selected,
+            selected: ["model.gguf", "vision/mmproj.gguf", "audio/encoder.gguf", "audio/encoder.gguf", "missing.gguf"]),
+            ["audio/encoder.gguf"])
+    }
+
+    func testMissingRecordedCompanionsRequireExplicitSelectionReview() {
+        var missing = review()
+        missing.requiredCompanionSelection = true
+        XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: missing, settingsLocked: false))
+        XCTAssertNotNil(missing.missingSelectionReason)
+        missing.requiredCompanionSelection = false
+        XCTAssertTrue(ModelUpdateReviewPresentation.canDownload(review: missing, settingsLocked: false))
+    }
+
+    func testPreparationCorrectionUsesOnlyTheCurrentSupportedWidths() {
+        let unsupportedRecipe = review(kind: .repository, bits: 5, supported: [4, 8])
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationRevisionBits(unsupportedRecipe, selected: nil), 4)
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationRevisionBits(unsupportedRecipe, selected: 8), 8)
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationRevisionBits(unsupportedRecipe, selected: 6), 4)
+        let gguf = review(kind: .gguf, bits: 5)
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationRevisionBits(gguf, selected: nil), 5)
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationRevisionBits(gguf, selected: 4), 4)
+        XCTAssertNil(ModelUpdateReviewPresentation.preparationRevisionBits(review(), selected: 4))
+    }
+
+    func testPreparationCorrectionRequiresAnIdleRevisableRecordAndChangedSupportedWidth() {
+        let captured = review(kind: .repository, bits: 4, supported: [4, 8])
+        XCTAssertTrue(ModelUpdateReviewPresentation.canReviewPreparationSettings(captured, bits: 8,
+            canRevise: true, isBusy: false, recoveryPending: false))
+        for bits in [nil, 4, 5] as [Int?] {
+            XCTAssertFalse(ModelUpdateReviewPresentation.canReviewPreparationSettings(captured, bits: bits,
+                canRevise: true, isBusy: false, recoveryPending: false))
+        }
+        for gate in [(false, false, false), (true, true, false), (true, false, true)] {
+            XCTAssertFalse(ModelUpdateReviewPresentation.canReviewPreparationSettings(captured, bits: 8,
+                canRevise: gate.0, isBusy: gate.1, recoveryPending: gate.2))
+        }
+        XCTAssertTrue(ModelUpdateReviewPresentation.settingsLocked(isLoading: false, isPreparing: false,
+            isRunning: false, accepted: true), "Preparation correction must not unlock captured source settings")
+    }
+
+    func testPreparationActionsKeepDownloadInstallAndConversionAsSeparateReviews() {
+        let raw = review()
+        let converted = review(kind: .repository)
+        XCTAssertEqual(ModelUpdateReviewPresentation.downloadTitle(raw), "Download and verify update")
+        XCTAssertEqual(ModelUpdateReviewPresentation.downloadTitle(converted), "Download source for preparation")
+        var preparation = ModelUpdatePreparationReview(id: UUID(), previewHash: "preparation", recipe: converted.conversion!,
+            repo: converted.repo, sourcePath: "/models/download", outputPath: converted.destinationPath,
+            fetchReceipt: "/state/fetch.json", sourceFiles: [.init(path: "/models/download", signature: "source")])
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationTitle(preparation), "Review local conversion")
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationAction(preparation), "Convert and verify update")
+        preparation.operation = .installBackend; preparation.backendInstallID = "mlx-lm"
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationTitle(preparation), "Review converter installation")
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationAction(preparation), "Install converter and review preparation")
+        preparation.operation = .observeConversion
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationTitle(preparation), "Review saved conversion")
+        XCTAssertEqual(ModelUpdateReviewPresentation.preparationAction(preparation), "Continue preparation and verification")
+    }
+
+    func testRecoveryActionNamesOnlyTheCapturedFailedFiles() {
+        let empty = ModelUpdateRecoveryReview(recordID: UUID(), snapshots: [], failedReceipts: [], queueItems: ["failed-job"], resetsDownload: false)
+        XCTAssertEqual(ModelUpdateReviewPresentation.recoveryAction(empty), "Retry failed preparation")
+        let snapshot = QuarantineFileSnapshot(path: "/models/failed-output", bytes: 100, device: 1, inode: 2,
+            modifiedAt: Date(), createdAt: Date())
+        let files = ModelUpdateRecoveryReview(recordID: UUID(), snapshots: [snapshot], failedReceipts: [], queueItems: [], resetsDownload: true)
+        XCTAssertEqual(ModelUpdateReviewPresentation.recoveryAction(files), "Quarantine failed files and retry")
+    }
+
+    private func review(kind: ModelUpdateConversionRecipe.Kind? = nil, bits: Int = 4,
+                        supported: [Int]? = nil, file: String? = "model.gguf", files: [String]? = nil) -> ModelUpdateReview {
+        let revision = String(repeating: "b", count: 40)
+        let gguf = kind != .repository
+        let resolution = IntakeResolution(schema: "intake/1",
+            source: IntakeSource(input: "org/model", repo: "org/model", revision: revision,
+                file: gguf ? file : nil, subfolder: nil, url: "https://huggingface.co/org/model"),
+            verdict: gguf ? .gguf : .convertible, reasons: [], backend: "mlx-lm", backendInstalled: true,
+            modelType: "qwen2", components: [], task: nil, customCode: false, gated: false,
+            libraryName: nil, pipelineTag: nil, transformersVersion: nil, bytes: 1, downloadBytes: nil,
+            estimatedOutputBytes: nil, qBits: supported, recipe: nil,
+            files: IntakeFiles(safetensors: 1, gguf: (files ?? ["model.gguf", "vision/mmproj.gguf"]).map {
+                .init(name: $0, bytes: 1)
+            }, python: []),
+            warnings: [])
+        let previous = ModelUpdatePreviousModel(repo: "org/model", path: "/models/old", signature: "old",
+            revision: String(repeating: "a", count: 40), displayName: "Old model", canQuarantine: false,
+            retentionReason: nil, file: gguf ? "model.gguf" : nil)
+        return ModelUpdateReview(id: UUID(), repo: "org/model", previous: previous, resolution: resolution,
+            targetRevision: revision, destinationPath: "/models/new", previewHash: "download", endpointSummary: [],
+            conversion: kind.map { .init(kind: $0, qBits: bits, backend: $0 == .repository ? "mlx-lm" : nil, modelType: nil) },
+            downloadDirectory: kind == nil ? nil : "/models/download")
+    }
+}

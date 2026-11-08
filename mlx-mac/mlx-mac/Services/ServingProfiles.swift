@@ -224,6 +224,7 @@ final class ServingProfileCoordinator: ObservableObject {
     var memoryPreview: ((ServingProfile) async throws -> [String: Any])?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
+    private var creatingUpdateReplacements = false
 
     init(store: JSONStore<ServingProfile>, probe: @escaping @Sendable (StrataComparisonOptions) -> ServeProbe) {
         self.store = store; self.probe = probe
@@ -362,6 +363,62 @@ final class ServingProfileCoordinator: ObservableObject {
         } catch { lastError = AppHost.render(error); return nil }
     }
 
+    /// Keep the previous revision's profiles intact and verify new identities against the new source.
+    func createUpdateReplacements(expected: [ServingProfile], modelPath: String) async throws -> [UUID: ServingProfile] {
+        guard activeID == nil, !creatingUpdateReplacements else {
+            throw WorkflowEvidenceError.invalid("Wait for profile verification to finish before updating models.")
+        }
+        creatingUpdateReplacements = true
+        defer { creatingUpdateReplacements = false }
+        do {
+            var sources: [ServingProfile] = []
+            for original in expected {
+                if let duplicate = sources.first(where: { $0.id == original.id }) {
+                    guard duplicate == original else { throw WorkflowEvidenceError.invalid("The source profile snapshots disagree. Review the update again.") }
+                } else { sources.append(original) }
+            }
+            if sources.isEmpty { return [:] }
+            let copies = sources.map { original in
+                ServingProfile(id: UUID(), name: original.name, modelPath: modelPath, options: original.options)
+            }
+            guard sources.allSatisfy({ $0.isValid && $0.modelPath != modelPath }), copies.allSatisfy(\.isValid) else {
+                throw WorkflowEvidenceError.invalid("Select a new local model source and valid serving profiles before updating.")
+            }
+            try store.mutate { saved in
+                guard Set(saved.map(\.id)).count == saved.count,
+                      sources.allSatisfy({ source in saved.filter { $0.id == source.id } == [source] }),
+                      copies.allSatisfy({ copy in !saved.contains { $0.id == copy.id } }) else {
+                    throw WorkflowEvidenceError.invalid("A source profile changed or is no longer available. Review the model update again.")
+                }
+                saved.append(contentsOf: copies)
+            }
+            profiles = try store.load()
+            var replacements: [UUID: ServingProfile] = [:]
+            for (original, copy) in zip(sources, copies) {
+                try Task.checkCancellation()
+                guard activeID == nil else { throw WorkflowEvidenceError.invalid("Profile verification is already running.") }
+                await verify(id: copy.id, expectedEvidence: nil, beforePublishing: nil, requiredSources: sources)
+                try Task.checkCancellation()
+                let saved = try store.load()
+                profiles = saved
+                guard sources.allSatisfy({ source in saved.filter { $0.id == source.id } == [source] }) else {
+                    throw WorkflowEvidenceError.invalid("A source profile changed during verification. The previous model was kept.")
+                }
+                guard lastError == nil, let verified = saved.first(where: { $0.id == copy.id }),
+                      verified.modelPath == modelPath, verified.options == original.options,
+                      verified.sourceRunID == nil, verified.sourceLaneID == nil, verified.hasPassedVerification else {
+                    throw WorkflowEvidenceError.invalid(lastError ?? "The updated serving profile did not pass the complete canary suite. The previous model was kept.")
+                }
+                replacements[original.id] = verified
+            }
+            lastError = nil
+            return replacements
+        } catch {
+            lastError = AppHost.render(error)
+            throw error
+        }
+    }
+
     func prepareComparison(baseline: ServingProfile, candidate: ServingProfile) throws -> ServingProfileComparisonSetup {
         guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
         let current = try store.load()
@@ -482,6 +539,11 @@ final class ServingProfileCoordinator: ObservableObject {
 
     /// Uses the existing canaries with an explicit 1,024-token answer budget for thinking models.
     func verify(id: UUID, expectedEvidence: ProbeServingEvidence? = nil, beforePublishing: (() async throws -> Void)? = nil) async {
+        await verify(id: id, expectedEvidence: expectedEvidence, beforePublishing: beforePublishing, requiredSources: [])
+    }
+
+    private func verify(id: UUID, expectedEvidence: ProbeServingEvidence?, beforePublishing: (() async throws -> Void)?,
+                        requiredSources: [ServingProfile]) async {
         guard activeID == nil, let saved = profiles.first(where: { $0.id == id }), saved.isValid else { return }
         var original = saved
         activeID = id; lastError = nil
@@ -523,11 +585,15 @@ final class ServingProfileCoordinator: ObservableObject {
             try await beforePublishing?()
             try Task.checkCancellation()
             var updated = original; updated.verification = proof
-            let changed = try store.update(id: id, keyPath: \.id) { current in
-                guard current == original else { throw WorkflowEvidenceError.invalid("The profile changed during verification. Verify its current settings.") }
-                return updated
+            try store.mutate { saved in
+                guard saved.filter({ $0.id == id }) == [original], let index = saved.firstIndex(where: { $0.id == id }) else {
+                    throw WorkflowEvidenceError.invalid("The profile changed during verification. Verify its current settings.")
+                }
+                guard requiredSources.allSatisfy({ source in saved.filter { $0.id == source.id } == [source] }) else {
+                    throw WorkflowEvidenceError.invalid("A source profile changed during verification. The previous model was kept.")
+                }
+                saved[index] = updated
             }
-            guard changed else { throw WorkflowEvidenceError.invalid("The serving profile is no longer available.") }
             profiles = try store.load()
             if !proof.passed { lastError = "Profile verification failed. Inspect the recorded canary failures before serving." }
         } catch {

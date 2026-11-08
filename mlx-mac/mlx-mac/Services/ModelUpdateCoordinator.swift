@@ -15,7 +15,27 @@ final class ModelUpdateCoordinator: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var error: String?
     @Published private(set) var persistenceError: String?
+    @Published private(set) var recoveryReview: ModelUpdateRecoveryReview?
     @Published private(set) var activeRecordID: UUID?
+    @Published private(set) var selectedBits: Int?
+    @Published private(set) var selectedProjector: String?
+    @Published private(set) var selectedFile: String?
+    @Published private(set) var selectedCompanions: [String]?
+    @Published private(set) var sourceConfirmed = false
+    @Published var includesUnattributedModels = false
+    var visibleCandidates: [ModelUpdatePreviousModel] {
+        candidates.filter { includesUnattributedModels || $0.needsSourceConfirmation != true }
+    }
+
+    var preparationReview: ModelUpdatePreparationReview? {
+        guard activeRecord?.stage == .awaitingPreparation, activeRecord?.state == .inProgress else { return nil }
+        return activeRecord?.preparation
+    }
+    var protectedPaths: [String] {
+        guard isRunning || preparationReview != nil, let record = activeRecord else { return [] }
+        return Array(Set([record.review.previous.path, record.review.downloadedModelPath,
+            record.review.sourceDirectory, record.review.destinationPath] + (record.review.dependencies ?? []).map(\.directory)))
+    }
 
     var onCompletion: ((UUID) async -> Void)?
     var onDiscardReview: ((UUID) -> Void)?
@@ -45,14 +65,15 @@ final class ModelUpdateCoordinator: ObservableObject {
 
     var activeRecord: ModelUpdateRecord? { records.first { $0.id == activeRecordID } }
     var interruptedRecords: [ModelUpdateRecord] { records.filter { $0.state == .interrupted } }
+    var resumableRecords: [ModelUpdateRecord] { records.filter { $0.state == .interrupted || $0.state == .failed } }
 
     func begin(repo: String, alertID: UUID? = nil) async {
-        guard !isRunning else { isPresented = true; return }
+        guard !isRunning && preparationReview == nil else { isPresented = true; return }
         discardReview()
         generation = UUID()
         let request = generation
         self.repo = repo; self.alertID = alertID
-        candidates = []; selectedPreviousPath = nil; review = nil
+        candidates = []; selectedPreviousPath = nil; selectedBits = nil; selectedProjector = nil; selectedFile = nil; sourceConfirmed = false; selectedCompanions = nil; includesUnattributedModels = false; review = nil
         activeRecordID = nil; error = nil; isPreparing = false; isLoading = true; isPresented = true
         await waitForHistory()
         guard request == generation else { return }
@@ -71,6 +92,18 @@ final class ModelUpdateCoordinator: ObservableObject {
     }
 
     func selectPrevious(path: String?) async {
+        selectedBits = nil; selectedProjector = nil; selectedFile = nil; sourceConfirmed = false; selectedCompanions = nil
+        await prepareSelection(path: path)
+    }
+
+    func selectPreparation(bits: Int?, file: String?, projector: String?, sourceConfirmed: Bool, additionalFiles: [String]? = nil) async {
+        guard !isRunning, activeRecord == nil else { return }
+        selectedCompanions = additionalFiles ?? selectedCompanions
+        selectedBits = bits; selectedProjector = projector; selectedFile = file; self.sourceConfirmed = sourceConfirmed
+        await prepareSelection(path: selectedPreviousPath)
+    }
+
+    private func prepareSelection(path: String?) async {
         guard !isRunning else { return }
         discardReview()
         generation = UUID()
@@ -80,7 +113,9 @@ final class ModelUpdateCoordinator: ObservableObject {
         isPreparing = true
         var preparedID: UUID?
         do {
-            let prepared = try await api.prepare(repo, candidate)
+            let prepared: ModelUpdateReview
+            if let prepare = api.prepareWithOptions { prepared = try await prepare(repo, candidate, ModelUpdateSettings(qBits: selectedBits, ggufFile: selectedFile, projectorFile: selectedProjector, sourceConfirmed: sourceConfirmed, additionalFiles: selectedCompanions)) }
+            else { prepared = try await api.prepare(repo, candidate) }
             preparedID = prepared.id
             guard request == generation else { onDiscardReview?(prepared.id); return }
             guard prepared.previous == candidate, prepared.repo.caseInsensitiveCompare(repo) == .orderedSame else {
@@ -99,7 +134,7 @@ final class ModelUpdateCoordinator: ObservableObject {
     /// under their captured review even if the presentation is closed.
     func close() {
         isPresented = false
-        if !isRunning { discardReview(); generation = UUID(); isLoading = false; isPreparing = false }
+        if !isRunning && preparationReview == nil { discardReview(); generation = UUID(); isLoading = false; isPreparing = false }
     }
 
     private func discardReview() {
@@ -113,7 +148,7 @@ final class ModelUpdateCoordinator: ObservableObject {
         isRunning = true; error = nil
         defer { isRunning = false }
         do {
-            try review.validate()
+            try review.validateForDownload()
             guard !quarantinePrevious || review.previous.canQuarantine else {
                 throw ModelUpdateError.invalid(review.previous.retentionReason ?? "The previous model must stay in its existing cache.")
             }
@@ -130,44 +165,202 @@ final class ModelUpdateCoordinator: ObservableObject {
                 try await advance(&record, to: .downloading)
                 try Task.checkCancellation()
                 try await api.revalidate(review, .download)
-                let installed = try await api.download(review)
-                try installed.validate(for: review)
-                record.installation = installed
+                let source = try await api.download(review)
+                try source.validateDownload(for: review)
+                record.downloadedSource = source
                 try await save(record)
-
-                try await advance(&record, to: .verifying)
-                try Task.checkCancellation()
-                try await api.revalidate(review, .verify)
-                try await api.verify(review, installed)
-
-                try await advance(&record, to: .switching)
-                try Task.checkCancellation()
-                try await api.revalidate(review, .switchEndpoints)
-                try await api.switchEndpoints(review, installed)
-
-                if quarantinePrevious {
-                    try await advance(&record, to: .quarantining)
-                    try Task.checkCancellation()
-                    try await api.revalidate(review, .quarantinePrevious)
-                    try await api.quarantinePrevious(review, installed)
+                if review.needsPreparation {
+                    let preview = try await api.previewPreparation(review, source)
+                    try preview.validate(for: review)
+                    record.preparation = preview
+                    try await advance(&record, to: .awaitingPreparation)
+                    return false
                 }
-                var completed = record
-                completed.stage = .completed; completed.state = .completed
-                completed.updatedAt = now()
-                try await save(completed)
-                if let alertID = completed.alertID { await onCompletion?(alertID) }
-                return true
+                try source.validate(for: review)
+                record.installation = source
+                try await save(record)
+                return await finish(record)
             } catch {
-                record.state = error is CancellationError ? .interrupted : .failed
-                record.error = AppHost.render(error); record.updatedAt = now()
-                self.error = record.error
-                do { try await save(record) } catch { self.error = persistenceError }
+                await fail(record, error: error)
                 return false
             }
-        } catch {
-            self.error = AppHost.render(error)
-            return false
-        }
+        } catch { self.error = AppHost.render(error); return false }
+    }
+
+    /// The downloaded source stays inert until its concrete local preparation plan is confirmed.
+    @discardableResult
+    func confirmPreparation(_ preview: ModelUpdatePreparationReview) async -> Bool {
+        guard !isRunning, var record = activeRecord, record.state == .inProgress,
+              record.stage == .awaitingPreparation, record.preparation == preview,
+              let source = record.downloadedSource else { return false }
+        isRunning = true; error = nil
+        defer { isRunning = false }
+        do {
+            try preview.validate(for: record.review)
+            try source.validateDownload(for: record.review)
+            try await advance(&record, to: .preparing)
+            try Task.checkCancellation()
+            try await api.revalidate(record.review, .prepare)
+            switch try await api.prepareInstallation(record.review, source, preview) {
+            case .installed(let installed):
+                try installed.validate(for: record.review)
+                record.installation = installed
+                try await save(record)
+                return await finish(record)
+            case .review(let next):
+                try next.validate(for: record.review)
+                record.preparation = next
+                try await advance(&record, to: .awaitingPreparation)
+                return false
+            }
+        } catch { await fail(record, error: error); return false }
+    }
+
+    var canRevisePreparation: Bool {
+        guard !isRunning, !isPreparing, let record = activeRecord else { return false }
+        return record.review.needsPreparation && record.downloadedSource != nil && record.installation == nil && record.state != .completed
+    }
+
+    @discardableResult
+    func revisePreparation(bits: Int) async -> Bool {
+        guard canRevisePreparation, let original = activeRecord else { return false }
+        isPreparing = true; error = nil
+        defer { isPreparing = false }
+        do {
+            let revised = try await api.revisePreparation(original, bits)
+            guard revised.id == original.id, revised.review.previous == original.review.previous,
+                  revised.review.targetRevision == original.review.targetRevision,
+                  revised.review.resolution == original.review.resolution,
+                  revised.review.previewHash == original.review.previewHash,
+                  revised.review.sourceDirectory == original.review.sourceDirectory,
+                  revised.review.additionalFiles == original.review.additionalFiles,
+                  revised.review.projectorFile == original.review.projectorFile,
+                  revised.review.reviewedEndpoints == original.review.reviewedEndpoints,
+                  revised.review.cleanupSnapshot == original.review.cleanupSnapshot,
+                  revised.downloadedSource == original.downloadedSource, revised.installation == nil,
+                  revised.state == .inProgress, revised.stage == .awaitingPreparation,
+                  let preparation = revised.preparation else { throw ModelUpdateError.invalid("Preparation settings changed the captured download or endpoints.") }
+            try revised.review.validateForDownload()
+            try preparation.validate(for: revised.review)
+            try await save(revised)
+            review = revised.review
+            selectedBits = bits
+            return true
+        } catch { self.error = AppHost.render(error); return false }
+    }
+
+    func cancelRecovery() { recoveryReview = nil }
+
+    func reviewRecovery(recordID: UUID) async {
+        guard !isRunning, preparationReview == nil || activeRecordID == recordID, let record = resumableRecords.first(where: { $0.id == recordID }) else { return }
+        isPreparing = true; recoveryReview = nil; error = nil
+        defer { isPreparing = false }
+        do { recoveryReview = try await api.previewRecovery(record) }
+        catch { self.error = AppHost.render(error) }
+    }
+
+    @discardableResult
+    func confirmRecovery(_ preview: ModelUpdateRecoveryReview) async -> Bool {
+        guard !isRunning, recoveryReview == preview,
+              let record = resumableRecords.first(where: { $0.id == preview.recordID }) else { return false }
+        isRunning = true; error = nil
+        do {
+            let recovered = try await api.applyRecovery(record, preview)
+            guard recovered.id == record.id, recovered.review == record.review else { throw ModelUpdateError.unavailable }
+            try await save(recovered)
+            recoveryReview = nil; isRunning = false
+            return await resume(recordID: recovered.id)
+        } catch { self.error = AppHost.render(error); isRunning = false; return false }
+    }
+
+    /// An explicit continuation reconnects receipts and rechecks current files and endpoints.
+    /// Loading history never invokes this operation.
+    @discardableResult
+    func resume(recordID: UUID) async -> Bool {
+        guard !isRunning, preparationReview == nil || activeRecordID == recordID, hasLoadedHistory, var record = records.first(where: { $0.id == recordID }),
+              record.state == .failed || record.state == .interrupted else { return false }
+        discardReview()
+        generation = UUID(); activeRecordID = recordID; review = record.review; repo = record.review.repo
+        selectedPreviousPath = record.review.previous.path; isPresented = true; error = nil; isRunning = true
+        defer { isRunning = false }
+        do {
+            record.state = .inProgress; record.error = nil; record.updatedAt = now()
+            try await save(record)
+            record = try await api.recover(record)
+            guard record.id == recordID, record.review == review else { throw ModelUpdateError.invalid("The saved update changed during recovery.") }
+            try await save(record)
+            if record.installation != nil { return await finish(record) }
+            if record.downloadedSource == nil {
+                try await advance(&record, to: .downloading)
+                try await api.revalidate(record.review, .download)
+                let source = try await api.download(record.review)
+                try source.validateDownload(for: record.review)
+                record.downloadedSource = source
+                try await save(record)
+            }
+            guard let source = record.downloadedSource else { throw ModelUpdateError.unavailable }
+            if record.review.needsPreparation {
+                if record.preparation?.operation != .observeConversion {
+                    record.preparation = try await api.previewPreparation(record.review, source)
+                }
+                try record.preparation?.validate(for: record.review)
+                try await advance(&record, to: .awaitingPreparation)
+                return false
+            }
+            try source.validate(for: record.review)
+            record.installation = source
+            try await save(record)
+            return await finish(record)
+        } catch { await fail(record, error: error); return false }
+    }
+
+    private func finish(_ captured: ModelUpdateRecord) async -> Bool {
+        var record = captured
+        let review = record.review
+        do {
+            guard let installed = record.installation else { throw ModelUpdateError.unavailable }
+            if record.endpointsSwitched != true {
+            try await advance(&record, to: .verifying)
+            try Task.checkCancellation()
+            try await api.revalidate(review, .verify)
+            let verified = try await api.verify(review, installed)
+            try verified.validate(for: review)
+            guard verified.path == installed.path, verified.signature == installed.signature else {
+                throw ModelUpdateError.invalid("Verification returned a different model. The previous version was kept.")
+            }
+            record.installation = verified
+            try await save(record)
+
+            try await advance(&record, to: .switching)
+            try Task.checkCancellation()
+            try await api.revalidate(review, .switchEndpoints)
+            try await api.switchEndpoints(review, verified)
+            record.endpointsSwitched = true
+            record.switchedEndpoints = api.switchedEndpoints(review)
+            try await save(record)
+            }
+
+            if record.quarantinePrevious && record.cleanupCompleted != true {
+                try await advance(&record, to: .quarantining)
+                try Task.checkCancellation()
+                try await api.revalidate(review, .quarantinePrevious)
+                try await api.quarantinePrevious(review, record.installation ?? installed)
+                record.cleanupCompleted = true
+                try await save(record)
+            }
+            record.stage = .completed; record.state = .completed; record.updatedAt = now()
+            try await save(record)
+            if let alertID = record.alertID { await onCompletion?(alertID) }
+            return true
+        } catch { await fail(record, error: error); return false }
+    }
+
+    private func fail(_ captured: ModelUpdateRecord, error: Error) async {
+        var record = captured
+        record.state = error is CancellationError ? .interrupted : .failed
+        record.error = AppHost.render(error); record.updatedAt = now()
+        self.error = record.error
+        do { try await save(record) } catch { self.error = persistenceError }
     }
 
     private func advance(_ record: inout ModelUpdateRecord, to stage: ModelUpdateStage) async throws {
@@ -197,7 +390,7 @@ final class ModelUpdateCoordinator: ObservableObject {
                 guard record.state == .inProgress else { return record }
                 var interrupted = record
                 interrupted.state = .interrupted
-                interrupted.error = "The update was interrupted during \(record.stage.title.lowercased()). Refresh the library and endpoints before reviewing another update."
+                interrupted.error = "The update was interrupted during \(record.stage.title.lowercased()). Continue the saved update to recheck its files, receipts and endpoints."
                 return interrupted
             }
             // Persist interruption before accepting another mutation. No operation is

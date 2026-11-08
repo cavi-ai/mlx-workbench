@@ -312,6 +312,7 @@ struct ServeLifecycle: Sendable {
     var preview: @Sendable (_ modelPath: String, _ port: Int) async throws -> String
     var start: @Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> Void
     var stop: @Sendable (_ port: Int) async throws -> Void
+    var stopObserved: (@Sendable (ServerInfo) async throws -> Void)? = nil
     var jitPreview: (@Sendable (_ modelPath: String, _ port: Int, _ policy: EndpointMemoryPolicy?) async throws -> String)? = nil
     var jitStart: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String, _ policy: EndpointMemoryPolicy?) async throws -> Void)? = nil
     var unload: (@Sendable (_ port: Int, _ expectedPID: Int) async throws -> Void)? = nil
@@ -339,6 +340,7 @@ extension ServeLifecycle {
             stop: { port in
                 _ = try await api.serveStop(port: port)
             },
+            stopObserved: { server in try await api.changeDiscoveredService(server, action: "stop") },
             jitPreview: { modelPath, port, policy in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
                     thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache)

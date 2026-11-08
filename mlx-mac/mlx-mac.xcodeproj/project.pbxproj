@@ -15,6 +15,9 @@
 		MIDTSTB1 /* ModelUpdateCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */; };
 		MIDUIB1 /* ModelUpdateReviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDUIF1 /* ModelUpdateReviewSheet.swift */; };
 		MIDCOB1 /* ModelUpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDCOF1 /* ModelUpdateCoordinator.swift */; };
+		MUPMPB1 /* ModelUpdatePreparationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MUPMPF1 /* ModelUpdatePreparationModels.swift */; };
+		MUPSRB1 /* AppHostModelUpdateSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = MUPSRF1 /* AppHostModelUpdateSources.swift */; };
+		MUPPRB1 /* AppHostModelUpdatePreparation.swift in Sources */ = {isa = PBXBuildFile; fileRef = MUPPRF1 /* AppHostModelUpdatePreparation.swift */; };
 		MIDMDB1 /* ModelUpdateModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDMDF1 /* ModelUpdateModels.swift */; };
 		MIDAPB1 /* AppHostModelUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDAPF1 /* AppHostModelUpdates.swift */; };
 		MIDSTB1 /* ManagedModelInstallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDSTF1 /* ManagedModelInstallStore.swift */; };
@@ -353,6 +356,9 @@
 		MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateCoordinatorTests.swift; path = ModelUpdateCoordinatorTests.swift; sourceTree = "<group>"; };
 		MIDUIF1 /* ModelUpdateReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateReviewSheet.swift; path = UI/Views/ModelUpdateReviewSheet.swift; sourceTree = "<group>"; };
 		MIDCOF1 /* ModelUpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateCoordinator.swift; path = Services/ModelUpdateCoordinator.swift; sourceTree = "<group>"; };
+		MUPMPF1 /* ModelUpdatePreparationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdatePreparationModels.swift; path = Models/ModelUpdatePreparationModels.swift; sourceTree = "<group>"; };
+		MUPSRF1 /* AppHostModelUpdateSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostModelUpdateSources.swift; path = Services/AppHostModelUpdateSources.swift; sourceTree = "<group>"; };
+		MUPPRF1 /* AppHostModelUpdatePreparation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostModelUpdatePreparation.swift; path = Services/AppHostModelUpdatePreparation.swift; sourceTree = "<group>"; };
 		MIDMDF1 /* ModelUpdateModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateModels.swift; path = Models/ModelUpdateModels.swift; sourceTree = "<group>"; };
 		MIDAPF1 /* AppHostModelUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostModelUpdates.swift; path = Services/AppHostModelUpdates.swift; sourceTree = "<group>"; };
 		MIDSTF1 /* ManagedModelInstallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStore.swift; path = Services/ManagedModelInstallStore.swift; sourceTree = "<group>"; };
@@ -832,6 +838,9 @@
 				MIDUIF1 /* ModelUpdateReviewSheet.swift */,
 				MIDCOF1 /* ModelUpdateCoordinator.swift */,
 				MIDMDF1 /* ModelUpdateModels.swift */,
+				MUPPRF1 /* AppHostModelUpdatePreparation.swift */,
+				MUPSRF1 /* AppHostModelUpdateSources.swift */,
+				MUPMPF1 /* ModelUpdatePreparationModels.swift */,
 				MIDAPF1 /* AppHostModelUpdates.swift */,
 				MIDSTF1 /* ManagedModelInstallStore.swift */,
 				24FREF05E /* WatchModels.swift */,
@@ -1431,6 +1440,9 @@
 				MIDUIB1 /* ModelUpdateReviewSheet.swift in Sources */,
 				MIDCOB1 /* ModelUpdateCoordinator.swift in Sources */,
 				MIDMDB1 /* ModelUpdateModels.swift in Sources */,
+				MUPPRB1 /* AppHostModelUpdatePreparation.swift in Sources */,
+				MUPSRB1 /* AppHostModelUpdateSources.swift in Sources */,
+				MUPMPB1 /* ModelUpdatePreparationModels.swift in Sources */,
 				MIDAPB1 /* AppHostModelUpdates.swift in Sources */,
 				MIDSTB1 /* ManagedModelInstallStore.swift in Sources */,
 				24BBLD060 /* WatchModels.swift in Sources */,

@@ -284,23 +284,66 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Replace reviewed model slots on their existing ports. Failed launches keep
     /// the previous files and restore the captured desired state before returning.
-    func replaceModelForUpdate(expected: [EndpointSlot], modelPath: String) async -> Bool {
+    func replaceModelForUpdate(expected: [EndpointSlot], modelPath: String,
+                               profileReplacements: [UUID: ServingProfile] = [:]) async -> Bool {
         guard beginUserOperation() else { return false }
         defer { activeUserOperations -= 1 }
-        guard expected.allSatisfy({ fleet.slots.contains($0) }),
-              passesGate(modelPath: modelPath, allowUnverified: false, action: "update") else { return false }
-        guard expected.allSatisfy({ $0.servingProfile == nil }) else {
-            lastError = "Prepare a new source-bound serving profile before replacing a Strata model."
+        guard Set(expected.map(\.id)).count == expected.count, expected.allSatisfy({ fleet.slots.contains($0) }) else {
+            lastError = "Endpoint settings changed. Review the model update again."
             return false
+        }
+        if expected.isEmpty || expected.contains(where: { $0.servingProfile == nil }) {
+            guard passesGate(modelPath: modelPath, allowUnverified: false, action: "update") else { return false }
         }
         if expected.isEmpty { return true }
         var next = fleet
+        let oldProfileIDs = Set(expected.compactMap { $0.servingProfile?.id })
+        var replacementIDs: [UUID: UUID] = [:]
         for old in expected {
             guard let index = next.slots.firstIndex(where: { $0.id == old.id }) else { return false }
             next.slots[index].modelPath = modelPath
             next.slots[index].acceleration = nil
             next.slots[index].accelerationPreviewHash = nil
+            next.slots[index].profilePreviewHash = nil
+            if let previous = old.servingProfile {
+                guard previous.modelPath == old.modelPath, modelPath != old.modelPath,
+                      let replacement = profileReplacements[previous.id], !oldProfileIDs.contains(replacement.id),
+                      replacement.modelPath == modelPath, replacement.options == previous.options,
+                      replacement.sourceRunID == nil, replacement.sourceLaneID == nil, replacement.hasPassedVerification,
+                      replacement.verification != previous.verification,
+                      !replacementIDs.contains(where: { $0.key != previous.id && $0.value == replacement.id }) else {
+                    lastError = "Verify a new source-bound replacement for every serving profile before updating its endpoints."
+                    return false
+                }
+                replacementIDs[previous.id] = replacement.id
+                next.slots[index].servingProfile = replacement
+                do {
+                    let candidate = next.slots[index]
+                    let selected = try servingLifecycle(candidate)
+                    let hash: String
+                    if candidate.usesJIT {
+                        guard let preview = selected.jitPreview else { throw WorkflowEvidenceError.invalid("Profile JIT serving is unavailable.") }
+                        hash = try await preview(modelPath, candidate.port, candidate.memoryPolicy)
+                    } else { hash = try await selected.preview(modelPath, candidate.port) }
+                    guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+                    guard expected.allSatisfy({ fleet.slots.contains($0) }) else {
+                        throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the model update again.")
+                    }
+                } catch { lastError = AppHost.render(error); return false }
+            }
         }
+        do {
+            for old in expected where old.servingProfile != nil {
+                guard let previous = old.servingProfile, let resolve = profileLifecycle,
+                      let updated = next.slots.first(where: { $0.id == old.id }) else {
+                    throw WorkflowEvidenceError.invalid("Serving profile is unavailable or changed.")
+                }
+                _ = try resolve(previous)
+                _ = try servingLifecycle(updated)
+            }
+        } catch { lastError = AppHost.render(error); return false }
+        if expected.contains(where: { $0.servingProfile == nil }),
+           !passesGate(modelPath: modelPath, allowUnverified: false, action: "update") { return false }
         guard commit(next) else { return false }
         var problem: String?
         var replacementAttempted = false
@@ -320,21 +363,32 @@ final class EndpointSupervisor: ObservableObject {
                     do {
                         let observed = try await statusProvider()
                         if let server = observed.first(where: { $0.port == slot.port && $0.state == "running" && $0.matchesUnadaptedModel(modelPath) && ($0.jit == true) == slot.usesJIT }) {
+                            guard !slot.usesJIT || server.memoryPolicy == slot.memoryPolicy else {
+                                problem = "The new endpoint does not match the reviewed memory policy."
+                                break
+                            }
+                            guard slot.servingProfile == nil || ServingProfile.matchesReceipt(server,
+                                previewHash: fleet.slots.first(where: { $0.id == slot.id })?.profilePreviewHash) else {
+                                problem = "The new endpoint does not match the confirmed serving profile."
+                                break
+                            }
                             slotStates[slot.id] = .running(modelPath: modelPath, port: slot.port)
                             slotResidencies[slot.id] = server.modelState
                             ready = true
                             break
                         }
+                        if case .degraded(let reason) = slotStates[slot.id] { problem = reason; break }
                         try await Task.sleep(for: .milliseconds(250))
                     } catch { problem = AppHost.render(error); break }
                 } while Date() < deadline
                 guard ready else {
-                    problem = lastError ?? "The new endpoint did not become available."
+                    problem = problem ?? lastError ?? "The new endpoint did not become available."
                     break
                 }
             }
         }
         if let problem {
+            let attempted = fleet.slots.filter { slot in expected.contains { $0.id == slot.id } }
             var restored = fleet
             for old in expected {
                 if let index = restored.slots.firstIndex(where: { $0.id == old.id }) { restored.slots[index] = old }
@@ -347,7 +401,7 @@ final class EndpointSupervisor: ObservableObject {
             if replacementAttempted {
                 do {
                     let observed = try await statusProvider()
-                    for slot in next.slots where expected.contains(where: { $0.id == slot.id }) && slot.enabled &&
+                    for slot in attempted where slot.enabled &&
                         observed.contains(where: { $0.port == slot.port && $0.state == "running" && $0.matchesUnadaptedModel(modelPath) }) {
                         if !(await stopServing(slot)) { cleanupFailed = true }
                     }
@@ -405,7 +459,8 @@ final class EndpointSupervisor: ObservableObject {
             if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic }
             guard commit(candidate) else { return }
             if let current, (current.jit == true) != enabled {
-                try await lifecycle.stop(slot.port)
+                if let stop = lifecycle.stopObserved { try await stop(current) }
+                else { try await lifecycle.stop(slot.port) }
                 let after = try await statusProvider()
                 guard !after.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }) else {
                     lastError = "Endpoint is still running in its previous mode. Disable and enable it to retry."
@@ -947,7 +1002,8 @@ final class EndpointSupervisor: ObservableObject {
                 guard matches else {
                     throw WorkflowEvidenceError.invalid("A different model is running on port \(slot.port). Refresh before stopping it.")
                 }
-                try await lifecycle.stop(slot.port)
+                if let stop = lifecycle.stopObserved { try await stop(current) }
+                else { try await lifecycle.stop(slot.port) }
                 let after = try await statusProvider()
                 guard !after.contains(where: { $0.state?.lowercased() == "running" && $0.port == slot.port }) else {
                     throw WorkflowEvidenceError.invalid("The server is still running on port \(slot.port).")

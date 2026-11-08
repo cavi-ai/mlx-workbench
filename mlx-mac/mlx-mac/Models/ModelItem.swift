@@ -214,9 +214,19 @@ struct Job: Codable, Equatable, Identifiable {
     let startedAt: String?
     let completedAt: String?
     let state: String
+    var previewHash: String? = nil
+    var sourceDetails: ModelConversionSourceDetails? = nil
+    var backend: String? = nil
+    var modelType: String? = nil
+    var completionObserved: Bool? = nil
+    var exitCode: Int? = nil
+    var processesQuiescent: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case receipt, repo, source, out, pid, state
+        case receipt, repo, source, out, pid, state, backend
+        case previewHash = "preview_hash", sourceDetails = "source_details", modelType = "model_type"
+        case completionObserved = "completion_observed", exitCode = "exit_code"
+        case processesQuiescent = "processes_quiescent"
         case qBits = "q_bits"
         case logPath = "log_path"
         case startedAt = "started_at"
