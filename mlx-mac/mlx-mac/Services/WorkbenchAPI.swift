@@ -23,6 +23,7 @@ actor WorkbenchAPI {
     private var scopedDoctorSupported = false
     private var scopedWatchSupported = false
     private var preparedUpdatesSupported = false
+    private var modelStorageSupported = false
     private let taskStateDirectory: URL?
     nonisolated var taskArtifactsRoot: URL {
         taskStateDirectory ?? WorkbenchStatePaths.userHome().appendingPathComponent("Library/Application Support/mlx-agent/tasks", isDirectory: true)
@@ -52,6 +53,7 @@ actor WorkbenchAPI {
         scopedDoctorSupported = false
         scopedWatchSupported = false
         preparedUpdatesSupported = false
+        modelStorageSupported = false
     }
 
     var resolvedAgentPath: String { agentPath }
@@ -466,11 +468,23 @@ actor WorkbenchAPI {
     }
 
     func intakeFetchPreview(_ request: IntakeFetchRequest) async throws -> [String: Any] {
-        Self.unwrapPlan(try await raw(Self.fetchArguments(request) + ["--receipts-dir", receiptDirectory]))
+        let generation = engineGeneration
+        if request.localDir != nil {
+            guard ModelUpdateReview.isCommit(request.revision) else { throw WorkflowEvidenceError.invalid("Resolve an immutable model revision before downloading.") }
+            try await requireModelStorageAdmission()
+            try requireEngineGeneration(generation)
+        }
+        return Self.unwrapPlan(try await raw(Self.fetchArguments(request) + ["--receipts-dir", receiptDirectory]))
     }
 
     func intakeFetchStart(_ request: IntakeFetchRequest, previewHash: String) async throws -> [String: Any] {
-        try await raw(Self.fetchArguments(request) + ["--confirm", "--preview-hash", previewHash,
+        let generation = engineGeneration
+        if request.localDir != nil {
+            guard ModelUpdateReview.isCommit(request.revision) else { throw WorkflowEvidenceError.invalid("Resolve an immutable model revision before downloading.") }
+            try await requireModelStorageAdmission()
+            try requireEngineGeneration(generation)
+        }
+        return try await raw(Self.fetchArguments(request) + ["--confirm", "--preview-hash", previewHash,
                                                       "--receipts-dir", receiptDirectory])
     }
 
@@ -519,6 +533,7 @@ actor WorkbenchAPI {
             scopedDoctorSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_doctor") == true
             scopedWatchSupported = (data["capabilities"] as? [String: Any])?.bool("scoped_watch") == true
             preparedUpdatesSupported = (data["capabilities"] as? [String: Any])?.bool("model_update_preparation") == true
+            modelStorageSupported = (data["capabilities"] as? [String: Any])?.bool("model_storage_admission") == true
             var errors: [String: String] = [:]
             for item in data["errors"] as? [[String: Any]] ?? [] {
                 if let source = item.string("source"), let message = item.string("message") { errors["engine:" + source] = message }
@@ -618,6 +633,13 @@ actor WorkbenchAPI {
         if let search { argv.append(contentsOf: ["--search", search]) }
         let data = try await raw(argv, isScout: true, cancellable: true)
         return DiscoverResult(candidates: Self.candidates(from: data))
+    }
+
+    func requireModelStorageAdmission() async throws {
+        if !modelStorageSupported { _ = try await discoverServingServices() }
+        guard modelStorageSupported else {
+            throw BridgeError.remote(code: "engine_update_required", message: "This engine cannot coordinate model storage safely.", remediation: "Update the engine in Health, then review the download again.")
+        }
     }
 
     func requireModelUpdatePreparation() async throws {

@@ -88,6 +88,9 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
     func testCompanionFetchPreviewAndConfirmationUseTheSamePinnedSelection() async throws {
         let recorder = AgentCallRecorder()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: "/state/workbench", command: { path, argv, scout, timeout in
+            if argv.prefix(2) == ["serve", "discover"] {
+                return ["schema_version": 1, "services": [], "capabilities": ["model_storage_admission": true]]
+            }
             recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
             return ["plan": ["preview_hash": "pinned-fetch"]]
         })
@@ -100,6 +103,33 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
             "--additional-file", "vision/mmproj.gguf", "--additional-file", "weights/part-2.gguf", "--local-dir", "/models/pinned download"]
         XCTAssertEqual(recorder.values[0].argv, prefix + ["--receipts-dir", "/state/workbench"])
         XCTAssertEqual(recorder.values[1].argv, prefix + ["--confirm", "--preview-hash", "pinned-fetch", "--receipts-dir", "/state/workbench"])
+    }
+
+    func testModelStorageCapabilityCannotSurviveAnEngineChange() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/new", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["schema_version": 1, "services": [], "capabilities": ["model_storage_admission": path == "/new"]]
+        })
+        try await api.requireModelStorageAdmission()
+        await api.setAgentPath("/old")
+        do {
+            _ = try await api.intakeFetchPreview(.init(source: "org/model", revision: String(repeating: "a", count: 40), file: nil, localDir: "/models/model"))
+            XCTFail("An engine without storage admission must not download managed weights")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "engine_update_required") }
+        XCTAssertFalse(recorder.values.contains { $0.argv.prefix(2) == ["intake", "fetch"] })
+    }
+
+    func testUnresolvedManagedDownloadCannotCallTheEngine() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/old", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return [:]
+        })
+        let request = IntakeFetchRequest(source: "org/model", revision: "main", file: nil, localDir: "/models/new")
+        do { _ = try await api.intakeFetchPreview(request); XCTFail("Unresolved sources must be refused") } catch {}
+        do { _ = try await api.intakeFetchStart(request, previewHash: "old"); XCTFail("Unresolved sources must be refused") } catch {}
+        XCTAssertTrue(recorder.values.isEmpty)
     }
 
     func testPreparedQueueRequestRetainsSourceDependenciesAndCompletionRequirement() async throws {
@@ -838,14 +868,16 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
     func testIntakeCommandsSendExpectedArgv() async throws {
         let record = FileManager.default.temporaryDirectory.appendingPathComponent("argv-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: record) }
-        let agent = try FixtureAgent(recordingTo: record, payload: ["plan": ["preview_hash": "h"], "jobs": []])
+        let agent = try FixtureAgent(recordingTo: record, payload: ["plan": ["preview_hash": "h"], "jobs": [],
+            "schema_version": 1, "services": [], "capabilities": ["model_storage_admission": true]])
         defer { agent.remove() }
         let receipts = FileManager.default.temporaryDirectory.appendingPathComponent("receipts-\(UUID().uuidString)").path
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path, receiptDirectory: receipts)
 
         _ = try await api.backendInstallPreview(id: "mlx-audio")
         _ = try await api.backendInstallStart(id: "mlx-audio", previewHash: "h")
-        let request = IntakeFetchRequest(source: "unsloth/Qwen3-8B-GGUF", revision: "main", file: "a.gguf", localDir: "/models/gguf/Qwen3-8B-GGUF")
+        let revision = String(repeating: "a", count: 40)
+        let request = IntakeFetchRequest(source: "unsloth/Qwen3-8B-GGUF", revision: revision, file: "a.gguf", localDir: "/models/gguf/Qwen3-8B-GGUF")
         _ = try await api.intakeFetchPreview(request)
         _ = try await api.intakeFetchStart(request, previewHash: "h")
         _ = try await api.intakeStatus()
@@ -858,10 +890,10 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         _ = try await api.intakeFetchPreview(IntakeFetchRequest(source: "org/x-GGUF", revision: "main", file: "a.gguf", localDir: nil, modelType: "llama"))
 
         let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
-        let argv = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }
+        let argv = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }.filter { $0.prefix(2) != ["serve", "discover"] }
         XCTAssertEqual(argv[0], ["backend", "install", "mlx-audio", "--receipts-dir", receipts, "--json"])
         XCTAssertEqual(argv[1], ["backend", "install", "mlx-audio", "--confirm", "--preview-hash", "h", "--receipts-dir", receipts, "--json"])
-        XCTAssertEqual(argv[2], ["intake", "fetch", "unsloth/Qwen3-8B-GGUF", "--revision", "main", "--file", "a.gguf", "--local-dir", "/models/gguf/Qwen3-8B-GGUF", "--receipts-dir", receipts, "--json"])
+        XCTAssertEqual(argv[2], ["intake", "fetch", "unsloth/Qwen3-8B-GGUF", "--revision", revision, "--file", "a.gguf", "--local-dir", "/models/gguf/Qwen3-8B-GGUF", "--receipts-dir", receipts, "--json"])
         XCTAssertEqual(argv[3].suffix(5), ["--confirm", "--preview-hash", "h", "--receipts-dir", receipts, "--json"].suffix(5))
         XCTAssertEqual(argv[4], ["intake", "status", "--receipts-dir", receipts, "--json"])
         XCTAssertTrue(argv[5].contains("--backend") && argv[5].contains("mlx-audio"))
@@ -1222,13 +1254,14 @@ private final class FixtureAgent {
         let scripts = root.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
         let body = String(data: try JSONSerialization.data(withJSONObject: payload), encoding: .utf8) ?? "{}"
+        let literal = String(data: try JSONSerialization.data(withJSONObject: body, options: [.fragmentsAllowed]), encoding: .utf8) ?? "\"{}\""
         let script = """
         import json
         import sys
 
         with open(\(String(reflecting: recordPath.path)), "a") as handle:
             handle.write(json.dumps(sys.argv[1:]) + "\\n")
-        print(json.dumps({"status": "ok", "data": \(body)}))
+        print(json.dumps({"status": "ok", "data": json.loads(\(literal))}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }

@@ -51,6 +51,9 @@ struct ModelUpdateDependency: Codable, Equatable {
     let modelPath: String
     let previewHash: String
     var additionalFiles: [String] = []
+    var shared: Bool? = nil
+    var fetchReceipt: String? = nil
+    var admissionPreviewHash: String? = nil
 }
 
 /// Local preparation is previewed only after the pinned source download finishes.

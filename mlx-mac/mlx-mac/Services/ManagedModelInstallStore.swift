@@ -59,6 +59,23 @@ actor ManagedModelInstallStore {
         return destination.appendingPathComponent(component).path
     }
 
+    nonisolated static func dependencyDirectory(root: String, source: IntakeSource, additionalFiles: [String]) -> String? {
+        let parts = source.repo.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2, parts.allSatisfy({ validSourceComponent($0, limit: 96) }),
+              ModelUpdateReview.isCommit(source.fetchRevision),
+              source.file == nil || source.subfolder == nil,
+              [source.file, source.subfolder].compactMap({ $0 }).allSatisfy(validSourcePath),
+              additionalFiles.allSatisfy(validSourcePath), Set(additionalFiles).count == additionalFiles.count,
+              !additionalFiles.contains(source.file ?? ""), additionalFiles.isEmpty || source.file != nil else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode([source.file ?? "", source.subfolder ?? ""] + additionalFiles.sorted()) else { return nil }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return URL(fileURLWithPath: root).appendingPathComponent("managed-components")
+            .appendingPathComponent(parts[0]).appendingPathComponent(parts[1])
+            .appendingPathComponent("selection-" + String(digest.prefix(32)))
+            .appendingPathComponent(source.fetchRevision.lowercased()).path
+    }
+
     nonisolated static func preparedDirectory(root: String, source: IntakeSource, recipe: ModelUpdateConversionRecipe) -> String? {
         guard ModelUpdateReview.isCommit(source.fetchRevision),
               (try? sourceReference(repo: source.repo, file: source.file, subfolder: source.subfolder)) != nil,

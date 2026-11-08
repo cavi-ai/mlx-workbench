@@ -109,13 +109,24 @@ enum IntakeLibraryMatch {
         Set((snapshot?.models ?? []).filter { $0.readiness == .ready }.map { $0.item.path })
     }
 
+    /// Complete GGUF sources can enter Prepare before they have a serving output.
+    static func sourcePaths(in snapshot: LibrarySnapshot?) -> Set<String> {
+        Set((snapshot?.models ?? []).filter {
+            $0.readiness == .ready || ($0.readiness == .needsConversion && $0.item.path.lowercased().hasSuffix(".gguf") &&
+                $0.item.readable != false && ($0.item.error?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) &&
+                ($0.item.shard?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true))
+        }.map { $0.item.path })
+    }
+
     /// The ready cache path of this source's repository at its revision. A checkpoint folder inside a
     /// repository is a different model from the repository cache, so only root sources match.
-    static func path(for resolution: IntakeResolution, readyPaths: Set<String>) -> String? {
+    static func path(for resolution: IntakeResolution, readyPaths: Set<String>, selectedFile: String? = nil) -> String? {
+        if resolution.verdict == .gguf {
+            guard let file = resolution.source.file ?? selectedFile else { return nil }
+            return readyPaths.sorted().first { IntakeCoordinator.sourceMatches($0, resolution: resolution, selectedFile: file) }
+        }
         guard resolution.source.subfolder == nil else { return nil }
-        return IntakeCoordinator.readyCachePath(
-            repo: resolution.source.repo, revision: resolution.source.revision, readyPaths: readyPaths
-        )
+        return readyPaths.sorted().first { IntakeCoordinator.sourceMatches($0, resolution: resolution) }
     }
 }
 

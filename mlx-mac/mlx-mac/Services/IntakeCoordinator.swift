@@ -103,27 +103,22 @@ final class IntakeCoordinator: ObservableObject {
         }
     }
 
-    /// The ready cache path holding `repo` at `revision`; `main` accepts any snapshot.
+    /// Only the exact immutable snapshot can satisfy a resolved source.
     nonisolated static func readyCachePath(repo: String, revision: String, readyPaths: Set<String>) -> String? {
-        readyPaths.sorted().first { path in
-            HFRepoID.forPath(path) == repo &&
-            (revision == "main" || path.contains("/snapshots/\(revision)/") || path.hasSuffix("/snapshots/\(revision)"))
+        guard ModelUpdateReview.isCommit(revision) else { return nil }
+        return readyPaths.sorted().first { path in
+            HFRepoID.forPath(path)?.caseInsensitiveCompare(repo) == .orderedSame &&
+            (path.contains("/snapshots/\(revision.lowercased())/") || path.hasSuffix("/snapshots/\(revision.lowercased())"))
         }
     }
 
-    static func existingModelPath(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>) -> String? {
+    static func existingModelPath(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>, selectedFile: String? = nil) -> String? {
+        if resolution.verdict == .gguf {
+            guard let file = resolution.source.file ?? selectedFile else { return nil }
+            return readyPaths.sorted().first { sourceMatches($0, resolution: resolution, selectedFile: file) }
+        }
         if resolution.verdict == .alreadyMLX {
-            let source = resolution.source
-            if ModelUpdateReview.isCommit(source.fetchRevision) {
-                if let directory = ManagedModelInstallStore.directory(root: "/intake", source: source) {
-                    let modelSuffix = String(directory.dropFirst("/intake".count)) + (source.subfolder.map { "/" + $0 } ?? "")
-                    if let path = readyPaths.sorted().first(where: { $0.hasSuffix(modelSuffix) }) { return path }
-                }
-            }
-            return readyCachePath(repo: source.repo, revision: source.fetchRevision, readyPaths: readyPaths).flatMap { path in
-                guard let subfolder = source.subfolder else { return path }
-                return path.hasSuffix("/" + subfolder) ? path : nil
-            }
+            return readyPaths.sorted().first { sourceMatches($0, resolution: resolution) }
         }
         return existingConversion(resolution, qBits: qBits, history: history, readyPaths: readyPaths)
             .map { $0.completedModelPath ?? $0.outputPath }
@@ -135,9 +130,23 @@ final class IntakeCoordinator: ObservableObject {
         let bits = ModelWorkflowCoordinator.allowedBits(qBits, allowed: resolution.qBits)
         return history.sorted { $0.updatedAt > $1.updatedAt }.first { record in
             record.sourcePath == "hf://\(resolution.source.reference)" && record.destinationBits == bits &&
+            record.localSourcePath.map { sourceMatches($0, resolution: resolution) } == true &&
             (record.state == .verified || record.state == .completed || record.state == .existingModelFound) &&
             readyPaths.contains(record.completedModelPath ?? record.outputPath)
         }
+    }
+
+    nonisolated static func sourceMatches(_ path: String, resolution: IntakeResolution, selectedFile: String? = nil) -> Bool {
+        let source = resolution.source
+        let file = source.file ?? selectedFile
+        guard ModelUpdateReview.isCommit(source.fetchRevision) else { return false }
+        if let cached = ManagedModelInstallStore.cacheSelection(path: path, repo: source.repo) {
+            return cached.revision.lowercased() == source.fetchRevision.lowercased() &&
+                cached.file == file && cached.subfolder == source.subfolder
+        }
+        guard let directory = ManagedModelInstallStore.directory(root: "/intake", source: source, file: file) else { return false }
+        let suffix = String(directory.dropFirst("/intake".count)) + ((file ?? source.subfolder).map { "/" + $0 } ?? "")
+        return path.hasSuffix(suffix)
     }
 
     /// A recorded download of `resolution`'s source while it is still the cached snapshot of the resolved revision.
@@ -267,37 +276,57 @@ final class IntakeCoordinator: ObservableObject {
         do {
             if let localDir {
                 try await validateDestination(localDir)
-                guard !FileManager.default.fileExists(atPath: localDir) else {
-                    throw WorkflowEvidenceError.invalid("The destination already exists. Use the current library copy or review a separate update instead of overwriting it.")
-                }
             }
-            let hash: String
-            if let previewHash { hash = previewHash }
-            else {
-                let plan = try await api.fetchPreview(request)
-                guard let value = plan["preview_hash"] as? String, !value.isEmpty else {
-                    throw WorkflowEvidenceError.invalid("The download preview did not include a preview hash.")
-                }
-                hash = value
+            let plan = try await api.fetchPreview(request)
+            guard let hash = plan["preview_hash"] as? String, !hash.isEmpty,
+                  previewHash == nil || previewHash == hash else {
+                throw WorkflowEvidenceError.invalid("The download preview changed. Review the current source before continuing.")
             }
+            let storage = plan["storage"] as? [String: Any]
+            let reusing = storage?["mode"] as? String == "reuse"
+            let effectiveDirectory = plan["local_dir"] as? String ?? request.localDir
+            if let localDir, FileManager.default.fileExists(atPath: localDir), !reusing {
+                throw WorkflowEvidenceError.invalid("The destination already exists. Use the current library copy or review a separate update instead of overwriting it.")
+            }
+            if let effectiveDirectory, effectiveDirectory != localDir { try await validateDestination(effectiveDirectory) }
             let started = try await api.fetchStart(request, hash)
             guard let receipt = started["receipt"] as? [String: Any],
                   let slug = receipt["slug"] as? String, !slug.isEmpty,
                   let startedAt = receipt["started_at"] as? String, !startedAt.isEmpty,
-                  receipt["repo"] as? String == resolution.source.repo,
+                  (receipt["repo"] as? String)?.caseInsensitiveCompare(resolution.source.repo) == .orderedSame,
                   receipt["revision"] as? String == request.revision,
                   receipt["file"] as? String == request.file,
                   (receipt["additional_files"] as? [String] ?? []) == request.additionalFiles,
                   receipt["subfolder"] as? String == resolution.source.subfolder,
-                  receipt["local_dir"] as? String == request.localDir else {
+                  receipt["local_dir"] as? String == effectiveDirectory else {
                 throw WorkflowEvidenceError.invalid("The download receipt did not match this request. Refresh download status before retrying.")
             }
+            if started["status"] as? String == "reused" {
+                guard reusing, let payload = started["reused_fetch"] as? [String: Any] else {
+                    throw WorkflowEvidenceError.invalid("The engine did not bind reuse to the reviewed source.")
+                }
+                let job = try JSONDecoder().decode(FetchJob.self, from: JSONSerialization.data(withJSONObject: payload))
+                guard job.receipt == storage?["receipt"] as? String, job.state == "done",
+                      job.repo == receipt["repo"] as? String, job.revision == request.revision,
+                      job.file == request.file, job.subfolder == resolution.source.subfolder,
+                      (job.additionalFiles ?? []) == request.additionalFiles,
+                      job.localDir == effectiveDirectory, job.path == effectiveDirectory,
+                      job.startedAt == startedAt, job.previewHash == receipt["preview_hash"] as? String,
+                      job.previewHash?.isEmpty == false,
+                      URL(fileURLWithPath: job.receipt).deletingPathExtension().lastPathComponent == slug else {
+                    throw WorkflowEvidenceError.invalid("The reused source does not match its original completed receipt.")
+                }
+                guard let path = job.path else { throw WorkflowEvidenceError.invalid("The reused source has no path.") }
+                activity = .idle; downloadedPath = path; completedFetch = job
+                return path
+            }
+            guard !reusing else { throw WorkflowEvidenceError.invalid("The engine started a download instead of reusing the reviewed source.") }
             for _ in 0..<pollLimit {
                 let job = try await api.fetchStatus().last {
                     URL(fileURLWithPath: $0.receipt).deletingPathExtension().lastPathComponent == slug &&
                     $0.startedAt == startedAt && $0.repo == resolution.source.repo && $0.revision == request.revision &&
                     $0.file == request.file && ($0.additionalFiles ?? []) == request.additionalFiles &&
-                    $0.subfolder == resolution.source.subfolder && $0.localDir == request.localDir
+                    $0.subfolder == resolution.source.subfolder && $0.localDir == effectiveDirectory
                 }
                 logTail = Self.tail(of: job?.logPath)
                 switch job?.state {
