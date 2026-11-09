@@ -74,6 +74,10 @@ enum FleetRouter {
                 skipped.append(SkippedRole(role: role, reason: "endpoint not running"))
                 continue
             }
+            if slot.apiKeySHA256 != nil || servers.contains(where: { $0.port == slot.port && $0.apiKeySHA256 != nil }) {
+                skipped.append(SkippedRole(role: role, reason: "configure this endpoint's API key in the client"))
+                continue
+            }
             if servers.contains(where: { $0.port == slot.port && !$0.supportsChatCompletions }) {
                 skipped.append(SkippedRole(role: role, reason: "endpoint provides typed model jobs"))
                 continue

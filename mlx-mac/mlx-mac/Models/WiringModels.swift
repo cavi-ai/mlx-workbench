@@ -19,7 +19,7 @@ struct WireEndpoint: Equatable, Sendable {
     }
 
     init?(server: ServerInfo) {
-        guard server.supportsChatCompletions, server.state?.lowercased() == "running", let port = server.port, (1...65535).contains(port),
+        guard server.supportsChatCompletions, server.apiKeySHA256 == nil, server.state?.lowercased() == "running", let port = server.port, (1...65535).contains(port),
               !server.modelIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         self.init(baseURL: "http://127.0.0.1:\(port)/v1", modelName: server.modelIdentity)
     }

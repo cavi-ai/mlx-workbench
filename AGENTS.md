@@ -93,6 +93,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   JIT gateway, memory policy, source-bound acceleration settings), transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
+  Endpoint API keys use `EndpointCredentialStore` (Keychain), with reviewed authentication changes owned by `EndpointSupervisor`.
 - Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
   `ComparisonMediaRunner`, histories via `ComparisonHistoryWorker`),
   `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; outputs in

@@ -26,6 +26,14 @@ struct EndpointAccelerationPreview {
     let hash: String
 }
 
+struct EndpointAuthenticationReview: Identifiable {
+    let id = UUID()
+    let slot: EndpointSlot
+    let keySHA256: String?
+    let token: String?
+    let previewHash: String
+}
+
 // MARK: - Endpoint models
 //
 // Always-on Endpoint (premium spec 06): a stable loopback port that always
@@ -108,6 +116,7 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var profilePreviewHash: String? = nil
     var acceleration: LocalAccelerationOptions? = nil
     var accelerationPreviewHash: String? = nil
+    var apiKeySHA256: String? = nil
     var accelerationOptions: LocalAccelerationOptions { acceleration ?? .init() }
     var usesJIT: Bool { loadOnRequest == true }
 
@@ -143,6 +152,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case duplicateRole(UseCase)
     case invalidMemoryPolicy(UUID)
     case incompatibleAcceleration(UUID)
+    case invalidAuthentication(UUID)
 }
 
 extension EndpointFleetValidation: LocalizedError {
@@ -160,6 +170,8 @@ extension EndpointFleetValidation: LocalizedError {
             return "Memory policy requires an idle timeout of 0–86400 seconds and a finite reserve of 0–1024 GB."
         case .incompatibleAcceleration:
             return "Local acceleration requires MLX-LM without a Strata serving profile."
+        case .invalidAuthentication:
+            return "API key authentication requires Load on request and a valid credential reference."
         }
     }
 }
@@ -174,6 +186,10 @@ extension EndpointFleetConfig {
         var seenPorts = Set<Int>()
         var seenRoles = Set<UseCase>()
         for slot in slots {
+            if let digest = slot.apiKeySHA256,
+               !slot.usesJIT || digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) == nil {
+                throw EndpointFleetValidation.invalidAuthentication(slot.id)
+            }
             if (slot.servingProfile != nil && slot.accelerationOptions.requested) ||
                 (slot.accelerationOptions.visionCache && slot.accelerationOptions.textRequested) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)

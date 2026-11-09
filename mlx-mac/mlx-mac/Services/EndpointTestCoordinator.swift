@@ -9,13 +9,15 @@ struct EndpointTestClient: Sendable {
     var servers: @Sendable () async throws -> [ServerInfo]
     var ask: @Sendable (ServerInfo, String, Int) async throws -> ProbeSample
 
-    static func live(api: WorkbenchAPI) -> Self {
+    static func live(api: WorkbenchAPI,
+                     credential: @escaping @Sendable (String) throws -> String = EndpointCredentialStore.token) -> Self {
         Self(servers: { try await api.serveStatus() }, ask: { server, prompt, limit in
             guard EndpointTestCoordinator.supports(server), let port = server.port,
                   let url = URL(string: "http://127.0.0.1:\(port)") else { throw EndpointTestError.changed }
             let session = HostHTTPClient.session()
             defer { session.invalidateAndCancel() }
             return try await OpenAIEndpointProber(session: session, requestTimeout: 120,
+                bearerToken: try server.apiKeySHA256.map(credential),
                 maximumResponseBytes: 1_048_576, maximumLineBytes: 65_536)
                 .chat(baseURL: url, model: server.modelIdentity, prompt: prompt, maxTokens: limit)
         })

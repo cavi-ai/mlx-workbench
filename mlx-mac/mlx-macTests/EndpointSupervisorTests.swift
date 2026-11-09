@@ -5,6 +5,68 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    nonisolated private static func authenticationLifecycle(_ digest: String? = nil) -> ServeLifecycle {
+        ServeLifecycle(preview: { _, _ in digest ?? "plain" }, start: { _, _, _ in }, stop: { _ in },
+            jitPreview: { _, _, _ in digest ?? "plain" }, jitStart: { _, _, _, _ in },
+            authenticated: { Self.authenticationLifecycle($0) })
+    }
+
+    func testAuthenticationPreviewSavesOnlyAfterConfirmationAndRejectsDrift() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let slot = EndpointSlot(enabled: false, port: 8920, modelPath: "/Models/auth", loadOnRequest: true)
+        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
+        let token = "mlxw_" + String(repeating: "c", count: 64)
+        var saved: [String] = []
+        supervisor.generateAPIKey = { token }
+        supervisor.saveAPIKey = { saved.append($0) }
+        supervisor.removeAPIKey = { _ in }
+        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
+        XCTAssertTrue(saved.isEmpty)
+        XCTAssertNil(supervisor.fleet.slots[0].apiKeySHA256)
+        let confirmed = await supervisor.confirmAuthentication(review)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        XCTAssertEqual(saved, [token])
+        XCTAssertEqual(supervisor.fleet.slots[0].apiKeySHA256, EndpointCredentialStore.digest(token))
+        XCTAssertFalse(supervisor.fleet.slots[0].enabled)
+        XCTAssertFalse(try String(contentsOf: store.url, encoding: .utf8).contains(token))
+        let repeated = await supervisor.confirmAuthentication(review)
+        XCTAssertFalse(repeated)
+        XCTAssertEqual(saved.count, 1)
+    }
+
+    func testAuthenticationChangesRefuseAnEnabledEndpoint() async throws {
+        let (supervisor, _) = makeSupervisor()
+        await supervisor.enable(modelPath: "/Models/old", port: 8921, loadOnRequest: false)
+        let slot = try XCTUnwrap(supervisor.fleet.slots.first)
+        supervisor.generateAPIKey = { XCTFail("A running endpoint must not create credentials"); return "" }
+        do {
+            _ = try await supervisor.previewAuthentication(slot: slot, required: true)
+            XCTFail("Authentication must not change while the endpoint is enabled")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Stop the endpoint")) }
+        XCTAssertEqual(supervisor.fleet.slots.first, slot)
+    }
+
+    func testCredentialSaveFailureKeepsAuthenticationConfigurationUnchanged() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let slot = EndpointSlot(enabled: false, port: 8922, modelPath: "/Models/auth", loadOnRequest: true)
+        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
+        supervisor.generateAPIKey = { "mlxw_" + String(repeating: "d", count: 64) }
+        supervisor.saveAPIKey = { _ in throw WorkflowEvidenceError.invalid("Credential store unavailable") }
+        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
+        let confirmed = await supervisor.confirmAuthentication(review)
+        XCTAssertFalse(confirmed)
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+        XCTAssertEqual(try store.load().first?.slots, [slot])
+    }
+
     func testObservedStopCarriesTheReviewedIdentityAfterDisablingRestart() async throws {
         let (supervisor, world) = makeSupervisor()
         await supervisor.enable(modelPath: "/Models/old", port: 8910, loadOnRequest: false)

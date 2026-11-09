@@ -7,6 +7,35 @@ import XCTest
 /// supervisor internals behind the single-slot shim.
 @MainActor
 final class EndpointFleetTests: XCTestCase {
+    func testAuthenticationReferenceIsNotTheCredentialAndRequiresJIT() throws {
+        let token = "mlxw_" + String(repeating: "a", count: 64)
+        let digest = EndpointCredentialStore.digest(token)
+        var slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/models/test", loadOnRequest: true)
+        slot.apiKeySHA256 = digest
+        let encoded = try JSONEncoder().encode(slot)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains(token))
+        XCTAssertEqual(try JSONDecoder().decode(EndpointSlot.self, from: encoded), slot)
+        XCTAssertNoThrow(try EndpointFleetConfig(slots: [slot], installedAtLogin: false).validated())
+        slot.loadOnRequest = false
+        XCTAssertThrowsError(try EndpointFleetConfig(slots: [slot], installedAtLogin: false).validated())
+        slot.loadOnRequest = true; slot.apiKeySHA256 = "plaintext-key"
+        XCTAssertThrowsError(try EndpointFleetConfig(slots: [slot], installedAtLogin: false).validated())
+    }
+
+    func testProtectedServeArgumentsContainOnlyVerificationDigest() {
+        let token = "mlxw_" + String(repeating: "b", count: 64)
+        let digest = EndpointCredentialStore.digest(token)
+        let arguments = WorkbenchAPI.serveArguments(model: "/models/test", runtime: "auto", port: 8766,
+            receipts: "/receipts", jit: true, apiKeySHA256: digest)
+        XCTAssertTrue(arguments.contains("--api-key-sha256"))
+        XCTAssertTrue(arguments.contains(digest))
+        XCTAssertFalse(arguments.contains(token))
+        let unprotected = ServerInfo(path: "/models/test", port: 8766, pid: 42, state: "running")
+        let protected = ServerInfo(path: "/models/test", port: 8766, pid: 42, state: "running", apiKeySHA256: digest)
+        XCTAssertFalse(unprotected.sameProcess(as: protected))
+        XCTAssertNil(WireEndpoint(server: protected))
+    }
+
     func testMemoryPolicySurvivesFleetPersistenceAndRejectsInvalidValues() throws {
         let urls = makeStoreURLs()
         let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 300, keepLoaded: true, minimumHeadroomGB: 4)

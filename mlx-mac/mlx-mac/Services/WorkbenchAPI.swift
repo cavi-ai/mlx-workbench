@@ -856,7 +856,8 @@ actor WorkbenchAPI {
 
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                               previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) -> [String] {
+                               previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
+                               apiKeySHA256: String? = nil) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
@@ -864,6 +865,7 @@ actor WorkbenchAPI {
         if m5Prefill { args += ["--m5-prefill"] }
         if promptLookup { args += ["--prompt-lookup"] }
         if visionCache { args += ["--vision-cache"] }
+        if let apiKeySHA256 { args += ["--api-key-sha256", apiKeySHA256] }
         if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
         return args
     }
@@ -879,27 +881,28 @@ actor WorkbenchAPI {
         let preview: [String: Any]
         if let profile = slot.servingProfile {
             guard profile.modelPath == slot.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            preview = try await profile.preview(api: self, port: slot.port, jit: slot.usesJIT, policy: slot.memoryPolicy)
+            preview = try await profile.preview(api: self, port: slot.port, jit: slot.usesJIT, policy: slot.memoryPolicy, apiKeySHA256: slot.apiKeySHA256)
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
                 jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy,
-                m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache)
+                m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache, apiKeySHA256: slot.apiKeySHA256)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache)
+            m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache, apiKeySHA256: slot.apiKeySHA256)
         if let options { args += options.arguments }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
     }
 
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
-                      thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async throws -> [String: Any] {
+                      thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
+                      apiKeySHA256: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, apiKeySHA256: apiKeySHA256)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -911,9 +914,10 @@ actor WorkbenchAPI {
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
-                    thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async throws -> [String: Any] {
+                    thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
+                    apiKeySHA256: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, apiKeySHA256: apiKeySHA256)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
