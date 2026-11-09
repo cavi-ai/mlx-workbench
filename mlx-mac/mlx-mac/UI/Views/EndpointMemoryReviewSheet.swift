@@ -238,7 +238,7 @@ struct EndpointMemoryReviewSheet: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Divider()
             Text("Policy preview").font(WorkbenchTypography.cardTitle)
-            Text(review.policy.keepLoaded ? "Keep the model loaded after use." : review.policy.idleTimeoutSeconds == 0
+            Text(review.policy.releaseAfterRequest == true ? "Release model weights after each request." : review.policy.keepLoaded ? "Keep the model loaded after use." : review.policy.idleTimeoutSeconds == 0
                  ? "No timed idle unload." : "Unload after \(review.policy.idleTimeoutSeconds) idle seconds.")
             if let reserve = review.policy.minimumHeadroomGB { Text("Reserve \(reserve, specifier: "%.1f") GB of system headroom.") }
             else { Text("Do not check headroom before loading.") }
