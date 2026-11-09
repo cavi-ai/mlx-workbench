@@ -3848,6 +3848,11 @@ final class WorkbenchReviewUITests: XCTestCase {
         let sheet = manager.sheets.firstMatch
         let modes = sheet.popUpButtons["serve-model-residency"]
         XCTAssertTrue(modes.waitForExistence(timeout: 10))
+        let authentication = sheet.checkBoxes["serve-model-authentication"]
+        XCTAssertTrue(authentication.waitForExistence(timeout: 10))
+        XCTAssertEqual(String(describing: authentication.value ?? ""), "0")
+        authentication.click()
+        XCTAssertEqual(String(describing: authentication.value ?? ""), "1")
         modes.click()
         XCTAssertTrue(app.menuItems["Release weights after each request"].waitForExistence(timeout: 5))
         app.menuItems["Keep loaded between requests"].click()

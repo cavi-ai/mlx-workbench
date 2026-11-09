@@ -145,21 +145,21 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
-    func preview(api: WorkbenchAPI, port: Int?, jit: Bool = false, policy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
+    func preview(api: WorkbenchAPI, port: Int?, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil) async throws -> [String: Any] {
         guard hasPassedVerification else { throw WorkflowEvidenceError.invalid("Verify the serving profile before previewing it.") }
         let plan = try await api.servePreview(repo: modelPath, runtime: "strata", port: port,
-                                              jit: jit, memoryPolicy: policy, strataOptions: options)
+                                              jit: jit, memoryPolicy: policy, strataOptions: options, apiKeySHA256: apiKeySHA256)
         try validate(plan: plan)
         return plan
     }
 
-    func start(api: WorkbenchAPI, port: Int?, hash: String, jit: Bool = false, policy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
-        let plan = try await preview(api: api, port: port, jit: jit, policy: policy)
+    func start(api: WorkbenchAPI, port: Int?, hash: String, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil) async throws -> [String: Any] {
+        let plan = try await preview(api: api, port: port, jit: jit, policy: policy, apiKeySHA256: apiKeySHA256)
         guard plan.string("preview_hash") == hash else {
             throw WorkflowEvidenceError.invalid("The serving profile preview changed. Preview it again before confirming.")
         }
         return try await api.serveStart(repo: modelPath, runtime: "strata", port: port, previewHash: hash,
-                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options)
+                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options, apiKeySHA256: apiKeySHA256)
     }
 
     /// Receipt ownership is established by serve status; bind its exact confirmed plan as well.
@@ -179,33 +179,34 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
 }
 
 extension ServeLifecycle {
-    static func verifiedProfile(_ profile: ServingProfile, api: WorkbenchAPI) -> ServeLifecycle {
-        var lifecycle = live(api: api, runtime: "strata", strataOptions: profile.options)
+    static func verifiedProfile(_ profile: ServingProfile, api: WorkbenchAPI, apiKeySHA256: String? = nil) -> ServeLifecycle {
+        var lifecycle = live(api: api, runtime: "strata", strataOptions: profile.options, apiKeySHA256: apiKeySHA256)
+        lifecycle.authenticated = { digest in .verifiedProfile(profile, api: api, apiKeySHA256: digest) }
         lifecycle.reviewedPreview = { path, port in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            let plan = try await profile.preview(api: api, port: port)
+            let plan = try await profile.preview(api: api, port: port, apiKeySHA256: apiKeySHA256)
             return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
         }
         lifecycle.preview = { path, port in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            return try await profile.preview(api: api, port: port).string("preview_hash") ?? ""
+            return try await profile.preview(api: api, port: port, apiKeySHA256: apiKeySHA256).string("preview_hash") ?? ""
         }
         lifecycle.start = { path, port, hash in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            _ = try await profile.start(api: api, port: port, hash: hash)
+            _ = try await profile.start(api: api, port: port, hash: hash, apiKeySHA256: apiKeySHA256)
         }
         lifecycle.startWithReceipt = { path, port, hash in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            let response = try await profile.start(api: api, port: port, hash: hash)
+            let response = try await profile.start(api: api, port: port, hash: hash, apiKeySHA256: apiKeySHA256)
             return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
         }
         lifecycle.jitPreview = { path, port, policy in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            return try await profile.preview(api: api, port: port, jit: true, policy: policy).string("preview_hash") ?? ""
+            return try await profile.preview(api: api, port: port, jit: true, policy: policy, apiKeySHA256: apiKeySHA256).string("preview_hash") ?? ""
         }
         lifecycle.jitStart = { path, port, hash, policy in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            _ = try await profile.start(api: api, port: port, hash: hash, jit: true, policy: policy)
+            _ = try await profile.start(api: api, port: port, hash: hash, jit: true, policy: policy, apiKeySHA256: apiKeySHA256)
         }
         return lifecycle
     }

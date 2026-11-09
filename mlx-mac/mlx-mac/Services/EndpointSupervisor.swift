@@ -50,6 +50,9 @@ final class EndpointSupervisor: ObservableObject {
 
     var profileLifecycle: ((ServingProfile) throws -> ServeLifecycle)?
     var accelerationLifecycle: ((LocalAccelerationOptions) throws -> ServeLifecycle)?
+    var generateAPIKey: () throws -> String = EndpointCredentialStore.generate
+    var saveAPIKey: (String) throws -> Void = EndpointCredentialStore.save
+    var removeAPIKey: (String) throws -> Void = EndpointCredentialStore.remove
     private let lifecycle: ServeLifecycle
     private let statusProvider: @Sendable () async throws -> [ServerInfo]
     private let fleetStore: EndpointFleetStore
@@ -200,14 +203,29 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) async {
+    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let usesJIT = loadOnRequest ?? (lifecycle.jitPreview != nil)
-        let candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role,
+        var candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role,
                                      loadOnRequest: usesJIT, memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil)
-        guard validate(candidate, isNew: true), commit(replacing: candidate) else { return }
+        var savedKey: String?
+        do {
+            if requireAPIKey {
+                let token = try generateAPIKey()
+                candidate.apiKeySHA256 = EndpointCredentialStore.digest(token)
+                candidate.loadOnRequest = true
+                candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic
+                guard validate(candidate, isNew: true) else { return }
+                try saveAPIKey(token)
+                savedKey = candidate.apiKeySHA256
+            }
+            guard validate(candidate, isNew: true), commit(replacing: candidate) else {
+                if let savedKey { try removeAPIKey(savedKey) }
+                return
+            }
+        } catch { lastError = AppHost.render(error); return }
         await reconcile(userRequestedSlotID: candidate.id)
     }
 
@@ -274,6 +292,9 @@ final class EndpointSupervisor: ObservableObject {
         guard commit(candidate) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         if slot.enabled, !(await stopServing(slot)) { syncShim(); return }
+        if let key = slot.apiKeySHA256, !fleet.slots.contains(where: { $0.apiKeySHA256 == key }) {
+            do { try removeAPIKey(key) } catch { lastError = AppHost.render(error) }
+        }
         slotStates.removeValue(forKey: id)
         slotRestartAttempts.removeValue(forKey: id)
         slotAttemptTimestamps.removeValue(forKey: id)
@@ -363,6 +384,10 @@ final class EndpointSupervisor: ObservableObject {
                     do {
                         let observed = try await statusProvider()
                         if let server = observed.first(where: { $0.port == slot.port && $0.state == "running" && $0.matchesUnadaptedModel(modelPath) && ($0.jit == true) == slot.usesJIT }) {
+                            guard server.apiKeySHA256 == slot.apiKeySHA256 else {
+                                problem = "The new endpoint does not match its reviewed authentication."
+                                break
+                            }
                             guard !slot.usesJIT || server.memoryPolicy == slot.memoryPolicy else {
                                 problem = "The new endpoint does not match the reviewed memory policy."
                                 break
@@ -528,6 +553,15 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     private func servingLifecycle(_ slot: EndpointSlot) throws -> ServeLifecycle {
+        let selected = try unauthenticatedLifecycle(slot)
+        guard let hash = slot.apiKeySHA256 else { return selected }
+        guard slot.usesJIT, let authenticated = selected.authenticated else {
+            throw WorkflowEvidenceError.invalid("API key authentication is unavailable for this endpoint. No unprotected endpoint was started.")
+        }
+        return authenticated(hash)
+    }
+
+    private func unauthenticatedLifecycle(_ slot: EndpointSlot) throws -> ServeLifecycle {
         if slot.accelerationOptions.requested {
             guard slot.servingProfile == nil, let factory = accelerationLifecycle else {
                 throw WorkflowEvidenceError.invalid("Local acceleration is unavailable for this endpoint.")
@@ -541,6 +575,67 @@ final class EndpointSupervisor: ObservableObject {
             return try factory(profile)
         }
         return lifecycle
+    }
+
+    func previewAuthentication(slot: EndpointSlot, required: Bool) async throws -> EndpointAuthenticationReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        try await requireStoppedForAuthentication(slot)
+        let token = required ? try generateAPIKey() : nil
+        var candidate = slot
+        candidate.apiKeySHA256 = token.map(EndpointCredentialStore.digest)
+        if required { candidate.loadOnRequest = true; candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic }
+        let hash = try await accelerationPreviewHash(candidate)
+        guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
+        return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, token: token, previewHash: hash)
+    }
+
+    func confirmAuthentication(_ review: EndpointAuthenticationReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        var savedKey: String?
+        do {
+            try await requireStoppedForAuthentication(review.slot)
+            var candidate = review.slot
+            candidate.apiKeySHA256 = review.keySHA256
+            if review.keySHA256 != nil { candidate.loadOnRequest = true; candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic }
+            let hash = try await accelerationPreviewHash(candidate)
+            guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
+                throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
+            }
+            try await requireStoppedForAuthentication(review.slot)
+            if let token = review.token {
+                guard EndpointCredentialStore.digest(token) == review.keySHA256 else { throw WorkflowEvidenceError.invalid("The API key review changed.") }
+                try saveAPIKey(token); savedKey = review.keySHA256
+            }
+            if candidate.accelerationOptions.requested { candidate.accelerationPreviewHash = hash }
+            candidate.profilePreviewHash = nil
+            guard validate(candidate, isNew: false), commit(replacing: candidate) else {
+                if let savedKey { try removeAPIKey(savedKey) }
+                return false
+            }
+            if let old = review.slot.apiKeySHA256, !fleet.slots.contains(where: { $0.apiKeySHA256 == old }) {
+                do { try removeAPIKey(old) }
+                catch {
+                    lastError = "Authentication was saved, but the previous unused key could not be removed from Keychain."
+                    return true
+                }
+            }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
+    }
+
+    private func requireStoppedForAuthentication(_ slot: EndpointSlot) async throws {
+        guard fleet.slots.contains(slot), !slot.enabled, pendingStops[slot.id] == nil else {
+            throw WorkflowEvidenceError.invalid("Stop the endpoint before changing authentication or resetting its key.")
+        }
+        let servers = try await statusProvider()
+        guard fleet.slots.contains(slot), !servers.contains(where: {
+            $0.port == slot.port && ($0.state?.lowercased() == "running" || ($0.workerPid ?? 0) > 0 || ($0.activeRequests ?? 0) > 0)
+        }) else {
+            throw WorkflowEvidenceError.invalid("This port is still serving. Confirm it has stopped before changing authentication.")
+        }
     }
 
     private func accelerationPreviewHash(_ slot: EndpointSlot) async throws -> String {
@@ -762,6 +857,10 @@ final class EndpointSupervisor: ObservableObject {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
         if let ours = running.first(where: { $0.port == slot.port }) {
+            guard ours.apiKeySHA256 == slot.apiKeySHA256 else {
+                slotStates[slot.id] = .degraded(reason: "Endpoint authentication differs from its configuration. Stop it and review authentication before restarting.")
+                return
+            }
             if ours.matchesUnadaptedModel(slot.modelPath) {
                 do {
                     if let hash = try await confirmedAccelerationHash(ours, slot: slot), hash != slot.accelerationPreviewHash {

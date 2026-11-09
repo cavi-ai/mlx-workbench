@@ -273,6 +273,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let requestBlockedReason: String?
     let lastUnloadReason: String?
     let taskKinds: [String]?
+    let apiKeySHA256: String?
     var supportsChatCompletions: Bool { runtime != "tasks" && (taskKinds?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
@@ -297,6 +298,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case requestBlockedReason = "request_blocked_reason"
         case lastUnloadReason = "last_unload_reason"
         case taskKinds = "task_kinds"
+        case apiKeySHA256 = "api_key_sha256"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -330,7 +332,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         memoryAllocation: ServingMemoryAllocation? = nil,
         requestBlockedReason: String? = nil,
         lastUnloadReason: String? = nil,
-        taskKinds: [String]? = nil
+        taskKinds: [String]? = nil,
+        apiKeySHA256: String? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -361,6 +364,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.requestBlockedReason = requestBlockedReason
         self.lastUnloadReason = lastUnloadReason
         self.taskKinds = taskKinds
+        self.apiKeySHA256 = apiKeySHA256
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -403,7 +407,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt &&
         adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus && trainingBinding == other.trainingBinding &&
         prefillKernel == other.prefillKernel && decodeProfile == other.decodeProfile && visionProfile == other.visionProfile &&
-        processStartedAt == other.processStartedAt
+        processStartedAt == other.processStartedAt && apiKeySHA256 == other.apiKeySHA256
     }
 
     var residencySummary: String {

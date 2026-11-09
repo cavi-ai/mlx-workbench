@@ -273,3 +273,29 @@ than a successful result.
 Typed endpoints expose residency, worker PID, memory controls and source paths
 in the same inventory and menu bar as chat endpoints. Chat prompt tests, chat
 client wiring and role routing are available only for chat endpoints.
+
+## Require an API key
+
+When adding a model in **Served models**, turn on **Require API key**. The
+endpoint stays on loopback and loads weights on request. Use **Copy base URL**,
+**Copy model ID** and **Copy API key** to configure each authorized client.
+Keys are generated securely and saved in Keychain. Endpoint settings, launch
+arguments and exports contain only a verification digest.
+
+For a saved endpoint, stop it first, then choose **Require API key…**. Review
+and save the change, then start the endpoint. **Reset API key…** creates a new
+key and revokes the previous one after restart. Authentication changes leave
+the endpoint stopped. **Disable authentication…** explicitly restores access
+for local clients without a key.
+
+Protected endpoints require `Authorization: Bearer KEY` or `x-api-key: KEY`
+for model discovery, inference, task history, cancellation and artifacts.
+Requests without a valid key receive HTTP 401 before inference. Internal
+worker ports also require separate credentials. Workbench's **Try a prompt**
+uses the endpoint key from Keychain. Automatic client wiring and role routing
+skip protected endpoints; configure the copied key directly in each client.
+
+Any client holding the key is authorized. Keep it private and reset it if it
+has been shared unintentionally. Loopback limits access to this machine; API
+keys do not create an executable allowlist. Authentication is optional, and
+existing endpoints keep their current access mode.

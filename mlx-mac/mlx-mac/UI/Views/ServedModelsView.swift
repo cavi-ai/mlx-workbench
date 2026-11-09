@@ -50,6 +50,8 @@ struct ServedModelsView: View {
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
     @State private var query = ""
     @State private var keepModelLoaded = false
+    @State private var requireAPIKey = false
+    @State private var authenticationReview: EndpointAuthenticationReview?
     @State private var action: Action?
     @State private var error: String?
 
@@ -152,6 +154,7 @@ struct ServedModelsView: View {
         .padding(WorkbenchSpacing.lg)
         .frame(minWidth: 520, idealWidth: 640, minHeight: 420, idealHeight: 620)
         .sheet(item: $action) { pending in confirmation(pending) }
+        .sheet(item: $authenticationReview) { review in authenticationConfirmation(review) }
         .sheet(isPresented: inventoryReviewBinding, onDismiss: {
             inventory.cancelReview()
             Task { await inventory.refresh() }
@@ -204,6 +207,21 @@ struct ServedModelsView: View {
         }
         Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
         if let connection { Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) } }
+        if let hash = slot.apiKeySHA256 {
+            Text("API key required").font(WorkbenchTypography.metadata)
+            Button("Copy API key") {
+                do { ServedModelsSelection.copy(try EndpointCredentialStore.token(for: hash)) }
+                catch { self.error = AppHost.render(error) }
+            }
+            if connection == nil, let server = workflow.servers.first(where: { $0.port == slot.port && $0.matchesUnadaptedModel(slot.modelPath) }) {
+                Button("Copy model ID") { ServedModelsSelection.copy(server.modelIdentity) }
+            }
+            Button("Reset API key…") { prepareAuthentication(slot, required: true) }
+                .disabled(slot.enabled).help("Stop this endpoint before resetting its key.")
+        }
+        Button(slot.apiKeySHA256 == nil ? "Require API key…" : "Disable authentication…") {
+            prepareAuthentication(slot, required: slot.apiKeySHA256 == nil)
+        }.disabled(slot.enabled).help("Stop this endpoint before changing authentication.")
         if workflow.servers.contains(where: { $0.port == slot.port && $0.runtime == "tasks" }) {
             Button("Copy jobs URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1/tasks") }
         }
@@ -214,6 +232,7 @@ struct ServedModelsView: View {
     private func prepare(model: LibraryModel) {
         guard let port = ServedModelsSelection.nextPort(slots: endpoint.fleet.slots, servers: workflow.servers) else { return }
         keepModelLoaded = false
+        requireAPIKey = false
         action = Action(model: model, slot: nil, port: port, memoryWarning: memoryWarning(for: model.item.path),
                         unverified: !appHost.isModelVerified(model.item.path), remove: false)
     }
@@ -250,6 +269,9 @@ struct ServedModelsView: View {
                 }.accessibilityIdentifier("serve-model-residency")
                 Text("Weights load on the first request. Stop and Unload release them; model files stay in place.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Toggle("Require API key", isOn: $requireAPIKey).accessibilityIdentifier("serve-model-authentication")
+                Text("Only clients with this key can use inference. The endpoint stays on loopback; the key is saved in Keychain.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if pending.unverified { InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.") }
             if let warning = pending.memoryWarning { InlineMessage(kind: .warning, text: warning) }
@@ -258,13 +280,14 @@ struct ServedModelsView: View {
                 Spacer()
                 Button(pending.remove ? "Remove selection" : pending.unverified ? "Serve unverified" : "Confirm serving") {
                     let retained = keepModelLoaded
-                    Task { await apply(pending, keepLoaded: retained) }
+                    let authenticated = requireAPIKey
+                    Task { await apply(pending, keepLoaded: retained, requireKey: authenticated) }
                 }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 460)
     }
 
-    private func apply(_ pending: Action, keepLoaded: Bool) async {
+    private func apply(_ pending: Action, keepLoaded: Bool, requireKey: Bool) async {
         action = nil; error = nil
         if let slot = pending.slot {
             guard endpoint.fleet.slots.contains(slot), canStop(slot) else { error = error ?? "Endpoint changed; review it again."; return }
@@ -288,8 +311,37 @@ struct ServedModelsView: View {
             }
             await endpoint.addSlot(modelPath: model.item.path, port: pending.port, allowUnverified: pending.unverified, loadOnRequest: true,
                 memoryPolicy: EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: keepLoaded, minimumHeadroomGB: 2,
-                    releaseAfterRequest: !keepLoaded))
+                    releaseAfterRequest: !keepLoaded), requireAPIKey: requireKey)
         }
+    }
+
+    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool) {
+        Task {
+            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required) }
+            catch { self.error = AppHost.render(error) }
+        }
+    }
+
+    private func authenticationConfirmation(_ review: EndpointAuthenticationReview) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text(review.keySHA256 == nil ? "Disable API key authentication?" : "Require a new API key?")
+                .font(WorkbenchTypography.cardTitle)
+            Text("Endpoint: 127.0.0.1:\(review.slot.port)").textSelection(.enabled)
+            Text(review.keySHA256 == nil ? "Any local client will be able to use this endpoint after you start it."
+                 : "Only clients holding the new key can use this endpoint. Copy the key after saving and configure it in each client. Previous keys stop working.")
+            Text("The endpoint stays stopped. Model files stay in place.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            HStack {
+                Button("Cancel") { authenticationReview = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save authentication") {
+                    Task {
+                        if await endpoint.confirmAuthentication(review) { authenticationReview = nil }
+                        error = endpoint.lastError
+                    }
+                }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
     }
 
     private func openRun() {
