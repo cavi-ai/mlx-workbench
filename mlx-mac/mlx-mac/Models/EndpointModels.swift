@@ -56,6 +56,7 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
     var modelMemoryBudgetGB: Double? = nil
     var unloadUnderPressure: Bool? = nil
     var contextTokens: Int? = nil
+    var releaseAfterRequest: Bool? = nil
 
     static let automatic = EndpointMemoryPolicy(idleTimeoutSeconds: 600, keepLoaded: false, minimumHeadroomGB: 2)
     static let legacy = EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: false, minimumHeadroomGB: nil)
@@ -67,9 +68,11 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
         case modelMemoryBudgetGB = "model_memory_budget_gb"
         case unloadUnderPressure = "unload_under_pressure"
         case contextTokens = "context_tokens"
+        case releaseAfterRequest = "release_after_request"
     }
 
     var isValid: Bool {
+        !(keepLoaded && releaseAfterRequest == true) &&
         (0...86400).contains(idleTimeoutSeconds) &&
         (minimumHeadroomGB.map { $0.isFinite && (0...1024).contains($0) } ?? true) &&
         (modelMemoryBudgetGB.map { $0.isFinite && (1...1024).contains($0) } ?? true) &&
@@ -80,6 +83,7 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
     var arguments: [String] {
         var result = ["--idle-timeout", String(idleTimeoutSeconds)]
         if keepLoaded { result.append("--keep-loaded") }
+        if let releaseAfterRequest { result.append(releaseAfterRequest ? "--release-after-request" : "--no-release-after-request") }
         if let minimumHeadroomGB { result += ["--min-headroom-gb", String(minimumHeadroomGB)] }
         if let modelMemoryBudgetGB { result += ["--memory-budget-gb", String(modelMemoryBudgetGB)] }
         if unloadUnderPressure == true { result.append("--unload-under-pressure") }

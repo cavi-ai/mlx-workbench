@@ -320,13 +320,13 @@ final class RepoWorkflowTests: XCTestCase {
         }
     }
 
-    func testPrepareServeRefusesNonServableModel() throws {
+    func testPrepareServeRefusesUnsupportedModel() throws {
         let workflow = coordinator()
-        let snapshot = Self.snapshot(output: "/models/mlx/asr", type: .speechToText)
+        let snapshot = Self.snapshot(output: "/models/mlx/asr", type: .other)
         let model = try XCTUnwrap(snapshot.models.first)
         workflow.prepareServe(model: model)
         XCTAssertEqual(workflow.workflow.serveState, .failed)
-        XCTAssertTrue(workflow.workflow.errorMessage?.contains("Speech-to-text") ?? false)
+        XCTAssertTrue(workflow.workflow.errorMessage?.contains("Other") ?? false)
     }
 
     func testCompareCandidatesExcludeNonServable() throws {

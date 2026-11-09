@@ -835,11 +835,21 @@ struct ServeView: View {
                         }
                     }
                     .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
-                    .disabled(policy.keepLoaded)
+                    .disabled(policy.keepLoaded || policy.releaseAfterRequest == true)
                     Toggle("Keep loaded after use", isOn: memoryBinding(slot, \.keepLoaded))
                         .toggleStyle(.checkbox)
                         .help("Prevent automatic unload after the first request. Manual unload remains available.")
                 }
+                Toggle("Release weights after each request", isOn: Binding(
+                    get: { policy.releaseAfterRequest == true },
+                    set: { enabled in
+                        var updated = policy
+                        updated.releaseAfterRequest = enabled
+                        if enabled { updated.keepLoaded = false; updated.idleTimeoutSeconds = 0 }
+                        Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
+                    }))
+                    .toggleStyle(.checkbox)
+                    .accessibilityIdentifier("endpoint-memory-release-after-request")
                 HStack {
                     Toggle("Check memory before loading", isOn: Binding(
                         get: { policy.minimumHeadroomGB != nil },
@@ -876,7 +886,7 @@ struct ServeView: View {
         } label: {
             HStack {
                 Text("Memory management")
-                Text(policy.keepLoaded ? "Keeps loaded" : (policy.idleTimeoutSeconds == 0 ? "Manual unload" : "Idle unload · \(policy.idleTimeoutSeconds / 60) min"))
+                Text(policy.releaseAfterRequest == true ? "Release after each request" : policy.keepLoaded ? "Keeps loaded" : (policy.idleTimeoutSeconds == 0 ? "Manual unload" : "Idle unload · \(policy.idleTimeoutSeconds / 60) min"))
                     .foregroundStyle(WorkbenchColor.muted)
                 if let reserve = policy.minimumHeadroomGB {
                     Text("\(reserve, specifier: "%.1f") GB reserve").foregroundStyle(WorkbenchColor.muted)
@@ -891,7 +901,10 @@ struct ServeView: View {
                 set: { value in
                     var policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
                     policy[keyPath: keyPath] = value
-                    if policy.keepLoaded { policy.unloadUnderPressure = nil }
+                    if policy.keepLoaded {
+                        policy.unloadUnderPressure = nil
+                        if policy.releaseAfterRequest == true { policy.releaseAfterRequest = false }
+                    }
                     Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
                 })
     }

@@ -259,13 +259,13 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(card.actions, [.openInLibrary(model.item.path), .runModel(workflow)])
     }
 
-    /// Run refuses models it cannot serve, so Activity does not offer it for them.
-    func testActivityCompletedSpeechOutputOffersLibraryOnly() {
+    /// Completed speech models can open their inspector or preview a typed endpoint.
+    func testActivityCompletedSpeechOutputOffersLibraryAndRun() {
         let speech = ModelTask(type: .speechToText, useCases: ["transcription"], source: "registry", confidence: "confirmed")
         let model = makeOperationalModel(path: "/models/asr-mlx", status: "ready", task: speech)
         let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
         let card = ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: makeOperationalSnapshot(models: [model]))
-        XCTAssertEqual(card.actions, [.openInLibrary(model.item.path)])
+        XCTAssertEqual(card.actions, [.openInLibrary(model.item.path), .runModel(workflow)])
     }
 
     func testActivityFailureOffersRetryPreview() {

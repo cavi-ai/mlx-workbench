@@ -46,7 +46,7 @@ struct HomeNextAction: Equatable {
         if let snapshot, let path = workflow.completedModelPath, !path.isEmpty {
             let completed = snapshot.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
             guard workflow.state == .completed || workflow.state == .verified, let completed, completed.readiness == .ready else { return .init(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: AppRoute.activity.rawValue) }
-            if !ModelTaskPresentation.isServable(completed) {
+            if !ModelTaskPresentation.supportsEndpoint(completed) {
                 let type = completed.item.task?.type ?? .other
                 let reason = type == .imageGeneration
                     ? "Conversion completed; generate images from the model's Library inspector."
@@ -97,7 +97,7 @@ struct HomeNextAction: Equatable {
             if model.item.backend?.installed == false {
                 return .init(kind: .openModel(path), title: "Repair the selected model's runtime", reason: "\(name) needs its declared backend. Open the model in Library to review runtime repair.", route: AppRoute.library.rawValue)
             }
-            guard ModelTaskPresentation.isServable(model) else {
+            guard ModelTaskPresentation.supportsEndpoint(model) else {
                 let reason = model.item.task?.type == .speculativeDraft
                     ? "\(name) is a speculative drafter that runs alongside its target model. Review its target in Library."
                     : "\(name) is ready. Open its Library inspector for its available tasks and comparison actions."
@@ -208,7 +208,7 @@ struct ModelFlightPathPresentation: Equatable {
                 detail: measured ? "A compatible completed comparison has a usable measurement for this path and signature."
                     : "No compatible completed comparison has a usable measurement for this path and signature."))
         }
-        if ModelTaskPresentation.isServable(model) {
+        if ModelTaskPresentation.supportsEndpoint(model) {
             stages.append(.init(stage: .serving, state: serving ? .complete : .pending,
                 detail: serving ? "Endpoint state and authoritative server agree on this identity."
                     : "Endpoint state and server receipts do not both confirm this identity."))

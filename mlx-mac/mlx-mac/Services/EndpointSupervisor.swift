@@ -200,13 +200,13 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil) async {
+    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let usesJIT = loadOnRequest ?? (lifecycle.jitPreview != nil)
         let candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role,
-                                     loadOnRequest: usesJIT, memoryPolicy: usesJIT ? .automatic : nil)
+                                     loadOnRequest: usesJIT, memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil)
         guard validate(candidate, isNew: true), commit(replacing: candidate) else { return }
         await reconcile(userRequestedSlotID: candidate.id)
     }

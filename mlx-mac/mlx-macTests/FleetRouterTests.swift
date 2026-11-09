@@ -38,6 +38,16 @@ final class FleetRouterTests: XCTestCase {
         XCTAssertEqual(plan.targetPath, "/tmp/router.yaml")
     }
 
+    func testTypedEndpointIsExcludedFromChatRoleRouting() {
+        let id = UUID()
+        let plan = FleetRouter.plan(
+            slots: [slot(port: 8766, modelPath: hfPath, role: .coding, id: id)],
+            states: running(id, path: hfPath, port: 8766),
+            servers: [ServerInfo(path: hfPath, runtime: "tasks", port: 8766, pid: 42, state: "running", taskKinds: ["classification"])])
+        XCTAssertTrue(plan.assignments.isEmpty)
+        XCTAssertEqual(plan.skipped.first?.reason, "endpoint provides typed model jobs")
+    }
+
     func testUnassignedSlotsAreIgnoredNotSkipped() {
         let id = UUID()
         let plan = FleetRouter.plan(

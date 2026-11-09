@@ -113,8 +113,8 @@ final class AdoptPresentationTests: XCTestCase {
         XCTAssertEqual(state, .recommended(repo: F.repo, step: .inLibrary(model: model, canRun: true)))
     }
 
-    func testNonServableLibraryModelOffersNoRun() {
-        let task = ModelTask(type: .speechToText, useCases: [], source: "registry", confidence: "confirmed")
+    func testUnsupportedLibraryModelOffersNoRun() {
+        let task = ModelTask(type: .other, useCases: [], source: "registry", confidence: "confirmed")
         let model = F.model(F.cachePath, task: task)
         let state = AdoptRecommendationState.make(response: F.response(), library: F.snapshot([model]), intakeIsBusy: false)
         XCTAssertEqual(state, .recommended(repo: F.repo, step: .inLibrary(model: model, canRun: false)))

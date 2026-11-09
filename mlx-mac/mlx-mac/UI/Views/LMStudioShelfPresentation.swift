@@ -482,7 +482,7 @@ private struct RowContext {
             action = .none
         } else if !item.outputs.isEmpty {
             tags.append(.converted)
-            let output = item.outputs.lazy.compactMap { lookup[$0] }.first { ModelTaskPresentation.isServable($0) && $0.readiness == .ready }
+            let output = item.outputs.lazy.compactMap { lookup[$0] }.first { ModelTaskPresentation.supportsEndpoint($0) && $0.readiness == .ready }
             action = output.map { .run(path: $0.item.path) } ?? .none
         }
         if !entry.companions.isEmpty {
@@ -503,7 +503,7 @@ private struct RowContext {
         let item = model.item
         let relative = entry.relative
         let repo = relative.count >= 2 ? relative[relative.count - 2] + "/" + relative[relative.count - 1] : (relative.last ?? item.name)
-        let runnable = ModelTaskPresentation.isServable(model) && model.readiness == .ready
+        let runnable = ModelTaskPresentation.supportsEndpoint(model) && model.readiness == .ready
         return LMStudioRow(
             id: item.path, format: .mlx, repo: repo, detail: nil, quantText: Self.bitsText(item.quantization), bytes: item.bytes,
             sizeText: ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file), fit: fit(model),

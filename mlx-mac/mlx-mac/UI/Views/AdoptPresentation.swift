@@ -60,7 +60,7 @@ enum AdoptRecommendationState: Equatable {
         guard let response else { return .idle }
         guard let repo = response.model, !repo.isEmpty else { return .noRecommendation }
         if let model = DiscoverPresentation.libraryModel(for: repo, in: libraryModels) {
-            let canRun = ModelTaskPresentation.isServable(model) && model.readiness == .ready
+            let canRun = ModelTaskPresentation.supportsEndpoint(model) && model.readiness == .ready
             return .recommended(repo: repo, step: .inLibrary(model: model, canRun: canRun))
         }
         return .recommended(repo: repo, step: .addFromHuggingFace(

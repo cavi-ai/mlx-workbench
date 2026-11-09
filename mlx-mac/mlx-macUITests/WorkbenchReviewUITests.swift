@@ -3829,6 +3829,36 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertNotEqual(app.state, .notRunning)
     }
 
+    func testServingManagerOffersBothResidencyModes() throws {
+        _ = try installTaskModel(kind: "classification", name: "Local classifier")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        app.buttons["system-memory-header"].click()
+        let manage = app.popovers.buttons["Manage…"].firstMatch
+        XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        manage.click()
+        let manager = app.windows["Served models"]
+        XCTAssertTrue(manager.waitForExistence(timeout: 10))
+        let query = manager.textFields["Search models to serve"]
+        XCTAssertTrue(query.waitForExistence(timeout: 10))
+        query.click()
+        query.typeText("Local classifier")
+        let add = manager.buttons["Add Local classifier to served models"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.click()
+        let sheet = manager.sheets.firstMatch
+        let modes = sheet.popUpButtons["serve-model-residency"]
+        XCTAssertTrue(modes.waitForExistence(timeout: 10))
+        modes.click()
+        XCTAssertTrue(app.menuItems["Release weights after each request"].waitForExistence(timeout: 5))
+        app.menuItems["Keep loaded between requests"].click()
+        XCTAssertTrue(modes.value as? String == "Keep loaded between requests")
+        capture("Serving-residency-options")
+        sheet.buttons["Cancel"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"serve\", \"start\""))
+    }
+
     func testProcessMemoryInspectorReadsWithoutStartingWork() throws {
         launch(appearance: "Dark")
         select("Run")

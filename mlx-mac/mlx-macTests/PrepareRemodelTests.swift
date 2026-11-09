@@ -316,8 +316,8 @@ final class PrepareRemodelTests: XCTestCase {
         }
     }
 
-    func testNonServableOutputOffersOpenInLibraryAsTheOnlyProminent() {
-        let output = model(bytes: 390, parameters: nil, type: .imageGeneration, path: "/models/mlx/pic-MLX-4bit")
+    func testUnsupportedOutputOffersOpenInLibraryAsTheOnlyProminent() {
+        let output = model(bytes: 390, parameters: nil, type: .other, path: "/models/mlx/pic-MLX-4bit")
         let snapshot = LibrarySnapshot(models: [output], groups: [], hardware: hardware, generatedAt: stamp)
         var record = workflow(outputPath: "/models/mlx/pic-MLX-4bit", state: .verified)
         record.completedModelPathOverride("/models/mlx/pic-MLX-4bit")

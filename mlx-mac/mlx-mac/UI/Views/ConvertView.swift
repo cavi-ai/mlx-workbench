@@ -540,7 +540,7 @@ struct ConvertView: View {
 
     private var actionPlan: PrepareActionPlan {
         let onward = ActivityWorkflowCardPresentation(workflow: modelWorkflow.workflow, job: currentJob, snapshot: appHost.librarySnapshot).actions
-        let existing = existingModel.map { PrepareExistingModel(path: $0.item.path, isServable: ModelTaskPresentation.isServable($0)) }
+        let existing = existingModel.map { PrepareExistingModel(path: $0.item.path, isServable: ModelTaskPresentation.supportsEndpoint($0)) }
         return PrepareActionPlan.make(presentation: presentation, onward: onward, existing: existing, isSubmitting: modelWorkflow.isConversionSubmissionInFlight)
     }
 

@@ -59,6 +59,7 @@ enum FleetRouter {
     static func plan(
         slots: [EndpointSlot],
         states: [UUID: EndpointState],
+        servers: [ServerInfo] = [],
         targetPath: String = defaultTargetPath
     ) -> Plan {
         var assignments: [Assignment] = []
@@ -71,6 +72,10 @@ enum FleetRouter {
             }
             guard case .running = states[slot.id] else {
                 skipped.append(SkippedRole(role: role, reason: "endpoint not running"))
+                continue
+            }
+            if servers.contains(where: { $0.port == slot.port && !$0.supportsChatCompletions }) {
+                skipped.append(SkippedRole(role: role, reason: "endpoint provides typed model jobs"))
                 continue
             }
             guard let repo = HFRepoID.forPath(slot.modelPath) else {

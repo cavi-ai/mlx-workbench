@@ -71,6 +71,9 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
 
     /// Run and Compare serve through mlx-lm's chat server.
     var isServable: Bool { self == .textLLM || self == .visionLanguage }
+
+    /// A typed endpoint is distinct from chat completions and chat verification.
+    var supportsEndpoint: Bool { self != .speculativeDraft && self != .other }
 }
 
 // MARK: - ModelTask
@@ -167,6 +170,10 @@ enum ModelTaskPresentation {
         case unclassifiedUseCase: return "Unclassified"
         default: return raw.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+
+    static func supportsEndpoint(_ model: LibraryModel) -> Bool {
+        model.item.task?.type.supportsEndpoint ?? true
     }
 
     static func isServable(_ model: LibraryModel) -> Bool {
