@@ -24,7 +24,7 @@ struct ModelActions {
     var prepareTitle: String { model.readiness == .needsConversion ? "Convert to MLX…" : "Prepare to run" }
 
     /// Run serves chat models. Compare also supports ready media models.
-    var canServe: Bool { ModelTaskPresentation.isServable(model) }
+    var canServe: Bool { ModelTaskPresentation.supportsEndpoint(model) }
     var canCompare: Bool { ComparisonModelRequest(model: model) != nil }
 
     func repairRuntime() {

@@ -410,13 +410,13 @@ final class LMStudioRowsTests: XCTestCase {
         XCTAssertEqual(F.rows(F.present(snapshot: F.snapshot([converted])), .gguf)[0].action, .none)
         let output = "/lm/publisher-c/model-c-8bit"
         let embedding = F.gguf("\(dir)/model-a-Q4_K_M.gguf", status: "converted", outputs: [output])
-        let rows = F.rows(F.present(snapshot: F.snapshot([embedding, F.mlx(output, task: .embedding)])), .gguf)
+        let rows = F.rows(F.present(snapshot: F.snapshot([embedding, F.mlx(output, task: .other)])), .gguf)
         XCTAssertEqual(rows[0].action, .none)
     }
 
     func testMLXRunsWhenServableAndReadyAndOtherwiseHasNoAction() {
         let a = F.mlx("/lm/publisher-a/model-a-8bit")
-        let b = F.mlx("/lm/publisher-b/model-b-8bit", task: .imageGeneration)
+        let b = F.mlx("/lm/publisher-b/model-b-8bit", task: .other)
         let rows = F.rows(F.present(snapshot: F.snapshot([a, b])), .mlx)
         XCTAssertEqual(rows.first { $0.id == a.item.path }?.action, .run(path: a.item.path))
         XCTAssertEqual(rows.first { $0.id == b.item.path }?.action, LMStudioRow.Action.none)
@@ -543,7 +543,7 @@ final class LMStudioRowsTests: XCTestCase {
         XCTAssertEqual(prepare.accessibilityActionNames, ["Convert to MLX…"] + menu)
         let run = F.rows(F.present(snapshot: F.snapshot([F.mlx(output)])), .mlx)[0]
         XCTAssertEqual(run.accessibilityActionNames, ["Run…"] + menu)
-        let none = F.rows(F.present(snapshot: F.snapshot([F.mlx(output, task: .imageGeneration)])), .mlx)[0]
+        let none = F.rows(F.present(snapshot: F.snapshot([F.mlx(output, task: .other)])), .mlx)[0]
         XCTAssertEqual(none.accessibilityActionNames, menu)
     }
 

@@ -1093,7 +1093,8 @@ actor WorkbenchAPI {
                 processStartedAt: r.string("process_started_at"),
                 memoryAllocation: adapter?.memoryAllocation,
                 requestBlockedReason: r.string("request_blocked_reason"),
-                lastUnloadReason: r.string("last_unload_reason")
+                lastUnloadReason: r.string("last_unload_reason"),
+                taskKinds: r["task_kinds"] as? [String]
             )
         }
     }

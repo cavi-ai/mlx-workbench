@@ -1,10 +1,10 @@
 # Run and endpoints
 
-**Run** serves chat and vision-language models on loopback ports. Every server speaks the OpenAI chat API on `127.0.0.1`.
+**Run** serves supported local models on loopback ports. Text and vision-language endpoints use the OpenAI chat API. Classification, text embeddings, speech, music, image generation, video generation and 3D generation use typed model jobs. The installed backend must implement the selected architecture.
 
 ## Serve a model
 
-1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Image, speech and other non-servable types get no verdict and no serve actions. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.
+1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Supported standalone model types offer serving; speculative drafters remain paired with their target model. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.
 2. Read the memory runway: what is already loaded, what this model needs (weights, KV cache and runtime overhead) and whether it **fits**, is **tight** or **won't fit** at the chosen context. A won't-fit verdict suggests a maximum context. Unavailable memory readings show as unknown.
 3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
@@ -109,9 +109,9 @@ endpoints; there is no separate serving process for the manager. Up to four mode
 can be selected, each on its own stable port. Models already selected are omitted
 from the add list.
 
-Each selection shows its state and OpenAI-compatible base URL. Use **Copy base URL**
+Each selection shows its state and base URL. Chat endpoints use the OpenAI-compatible API; typed endpoints advertise their operations at `/v1/models` and accept jobs at `/v1/tasks`. Use **Copy base URL**
 and, when a matching running server reports it, **Copy model ID** in the other
-application's OpenAI-compatible provider settings. **Refresh status** updates the
+application's matching provider settings. **Refresh status** updates the
 reported servers. The menu bar also lists each selected model with status and copy
 controls. **Start…** opens the manager for review; **Stop** stops its endpoint.
 
@@ -227,3 +227,49 @@ For a load-on-request endpoint, **Review memory policy…** previews idle unload
 Pressure handling checks reserve before new requests and unloads idle weights when headroom falls below it. Active requests finish first. Keep loaded disables automatic pressure unloading. For native text runtimes, admission context changes the KV-cache estimate used before loading; it does not change the runtime’s context limit. Strata uses the context from its serving profile.
 
 A Strata total model budget estimates fixed weights, runtime and context requirements, then assigns the remaining allowance to the expert cache. It cannot be combined with a fixed expert-memory profile. Changing a budget schedules a loaded worker to reload after active requests finish. This is an estimated allowance, not a measured allocation or an operating-system memory cap.
+
+## Typed model jobs and residency
+
+When adding a model, choose **Release weights after each request** for one-off
+jobs and benchmarks, or **Keep loaded between requests** for a session. Both load
+weights on the first request. Release mode stops the owned model worker after
+completion; keep mode retains the same model object for the next job. Existing
+caches stay in place and serving never downloads weights. Change either choice
+later in the endpoint's **Memory management** controls. Manual Unload keeps the
+endpoint reachable; Stop also closes it. Active jobs finish or are cancelled
+before their weights are released.
+
+Typed endpoints accept `POST /v1/tasks` with `kind` and `parameters`:
+
+| Model | Job kind | Output |
+| --- | --- | --- |
+| Classifier | `classification` | Typed answers |
+| Text embedding | `embedding` | Finite embedding vectors |
+| Speech recognition | `transcribe` | Transcript |
+| Speech synthesis | `speak` | WAV audio |
+| Music generation | `music_generation` | WAV audio |
+| Image generation | `image_generation` | PNG image |
+| Video generation | `video_generation` | MP4 video |
+| 3D generation | `mesh_generation` | GLB model |
+
+Use only the kinds returned by that endpoint's `/v1/models`. Parameters follow
+the engine's [task contract](https://cavi-ai.xyz/docs/mlx-agent/lifecycle/tasks).
+For example, a music endpoint accepts:
+
+```json
+{"kind":"music_generation","parameters":{"caption":"Gentle instrumental piano","duration":15,"seed":42}}
+```
+
+The response supplies a durable task ID. Read `/v1/tasks/ID` for status and
+`/v1/tasks/ID/result` for validated results. Download generated media from
+`/v1/tasks/ID/artifacts/output`, or the complete result JSON from
+`/v1/tasks/ID/artifacts/result`. Cancel with `POST /v1/tasks/ID/cancel` and an empty
+JSON object. Each endpoint runs one job at a time and refuses overlapping jobs.
+Input media is retained with the task; changed model files, adapters, inputs or
+result artifacts require a fresh review or job. Job history survives a client
+disconnection. Interrupted endpoint processes leave an interrupted job rather
+than a successful result.
+
+Typed endpoints expose residency, worker PID, memory controls and source paths
+in the same inventory and menu bar as chat endpoints. Chat prompt tests, chat
+client wiring and role routing are available only for chat endpoints.

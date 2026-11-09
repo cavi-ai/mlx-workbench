@@ -10,7 +10,7 @@ enum ServedModelsSelection {
     static func candidates(models: [LibraryModel], slots: [EndpointSlot], query: String) -> [LibraryModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return models.filter { model in
-            model.readiness == .ready && ModelTaskPresentation.isServable(model)
+            model.readiness == .ready && ModelTaskPresentation.supportsEndpoint(model)
                 && !slots.contains { $0.modelPath == model.item.path || model.outputPaths.contains($0.modelPath) }
                 && (query.isEmpty || model.displayName.localizedCaseInsensitiveContains(query))
         }.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
@@ -18,7 +18,7 @@ enum ServedModelsSelection {
 
     static func canConfirm(model: LibraryModel?, models: [LibraryModel]) -> Bool {
         guard let model, model.item.signature?.isEmpty == false else { return false }
-        return models.contains { $0.item.path == model.item.path && $0.item.signature == model.item.signature && $0.readiness == .ready && ModelTaskPresentation.isServable($0) }
+        return models.contains { $0.item.path == model.item.path && $0.item.signature == model.item.signature && $0.readiness == .ready && ModelTaskPresentation.supportsEndpoint($0) }
     }
 
     static func nextPort(slots: [EndpointSlot], servers: [ServerInfo]) -> Int? {
@@ -49,6 +49,7 @@ struct ServedModelsView: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
     @State private var query = ""
+    @State private var keepModelLoaded = false
     @State private var action: Action?
     @State private var error: String?
 
@@ -203,12 +204,16 @@ struct ServedModelsView: View {
         }
         Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
         if let connection { Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) } }
+        if workflow.servers.contains(where: { $0.port == slot.port && $0.runtime == "tasks" }) {
+            Button("Copy jobs URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1/tasks") }
+        }
         Button("Remove…") { prepare(slot: slot, remove: true) }
         .help("Remove this serving selection. Model files stay in Library.")
     }
 
     private func prepare(model: LibraryModel) {
         guard let port = ServedModelsSelection.nextPort(slots: endpoint.fleet.slots, servers: workflow.servers) else { return }
+        keepModelLoaded = false
         action = Action(model: model, slot: nil, port: port, memoryWarning: memoryWarning(for: model.item.path),
                         unverified: !appHost.isModelVerified(model.item.path), remove: false)
     }
@@ -238,19 +243,28 @@ struct ServedModelsView: View {
             Text(pending.remove ? "Remove serving selection?" : "Serve this model?").font(WorkbenchTypography.cardTitle)
             Text(pending.model?.displayName ?? pending.slot?.modelPath ?? "Model").textSelection(.enabled)
             Text(verbatim: pending.remove ? "Its endpoint will stop. Model files stay in Library." : "Other apps can connect to http://127.0.0.1:\(pending.port)/v1.")
+            if !pending.remove && pending.slot == nil {
+                Picker("Model residency", selection: $keepModelLoaded) {
+                    Text("Release weights after each request").tag(false)
+                    Text("Keep loaded between requests").tag(true)
+                }.accessibilityIdentifier("serve-model-residency")
+                Text("Weights load on the first request. Stop and Unload release them; model files stay in place.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
             if pending.unverified { InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.") }
             if let warning = pending.memoryWarning { InlineMessage(kind: .warning, text: warning) }
             HStack {
                 Button("Cancel") { action = nil }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(pending.remove ? "Remove selection" : pending.unverified ? "Serve unverified" : "Confirm serving") {
-                    Task { await apply(pending) }
+                    let retained = keepModelLoaded
+                    Task { await apply(pending, keepLoaded: retained) }
                 }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 460)
     }
 
-    private func apply(_ pending: Action) async {
+    private func apply(_ pending: Action, keepLoaded: Bool) async {
         action = nil; error = nil
         if let slot = pending.slot {
             guard endpoint.fleet.slots.contains(slot), canStop(slot) else { error = error ?? "Endpoint changed; review it again."; return }
@@ -272,7 +286,9 @@ struct ServedModelsView: View {
                   pending.memoryWarning == memoryWarning(for: model.item.path) else {
                 error = "Model, port or memory conditions changed; review serving again."; return
             }
-            await endpoint.addSlot(modelPath: model.item.path, port: pending.port, allowUnverified: pending.unverified, loadOnRequest: true)
+            await endpoint.addSlot(modelPath: model.item.path, port: pending.port, allowUnverified: pending.unverified, loadOnRequest: true,
+                memoryPolicy: EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: keepLoaded, minimumHeadroomGB: 2,
+                    releaseAfterRequest: !keepLoaded))
         }
     }
 

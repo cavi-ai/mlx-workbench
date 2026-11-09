@@ -33,7 +33,8 @@ struct FleetRouterSheet: View {
     private var plan: FleetRouter.Plan {
         FleetRouter.plan(
             slots: appHost.endpoint.fleet.slots,
-            states: appHost.endpoint.slotStates
+            states: appHost.endpoint.slotStates,
+            servers: appHost.modelWorkflow.servers
         )
     }
 

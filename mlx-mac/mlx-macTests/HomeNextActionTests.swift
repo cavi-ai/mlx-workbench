@@ -36,15 +36,12 @@ final class HomeNextActionTests: XCTestCase {
         XCTAssertEqual(action.route, AppRoute.run.rawValue)
     }
 
-    /// Image, speech, and classification outputs are not served: the next action opens the Library.
-    func testCompletedNonServableOutputOpensTheLibraryInsteadOfRun() {
-        for (type, reason) in [(ModelTaskType.imageGeneration, "Conversion completed; generate images from the model's Library inspector."),
-                               (.classification, "Conversion completed; classification models are used from the Library inspector, not served.")] {
+    func testCompletedTypedOutputOffersRun() {
+        for type in [ModelTaskType.imageGeneration, .classification, .speechToText, .musicGeneration, .meshGeneration, .embedding] {
             let model = makeModel(path: "/models/\(type.rawValue)-mlx", readiness: .ready, type: type)
             let action = derive(workflow: workflow(state: .verified, completedModelPath: model.item.path), snapshot: snapshot(with: [model]))
-            XCTAssertEqual(action.kind, .openModel(model.item.path), type.rawValue)
-            XCTAssertEqual(action.route, AppRoute.library.rawValue)
-            XCTAssertEqual(action.reason, reason)
+            XCTAssertEqual(action.kind, .run(model.item.path), type.rawValue)
+            XCTAssertEqual(action.route, AppRoute.run.rawValue)
         }
     }
 
@@ -136,11 +133,11 @@ final class HomeNextActionTests: XCTestCase {
         let selected = makeModel(path: "/models/chosen", readiness: .ready, type: .musicGeneration)
         let action = derive(workflow: workflow(state: .verified, completedModelPath: completed.item.path),
                             snapshot: snapshot(with: [completed, selected]), selectedModelPath: selected.item.path)
-        XCTAssertEqual(action.kind, .openModel(selected.item.path))
+        XCTAssertEqual(action.kind, .run(selected.item.path))
     }
 
-    func testSelectedNonServableModelsOpenTheirOwnInspector() {
-        for type in [ModelTaskType.musicGeneration, .imageGeneration, .speechToText, .classification, .speculativeDraft] {
+    func testSelectedUnsupportedModelsOpenTheirOwnInspector() {
+        for type in [ModelTaskType.other, .speculativeDraft] {
             let selected = makeModel(path: "/models/" + type.rawValue, readiness: .ready, type: type)
             let action = derive(snapshot: snapshot(with: [selected]), selectedModelPath: selected.item.path)
             XCTAssertEqual(action.kind, .openModel(selected.item.path), type.rawValue)

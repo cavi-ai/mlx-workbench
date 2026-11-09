@@ -272,6 +272,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let memoryAllocation: ServingMemoryAllocation?
     let requestBlockedReason: String?
     let lastUnloadReason: String?
+    let taskKinds: [String]?
+    var supportsChatCompletions: Bool { runtime != "tasks" && (taskKinds?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
@@ -294,6 +296,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case memoryAllocation = "memory_allocation"
         case requestBlockedReason = "request_blocked_reason"
         case lastUnloadReason = "last_unload_reason"
+        case taskKinds = "task_kinds"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -326,7 +329,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         processStartedAt: String? = nil,
         memoryAllocation: ServingMemoryAllocation? = nil,
         requestBlockedReason: String? = nil,
-        lastUnloadReason: String? = nil
+        lastUnloadReason: String? = nil,
+        taskKinds: [String]? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -356,6 +360,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.memoryAllocation = memoryAllocation
         self.requestBlockedReason = requestBlockedReason
         self.lastUnloadReason = lastUnloadReason
+        self.taskKinds = taskKinds
     }
 
     /// The identity serve reports for this server's model: the repo id for

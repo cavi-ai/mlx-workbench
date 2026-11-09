@@ -551,9 +551,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     func prepareServe(model: LibraryModel, exactPath: String? = nil) {
         guard model.readiness == .ready, !isServeSubmissionInFlight else { return }
-        guard ModelTaskPresentation.isServable(model) else {
+        guard ModelTaskPresentation.supportsEndpoint(model) else {
             let title = model.item.task?.type.title ?? "This"
-            update(serveState: .failed, message: "\(title) models are not servable by mlx-lm.", errorMessage: "\(title) models are not servable by mlx-lm.")
+            update(serveState: .failed, message: "\(title) models have no standalone serving adapter.", errorMessage: "\(title) models have no standalone serving adapter.")
             return
         }
         let selectedPath = preferredModelPath(

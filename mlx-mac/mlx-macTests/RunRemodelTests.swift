@@ -594,14 +594,13 @@ extension RunRemodelTests {
         XCTAssertNotNil(presentation.selectionError)
     }
 
-    func testImageGenerationModelIsNonServableWithNoServeActionsAndNoNextSegment() {
+    func testImageGenerationModelCanPreviewItsTypedEndpoint() {
         let model = Fixture.model(path: path, type: .imageGeneration)
         let presentation = Fixture.presentation(Fixture.workflow(state: .verified, completedModelPath: path), model: model)
-        XCTAssertEqual(presentation.stage, .nonServable)
-        XCTAssertFalse(presentation.canPreview)
+        XCTAssertTrue(presentation.canPreview)
         XCTAssertFalse(presentation.canConfirm)
         XCTAssertNil(presentation.selectionError)
-        XCTAssertNil(presentation.runwayModel)
+        XCTAssertNotNil(presentation.runwayModel)
     }
 
     func testSpeculativeDraftIsNonServable() {
@@ -935,14 +934,14 @@ extension RunRemodelTests {
         XCTAssertTrue(SystemResourceMonitor.contextOptions.contains(FitAdvisor.defaultContextTokens))
     }
 
-    func testAddEndpointIsOfferedOnlyForAServableShownModel() {
+    func testAddEndpointSupportsTypedModelsAndRequiresASelection() {
         let chat = Fixture.presentation(Fixture.workflow(), model: Fixture.model(path: "/models/chat"))
         XCTAssertTrue(chat.canAddEndpoint)
         XCTAssertNil(chat.addEndpointBlockedReason)
 
         let image = Fixture.presentation(Fixture.workflow(), model: Fixture.model(path: "/models/image", type: .imageGeneration))
-        XCTAssertFalse(image.canAddEndpoint)
-        XCTAssertEqual(image.addEndpointBlockedReason, "Endpoints serve chat and vision models. Select one in Library.")
+        XCTAssertTrue(image.canAddEndpoint)
+        XCTAssertNil(image.addEndpointBlockedReason)
 
         let none = Fixture.presentation(Fixture.workflow(), model: nil)
         XCTAssertFalse(none.canAddEndpoint)

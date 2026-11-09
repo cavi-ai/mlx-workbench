@@ -42,6 +42,15 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertEqual(ModelTaskPresentation.useCaseTitle("moderation"), "Moderation")
     }
 
+    func testTypedEndpointsDoNotAdvertiseChatControls() {
+        let typed = ServerInfo(path: "/models/music", runtime: "tasks", port: 8085, pid: 42, state: "running", taskKinds: ["music_generation"])
+        XCTAssertFalse(typed.supportsChatCompletions)
+        XCTAssertFalse(EndpointTestCoordinator.supports(typed))
+        XCTAssertNil(WireEndpoint(server: typed))
+        XCTAssertTrue(ModelTaskType.musicGeneration.supportsEndpoint)
+        XCTAssertFalse(ModelTaskType.musicGeneration.isServable)
+    }
+
     func testCapabilitiesComeFromAgentTask() {
         let coder = ModelTask(type: .textLLM, useCases: ["coding", "general_chat"], source: "registry", confidence: "confirmed")
         XCTAssertEqual(ModelTaskPresentation.capabilities(for: coder), [.coding, .generalChat])
@@ -51,16 +60,16 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertEqual(LibraryModel(item: item).capabilities, [])
     }
 
-    /// Run serves chat models; media comparisons use their own task runners.
+    /// Endpoint availability is independent of chat canaries and comparisons.
     @MainActor
-    func testRunIsOfferedOnlyForServableModels() {
+    func testRunIsOfferedForSupportedEndpointTypes() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("actions-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let host = AppHost(
             catalogStore: CatalogStore(appSupportDirectory: { root }), catalogClient: CatalogClient(),
             config: Config.defaults(), now: { Date(timeIntervalSinceReferenceDate: 100) }
         )
-        let cases: [(ModelTaskType, Bool)] = [(.textLLM, true), (.visionLanguage, true), (.speechToText, false), (.classification, false), (.imageGeneration, false), (.speculativeDraft, false)]
+        let cases: [(ModelTaskType, Bool)] = [(.textLLM, true), (.visionLanguage, true), (.speechToText, true), (.textToSpeech, true), (.classification, true), (.imageGeneration, true), (.musicGeneration, true), (.videoGeneration, true), (.meshGeneration, true), (.embedding, true), (.other, false), (.speculativeDraft, false)]
         for (type, servable) in cases {
             let task = ModelTask(type: type, useCases: [], source: "registry", confidence: "confirmed")
             let item = ModelItem(path: "/m/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil, task: task)

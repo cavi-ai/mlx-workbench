@@ -4,7 +4,7 @@
 
 **Overview** is the landing screen. It leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
-The **Next step** follows the model selected in Library: ready chat models open
+The **Next step** follows the model selected in Library: ready supported models open
 Run for a serve preview, sources needing conversion open Prepare, and other task
 types open their own Library inspector. Missing runtimes lead to repair guidance.
 An unavailable selection asks you to choose another model. Active conversions,
@@ -70,7 +70,7 @@ cannot reach a verdict, the Verification section says why. For a text LLM it
 also lists **Agent tools**: the protocols the model is agent-ready for and each
 failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
-**Select for Compare** is available for ready chat, speech, music, image, video, 3D and classification models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
+**Select for Compare** is available for ready chat, speech, music, image, video, 3D and classification models. It opens the matching comparison mode and selects the model without starting a run. Run offers chat endpoints and typed model-job endpoints for supported standalone model types. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 
 ### Local inference tasks
 

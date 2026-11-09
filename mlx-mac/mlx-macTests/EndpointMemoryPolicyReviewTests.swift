@@ -20,6 +20,26 @@ final class EndpointMemoryPolicyReviewTests: XCTestCase {
             previewHash: hash, allocation: nil, estimatedResidentBytes: nil)
     }
 
+    func testResidencyModesAreExclusiveAndRoundTrip() throws {
+        var draft = EndpointMemoryPolicyDraft(policy: .automatic)
+        draft.setReleaseAfterRequest(true)
+        let released = try draft.policy(for: slot())
+        XCTAssertEqual(released.releaseAfterRequest, true)
+        XCTAssertFalse(released.keepLoaded)
+        XCTAssertEqual(released.idleTimeoutSeconds, 0)
+        XCTAssertTrue(released.arguments.contains("--release-after-request"))
+        draft.setKeepLoaded(true)
+        let retained = try draft.policy(for: slot())
+        XCTAssertTrue(retained.keepLoaded)
+        XCTAssertEqual(retained.releaseAfterRequest, false)
+        XCTAssertTrue(retained.arguments.contains("--no-release-after-request"))
+        let data = try JSONEncoder().encode(retained)
+        XCTAssertEqual(try JSONDecoder().decode(EndpointMemoryPolicy.self, from: data), retained)
+        var invalid = retained
+        invalid.releaseAfterRequest = true
+        XCTAssertFalse(invalid.isValid)
+    }
+
     func testExtendedAdmissionPolicyRoundTripsWithoutChangingEndpointOptions() throws {
         var target = slot()
         target.acceleration = LocalAccelerationOptions(visionCache: true)

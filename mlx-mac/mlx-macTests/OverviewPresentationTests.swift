@@ -252,13 +252,13 @@ final class OverviewPresentationTests: XCTestCase {
         XCTAssertEqual(blocked.route, AppRoute.health.rawValue, "Base readiness cannot replace the model's missing backend")
         for (type, expected) in [(ModelTaskType.textLLM, [ModelFlightStage.discovered, .prepared, .verified, .measured, .serving]),
                                  (.visionLanguage, [.discovered, .prepared, .verified, .measured, .serving]),
-                                 (.imageGeneration, [.discovered, .prepared, .verified, .measured]),
-                                 (.musicGeneration, [.discovered, .prepared, .measured]),
-                                 (.textToSpeech, [.discovered, .prepared, .measured]),
-                                 (.speechToText, [.discovered, .prepared, .verified, .measured]),
-                                 (.videoGeneration, [.discovered, .prepared, .measured]),
-                                 (.classification, [.discovered, .prepared, .verified, .measured]),
-                                 (.embedding, [.discovered, .prepared]),
+                                 (.imageGeneration, [.discovered, .prepared, .verified, .measured, .serving]),
+                                 (.musicGeneration, [.discovered, .prepared, .measured, .serving]),
+                                 (.textToSpeech, [.discovered, .prepared, .measured, .serving]),
+                                 (.speechToText, [.discovered, .prepared, .verified, .measured, .serving]),
+                                 (.videoGeneration, [.discovered, .prepared, .measured, .serving]),
+                                 (.classification, [.discovered, .prepared, .verified, .measured, .serving]),
+                                 (.embedding, [.discovered, .prepared, .serving]),
                                  (.speculativeDraft, [.discovered, .prepared])] {
             let model = makeModel(bytes: 1000, parameters: nil, type: type)
             let path = ModelFlightPathPresentation.derive(model: model, verification: .unverified,

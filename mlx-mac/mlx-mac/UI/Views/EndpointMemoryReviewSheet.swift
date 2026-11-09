@@ -3,6 +3,7 @@ import SwiftUI
 struct EndpointMemoryPolicyDraft: Equatable {
     var idleTimeoutSeconds: Int
     var keepLoaded: Bool
+    var releaseAfterRequest: Bool?
     var reserveEnabled: Bool
     var reserveGB: String
     var budgetEnabled: Bool
@@ -14,6 +15,7 @@ struct EndpointMemoryPolicyDraft: Equatable {
     init(policy: EndpointMemoryPolicy) {
         idleTimeoutSeconds = policy.idleTimeoutSeconds
         keepLoaded = policy.keepLoaded
+        releaseAfterRequest = policy.releaseAfterRequest
         reserveEnabled = policy.minimumHeadroomGB != nil
         reserveGB = policy.minimumHeadroomGB.map { String($0) } ?? "2"
         budgetEnabled = policy.modelMemoryBudgetGB != nil
@@ -25,7 +27,15 @@ struct EndpointMemoryPolicyDraft: Equatable {
 
     mutating func setKeepLoaded(_ enabled: Bool) {
         keepLoaded = enabled
-        if enabled { pressureEnabled = false }
+        if enabled {
+            pressureEnabled = false
+            if releaseAfterRequest == true { releaseAfterRequest = false }
+        }
+    }
+
+    mutating func setReleaseAfterRequest(_ enabled: Bool) {
+        releaseAfterRequest = enabled
+        if enabled { keepLoaded = false; idleTimeoutSeconds = 0 }
     }
 
     mutating func setReserve(_ enabled: Bool) {
@@ -73,7 +83,7 @@ struct EndpointMemoryPolicyDraft: Equatable {
         }
         let result = EndpointMemoryPolicy(idleTimeoutSeconds: idleTimeoutSeconds, keepLoaded: keepLoaded,
             minimumHeadroomGB: reserve, modelMemoryBudgetGB: budget,
-            unloadUnderPressure: pressureEnabled ? true : nil, contextTokens: context)
+            unloadUnderPressure: pressureEnabled ? true : nil, contextTokens: context, releaseAfterRequest: releaseAfterRequest)
         guard result.isValid else { throw WorkflowEvidenceError.invalid("Review idle timeout, reserve and pressure settings before previewing.") }
         return result
     }
@@ -168,7 +178,9 @@ struct EndpointMemoryReviewSheet: View {
                 if ![0, 60, 300, 600, 1800, 3600].contains(draft.idleTimeoutSeconds) {
                     Text("\(draft.idleTimeoutSeconds) seconds").tag(draft.idleTimeoutSeconds)
                 }
-            }.disabled(draft.keepLoaded)
+            }.disabled(draft.keepLoaded || draft.releaseAfterRequest == true)
+            Toggle("Release weights after each request", isOn: Binding(get: { draft.releaseAfterRequest == true }, set: { draft.setReleaseAfterRequest($0) }))
+                .accessibilityIdentifier("endpoint-memory-release-after-request")
             Toggle("Keep loaded after use", isOn: Binding(get: { draft.keepLoaded }, set: { draft.setKeepLoaded($0) }))
                 .help("Prevents idle and pressure-based unloading. Manual unload remains available.")
             Divider()

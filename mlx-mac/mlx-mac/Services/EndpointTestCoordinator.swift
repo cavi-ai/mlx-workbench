@@ -49,7 +49,7 @@ final class EndpointTestCoordinator: ObservableObject {
     deinit { task?.cancel() }
 
     nonisolated static func supports(_ server: ServerInfo) -> Bool {
-        server.state?.lowercased() == "running" && (server.pid ?? 0) > 0
+        server.supportsChatCompletions && server.state?.lowercased() == "running" && (server.pid ?? 0) > 0
             && (1...65535).contains(server.port ?? 0)
             && !server.modelIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }

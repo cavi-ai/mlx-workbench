@@ -33,7 +33,7 @@ struct RunPresentation: Equatable {
         return nil
     }
 
-    var isServable: Bool { model.map(ModelTaskPresentation.isServable) ?? false }
+    var isServable: Bool { model.map(ModelTaskPresentation.supportsEndpoint) ?? false }
 
     var selectedCompletedModel: LibraryModel? {
         guard Self.runnableStates.contains(workflow.state),
@@ -135,7 +135,7 @@ struct RunPresentation: Equatable {
 
     /// Why Add endpoint is unavailable; nil when it is available.
     var addEndpointBlockedReason: String? {
-        canAddEndpoint ? nil : "Endpoints serve chat and vision models. Select one in Library."
+        canAddEndpoint ? nil : "Select a supported standalone model in Library."
     }
 }
 
