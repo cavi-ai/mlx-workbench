@@ -291,7 +291,7 @@ for local clients without a key.
 Protected endpoints require `Authorization: Bearer KEY` or `x-api-key: KEY`
 for model discovery, inference, task history, cancellation and artifacts.
 Requests without a valid key receive HTTP 401 before inference. Internal
-worker ports also require separate credentials. Workbench's **Try a prompt**
+workers require separate credentials over Unix sockets or loopback ports. Workbench's **Try a prompt**
 uses the endpoint key from Keychain. Automatic client wiring and role routing
 skip protected endpoints; configure the copied key directly in each client.
 
