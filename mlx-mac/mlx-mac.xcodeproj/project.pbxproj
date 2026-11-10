@@ -349,6 +349,10 @@
 		D52C00000000000000000003 /* ServedModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000003 /* ServedModelsView.swift */; };
 		D52C00000000000000000004 /* ModelFamilyReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F00000000000000000004 /* ModelFamilyReviewView.swift */; };
 		D53C00000000000000000001 /* ModelShowdownResults.swift in Sources */ = {isa = PBXBuildFile; fileRef = D53F00000000000000000001 /* ModelShowdownResults.swift */; };
+		E70500000000000000000102 /* ServedTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000101 /* ServedTaskTests.swift */; };
+		E70500000000000000000202 /* ServedTaskAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000201 /* ServedTaskAPI.swift */; };
+		E70500000000000000000302 /* ServedTaskSessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000301 /* ServedTaskSessions.swift */; };
+		E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000401 /* TaskDestinationPanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -709,6 +713,10 @@
 		D52F00000000000000000003 /* ServedModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServedModelsView.swift; path = UI/Views/ServedModelsView.swift; sourceTree = "<group>"; };
 		D52F00000000000000000004 /* ModelFamilyReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelFamilyReviewView.swift; path = UI/Views/ModelFamilyReviewView.swift; sourceTree = "<group>"; };
 		D53F00000000000000000001 /* ModelShowdownResults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelShowdownResults.swift; path = Services/ModelShowdownResults.swift; sourceTree = "<group>"; };
+		E70500000000000000000101 /* ServedTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServedTaskTests.swift; sourceTree = "<group>"; };
+		E70500000000000000000201 /* ServedTaskAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ServedTaskAPI.swift; sourceTree = "<group>"; };
+		E70500000000000000000301 /* ServedTaskSessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ServedTaskSessions.swift; sourceTree = "<group>"; };
+		E70500000000000000000401 /* TaskDestinationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TaskDestinationPanel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -775,6 +783,9 @@
 				5A1E5E770000000000000001 /* InferenceSettings.swift */,
 				29A710000000000000000002 /* TaskArtifactVerifier.swift */,
 				C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */,
+				E70500000000000000000401 /* TaskDestinationPanel.swift */,
+				E70500000000000000000301 /* ServedTaskSessions.swift */,
+				E70500000000000000000201 /* ServedTaskAPI.swift */,
 				C0DE00000000000000000002 /* InferenceTaskPanels.swift */,
 				C0DE00000000000000000003 /* LibraryRecentTasks.swift */,
 				C0DE00000000000000000004 /* SharedAudioClipPlayer.swift */,
@@ -1051,6 +1062,7 @@
 				MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 				29A710000000000000000003 /* InferenceTaskTests.swift */,
+				E70500000000000000000101 /* ServedTaskTests.swift */,
 				26CFREF001 /* ContractFixtureTests.swift */,
 				26WQREF002 /* WebConvertQueueTests.swift */,
 				26PWREF001 /* PromoteWinnerTests.swift */,
@@ -1297,6 +1309,9 @@
 				5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */,
 				29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */,
 				C0DE00000000000000000011 /* InferenceTaskCoordinator.swift in Sources */,
+				E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */,
+				E70500000000000000000302 /* ServedTaskSessions.swift in Sources */,
+				E70500000000000000000202 /* ServedTaskAPI.swift in Sources */,
 				C0DE00000000000000000012 /* InferenceTaskPanels.swift in Sources */,
 				C0DE00000000000000000013 /* LibraryRecentTasks.swift in Sources */,
 				C0DE00000000000000000014 /* SharedAudioClipPlayer.swift in Sources */,
@@ -1562,6 +1577,7 @@
 				MIDTSTB1 /* ModelUpdateCoordinatorTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 				29A710000000000000000013 /* InferenceTaskTests.swift in Sources */,
+				E70500000000000000000102 /* ServedTaskTests.swift in Sources */,
 				26CFBL001 /* ContractFixtureTests.swift in Sources */,
 				26WQBL002 /* WebConvertQueueTests.swift in Sources */,
 				26PWBL001 /* PromoteWinnerTests.swift in Sources */,

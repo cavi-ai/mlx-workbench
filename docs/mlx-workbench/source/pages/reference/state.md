@@ -20,6 +20,7 @@ be saved.
 | `prompt-sets.json` | Saved prompt sets |
 | `serving-profiles.json` | Saved serving profiles and their verification |
 | `endpoint-fleet.json` | Always-on endpoints and their memory policies |
+| `task-endpoints.json` | Typed task endpoint origins, verified job identities and unresolved-submission blocks; contains no API keys or model weights |
 | `recommendation-preferences.json` | Preferred model per use case |
 | `usage-stamps.json` | When each model was last served, verified or benchmarked |
 | `wiring-transactions.json` | Client wiring transactions, with the backup locations used for rollback |

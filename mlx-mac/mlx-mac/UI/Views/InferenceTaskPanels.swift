@@ -467,7 +467,7 @@ struct RecentTaskList: View {
 
     static func visibleTasks(in tasks: [TaskRecord], for model: LibraryModel?) -> [TaskRecord] {
         guard let model else { return tasks }
-        return tasks.filter { $0.modelPath == model.item.path }
+        return tasks.filter { Quarantine.resolve($0.modelPath) == Quarantine.resolve(model.item.path) }
     }
 
     static func visibleSelectedTask(_ task: TaskRecord?, in visibleTasks: [TaskRecord]) -> TaskRecord? {
@@ -734,7 +734,7 @@ struct RecentTaskList: View {
     private func reuseUnavailableReason(_ task: TaskRecord) -> String? {
         guard let model = reuseModel else { return "Select the matching Ready model in Library to reuse this request." }
         guard model.readiness == .ready else { return "Reuse requires a Ready model." }
-        guard model.item.path == task.modelPath else { return "Select the model recorded for this task." }
+        guard Quarantine.resolve(model.item.path) == Quarantine.resolve(task.modelPath) else { return "Select the model recorded for this task." }
         guard model.item.task?.type == task.kind.modelTaskType else { return "The selected model does not support this task type." }
         return nil
     }

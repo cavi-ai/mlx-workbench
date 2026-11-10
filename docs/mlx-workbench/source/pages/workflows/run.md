@@ -2,6 +2,11 @@
 
 **Run** serves supported local models on loopback ports. Text and vision-language endpoints use the OpenAI chat API. Classification, text embeddings, speech, music, image generation, video generation and 3D generation use typed model jobs. The installed backend must implement the selected architecture.
 
+Typed model servers offer **Run a task…** when their ready model is in Library.
+The task form opens with that server selected and uses its existing worker,
+inference authentication and memory policy. Recent jobs and verified artifacts
+remain attached to their original server session. See [Local inference tasks](library.md#local-inference-tasks).
+
 ## Serve a model
 
 1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Supported standalone model types offer serving; speculative drafters remain paired with their target model. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.

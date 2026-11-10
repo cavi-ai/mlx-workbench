@@ -136,6 +136,23 @@ actor WorkbenchAPI {
         try Self.decodeTask(TaskModelVerification.self, envelope: await taskEnvelope(taskArguments(["task", "verify-model", "--id", try Self.taskUUID(id)])))
     }
 
+    func taskStatus(id: String, stateDirectory: URL) async throws -> TaskRecord {
+        return try Self.decodeTaskRecord(await taskEnvelope(["task", "status", "--id", try Self.taskUUID(id)] + ["--state-dir", stateDirectory.path]))
+    }
+
+    func taskList(limit: Int, stateDirectory: URL) async throws -> TaskPage {
+        guard (1...100).contains(limit) else { throw TaskProtocolError.invalidRequest }
+        return try Self.decodeTask(TaskPage.self, envelope: await taskEnvelope(["task", "list", "--limit", String(limit)] + ["--state-dir", stateDirectory.path]))
+    }
+
+    func taskResult(id: String, stateDirectory: URL) async throws -> TaskResultResponse {
+        return try Self.decodeTask(TaskResultResponse.self, envelope: await taskEnvelope(["task", "result", "--id", try Self.taskUUID(id)] + ["--state-dir", stateDirectory.path]))
+    }
+
+    func taskVerifyModel(id: String, stateDirectory: URL) async throws -> TaskModelVerification {
+        return try Self.decodeTask(TaskModelVerification.self, envelope: await taskEnvelope(["task", "verify-model", "--id", try Self.taskUUID(id)] + ["--state-dir", stateDirectory.path]))
+    }
+
     private func taskArguments(_ argv: [String]) -> [String] {
         guard let taskStateDirectory else { return argv }
         return argv + ["--state-dir", taskStateDirectory.path]
@@ -513,6 +530,11 @@ actor WorkbenchAPI {
     }
 
     func serveStatus() async throws -> [ServerInfo] {
+        try await serveStatus(receiptsDirectory: receiptDirectory)
+    }
+
+    func serveStatus(receiptsDirectory: String) async throws -> [ServerInfo] {
+        let receiptDirectory = receiptsDirectory
         let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory])
         guard let servers = Self.servers(from: data, defaultReceiptsDirectory: receiptDirectory) else {
             throw BridgeError.remote(code: "invalid_service_inventory", message: "The engine returned unreadable server status.", remediation: "Update the engine and refresh serving status.")

@@ -78,7 +78,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop,
   Unload, reclaim and guidance refuse claimed models.
 - Library: `ModelLibraryBuilder`, `LibraryView`; inspector tasks
-  (`InferenceTaskCoordinator`, `InferenceTaskPanels`); LM Studio source
+  (`InferenceTaskCoordinator`, `InferenceTaskPanels`, `TaskDestinationPanel`; `ServedTaskSessions` and `ServedTaskAPI` bind served jobs to their original process and engine-owned artifact root); LM Studio source
   (`LMStudioShelfResolver`, `LMStudioShelfPresentation`); Hosted models
   (`ModelHostsCoordinator`, `ModelHostClient`, `HostResourceClient`, one
   `ModelHostAdapter` per provider in `Services/*HostAdapter.swift`,

@@ -460,17 +460,19 @@ final class InferenceTaskCoordinator: ObservableObject {
     private let api: any InferenceTaskAPI
     private let artifactRoot: URL
     private let fileManager: FileManager
+    private let clearsUncertainStartOnRefresh: Bool
     private let pollInterval: Duration
     private var pollingTask: Task<Void, Never>?
     private var pollingOwners: Set<String> = []
     private var pollingTaskID: String?
 
     init(api: any InferenceTaskAPI, artifactRoot: URL, fileManager: FileManager = .default,
-         pollInterval: Duration = .seconds(2)) {
+         pollInterval: Duration = .seconds(2), clearsUncertainStartOnRefresh: Bool = true) {
         self.api = api
         self.artifactRoot = artifactRoot
         self.fileManager = fileManager
         self.pollInterval = pollInterval
+        self.clearsUncertainStartOnRefresh = clearsUncertainStartOnRefresh
     }
 
     deinit { pollingTask?.cancel() }
@@ -481,13 +483,36 @@ final class InferenceTaskCoordinator: ObservableObject {
             .union(selectedTask.flatMap { $0.state.isActive ? [$0.modelPath] : nil } ?? [])
     }
 
+    func seedHistory(_ records: [TaskRecord], submissionUnresolved: Bool) {
+        recent = records.sorted { $0.createdAt > $1.createdAt }
+        startOutcomeUnknown = submissionUnresolved
+    }
+
+    func setSubmissionUnresolved(_ value: Bool) {
+        startOutcomeUnknown = value
+        if !value { error = nil }
+    }
+
+    func copyDrafts(from other: InferenceTaskCoordinator) {
+        classificationDraft = other.classificationDraft
+        embeddingDraft = other.embeddingDraft
+        meshGenerationDraft = other.meshGenerationDraft
+        musicDraft = other.musicDraft
+        transcribeDraft = other.transcribeDraft
+        speakDraft = other.speakDraft
+        imageGenerationDraft = other.imageGenerationDraft
+        imageUnderstandingDraft = other.imageUnderstandingDraft
+        videoUnderstandingDraft = other.videoUnderstandingDraft
+        videoGenerationDraft = other.videoGenerationDraft
+    }
+
     func refreshRecent() async {
         do {
             let page = try await api.taskList(limit: 100)
             recent = page.tasks
             hasMoreRecent = page.hasMore
             readError = nil
-            if startOutcomeUnknown { startOutcomeUnknown = false; error = nil }
+            if startOutcomeUnknown && clearsUncertainStartOnRefresh { startOutcomeUnknown = false; error = nil }
         } catch { readError = AppHost.render(error) }
     }
 
@@ -552,7 +577,7 @@ final class InferenceTaskCoordinator: ObservableObject {
             selectedTask = record
             recent.removeAll { $0.id == record.id }
             recent.insert(record, at: 0)
-            guard record.isSupported, record.kind == kind, record.modelPath == model.item.path else {
+            guard record.isSupported, record.kind == kind, Quarantine.resolve(record.modelPath) == Quarantine.resolve(model.item.path) else {
                 if cancellationPending && record.state.isActive { await cancel(id: record.id) }
                 else { cancellationPending = false }
                 error = "The engine returned a task whose type or model does not match this request. Its recorded ID is available for inspection."
@@ -686,12 +711,12 @@ final class InferenceTaskCoordinator: ObservableObject {
         }
         do {
             let verification = try await api.taskVerifyModel(id: id)
-            guard verification.matches, verification.modelPath == model.item.path else {
+            guard verification.matches, Quarantine.resolve(verification.modelPath) == Quarantine.resolve(model.item.path) else {
                 error = "The saved task belongs to a different model identity. The result remains available."
                 return
             }
             let artifact = try await TaskArtifactVerifier.verify(reference: record.request, taskID: id, root: artifactRoot)
-            guard let request = artifact.request, request.kind == record.kind, request.modelPath == model.item.path else { throw TaskProtocolError.invalidRequest }
+            guard let request = artifact.request, request.kind == record.kind, Quarantine.resolve(request.modelPath) == Quarantine.resolve(model.item.path) else { throw TaskProtocolError.invalidRequest }
             switch request.kind {
             case .embedding: try embeddingDraft.load(request)
             case .meshGeneration:

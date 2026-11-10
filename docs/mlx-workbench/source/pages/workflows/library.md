@@ -74,6 +74,26 @@ failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder
 
 ### Local inference tasks
 
+**Run on** selects a **One-off run** or a running typed model server. Both use
+these task forms. Choosing a destination retains the draft and starts no work.
+A server run uses that endpoint's existing model worker and memory policy;
+it never launches a separate one-off worker. **Run a task…** in Run opens the
+same form with that server selected.
+
+Server jobs show their engine-owned job folder. Verified history stays bound
+to the original model, port, process and inference-key identity. A replacement
+server on the same port is a separate destination. Recorded sessions remain
+available in the destination picker after restart; status, result verification,
+playback and export read the original task store. Cancellation requires the
+original running endpoint and its matching inference API key. A busy response
+keeps the draft for an explicit retry; Workbench does not queue it.
+
+If a server submission loses its response, further submissions to that session
+stay blocked across app restarts. Refresh can discover accepted jobs but does
+not submit again or remove the block. Review **Recent tasks**, then use
+**Allow another submission…** only after checking any active job. Confirmation
+enables another explicit Start; it never retries or cancels a job.
+
 Choose a ready model and fill its task form in the inspector. **Start** submits
 one task to the engine and shows its ID and state. Editing inputs does not run
 the model. If the engine is busy or its backend is unavailable, the form keeps
