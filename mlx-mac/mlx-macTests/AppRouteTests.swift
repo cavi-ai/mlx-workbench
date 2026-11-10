@@ -5,20 +5,20 @@ final class AppRouteTests: XCTestCase {
     func testRouteRegistryPreservesLegacyIDsAndIncludesStudies() {
         let routes = AppRoute.allCases
         let expectedIDs = [
-            "quickstart", "models",
+            "quickstart", "models", "use",
             "convert", "quant", "serve",
             "jobs", "duplicates", "wire", "doctor",
             "scout", "lmstudio", "studies", "training-studio", "adopt",
             "settings"
         ]
 
-        XCTAssertEqual(routes.count, 15)
+        XCTAssertEqual(routes.count, 16)
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map(\.group), [.workbench, .lifecycle, .operations, .lab, .settings])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 3, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [3, 3, 4, 3, 1])
     }
 
     func testLegacyAdoptUsesTheDiscoverDestinationWithoutADuplicatePage() {
@@ -43,6 +43,7 @@ final class AppRouteTests: XCTestCase {
         let expected: [(AppRoute, String, String, String)] = [
             (.overview, "Workbench", "Overview", "house"),
             (.library, "Workbench", "Library", "books.vertical"),
+            (.use, "Workbench", "Use", "bubble.left.and.bubble.right"),
             (.prepare, "Lifecycle", "Prepare", "shippingbox"),
             (.compare, "Lifecycle", "Compare", "chart.bar"),
             (.run, "Lifecycle", "Run", "play.circle"),

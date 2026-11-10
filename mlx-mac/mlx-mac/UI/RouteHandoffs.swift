@@ -72,3 +72,21 @@ struct RouteHandoffs {
         return self[kind]
     }
 }
+
+extension HandoffKind where Value == UseModelRequest { static var useModel: Self { Self(name: "useModel") } }
+
+/// Opens a work session without starting a model server or inference.
+struct UseModelRequest: Equatable {
+    let id = UUID()
+    let modelPath: String
+    var server: ServerInfo? = nil
+}
+
+extension HandoffKind where Value == UseServerReviewRequest { static var returnToUse: Self { Self(name: "returnToUse") } }
+
+/// Keeps a conversation reachable while the existing server review is open.
+struct UseServerReviewRequest: Equatable {
+    let id = UUID()
+    let sessionID: UUID
+    let modelPath: String
+}

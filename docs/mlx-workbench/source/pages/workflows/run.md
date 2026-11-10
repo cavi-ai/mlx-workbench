@@ -7,6 +7,10 @@ The task form opens with that server selected and uses its existing worker,
 inference authentication and memory policy. Recent jobs and verified artifacts
 remain attached to their original server session. See [Local inference tasks](library.md#local-inference-tasks).
 
+**Use…** opens a work session with that server selected. Chat history and typed
+task results remain accessible in [Use](use.md). **Try a prompt…** remains a
+separate transient diagnostic.
+
 ## Serve a model
 
 1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Supported standalone model types offer serving; speculative drafters remain paired with their target model. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.

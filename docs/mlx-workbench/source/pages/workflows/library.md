@@ -47,6 +47,10 @@ Opening intake does not download a model. If search or filters hide existing mod
 
 ### Model details
 
+Ready supported models offer **Use model** to open a persistent conversation or
+typed task workspace. **Run model** remains available for server management.
+See [Use models](use.md).
+
 In wide windows, the first selected model opens the inspector beside the table.
 In compact windows, selecting a model opens its details in a sheet. Use
 **Inspector** in the toolbar or ⌥⌘I to hide or show details. Actions and the current memory fit come first;

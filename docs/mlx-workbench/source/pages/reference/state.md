@@ -18,6 +18,8 @@ be saved.
 | `comparison-runs.json.sqlite` | Native comparison runs, indexed history entries, prompt snapshots, samples and quality reviews |
 | `hosted-comparison-runs.json.sqlite` | Hosted comparison runs, captured conditions and submitted workflow evidence |
 | `prompt-sets.json` | Saved prompt sets |
+| `use-sessions.json.sqlite` | Conversation text, partial replies, drafts, server identities and task workspace selections; navigation loads summaries |
+| `use-defaults.json` | Request defaults and the selected work session |
 | `serving-profiles.json` | Saved serving profiles and their verification |
 | `endpoint-fleet.json` | Always-on endpoints and their memory policies |
 | `task-endpoints.json` | Typed task endpoint origins, verified job identities and unresolved-submission blocks; contains no API keys or model weights |
@@ -34,6 +36,7 @@ be saved.
 |---|---|
 | `comparison-outputs/<run-id>/` | Comparison inputs and outputs; the 10 newest media runs keep their files |
 | `prompt-set-inputs/<uuid>/` | Input files owned by saved prompt sets |
+| `use-inputs/` | Verified PNG and JPEG chat inputs, addressed by content digest |
 | `runtimes/<manifest-sha256>/` | Prepared bundled engine sources and their explicitly installed Python environment; existing versions are retained |
 
 Existing `model-workflows.json`, `verification-reports.json`, `comparison-runs.json` and `hosted-comparison-runs.json` arrays migrate once into their SQLite archives. Migration validates every record in one transaction and leaves the original JSON files untouched as backups. Later edits use the archives; editing a backup does not update current history. Preserve the archives when backing up or moving app state.

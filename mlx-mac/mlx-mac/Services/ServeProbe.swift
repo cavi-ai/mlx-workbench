@@ -829,7 +829,31 @@ struct OpenAIEndpointProber: EndpointProbing {
             body["tools"] = [openAITool]
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await streamCompletion(request: request, tool: tool, onUpdate: nil)
+    }
 
+    /// A work session sends its complete conversation; no response-cache identifier is required.
+    func conversation(baseURL: URL, model: String, messages: [[String: JSONValue]],
+                      settings: UseRequestDefaults,
+                      onUpdate: @escaping @Sendable (String, String) async throws -> Void) async throws -> ProbeSample {
+        try settings.validate()
+        let host = ModelHost(name: "Chat", provider: .openAICompatible, baseURL: baseURL.absoluteString)
+        let base = try host.validatedURL()
+        var request = URLRequest(url: base.appendingPathComponent("v1/chat/completions"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = requestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let bearerToken { request.setValue("Bearer " + bearerToken, forHTTPHeaderField: "Authorization") }
+        let body: [String: JSONValue] = ["model": .string(model), "messages": .array(messages.map(JSONValue.object)),
+            "max_tokens": .number(Double(settings.maximumTokens)), "temperature": .number(settings.temperature),
+            "stream": .bool(true), "stream_options": .object(["include_usage": .bool(true)])]
+        request.httpBody = try JSONEncoder().encode(body)
+        guard request.httpBody!.count <= 16_777_216 else { throw UseSessionError.requestTooLarge }
+        return try await streamCompletion(request: request, tool: nil, onUpdate: onUpdate)
+    }
+
+    private func streamCompletion(request: URLRequest, tool: PromptToolSpec?,
+                                  onUpdate: (@Sendable (String, String) async throws -> Void)?) async throws -> ProbeSample {
         let startedAt = Date()
         let (bytes, response) = try await session.bytes(for: request)
         defer { bytes.task.cancel() }
@@ -859,7 +883,10 @@ struct OpenAIEndpointProber: EndpointProbing {
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8),
-                  let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                  let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                if onUpdate != nil { throw ProbeHTTPError.invalidResponse }
+                continue
+            }
             if chunk["error"] != nil { throw ProbeHTTPError.invalidResponse }
             if let usage = chunk["usage"] as? [String: Any] {
                 if let count = usage["completion_tokens"] as? Int {
@@ -897,6 +924,10 @@ struct OpenAIEndpointProber: EndpointProbing {
                     }
                     reasoning += thought
                     text += answer
+                    if let onUpdate {
+                        let inline = reasoning.isEmpty ? InlineReasoning.split(text) : nil
+                        try await onUpdate(inline?.answer ?? text, inline?.reasoning ?? reasoning)
+                    }
                 }
                 if let calls = delta["tool_calls"] as? [[String: Any]] {
                     for call in calls {
