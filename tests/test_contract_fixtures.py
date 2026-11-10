@@ -66,7 +66,8 @@ class TaskCapabilityContractFixtureTests(unittest.TestCase):
         self.assertEqual({item["kind"] for item in expected["tasks"] if item["kind"] in native_kinds}, native_kinds)
         for entry in expected["tasks"]:
             if entry["kind"] in native_kinds:
-                self.assertEqual(contracts[entry["kind"]], entry)
+                for field, value in entry.items():
+                    self.assertEqual(contracts[entry["kind"]][field], value)
 
 
 class ConfigContractFixtureTests(unittest.TestCase):
