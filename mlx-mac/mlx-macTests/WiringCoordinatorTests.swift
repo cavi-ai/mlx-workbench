@@ -50,6 +50,38 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/zed/settings.json").path))
     }
 
+    func testServingStatusPreservesAuthenticationAndRejectsMalformedKeyMetadata() throws {
+        let digest = String(repeating: "a", count: 64)
+        let row: [String: Any] = ["repo": "org/protected", "runtime": "mlx_lm", "port": 8766,
+                                  "pid": 123, "state": "running", "api_key_sha256": digest]
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        XCTAssertEqual(server.apiKeySHA256, digest)
+        let malformedValues: [Any] = [42, true, "", "plaintext-not-a-digest"]
+        for malformed in malformedValues {
+            var changed = row; changed["api_key_sha256"] = malformed
+            XCTAssertNil(WorkbenchAPI.servers(from: ["servers": [changed]]))
+        }
+        var unprotected = row; unprotected["api_key_sha256"] = NSNull()
+        XCTAssertNil(try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [unprotected]])?.first).apiKeySHA256)
+    }
+
+    func testMalformedAuthenticationStatusDoesNotBecomeAnEmptyInventory() async throws {
+        let home = try makeHome()
+        let script = home.appendingPathComponent("scripts/mlx-agent")
+        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        import json
+        print(json.dumps({"status":"ok","data":{"servers":[{"repo":"org/protected","runtime":"mlx_lm","port":8766,"pid":123,"state":"running","api_key_sha256":42}]}}))
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: home.path)
+        do {
+            _ = try await api.serveStatus()
+            XCTFail("Malformed authentication status must remain unavailable")
+        } catch BridgeError.remote(let code, _, _) {
+            XCTAssertEqual(code, "invalid_service_inventory")
+        }
+    }
+
     func testProtectedServerCanBeSelectedWithoutReadingItsKey() throws {
         let server = ServerInfo(repo: "org/protected", runtime: "mlx_lm", port: 8766, pid: 123,
                                 state: "running", apiKeySHA256: String(repeating: "a", count: 64))
