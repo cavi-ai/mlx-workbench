@@ -429,6 +429,8 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
 @MainActor
 final class InferenceTaskCoordinator: ObservableObject {
     @Published var classificationDraft = ClassificationDraft()
+    @Published var embeddingDraft = EmbeddingTaskDraft()
+    @Published var meshGenerationDraft = MeshGenerationTaskDraft()
     @Published var musicDraft = MusicTaskDraft()
     @Published var transcribeDraft = TranscribeTaskDraft()
     @Published var speakDraft = SpeakTaskDraft()
@@ -443,6 +445,7 @@ final class InferenceTaskCoordinator: ObservableObject {
     @Published private(set) var verifiedResult: VerifiedTaskArtifact?
     @Published private(set) var verifiedOutput: VerifiedTaskArtifact?
     @Published private(set) var verifiedInput: VerifiedTaskArtifact?
+    @Published private(set) var embeddingResult: EmbeddingTaskResult?
     @Published private(set) var busy = false
     @Published private(set) var startOutcomeUnknown = false
     @Published private(set) var error: String?
@@ -496,6 +499,7 @@ final class InferenceTaskCoordinator: ObservableObject {
         verifiedResult = nil
         verifiedOutput = nil
         verifiedInput = nil
+        embeddingResult = nil
         if record.state.isActive { await refresh(id: id) }
         else { await inspect(id: id) }
     }
@@ -510,6 +514,8 @@ final class InferenceTaskCoordinator: ObservableObject {
         let request: TaskRequest
         do {
             switch kind {
+            case .embedding: request = try embeddingDraft.request(modelPath: model.item.path)
+            case .meshGeneration: request = try meshGenerationDraft.request(modelPath: model.item.path)
             case .classification: request = try classificationDraft.request(modelPath: model.item.path)
             case .musicGeneration: request = try musicDraft.request(modelPath: model.item.path)
             case .transcribe: request = try transcribeDraft.request(modelPath: model.item.path)
@@ -604,6 +610,20 @@ final class InferenceTaskCoordinator: ObservableObject {
             let payload = try verifiedResultPayload(response, artifact: json)
             var output: VerifiedTaskArtifact?
             var input: VerifiedTaskArtifact?
+            var embedding: EmbeddingTaskResult?
+            if response.task.kind == .embedding {
+                guard let payload else { throw TaskArtifactVerificationError.invalidJSON }
+                embedding = try await Task.detached(priority: .userInitiated) { try EmbeddingTaskResult(raw: payload) }.value
+            }
+            if response.task.kind == .meshGeneration {
+                guard payload?.objectValue?["schema"]?.stringValue == "mesh/1",
+                      let raw = payload?.objectValue?["output_artifact"],
+                      let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)),
+                      URL(fileURLWithPath: reference.path).lastPathComponent == "output.glb" else {
+                    throw TaskArtifactVerificationError.invalidReference
+                }
+                output = try await TaskArtifactVerifier.verifyMesh(reference: reference, taskID: id, root: artifactRoot)
+            }
             if response.task.kind == .speak || response.task.kind == .musicGeneration,
                let raw = payload?.objectValue?["output_artifact"],
                let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) {
@@ -627,12 +647,12 @@ final class InferenceTaskCoordinator: ObservableObject {
                 }
                 output = try await TaskArtifactVerifier.verifyVideo(reference: reference, taskID: id, root: artifactRoot)
             }
-            if response.task.kind == .transcribe || response.task.kind == .imageUnderstanding {
+            if response.task.kind == .transcribe || response.task.kind == .imageUnderstanding || response.task.kind == .meshGeneration {
                 guard let recorded = response.task.inputArtifact,
                       let returned = payload?.objectValue?["input_artifact"],
                       let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned)),
                       reference == recorded else { throw TaskArtifactVerificationError.invalidReference }
-                input = response.task.kind == .imageUnderstanding
+                input = response.task.kind != .transcribe
                     ? try await TaskArtifactVerifier.verifyImage(reference: recorded, taskID: id, root: artifactRoot)
                     : try await TaskArtifactVerifier.verify(reference: recorded, taskID: id, root: artifactRoot)
             }
@@ -648,6 +668,7 @@ final class InferenceTaskCoordinator: ObservableObject {
             verifiedResult = json
             verifiedOutput = output
             verifiedInput = input
+            embeddingResult = embedding
             replaceSelectedInRecent()
             readError = nil
         } catch { readError = AppHost.render(error) }
@@ -672,6 +693,11 @@ final class InferenceTaskCoordinator: ObservableObject {
             let artifact = try await TaskArtifactVerifier.verify(reference: record.request, taskID: id, root: artifactRoot)
             guard let request = artifact.request, request.kind == record.kind, request.modelPath == model.item.path else { throw TaskProtocolError.invalidRequest }
             switch request.kind {
+            case .embedding: try embeddingDraft.load(request)
+            case .meshGeneration:
+                guard let input = record.inputArtifact else { throw TaskArtifactVerificationError.unavailable }
+                _ = try await TaskArtifactVerifier.verifyImage(reference: input, taskID: id, root: artifactRoot)
+                try meshGenerationDraft.load(request, retainedImagePath: input.path)
             case .classification: try classificationDraft.load(request)
             case .musicGeneration: try musicDraft.load(request)
             case .transcribe:
@@ -701,6 +727,7 @@ final class InferenceTaskCoordinator: ObservableObject {
         let response = try await api.taskResult(id: id)
         let result = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
         guard let raw = try verifiedResultPayload(response, artifact: result), case .object(let fields) = raw else { throw TaskArtifactVerificationError.invalidJSON }
+        if response.task.kind == .embedding { _ = try EmbeddingTaskResult(raw: raw) }
         let safeFields = fields.filter { key, _ in
             let normalized = key.lowercased()
             return !normalized.contains("path") && !normalized.contains("artifact")
@@ -730,6 +757,19 @@ final class InferenceTaskCoordinator: ObservableObject {
         guard output.url.pathExtension.lowercased() == "wav" else { throw TaskArtifactVerificationError.invalidReference }
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fileManager.copyItem(at: output.url, to: destination)
+    }
+
+    func exportMesh(id: String, to destination: URL) async throws {
+        let response = try await api.taskResult(id: id)
+        guard response.task.kind == .meshGeneration else { throw TaskArtifactVerificationError.unavailable }
+        let result = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
+        guard let payload = try verifiedResultPayload(response, artifact: result)?.objectValue,
+              payload["schema"]?.stringValue == "mesh/1", let raw = payload["output_artifact"],
+              let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)),
+              URL(fileURLWithPath: reference.path).lastPathComponent == "output.glb" else {
+            throw TaskArtifactVerificationError.invalidReference
+        }
+        try await TaskArtifactVerifier.exportMesh(reference: reference, taskID: id, root: artifactRoot, to: destination)
     }
 
     func exportImage(id: String, to destination: URL) async throws {
@@ -817,6 +857,8 @@ final class InferenceTaskCoordinator: ObservableObject {
 
     func isDraftValid(for kind: TaskKind) -> Bool {
         switch kind {
+        case .embedding: embeddingDraft.validationError == nil
+        case .meshGeneration: meshGenerationDraft.validationError == nil
         case .classification: classificationDraft.validationError == nil
         case .musicGeneration: musicDraft.validationError == nil
         case .transcribe: transcribeDraft.validationError == nil
@@ -839,6 +881,8 @@ final class InferenceTaskCoordinator: ObservableObject {
 extension TaskKind {
     var modelTaskType: ModelTaskType? {
         switch self {
+        case .embedding: .embedding
+        case .meshGeneration: .meshGeneration
         case .classification: .classification
         case .musicGeneration: .musicGeneration
         case .transcribe: .speechToText

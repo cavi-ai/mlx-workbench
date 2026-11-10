@@ -139,7 +139,26 @@ full returned answer. Video tasks appear in Recent tasks and can reuse their
 recorded request when the matching Ready model is available. Video playback
 stops when you leave the inspector or select another model or task.
 
-Each form names an out-of-range value and keeps **Run** unavailable until it is
+For **Embed text**, add 1–128 text entries, each containing at most 32,768
+characters. Entries can contain multiple paragraphs; their order is preserved.
+**Advanced options** sets the maximum token length (1–8192; blank uses 512).
+Completed results show the vector count and dimensions. **Export vectors** saves
+verified JSON without the submitted text or local model paths. The model's
+trained pooling and normalization are retained; this operation accepts text only.
+
+For **Generate 3D mesh**, choose a local PNG, JPEG or WebP image. The engine
+retains a verified input copy before accepting the task. Leave **Advanced
+options** blank for the model's defaults, or set steps (1–100), seed, resolution
+(16–4096), guidance (1–20) or maximum faces (1,000–10,000,000). The engine checks
+the chosen model's supported resolutions. Completed results show an interactive
+GLB preview: drag to rotate and pinch to zoom. Scrolling moves through the
+task details. Meshes above 100 MB keep verified export available without loading
+preview geometry. Expand **Input image** to inspect the retained source. **Export GLB** rechecks the recorded
+size and digest before saving the mesh; missing or changed outputs
+are refused. Embedding and mesh jobs share Recent tasks, cancellation and
+identity-checked Reuse with the other local tasks.
+
+Each form names an out-of-range value and keeps **Start** unavailable until it is
 fixed. Compare prompt sets apply the same limits.
 
 New engine task kinds do not disable the task forms Workbench already supports.

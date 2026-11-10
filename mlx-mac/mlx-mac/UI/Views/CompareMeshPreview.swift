@@ -20,6 +20,11 @@ struct ComparisonMeshData: Sendable {
         guard properties.isRegularFile == true, properties.isSymbolicLink != true,
               let size = properties.fileSize, (28...100_000_000).contains(size) else { throw ReadError.invalid }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        return try read(data)
+    }
+
+    nonisolated static func read(_ data: Data) throws -> Self {
+        guard (28...100_000_000).contains(data.count) else { throw ReadError.invalid }
         func word(_ offset: Int) throws -> UInt32 {
             guard offset >= 0, offset <= data.count - 4 else { throw ReadError.invalid }
             return data.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self)) }
@@ -133,12 +138,16 @@ struct ComparisonMeshZoom {
 /// SceneKit camera control for rotate and pan, with pinch routed through `ComparisonMeshZoom`.
 final class ComparisonMeshSceneView: SCNView {
     private var zoom: ComparisonMeshZoom?
+    var scrollsPage = false
 
     convenience init(stage: ComparisonMeshStage) {
         self.init(frame: .zero, options: nil)
         allowsCameraControl = true
         autoenablesDefaultLighting = true
         antialiasingMode = .multisampling4X
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("3D mesh preview. Drag to rotate, pinch to zoom and scroll to pan.")
         show(stage)
     }
 
@@ -152,14 +161,26 @@ final class ComparisonMeshSceneView: SCNView {
         guard let zoom, let camera = pointOfView else { return super.magnify(with: event) }
         zoom.apply(event.magnification, to: camera)
     }
+
+    override func scrollWheel(with event: NSEvent) {
+        if scrollsPage, let scrollView = enclosingScrollView { scrollView.scrollWheel(with: event) }
+        else { super.scrollWheel(with: event) }
+    }
 }
 
 private struct ComparisonMeshSceneRepresentable: NSViewRepresentable {
     let stage: ComparisonMeshStage
+    var scrollsPage = false
 
-    func makeNSView(context: Context) -> ComparisonMeshSceneView { ComparisonMeshSceneView(stage: stage) }
+    func makeNSView(context: Context) -> ComparisonMeshSceneView {
+        let view = ComparisonMeshSceneView(stage: stage)
+        view.scrollsPage = scrollsPage
+        return view
+    }
 
     func updateNSView(_ view: ComparisonMeshSceneView, context: Context) {
+        view.scrollsPage = scrollsPage
+        view.setAccessibilityLabel(scrollsPage ? "3D mesh preview. Drag to rotate and pinch to zoom." : "3D mesh preview. Drag to rotate, pinch to zoom and scroll to pan.")
         if view.scene !== stage.scene { view.show(stage) }
     }
 }
@@ -173,6 +194,8 @@ struct ComparisonMeshInspection: Codable, Hashable {
 
 struct ComparisonMeshPreview: View {
     let url: URL
+    var verifiedMesh: ComparisonMeshData? = nil
+    var scrollsPage = false
     /// Shows the full-screen button when set.
     var inspection: ComparisonMeshInspection?
     @Environment(\.openWindow) private var openWindow
@@ -182,8 +205,8 @@ struct ComparisonMeshPreview: View {
     var body: some View {
         Group {
             if let stage {
-                ComparisonMeshSceneRepresentable(stage: stage)
-                    .accessibilityLabel("3D mesh preview. Drag to rotate, pinch to zoom and scroll to pan.")
+                ComparisonMeshSceneRepresentable(stage: stage, scrollsPage: scrollsPage)
+                    .accessibilityLabel(scrollsPage ? "3D mesh preview. Drag to rotate and pinch to zoom." : "3D mesh preview. Drag to rotate, pinch to zoom and scroll to pan.")
                     .overlay(alignment: .topTrailing) {
                         if let inspection {
                             Button { openWindow(value: inspection) } label: {
@@ -203,7 +226,9 @@ struct ComparisonMeshPreview: View {
         .task(id: url) {
             stage = nil; error = nil
             do {
-                let mesh = try await Task.detached(priority: .userInitiated) { try ComparisonMeshData.read(url) }.value
+                let mesh: ComparisonMeshData
+                if let verifiedMesh { mesh = verifiedMesh }
+                else { mesh = try await Task.detached(priority: .userInitiated) { try ComparisonMeshData.read(url) }.value }
                 try Task.checkCancellation()
                 stage = mesh.stage()
             } catch is CancellationError { } catch { self.error = error.localizedDescription }

@@ -2,6 +2,8 @@ import Foundation
 
 enum TaskKind: Equatable, Sendable {
     case classification
+    case embedding
+    case meshGeneration
     case musicGeneration
     case transcribe
     case speak
@@ -14,6 +16,8 @@ enum TaskKind: Equatable, Sendable {
     var wireValue: String {
         switch self {
         case .classification: "classification"
+        case .embedding: "embedding"
+        case .meshGeneration: "mesh_generation"
         case .musicGeneration: "music_generation"
         case .transcribe: "transcribe"
         case .speak: "speak"
@@ -27,7 +31,7 @@ enum TaskKind: Equatable, Sendable {
 
     var isSupported: Bool {
         switch self {
-        case .classification, .musicGeneration, .transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration: true
+        case .classification, .embedding, .meshGeneration, .musicGeneration, .transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration: true
         case .unsupported: false
         }
     }
@@ -64,6 +68,8 @@ extension TaskKind: Codable {
         let value = try decoder.singleValueContainer().decode(String.self)
         switch value {
         case "classification": self = .classification
+        case "embedding": self = .embedding
+        case "mesh_generation": self = .meshGeneration
         case "music_generation": self = .musicGeneration
         case "transcribe": self = .transcribe
         case "speak": self = .speak
@@ -202,7 +208,7 @@ struct TaskRequest: Codable, Equatable, Sendable {
     let parameters: [String: JSONValue]
 
     init(kind: TaskKind, modelPath: String, parameters: [String: JSONValue]) {
-        self.schema = [.transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration].contains(kind) ? "task-request/2" : "task-request/1"
+        self.schema = [.embedding, .meshGeneration, .transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration].contains(kind) ? "task-request/2" : "task-request/1"
         self.kind = kind
         self.modelPath = modelPath
         self.parameters = parameters
@@ -214,6 +220,7 @@ struct TaskRequest: Codable, Equatable, Sendable {
              ("task-request/2", .transcribe), ("task-request/2", .speak),
              ("task-request/2", .imageGeneration), ("task-request/2", .imageUnderstanding): true
         case ("task-request/2", .videoUnderstanding), ("task-request/2", .videoGeneration): true
+        case ("task-request/2", .embedding), ("task-request/2", .meshGeneration): true
         default: false
         }
     }
@@ -221,6 +228,10 @@ struct TaskRequest: Codable, Equatable, Sendable {
     func validate() throws {
         guard isSupported, Self.absolutePath(modelPath) else { throw TaskProtocolError.invalidRequest }
         switch kind {
+        case .embedding:
+            try EmbeddingTaskDraft.validate(parameters)
+        case .meshGeneration:
+            try MeshGenerationTaskDraft.validate(parameters)
         case .classification:
             guard Set(parameters.keys) == ["state", "questions"],
                   let state = parameters["state"], state.isStateValue,
@@ -370,7 +381,8 @@ struct TaskRecord: Codable, Equatable, Sendable {
         case ("task-run/1", .classification), ("task-run/1", .musicGeneration),
              ("task-run/2", .transcribe), ("task-run/2", .speak),
              ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding),
-             ("task-run/2", .videoGeneration), ("task-run/2", .videoUnderstanding): state.isSupported
+             ("task-run/2", .videoGeneration), ("task-run/2", .videoUnderstanding),
+             ("task-run/2", .embedding), ("task-run/2", .meshGeneration): state.isSupported
         default: false
         }
     }

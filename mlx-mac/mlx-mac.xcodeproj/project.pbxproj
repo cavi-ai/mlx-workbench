@@ -115,6 +115,7 @@
 		24BBLD000013 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000013 /* x */; };
 		28OVWB01 /* OverviewComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28OVWF01 /* OverviewComponents.swift */; };
 		28OVWB02 /* OverviewPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28OVWF02 /* OverviewPresentationTests.swift */; };
+		E8BED0000000000000000011 /* EmbeddingMeshTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BED0000000000000000001 /* EmbeddingMeshTaskModels.swift */; };
 		29A710000000000000000011 /* InferenceTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A710000000000000000001 /* InferenceTaskModels.swift */; };
 		5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000001 /* InferenceSettings.swift */; };
 		29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A710000000000000000002 /* TaskArtifactVerifier.swift */; };
@@ -422,6 +423,7 @@
 		24FREF000005 /* RuntimeChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeChecker.swift; path = Services/RuntimeChecker.swift; sourceTree = "<group>"; };
 
 		24FREF000006 /* WorkbenchAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPI.swift; path = Services/WorkbenchAPI.swift; sourceTree = "<group>"; };
+		E8BED0000000000000000001 /* EmbeddingMeshTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EmbeddingMeshTaskModels.swift; path = Models/EmbeddingMeshTaskModels.swift; sourceTree = "<group>"; };
 		29A710000000000000000001 /* InferenceTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceTaskModels.swift; path = Models/InferenceTaskModels.swift; sourceTree = "<group>"; };
 		5A1E5E770000000000000001 /* InferenceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceSettings.swift; path = Models/InferenceSettings.swift; sourceTree = "<group>"; };
 		29A710000000000000000002 /* TaskArtifactVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskArtifactVerifier.swift; path = Services/TaskArtifactVerifier.swift; sourceTree = "<group>"; };
@@ -765,6 +767,7 @@
 				24FREF000002 /* BridgeError.swift */,
 				24FREF000003 /* CLIProcess.swift */,
 				24FREF000004 /* ModelItem.swift */,
+				E8BED0000000000000000001 /* EmbeddingMeshTaskModels.swift */,
 				29A710000000000000000001 /* InferenceTaskModels.swift */,
 				5A1E5E770000000000000001 /* InferenceSettings.swift */,
 				29A710000000000000000002 /* TaskArtifactVerifier.swift */,
@@ -1285,6 +1288,7 @@
 				24BBLD000002 /* x */,
 				24BBLD000003 /* x */,
 				24BBLD000004 /* x */,
+				E8BED0000000000000000011 /* EmbeddingMeshTaskModels.swift in Sources */,
 				29A710000000000000000011 /* InferenceTaskModels.swift in Sources */,
 				5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */,
 				29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */,
