@@ -1,0 +1,93 @@
+{
+  "request_schema": "task-request/1",
+  "run_schema": "task-run/1",
+  "schema": "task-capabilities/1",
+  "tasks": [
+    {
+      "cancellation": true,
+      "kind": "embedding",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "embed/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "classification",
+      "model_verification": true,
+      "requires_local_model": true,
+      "result_schema": "decide/1"
+    },
+    {
+      "cancellation": true,
+      "kind": "music_generation",
+      "model_verification": true,
+      "requires_local_model": true,
+      "result_schema": "music/1"
+    },
+    {
+      "cancellation": true,
+      "kind": "transcribe",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "transcribe/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "speak",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "speak/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "image_generation",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "generate/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "image_understanding",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "describe/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "video_generation",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "video/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "video_understanding",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "describe/1",
+      "run_schema": "task-run/2"
+    },
+    {
+      "cancellation": true,
+      "kind": "mesh_generation",
+      "model_verification": true,
+      "request_schema": "task-request/2",
+      "requires_local_model": true,
+      "result_schema": "mesh/1",
+      "run_schema": "task-run/2"
+    }
+  ]
+}

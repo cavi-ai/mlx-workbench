@@ -1213,6 +1213,72 @@ final class InferenceTaskTests: XCTestCase {
         } catch { }
     }
 
+    @MainActor
+    func testCurrentEngineAndFutureKindsDoNotBlockClassificationStart() async throws {
+        let fixture = try Self.engineCapabilitiesFixture()
+        var future = fixture
+        var tasks = try XCTUnwrap(future["tasks"] as? [[String: Any]])
+        tasks.append(["kind": "future_task", "result_schema": "future/9", "cancellation": false,
+                      "requires_local_model": true, "request_schema": "task-request/9", "run_schema": "task-run/9"])
+        future["tasks"] = tasks
+        for payload in [fixture, future] {
+            let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: payload))
+            let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+            let coordinator = InferenceTaskCoordinator(api: FakeInferenceTaskAPI(record: record, capabilities: capabilities),
+                                                     artifactRoot: URL(fileURLWithPath: "/tasks"))
+            coordinator.classificationDraft.state = "Refund request"
+            coordinator.classificationDraft.questions[0].instructions = "Choose the correct team"
+            await coordinator.start(kind: .classification, model: Self.libraryModel(type: .classification, path: record.modelPath))
+            XCTAssertEqual(coordinator.selectedTask?.id, record.id)
+            XCTAssertFalse(coordinator.needsEngineSetup)
+            XCTAssertNil(coordinator.error)
+        }
+    }
+
+    @MainActor
+    func testSelectedTaskContractRefusalsPreserveDraftAndIdentifyTheMismatch() async throws {
+        let fixture = try Self.engineCapabilitiesFixture()
+        let cases: [(field: String, value: Any, detail: String)] = [
+            ("schema", "task-capabilities/9", "task-capabilities/9"),
+            ("request_schema", "task-request/9", "task-request/9"),
+            ("run_schema", "task-run/9", "task-run/9"),
+            ("missing", true, "classification"),
+            ("requires_local_model", false, "local model"),
+            ("task.request_schema", "task-request/9", "task-request/9"),
+            ("task.run_schema", "task-run/9", "task-run/9")
+        ]
+        for example in cases {
+            var payload = fixture
+            // Keep unrelated future kinds out of this test: rejection must be
+            // caused by the selected contract, not the former global gate.
+            var tasks = try XCTUnwrap(payload["tasks"] as? [[String: Any]])
+                .filter { $0["kind"] as? String == "classification" }
+            if example.field == "missing" { tasks = [] }
+            else if example.field == "requires_local_model" { tasks[0][example.field] = example.value }
+            else if example.field.hasPrefix("task.") { tasks[0][String(example.field.dropFirst(5))] = example.value }
+            else { payload[example.field] = example.value }
+            payload["tasks"] = tasks
+            let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: payload))
+            let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+            let api = FakeInferenceTaskAPI(record: record, capabilities: capabilities)
+            let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+            coordinator.classificationDraft.state = "Refund request"
+            coordinator.classificationDraft.questions[0].instructions = "Choose the correct team"
+            await coordinator.start(kind: .classification, model: Self.libraryModel(type: .classification, path: record.modelPath))
+            let starts = await api.startEvidence()
+            XCTAssertTrue(starts.isEmpty, example.field)
+            XCTAssertNil(coordinator.selectedTask, example.field)
+            XCTAssertEqual(coordinator.classificationDraft.state, "Refund request", example.field)
+            XCTAssertTrue(coordinator.needsEngineSetup, example.field)
+            XCTAssertTrue(coordinator.error?.contains(example.detail) == true, example.field)
+        }
+    }
+
+    private static func engineCapabilitiesFixture() throws -> [String: Any] {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("tests/fixtures/task-capabilities.json"))) as? [String: Any])
+    }
+
     private static let taskCapabilities = try! JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true,"model_verification":true},{"kind":"music_generation","result_schema":"music/1","cancellation":true,"requires_local_model":true,"model_verification":true}]}"#.utf8))
 
     private static func libraryModel(type: ModelTaskType, path: String? = nil) -> LibraryModel {

@@ -425,7 +425,30 @@ struct TaskCapabilities: Codable, Equatable, Sendable {
     let tasks: [TaskCapability]
     var isSupported: Bool {
         schema == "task-capabilities/1" && requestSchema == "task-request/1" && runSchema == "task-run/1"
-            && tasks.allSatisfy { $0.kind.isSupported }
+    }
+    func unavailabilityReason(for request: TaskRequest) -> String? {
+        guard isSupported else {
+            return "The engine advertises an incompatible task contract: \(schema), \(requestSchema), \(runSchema)."
+        }
+        guard request.isSupported else {
+            return "Workbench cannot submit \(request.schema) for \(request.kind.wireValue)."
+        }
+        guard let capability = tasks.first(where: { $0.kind == request.kind }) else {
+            return "The engine does not advertise \(request.kind.wireValue) tasks."
+        }
+        guard capability.requiresLocalModel else {
+            return "The engine does not support \(request.kind.wireValue) with a local model."
+        }
+        let advertisedRequest = capability.requestSchema ?? requestSchema
+        guard advertisedRequest == request.schema else {
+            return "The engine's \(request.kind.wireValue) task expects \(advertisedRequest); Workbench sends \(request.schema)."
+        }
+        let expectedRun = request.schema == "task-request/2" ? "task-run/2" : "task-run/1"
+        let advertisedRun = capability.runSchema ?? runSchema
+        guard advertisedRun == expectedRun else {
+            return "The engine's \(request.kind.wireValue) task returns \(advertisedRun); Workbench reads \(expectedRun)."
+        }
+        return nil
     }
     func requestSchema(for kind: TaskKind) -> String? { tasks.first(where: { $0.kind == kind })?.requestSchema ?? requestSchema }
     func runSchema(for kind: TaskKind) -> String? { tasks.first(where: { $0.kind == kind })?.runSchema ?? runSchema }

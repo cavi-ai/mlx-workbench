@@ -530,13 +530,10 @@ final class InferenceTaskCoordinator: ObservableObject {
         defer { busy = false }
         do {
             let capabilities = try await api.taskCapabilities()
-            guard capabilities.isSupported,
-                  capabilities.tasks.contains(where: { $0.kind == kind && $0.requiresLocalModel }),
-                  capabilities.requestSchema(for: kind) == request.schema,
-                  capabilities.runSchema(for: kind) == ([.transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration].contains(kind) ? "task-run/2" : "task-run/1") else {
+            if let reason = capabilities.unavailabilityReason(for: request) {
                 cancellationPending = false
                 needsEngineSetup = true
-                error = "The selected engine does not support this task. Open Health and run the setup assistant to select a compatible engine, then try again. Your inputs are retained."
+                error = "\(reason) Open Health and run the setup assistant to select a compatible engine, then try again. Your inputs are retained."
                 return
             }
             let record = try await api.taskStart(request)

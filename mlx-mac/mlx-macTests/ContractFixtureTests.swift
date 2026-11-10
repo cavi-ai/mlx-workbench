@@ -6,6 +6,23 @@ import XCTest
 /// Consumers for the shared contract fixtures at <repo>/tests/fixtures.
 /// The Python suite asserts the same values; see tests/fixtures/README.md.
 final class ContractFixtureTests: XCTestCase {
+    func testTaskCapabilitiesKeepUnknownKindsWithoutBlockingKnownRequests() throws {
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            Data(contentsOf: fixtureURL("task-capabilities", ext: "json"))) as? [String: Any])
+        var tasks = try XCTUnwrap(payload["tasks"] as? [[String: Any]])
+        tasks.append(["kind": "future_task", "result_schema": "future/9", "cancellation": false,
+                      "requires_local_model": true, "request_schema": "task-request/9", "run_schema": "task-run/9"])
+        payload["tasks"] = tasks
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertTrue(capabilities.isSupported)
+        let future = try XCTUnwrap(capabilities.tasks.first { $0.kind.wireValue == "future_task" })
+        XCTAssertFalse(future.kind.isSupported)
+        XCTAssertEqual(future.kind, .unsupported("future_task"))
+        XCTAssertEqual(future.requestSchema, "task-request/9")
+        XCTAssertEqual(capabilities.requestSchema(for: .classification), "task-request/1")
+        XCTAssertEqual(capabilities.runSchema(for: .speak), "task-run/2")
+    }
+
     // MARK: - config-premium-keys.json
 
     func testPremiumKeysFixtureLoadsWithExpectedValues() throws {

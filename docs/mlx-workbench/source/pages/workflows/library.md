@@ -142,6 +142,11 @@ stops when you leave the inspector or select another model or task.
 Each form names an out-of-range value and keeps **Run** unavailable until it is
 fixed. Compare prompt sets apply the same limits.
 
+New engine task kinds do not disable the task forms Workbench already supports.
+Start checks the selected kind's request and run schemas. An incompatible
+contract identifies the affected kind or schema and retains your draft while
+you select a compatible engine in Health.
+
 **Recent tasks** in the inspector shows the selected model's tasks. The Library
 toolbar also opens Recent tasks independently of model selection, so recorded
 results remain accessible when their model is no longer in the Library. At
