@@ -7,6 +7,28 @@ The task form opens with that server selected and uses its existing worker,
 inference authentication and memory policy. Recent jobs and verified artifacts
 remain attached to their original server session. See [Local inference tasks](library.md#local-inference-tasks).
 
+## Music, sound effects and ambience
+
+Music task forms offer a **Purpose** picker: **Music**, **Sound effects** or
+**Ambience**. FX and ambience use an instrumental prompt on the selected music
+model. These modes are experimental: a music model can still produce music.
+They reuse the existing music API, worker and memory policy.
+
+In **Settings → Artist Brain local audio**, choose **Use music model
+(experimental)** to share Artist Brain's music endpoint, or **Specific served
+audio model** to select a running local endpoint advertising `music_generation`
+or `sound_effects`. Save the audio choice to apply it. A specific music endpoint
+also uses experimental FX prompting. Models without a compatible installed
+execution adapter are not offered. No weights or dependencies are downloaded.
+
+Artist Brain profiles opt into this preference with `audio_routing_file` pointing
+to `local-audio-routing.json` under Workbench's Application Support directory.
+The shared option follows the profile's music route; the specific option records
+the selected model, loopback port and receipts directory. The plugin verifies
+the live service and its task capability before submitting. Unloading a shared
+FX route also unloads its music worker. In Run, the purpose picker always uses
+the model being inspected.
+
 ## Serve a model
 
 1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Supported standalone model types offer serving; speculative drafters remain paired with their target model. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.
