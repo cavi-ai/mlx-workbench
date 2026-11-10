@@ -1,11 +1,27 @@
 import SwiftUI
 import AppKit
+import Darwin
 
 @main
 struct MlxWorkbenchApp: App {
     @NSApplicationDelegateAdaptor(WorkbenchApplicationDelegate.self) private var appDelegate
     @State private var appHost = AppHost()
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
+
+    init() {
+        if CommandLine.arguments.contains("--check-installation") {
+            NSApplication.shared.setActivationPolicy(.prohibited)
+            let result = ["protocol": "workbench-installation/1", "application": Bundle.main.bundleURL.path,
+                          "engine": ConfigModule().load().mlxAgentPath,
+                          "commit": Bundle.main.object(forInfoDictionaryKey: "MLXWorkbenchCommit") as? String ?? "unknown"]
+            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data("\n".utf8))
+                exit(0)
+            }
+            exit(1)
+        }
+    }
 
     var body: some Scene {
         Window("MLX Workbench", id: ServedModelsWindow.mainID) {

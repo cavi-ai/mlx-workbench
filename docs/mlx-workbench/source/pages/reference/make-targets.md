@@ -1,5 +1,11 @@
 # Make targets
 
+`make install-app` builds the local application and replaces
+`/Applications/MLX Workbench.app`. It reuses that installation's signing identity,
+checks every bundled executable and library, and runs a headless startup check on
+the installed copy. The matching signing certificate must already be available;
+the command does not sign in or provision a certificate.
+
 The `Makefile` is the supported command surface. Run `make help` for the short list. Every target that touches the machine requires an Apple Silicon Mac.
 
 ## Setup

@@ -46,6 +46,7 @@ help:
 	hdr "Run"; \
 	row "make start" "build and open the SwiftUI application"; \
 	row "make run" "build and open the SwiftUI application"; \
+	row "make install-app" "build, sign and replace /Applications/MLX Workbench.app"; \
 	hdr "Test"; \
 	row "make test" "Python compatibility and contract tests"; \
 	row "make test-swift" "unit tests for Swift app"; \
@@ -291,12 +292,17 @@ clean-venv:
 
 MLX_SWIFT_DD ?= $(RUN_DIR)/swift-build
 MLX_SWIFT_APP = $(MLX_SWIFT_DD)/Build/Products/Release/mlx-workbench.app
+MLX_BUILD_JOBS ?= 2
+
+.PHONY: install-app
+install-app: build-swift
+	@$(PYTHON) scripts/install_app.py --app "$(abspath $(MLX_SWIFT_APP))"
 
 build-swift:
 	@echo "Building mlx-workbench (Swift)..."
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
-		-configuration Release -arch arm64 \
-		-derivedDataPath $(MLX_SWIFT_DD) build
+		-configuration Release -arch arm64 -jobs $(MLX_BUILD_JOBS) \
+		-derivedDataPath $(MLX_SWIFT_DD) MLX_WORKBENCH_COMMIT="$(shell git rev-parse HEAD)" MLX_WORKBENCH_CHANNEL=local build
 
 # Distribution build for the DMG: compiled without the source path, so the
 # installed app finds its checkout through the configured agent path.
