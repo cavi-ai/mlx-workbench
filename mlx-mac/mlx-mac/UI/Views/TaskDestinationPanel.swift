@@ -58,9 +58,9 @@ struct TaskDestinationPanel: View {
                 Label("Uses this server’s model and memory policy.", systemImage: "server.rack")
                     .font(WorkbenchTypography.secondary)
                 Text("PID \(origin.server.pid!) · \(origin.server.apiKeySHA256 == nil ? "Loopback" : "API key required")")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(.secondary)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 Text("Jobs: \(origin.artifactRoot.path)")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(.secondary).textSelection(.enabled)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
                 if coordinator?.startOutcomeUnknown == true {
                     Text("The last submission was not confirmed. Check recent jobs before allowing another submission.")
                         .font(WorkbenchTypography.secondary)
