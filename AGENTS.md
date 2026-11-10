@@ -100,8 +100,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
   `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
   `ComparisonPickerViews.swift`, `CompareSheets.swift`.
-- Wire: `WiringCoordinator` (allowlisted client configs, backups, content-digest
-  rollback fences and persisted progress for partial rollback retries).
+- Wire: `WiringCoordinator` (allowlisted client configs, endpoint-bound inference-key handoffs,
+  owner-only writes and backups, content-digest rollback fences and persisted progress for partial rollback retries).
+  Client adapters own credential fields; Zed keys stay in its own credential store.
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
   `ModelPurposeStore` owns durable keep reasons; `ModelFamilyReview` builds related-name review groups and identity-bound Compare handoffs.
   `ModelShowdownResults` validates recorded chat cohorts for task-specific result cards and replacement advice.

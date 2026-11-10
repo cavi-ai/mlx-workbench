@@ -121,6 +121,7 @@ final class ManualWiringSession: ObservableObject {
 struct WireView: View {
     let appHost: AppHost
     @ObservedObject private var wiring: WiringCoordinator
+    @ObservedObject private var endpointTest: EndpointTestCoordinator
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
@@ -139,11 +140,14 @@ struct WireView: View {
     @State private var captureError: String?
     @State private var layout = ClientsLayout()
     @State private var showsSetupDoctor = false
+    @State private var promptPresentation: EndpointTestPresentation?
+    @State private var credentialMessage: String?
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
+        _endpointTest = ObservedObject(wrappedValue: appHost.endpointTest)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _manual = StateObject(wrappedValue: ManualWiringSession(
             preview: { request in
@@ -227,6 +231,9 @@ struct WireView: View {
                 previewClient: { await previewClients(clientIDs: [$0]) },
                 onOpenRun: { onRouteSelection(.run) }, onOpenHealth: { onRouteSelection(.health) })
         }
+        .sheet(item: $promptPresentation) { presentation in
+            EndpointTestSheet(presentation: presentation, coordinator: endpointTest, configureClients: {})
+        }
         .sheet(item: $capture, onDismiss: {
             if importAfterCapture { importAfterCapture = false; reviewReport() }
         }) { capture in
@@ -251,6 +258,7 @@ struct WireView: View {
             noticeViews(.actions)
             if showsPreview, let hash = wiring.previewHash { previewSurface(hash: hash) }
             if let transaction = resultTransaction {
+                credentialActions(transaction)
                 ClientsOutcomeView(
                     result: transaction.resultSummary, hasIssues: !transaction.failures.isEmpty, prominence: prominence,
                     showsMeasurement: wiredTransaction != nil, isPreparing: isPreparingCapture,
@@ -259,6 +267,54 @@ struct WireView: View {
                 ) { noticeViews(.measurement) }
             }
         }
+    }
+
+    @ViewBuilder
+    private func credentialActions(_ transaction: WiringTransaction) -> some View {
+        if let server = wiredServer, server.apiKeySHA256 != nil, !transaction.receipts.isEmpty {
+            WorkbenchSurface {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    Label("Protected connection", systemImage: "lock.shield").font(WorkbenchTypography.emphasis)
+                    ForEach(Array(Set(transaction.receipts.compactMap(\.credentialInstruction))).sorted(), id: \.self) { instruction in
+                        Text(instruction).font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack {
+                        Button("Copy inference key") { Task { await copyInferenceKey(server) } }
+                            .accessibilityIdentifier("client-copy-inference-key")
+                            .disabled(wiring.isCheckingServer || wiring.isApplying || isRefreshingServer)
+                        Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
+                            .disabled(!EndpointTestCoordinator.supports(server) || endpointTest.isSending
+                                || endpointTest.presentationID != nil || appHost.occupancy.blocksStop(server))
+                    }
+                    Text("Copy only into an app you authorize. Clipboard access is temporary; testing may load the model.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    if let credentialMessage { Text(credentialMessage).font(WorkbenchTypography.secondary) }
+                }
+            }
+        }
+    }
+
+    private func copyInferenceKey(_ server: ServerInfo) async {
+        credentialMessage = nil
+        do {
+            let key = try await wiring.inferenceKey(server: server, currentServers: {
+                guard await appHost.modelWorkflow.refreshServingStatus() else { throw WiringError.serverChanged }
+                return appHost.modelWorkflow.servers
+            })
+            guard isRouteActive, !Task.isCancelled else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            let item = NSPasteboardItem()
+            item.setString(key, forType: .string)
+            item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            guard pasteboard.writeObjects([item]) else { throw CocoaError(.fileWriteUnknown) }
+            let change = pasteboard.changeCount
+            credentialMessage = "Inference key copied. Clipboard clears after one minute unless replaced."
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(60))
+                if pasteboard.changeCount == change { pasteboard.clearContents() }
+            }
+        } catch { credentialMessage = error.localizedDescription }
     }
 
     // MARK: Header
@@ -355,7 +411,17 @@ struct WireView: View {
                         .textSelection(.enabled)
                         .accessibilityIdentifier("client-wiring-reviewed-endpoint")
                 }
+                if wiring.reviewedEndpoint?.apiKeySHA256 != nil {
+                    Label("API-key protected", systemImage: "lock.shield")
+                        .font(WorkbenchTypography.secondary)
+                        .accessibilityIdentifier("client-wiring-protected")
+                    Text("Only the inference key is shared. Resetting it affects every app connected to this endpoint.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
                 ForEach(wiring.plans) { plan in
+                    if let instruction = plan.credentialInstruction {
+                        Text(instruction).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    }
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             ForEach(Array(plan.redactedDiff.enumerated()), id: \.offset) { _, line in

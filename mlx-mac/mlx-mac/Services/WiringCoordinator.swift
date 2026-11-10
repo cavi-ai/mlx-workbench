@@ -1,6 +1,7 @@
 import Combine
 import CryptoKit
 import Foundation
+import Darwin
 
 // MARK: - WiringCoordinator
 //
@@ -17,6 +18,8 @@ enum WiringError: LocalizedError {
     case noTransactionToRollback
     case symlinkRefused(client: String)
     case serverChanged
+    case credentialUnavailable
+    case credentialUnsupported(client: String)
     case createdFileChanged
     case rollbackFileChanged
     case rollbackEvidenceMissing
@@ -29,6 +32,8 @@ enum WiringError: LocalizedError {
         case .postWriteValidationFailed(let client): return "\(client): the written config did not validate; the previous file was restored."
         case .noTransactionToRollback: return "There is no wiring transaction to roll back."
         case .symlinkRefused(let client): return "\(client): the config path or its backup target is a symbolic link; refusing to write through it."
+        case .credentialUnavailable: return "The endpoint inference key is unavailable or changed. Check its API-key setup in Run, then preview again."
+        case .credentialUnsupported(let client): return "\(client): authenticated setup is not supported by this adapter."
         case .serverChanged: return "The selected server stopped or changed. Refresh and preview client wiring again."
         case .createdFileChanged: return "The config file changed after wiring created it; it was left in place."
         case .rollbackFileChanged: return "The config file changed after wiring; it was left in place. Review the backup before restoring it."
@@ -54,6 +59,7 @@ final class WiringCoordinator: ObservableObject {
     private let home: URL
     private let fileManager: FileManager
     private let configSource: ClientConfigSource
+    private let credential: (String) throws -> String
     private let store: JSONStore<WiringTransaction>
     /// Moves a file to the macOS Trash; rollback never deletes permanently.
     private let moveToTrash: (URL) throws -> Void
@@ -84,6 +90,7 @@ final class WiringCoordinator: ObservableObject {
         fileManager: FileManager = .default,
         configSource: @escaping ClientConfigSource = ClientConfigFile.live,
         store: JSONStore<WiringTransaction>,
+        credential: @escaping (String) throws -> String = EndpointCredentialStore.token,
         moveToTrash: ((URL) throws -> Void)? = nil,
         now: @escaping () -> Date = Date.init
     ) {
@@ -91,6 +98,7 @@ final class WiringCoordinator: ObservableObject {
         self.home = home
         self.fileManager = fileManager
         self.configSource = configSource
+        self.credential = credential
         self.store = store
         self.moveToTrash = moveToTrash ?? { try fileManager.trashItem(at: $0, resultingItemURL: nil) }
         self.now = now
@@ -161,6 +169,11 @@ final class WiringCoordinator: ObservableObject {
             }
             targets = setupClients.filter { clientIDs.contains($0.clientID) }
         } else { targets = installations }
+        let key: String?
+        do { key = try inferenceKey(for: endpoint) }
+        catch {
+            invalidateServerPreview(); lastError = WiringError.credentialUnavailable.errorDescription; return
+        }
         var built: [ClientEditPlan] = []
         for installation in targets where !installation.advisoryOnly {
             guard let adapter = adapters.first(where: { $0.clientID == installation.clientID }),
@@ -174,7 +187,7 @@ final class WiringCoordinator: ObservableObject {
                         throw WorkflowEvidenceError.invalid(diagnosis.message)
                     }
                 }
-                let after = try adapter.plan(before, endpoint)
+                let after = try adapter.authenticatedPlan(before, endpoint, key: key)
                 let rewrites = before != nil && JSONCTolerant.strip(before ?? "") != before
                 built.append(ClientEditPlan(
                     clientID: installation.clientID,
@@ -183,7 +196,8 @@ final class WiringCoordinator: ObservableObject {
                     before: before,
                     after: after,
                     summary: summary(for: installation.clientID, endpoint: endpoint, creating: before == nil),
-                    rewritesFile: rewrites
+                    rewritesFile: rewrites,
+                    credentialInstruction: endpoint.apiKeySHA256 == nil ? nil : adapter.credentialInstruction
                 ))
             } catch {
                 lastError = "\(installation.displayName): \(AppHost.render(error))"
@@ -229,6 +243,34 @@ final class WiringCoordinator: ObservableObject {
         }
     }
 
+    /// Explicit transfer to a client's native key store, with fresh endpoint identity.
+    func inferenceKey(server: ServerInfo, currentServers: () async throws -> [ServerInfo]) async throws -> String {
+        guard !isApplying, !isCheckingServer, let endpoint = WireEndpoint(server: server), endpoint.apiKeySHA256 != nil else {
+            throw WiringError.credentialUnavailable
+        }
+        isCheckingServer = true
+        defer { isCheckingServer = false }
+        try Task.checkCancellation()
+        let servers = try await currentServers()
+        try Task.checkCancellation()
+        let candidates = servers.filter { $0.port == server.port }
+        guard candidates.count == 1, ClientWiringSelection.sameServer(server, candidates[0]) else {
+            throw WiringError.serverChanged
+        }
+        guard let key = try inferenceKey(for: endpoint) else { throw WiringError.credentialUnavailable }
+        return key
+    }
+
+    private func inferenceKey(for endpoint: WireEndpoint) throws -> String? {
+        guard let hash = endpoint.apiKeySHA256 else { return nil }
+        do {
+            let key = try credential(hash)
+            guard (32...512).contains(key.utf8.count), key.utf8.allSatisfy({ (33...126).contains($0) }),
+                  EndpointCredentialStore.digest(key) == hash else { throw WiringError.credentialUnavailable }
+            return key
+        } catch { throw WiringError.credentialUnavailable }
+    }
+
     private func invalidateServerPreview() {
         previewedServer = nil; previewedEndpoint = nil; previewedPlans = []; plans = []; previewHash = nil
     }
@@ -253,6 +295,10 @@ final class WiringCoordinator: ObservableObject {
         guard previewedEndpoint == endpoint, previewHash == hash else {
             lastError = WiringError.previewHashMismatch.errorDescription
             return nil
+        }
+        do { _ = try inferenceKey(for: endpoint) }
+        catch {
+            invalidateServerPreview(); lastError = WiringError.credentialUnavailable.errorDescription; return nil
         }
         isApplying = true
         defer { isApplying = false }
@@ -355,6 +401,7 @@ final class WiringCoordinator: ObservableObject {
             try Self.refuseSymlink(fileURL, client: plan.displayName, fileManager: fileManager)
             try Self.refuseSymlink(backup, client: plan.displayName, fileManager: fileManager)
             try fileManager.copyItem(at: fileURL, to: backup)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
             backupPath = backup.path
         }
         // Only a write to a path with nothing at it creates the file; an unreadable existing file does not count.
@@ -386,19 +433,25 @@ final class WiringCoordinator: ObservableObject {
             backupPath: backupPath,
             createdFileSHA256: createsFile ? Self.sha256Hex(Data(plan.after.utf8)) : nil,
             writtenFileSHA256: Self.sha256Hex(Data(plan.after.utf8)),
-            appliedAt: now()
+            appliedAt: now(),
+            credentialInstruction: plan.credentialInstruction
         )
     }
 
     private func writeAtomically(_ contents: String, to url: URL) throws {
         let directory = url.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let temporary = url.appendingPathExtension("tmp-\(UUID().uuidString)")
         do {
-            try Data(contents.utf8).write(to: temporary, options: .atomic)
+            let descriptor = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            try handle.write(contentsOf: Data(contents.utf8))
+            try handle.synchronize()
+            try handle.close()
             if fileManager.fileExists(atPath: url.path) {
                 try Self.refuseSymlink(url, client: nil, fileManager: fileManager)
-                _ = try fileManager.replaceItemAt(url, withItemAt: temporary)
+                _ = try fileManager.replaceItemAt(url, withItemAt: temporary, options: .usingNewMetadataOnly)
             } else {
                 try fileManager.moveItem(at: temporary, to: url)
             }
@@ -434,7 +487,7 @@ final class WiringCoordinator: ObservableObject {
             // the backup survives for repeatability.
             let temporaryCopy = targetURL.appendingPathExtension("restore-\(UUID().uuidString)")
             try fileManager.copyItem(at: backupURL, to: temporaryCopy)
-            _ = try fileManager.replaceItemAt(targetURL, withItemAt: temporaryCopy)
+            _ = try fileManager.replaceItemAt(targetURL, withItemAt: temporaryCopy, options: .usingNewMetadataOnly)
         } else {
             try fileManager.copyItem(at: backupURL, to: targetURL)
         }
@@ -463,7 +516,7 @@ final class WiringCoordinator: ObservableObject {
     // MARK: - Hashing and summaries
 
     static func hash(plans: [ClientEditPlan], endpoint: WireEndpoint) -> String {
-        var canonical = "endpoint:\(endpoint.baseURL)|\(endpoint.modelName)\n"
+        var canonical = "endpoint:\(endpoint.baseURL)|\(endpoint.modelName)|\(endpoint.apiKeySHA256 ?? "")\n"
         for plan in plans.sorted(by: { $0.clientID < $1.clientID }) {
             canonical += "plan:\(plan.clientID)|\(plan.configPath)|\(plan.after)\n"
         }
@@ -476,7 +529,9 @@ final class WiringCoordinator: ObservableObject {
 
     private func summary(for clientID: String, endpoint: WireEndpoint, creating: Bool) -> String {
         let verb = creating ? "Create config" : "Update config"
-        return "\(verb); point at \(endpoint.baseURL), model \(endpoint.modelName)"
+        let auth = endpoint.apiKeySHA256 == nil ? "" : (adapters.first { $0.clientID == clientID }?.credentialInstruction != nil
+            ? "; finish API-key setup in the client" : "; inference key in owner-only config")
+        return "\(verb); point at \(endpoint.baseURL), model \(endpoint.modelName)\(auth)"
     }
 
     private static func backupStamp(_ date: Date) -> String {

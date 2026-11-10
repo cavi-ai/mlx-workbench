@@ -33,7 +33,7 @@ final class EndpointFleetTests: XCTestCase {
         let unprotected = ServerInfo(path: "/models/test", port: 8766, pid: 42, state: "running")
         let protected = ServerInfo(path: "/models/test", port: 8766, pid: 42, state: "running", apiKeySHA256: digest)
         XCTAssertFalse(unprotected.sameProcess(as: protected))
-        XCTAssertNil(WireEndpoint(server: protected))
+        XCTAssertEqual(WireEndpoint(server: protected)?.apiKeySHA256, digest)
     }
 
     func testMemoryPolicySurvivesFleetPersistenceAndRejectsInvalidValues() throws {

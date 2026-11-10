@@ -3089,6 +3089,66 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Health navigation must not recreate a rolled-back config")
     }
 
+    func testProtectedClientSetupUsesKeychainAndKeepsKeysOutOfZed() throws {
+        let key = "mlxw_ui_" + UUID().uuidString + UUID().uuidString
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let service = "xyz.cavi.mlx-workbench.endpoint"
+        func keychain(_ args: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+            process.arguments = args
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "The isolated VM fixture key could not be updated")
+        }
+        try keychain(["add-generic-password", "-a", digest, "-s", service, "-w", key, "-A"])
+        defer {
+            app.terminate()
+            try? keychain(["delete-generic-password", "-a", digest, "-s", service])
+            NSPasteboard.general.clearContents()
+        }
+        let opencode = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        let zed = root.appendingPathComponent(".config/zed/settings.json")
+        for config in [opencode, zed] {
+            try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "{}".write(to: config, atomically: true, encoding: .utf8)
+        }
+        try JSONSerialization.data(withJSONObject: [["repo": "org/Protected-local", "runtime": "mlx_lm",
+            "port": 8766, "pid": 123, "state": "running", "api_key_sha256": digest]])
+            .write(to: root.appendingPathComponent("servers.json"))
+        for appearance in ["Light", "Dark"] {
+            launch(appearance: appearance, isolatedHome: true)
+            select("Clients")
+            let picker = app.popUpButtons["client-wiring-endpoint"].firstMatch
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            picker.click(); app.menuItems["Protected-local :8766"].click()
+            app.buttons["Preview client wiring"].click()
+            let protected = app.descendants(matching: .any)["client-wiring-protected"].firstMatch
+            XCTAssertTrue(protected.waitForExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts.allElementsBoundByIndex.contains { $0.label.contains(key) || ($0.value as? String)?.contains(key) == true })
+            capture("Clients-\(appearance)-protected-review")
+            let confirm = app.buttons["Confirm client wiring"]
+            for _ in 0..<6 where !confirm.isHittable { app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -200) }
+            confirm.click()
+            let copy = app.buttons["client-copy-inference-key"]
+            XCTAssertTrue(copy.waitForExistence(timeout: 10))
+            let parsed = try JSONSerialization.jsonObject(with: Data(contentsOf: opencode)) as? [String: Any]
+            let providers = parsed?["provider"] as? [String: Any]
+            let local = providers?["mlx-local"] as? [String: Any]
+            XCTAssertEqual((local?["options"] as? [String: Any])?["apiKey"] as? String, key)
+            XCTAssertFalse(try String(contentsOf: zed).contains(key))
+            for _ in 0..<6 where !copy.isHittable { app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -200) }
+            copy.click()
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Inference key copied", "Inference key copied")).firstMatch.waitForExistence(timeout: 10))
+            XCTAssertEqual(NSPasteboard.general.string(forType: .string), key)
+            NSPasteboard.general.clearContents()
+            resizeWindow(width: 800, height: 680)
+            capture("Clients-\(appearance)-protected-connected-narrow")
+            app.terminate()
+        }
+    }
+
     func testClientWiringPreviewAndEndpointSelection() throws {
         let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
         try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)

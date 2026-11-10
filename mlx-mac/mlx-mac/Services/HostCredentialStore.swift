@@ -52,7 +52,7 @@ enum EndpointCredentialStore {
     }
 
     private static func identity(_ hash: String) throws -> [String: Any] {
-        guard WorkbenchStatePaths.hostedTestRoot == nil,
+        guard !WorkbenchStatePaths.isHostedUnitTest(),
               hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { throw unavailable }
         return [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                 kSecAttrAccount as String: hash, kSecAttrSynchronizable as String: false]
