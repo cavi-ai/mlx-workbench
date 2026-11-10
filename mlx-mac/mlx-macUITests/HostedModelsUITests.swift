@@ -1,3 +1,4 @@
+import CryptoKit
 import Network
 import XCTest
 
@@ -351,6 +352,58 @@ final class HostedUIFixture: @unchecked Sendable {
                 let body = "private-server-body"
                 let response = "HTTP/1.1 401 Unauthorized\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            if let serverData = try? Data(contentsOf: root.appendingPathComponent("typed-endpoint.json")),
+               let server = try? JSONSerialization.jsonObject(with: serverData) as? [String: Any],
+               let path = header.components(separatedBy: " ").dropFirst().first,
+               path == "/v1/models" || path.hasPrefix("/v1/tasks") {
+                do {
+                    let taskRoot = URL(fileURLWithPath: server["receipts_dir"] as! String)
+                        .appendingPathComponent(".mlx-agent-receipts/tasks/\(server["port"] as! Int)")
+                    let file = taskRoot.appendingPathComponent("fixture-tasks.json")
+                    var records = ((try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] }) ?? []
+                    var status = 200
+                    let value: [String: Any]
+                    if path == "/v1/models" {
+                        value = ["data": [["id": server["path"]!, "api": "/v1/tasks", "task_kinds": ["music_generation"]]]]
+                    } else if request.hasPrefix("POST /v1/tasks ") {
+                        let body = Data(request[end.upperBound...].utf8)
+                        try body.write(to: root.appendingPathComponent("typed-request.json"))
+                        if FileManager.default.fileExists(atPath: root.appendingPathComponent("typed-busy").path) {
+                            status = 409; value = ["error": ["code": "model_busy"]]
+                        } else {
+                            let input = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+                            let identifier = UUID().uuidString.lowercased()
+                            let folder = taskRoot.appendingPathComponent("artifacts/" + identifier)
+                            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                            let requestFile = folder.appendingPathComponent("request.json")
+                            let taskRequest: [String: Any] = ["schema": "task-request/1", "kind": input["kind"]!, "parameters": input["parameters"]!, "model_path": server["path"]!]
+                            let bytes = try JSONSerialization.data(withJSONObject: taskRequest, options: .sortedKeys)
+                            try bytes.write(to: requestFile)
+                            let record: [String: Any] = ["schema": "task-run/1", "id": identifier, "kind": input["kind"]!, "model_path": server["path"]!,
+                                "state": "running", "created_at": ISO8601DateFormatter().string(from: Date()), "cancel_requested": false, "execution_unresolved": false,
+                                "supervisor": ["pid": server["pid"]!, "identity": (server["process_started_at"] as! String) + " python task_serve.py"],
+                                "identity": ["backend": "mlx-audio", "backend_version": "1.0", "engine_version": "0.7.0", "python_version": "3.12", "model_fingerprint": String(repeating: "a", count: 64)],
+                                "request": ["path": requestFile.path, "bytes": bytes.count, "sha256": SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()]]
+                            records.insert(record, at: 0)
+                            value = record; status = 202
+                        }
+                    } else {
+                        let identifier = path.split(separator: "/")[2]
+                        let index = try XCTUnwrap(records.firstIndex { $0["id"] as? String == String(identifier) })
+                        if request.hasPrefix("POST ") && path.hasSuffix("/cancel") {
+                            records[index]["state"] = "cancelled"; records[index]["cancel_requested"] = true
+                        }
+                        value = records[index]
+                    }
+                    try FileManager.default.createDirectory(at: taskRoot, withIntermediateDirectories: true)
+                    try JSONSerialization.data(withJSONObject: records).write(to: file)
+                    let body = try JSONSerialization.data(withJSONObject: value)
+                    var response = Data("HTTP/1.1 \(status) OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                    response.append(body)
+                    connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+                } catch { XCTFail("Typed endpoint fixture failed: \(error)"); connection.cancel() }
                 return
             }
             if request.hasPrefix("POST /v1/chat/completions "),

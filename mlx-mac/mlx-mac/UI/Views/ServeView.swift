@@ -29,6 +29,7 @@ struct ServeView: View {
     @ObservedObject private var profiles: ServingProfileCoordinator
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
     @ObservedObject private var endpointTest: EndpointTestCoordinator
+    @ObservedObject private var servedTasks: ServedTaskSessions
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
@@ -46,6 +47,7 @@ struct ServeView: View {
     @State private var runtime = "auto"
     @State private var inferenceOptions = LocalInferenceOptions()
     @State private var revealInferenceRevision = UUID()
+    @State private var taskPresentation: ServedTaskPresentation?
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
@@ -77,6 +79,7 @@ struct ServeView: View {
     init(appHost: AppHost, initialReview: EndpointChangeReview? = nil, fleetHold: FleetOverrideHold? = nil,
          onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        _servedTasks = ObservedObject(wrappedValue: appHost.servedTasks)
         _action = State(initialValue: initialReview)
         _fleetHold = StateObject(wrappedValue: fleetHold ?? FleetOverrideHold())
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
@@ -152,6 +155,9 @@ struct ServeView: View {
         }
         .sheet(item: gated($action)) { pending in confirmation(pending) }
         .sheet(item: gated($authenticationReview)) { review in authenticationConfirmation(review) }
+        .sheet(item: $taskPresentation) { presentation in
+            ServedTaskSheet(appHost: appHost, presentation: presentation)
+        }
         .sheet(item: $promptPresentation) { presentation in
             EndpointTestSheet(presentation: presentation, coordinator: endpointTest) {
                 guard let request = ClientWiringRequest.forServer(presentation.server) else { return }
@@ -290,6 +296,7 @@ struct ServeView: View {
                 }
             }
             if isSelected { selectedServerDetails(server) }
+            taskButton(server)
             Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
                 .buttonStyle(.bordered).controlSize(.small)
                 .disabled(!EndpointTestCoordinator.supports(server) || modelWorkflow.serversError != nil || protected || endpointTest.isSending || endpointTest.presentationID != nil)
@@ -815,6 +822,17 @@ struct ServeView: View {
         .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
     }
 
+    @ViewBuilder
+    private func taskButton(_ server: ServerInfo) -> some View {
+        if let origin = try? ServedTaskOrigin(server: server),
+           let model = models.first(where: { $0.readiness == .ready && Quarantine.resolve($0.item.path) == Quarantine.resolve(server.path!) }) {
+            Button("Run a task…") { taskPresentation = ServedTaskPresentation(origin: origin, model: model) }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(modelWorkflow.serversError != nil)
+                .accessibilityIdentifier("run-model-task-\(server.port ?? 0)")
+        }
+    }
+
     private func revealModel(_ path: String) {
         appHost.selectedModelPath = path
         appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
@@ -823,6 +841,7 @@ struct ServeView: View {
 
     @ViewBuilder
     private func promptButtons(_ server: ServerInfo, name: String) -> some View {
+        taskButton(server)
         Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
             .buttonStyle(.bordered).controlSize(.small)
             .disabled(!EndpointTestCoordinator.supports(server) || modelWorkflow.serversError != nil

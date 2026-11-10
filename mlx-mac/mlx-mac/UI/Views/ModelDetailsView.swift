@@ -321,7 +321,7 @@ struct ModelDetailsView: View {
 
                 if model.readiness == .ready, let taskType = model.item.task?.type,
                    [.classification, .embedding, .meshGeneration, .musicGeneration, .speechToText, .textToSpeech, .imageGeneration, .visionLanguage, .videoGeneration].contains(taskType) {
-                    InferenceTaskPanel(coordinator: appHost.inferenceTasks, model: model,
+                    TaskDestinationPanel(appHost: appHost, model: model,
                                        onEngineSetup: { onRouteSelection(.health) })
                 }
 

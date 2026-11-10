@@ -1092,6 +1092,65 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Library-history-with-another-model-selected")
     }
 
+    func testServedMusicTaskUsesEndpointAndRetainsHistory() throws {
+        let model = try installTaskModel(kind: "music_generation", name: "Resident music")
+        let peer = try HostedUIFixture(root: root)
+        let port = try peer.start()
+        defer { peer.stop() }
+        let receipts = root.appendingPathComponent("server-state").path
+        let server: [String: Any] = ["path": model.path, "runtime": "tasks", "port": Int(port), "pid": 12345,
+            "state": "running", "jit": true, "model_state": "loaded", "task_kinds": ["music_generation"],
+            "started_at": "2026-11-10T12:00:00Z", "process_started_at": "Tue Nov 10 07:00:00 2026",
+            "receipts_dir": receipts, "receipt": receipts + "/.mlx-agent-receipts/serve/\(port).json"]
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Run")
+        let open = app.buttons["run-model-task-\(port)"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+        let caption = app.textFields["task-music-caption"]
+        XCTAssertTrue(caption.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.popUpButtons["task-destination"].exists)
+        replace(caption, with: "Quiet instrumental piano")
+        try Data().write(to: root.appendingPathComponent("typed-busy"))
+        app.buttons["task-start"].click()
+        XCTAssertTrue(text(containing: "This server is busy").waitForExistence(timeout: 15))
+        XCTAssertEqual(caption.value as? String, "Quiet instrumental piano")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("typed-busy"))
+        app.buttons["task-start"].click()
+        waitForTaskState("running")
+        app.buttons["task-cancel"].click()
+        waitForTaskState("cancelled")
+        try Data().write(to: root.appendingPathComponent("finish-music-task"))
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        let export = app.buttons["task-export-audio"]
+        XCTAssertTrue(export.waitForExistence(timeout: 15))
+        capture("Served-task-completed")
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("typed-request.json"))) as? [String: Any])
+        XCTAssertEqual(Set(sent.keys), ["kind", "parameters"])
+        XCTAssertEqual(sent["kind"] as? String, "music_generation")
+        app.terminate()
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Resident music"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        let destination = app.popUpButtons["task-destination"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 10)); destination.click()
+        destination.menuItems.matching(NSPredicate(format: "title CONTAINS %@", ":\(port)")).firstMatch.click()
+        let history = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-history-row-")).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 15)); history.click()
+        XCTAssertTrue(app.buttons["task-export-audio"].waitForExistence(timeout: 15))
+        capture("Served-task-restored-history")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["task", "start"] })
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["task", "cancel"] })
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["serve", "start"] })
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        let requests = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
+        XCTAssertEqual(requests.components(separatedBy: "POST /v1/tasks ").count - 1, 3, "Restart and history inspection must not resubmit")
+    }
+
     func testLibraryMusicTaskLifecycle() throws {
         _ = try installTaskModel(kind: "music_generation", name: "Fixture music")
         launch(appearance: "Dark", route: "models", isolatedHome: true)

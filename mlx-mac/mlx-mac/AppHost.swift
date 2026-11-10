@@ -77,6 +77,7 @@ class AppHost {
     let updater: UpdateCoordinator
 
     let api: WorkbenchAPI
+    let servedTasks: ServedTaskSessions
     let inferenceTasks: InferenceTaskCoordinator
     let endpointTest: EndpointTestCoordinator
 
@@ -154,6 +155,7 @@ class AppHost {
         self.config = loadedConfig
         let api = workbenchAPI ?? WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
+        self.servedTasks = ServedTaskSessions(engine: api)
         self.inferenceTasks = inferenceTasks ?? InferenceTaskCoordinator(api: api, artifactRoot: api.taskArtifactsRoot)
         self.endpointTest = endpointTest ?? EndpointTestCoordinator(client: .live(api: api))
         self.lab = LabCoordinator(api: api)
@@ -1121,7 +1123,7 @@ class AppHost {
             occupancy.add([profile.modelPath], for: .verification)
         }
         occupancy.add(modelUpdates.protectedPaths, for: .modelUpdate)
-        occupancy.add(inferenceTasks.activeModelPaths, for: .inferenceTask)
+        occupancy.add(inferenceTasks.activeModelPaths.union(servedTasks.activeModelPaths), for: .inferenceTask)
         occupancy.add([endpointTest.activeServer?.modelIdentity].compactMap { $0 }, for: .promptTest)
         if let id = hostedComparison.activeRunID, let record = hostedComparison.records.first(where: { $0.id == id }) {
             occupancy.add(record.targets.compactMap(\.localPath), for: .hostedComparison)
@@ -1172,6 +1174,7 @@ class AppHost {
             await comparison.waitForHistory()
             if comparison.hasLoadedHistory { endpoint.startMonitoring() }
         }
+        Task { await servedTasks.refreshHistories() }
         resources.startMonitoring()
         servingInventory.startMonitoring()
         Task { await self.refreshDiscoveredRoots() }
