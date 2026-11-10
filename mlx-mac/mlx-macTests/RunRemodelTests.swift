@@ -1132,11 +1132,32 @@ enum ServingWorld {
         hosting.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        let image = try XCTUnwrap(bitmap.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        return try recognizedLines(in: try XCTUnwrap(bitmap.cgImage))
+    }
+
+    /// Reads text in overlapping horizontal bands, top to bottom, so tall renders keep a legible text size
+    /// at any backing scale. Each line is kept once, by the band that owns its centre.
+    static func recognizedLines(in image: CGImage, band: Int = 600, overlap: Int = 100) throws -> [String] {
+        var lines: [(y: Double, x: Double, text: String)] = []
+        var top = 0
+        while top < image.height {
+            let height = min(band, image.height - top)
+            let last = top + height >= image.height
+            let slice = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: top, width: image.width, height: height)))
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: slice).perform([request])
+            let lower = top == 0 ? -Double.infinity : Double(top + overlap / 2)
+            let upper = last ? Double.infinity : Double(top + band - overlap / 2)
+            for observation in request.results ?? [] {
+                guard let text = observation.topCandidates(1).first?.string else { continue }
+                let centre = Double(top) + (1 - observation.boundingBox.midY) * Double(height)
+                if centre >= lower && centre < upper { lines.append((centre, observation.boundingBox.minX, text)) }
+            }
+            if last { break }
+            top += band - overlap
+        }
+        return lines.sorted { ($0.y, $0.x) < ($1.y, $1.x) }.map(\.text)
     }
 
     static let managed = "/receipts/workbench"
@@ -1187,10 +1208,14 @@ enum ServingWorld {
                     errors: serversError ? ["engine:\(other)": "Receipts are unreadable."] : [:])
             },
             readMemory: { _ in nil })
+        // The setup assistant reads its own suite, so a fresh machine and a configured one host the same window.
+        let setupDefaults = try XCTUnwrap(UserDefaults(suiteName: "serving-world-setup-\(UUID().uuidString)"))
+        setupDefaults.set(true, forKey: SetupCoordinator.completionKey)
+        let setup = SetupCoordinator(defaults: setupDefaults)
         let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured,
             runtimeReport: .checking, modelWorkflowAPI: api,
             modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }),
-            verification: verification, servingInventory: inventory, endpoint: supervisor)
+            verification: verification, servingInventory: inventory, endpoint: supervisor, setup: setup)
         await supervisor.reconcile()
         let library = ([("Dune", selectedModel, 4_000_000_000), ("Alder", "/models/Alder", 4_000_000_000)]
             + extraModels.map { ($0.0, "/models/\($0.0)", $0.1) }).map { name, path, bytes in
@@ -1260,11 +1285,7 @@ extension RunRemodelTests {
 
     /// Text recognised in the rendered page, one entry per line of text.
     private func renderedLines(_ data: Data) throws -> [String] {
-        let image = try XCTUnwrap(NSBitmapImageRep(data: data)?.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        try ServingWorld.recognizedLines(in: try XCTUnwrap(NSBitmapImageRep(data: data)?.cgImage))
     }
 
     func testRunRendersTheServingFixtureForReview() async throws {
