@@ -3,7 +3,7 @@ import SwiftUI
 
 // MARK: - MenuBarView
 //
-// Cached local serving observations and the same controls as Served Models.
+// Cached local serving observations and the same rows and actions as Run.
 
 struct MenuBarView: View {
     let appHost: AppHost
@@ -37,39 +37,52 @@ struct MenuBarView: View {
                 .disabled(true)
         }
         if !inventory.snapshot.sourceErrors.isEmpty {
-            Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Manage to inspect") { openManager() }
+            Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Open Serving to inspect") { openManager() }
         }
         Divider()
-        ForEach(endpoint.fleet.slots) { slot in
-            Menu("\(MenuBarPresentation.modelName(slot.modelPath, models: appHost.librarySnapshot?.models ?? [])) · :\(String(slot.port))") {
-                Text(MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id]))
-                Text("MLX Workbench")
-                if let service = ServingInventoryPresentation.service(for: slot, in: inventory.snapshot), service.canUnload {
-                    Button("Unload model…") { prepare(.unload, service: service) }
-                        .disabled(inventory.isChanging || !inventory.mayChange(service))
-                }
-                Button(slot.enabled ? "Stop" : "Start…") {
-                    if slot.enabled {
-                        Task {
-                            guard comparison.hasLoadedHistory, !appHost.occupancy.blocksStop(modelIdentity: slot.modelPath) else { return }
-                            await endpoint.setSlotEnabled(id: slot.id, false)
+        let models = appHost.librarySnapshot?.models ?? []
+        let rows = ServingRows.build(slots: endpoint.fleet.slots, servers: workflow.servers, snapshot: inventory.snapshot)
+        ForEach(rows) { row in
+            Menu(MenuBarPresentation.rowTitle(row, models: models)) {
+                switch row {
+                case .endpoint(let slot, _, let service):
+                    Text(MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id]))
+                    Text("MLX Workbench")
+                    Button(slot.enabled ? "Stop" : "Start…") {
+                        if slot.enabled {
+                            Task {
+                                guard comparison.hasLoadedHistory, !appHost.occupancy.blocksStop(modelIdentity: slot.modelPath) else { return }
+                                await endpoint.setSlotEnabled(id: slot.id, false)
+                            }
+                        } else { openManager(rowID: row.id) }
+                    }.disabled(endpoint.isChanging || !comparison.hasLoadedHistory || appHost.occupancy.blocksStop(modelIdentity: slot.modelPath))
+                    if let service, service.canUnload {
+                        Button("Unload model…") { prepare(.unload, service: service) }
+                            .disabled(inventory.isChanging || !inventory.mayChange(service))
+                    }
+                    Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
+                    if let connection = ServedModelsSelection.connection(slot: slot, state: endpoint.slotStates[slot.id], servers: workflow.servers) {
+                        Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) }
+                    }
+                case .server(let server, let service):
+                    Text(server.residencySummary)
+                    if let service, service.canUnload || service.canStop {
+                        if service.canUnload {
+                            Button(ServingInventoryPresentation.unloadTitle(for: service)) { prepare(.unload, service: service) }
+                                .disabled(inventory.isChanging || !inventory.mayChange(service))
                         }
-                    } else { openManager() }
-                }.disabled(endpoint.isChanging || !comparison.hasLoadedHistory || appHost.occupancy.blocksStop(modelIdentity: slot.modelPath))
-                Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
-                if let connection = ServedModelsSelection.connection(slot: slot, state: endpoint.slotStates[slot.id], servers: workflow.servers) {
-                    Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) }
-                }
-            }
-        }
-        if endpoint.fleet.slots.isEmpty {
-            Button("No Workbench endpoints configured") {}.disabled(true)
-        }
-        let otherServices = ServingInventoryPresentation.additionalServices(inventory.snapshot, slots: endpoint.fleet.slots)
-        if !otherServices.isEmpty {
-            Divider()
-            ForEach(otherServices) { service in
-                Menu(service.name + " · " + service.providerName + " · " + service.statusText) {
+                        if service.canStop {
+                            Button("Stop server…") { prepare(.stop, service: service) }
+                                .disabled(inventory.isChanging || !inventory.mayChange(service))
+                        }
+                    } else {
+                        Button("Open Serving") { openManager(rowID: row.id) }
+                    }
+                    if let port = server.port {
+                        Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(port)/v1") }
+                    }
+                    Button("Copy model ID") { ServedModelsSelection.copy(server.modelIdentity) }
+                case .service(let service):
                     Text(service.statusText)
                     if let endpoint = service.baseURL { Text(endpoint) }
                     if let path = service.modelPath { Text(path) }
@@ -91,10 +104,18 @@ struct MenuBarView: View {
                 }
             }
         }
+        if rows.isEmpty {
+            Button("No Workbench endpoints configured") {}.disabled(true)
+        }
         Divider()
-        Button("Manage served models…") { openManager() }
-        Button("Refresh local services") { Task { await inventory.refresh(refreshHosts: true) } }
-            .disabled(inventory.isRefreshing)
+        Button("Open Serving") { openManager() }
+        Button("Refresh local services") {
+            Task {
+                await workflow.refreshServers()
+                await inventory.refresh(refreshHosts: true)
+            }
+        }
+        .disabled(inventory.isRefreshing)
         Button("Open MLX Workbench") { openApp() }
         Button("Settings…") { selectedRouteID = AppRoute.settings.rawValue; openApp() }
         Divider()
@@ -114,13 +135,17 @@ struct MenuBarView: View {
         return String(format: "%.1f tok/s measured", tps)
     }
 
-    private func openManager() {
-        openWindow(id: ServedModelsWindow.id)
-        NSApp.activate(ignoringOtherApps: true)
+    private func openManager(rowID: String? = nil) {
+        appHost.handoffs.send(ServingFocusRequest(rowID: rowID), as: .openServing)
+        selectedRouteID = AppRoute.run.rawValue
+        openApp()
     }
 
+    /// Opens the main window on Run; a window already presenting a sheet keeps it, so the review waits.
     private func prepare(_ action: ServingActionKind, service: ServingServiceObservation) {
-        openManager()
+        selectedRouteID = AppRoute.run.rawValue
+        openApp()
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
         Task { await inventory.prepare(action, service: service) }
     }
 
@@ -146,6 +171,17 @@ enum MenuBarPresentation {
     static func modelName(_ path: String, models: [LibraryModel] = []) -> String {
         if let model = models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) { return model.displayName }
         return path.isEmpty ? "No model" : NSString(string: path).lastPathComponent
+    }
+
+    /// The menu title for one served row: endpoints and servers read "name · :port", other services "name · provider · status".
+    static func rowTitle(_ row: ServingRow, models: [LibraryModel] = []) -> String {
+        switch row {
+        case .endpoint(let slot, _, _): "\(modelName(slot.modelPath, models: models)) · :\(slot.port)"
+        case .server(let server, _):
+            (HFRepoID.forPath(server.modelIdentity) ?? modelName(server.modelIdentity))
+                + (server.adapterSummary.map { " · " + $0 } ?? "") + (server.port.map { " · :\($0)" } ?? "")
+        case .service(let service): service.name + " · " + service.providerName + " · " + service.statusText
+        }
     }
 
     static func availability(_ slot: EndpointSlot, state: EndpointState?, residency: String?) -> String {

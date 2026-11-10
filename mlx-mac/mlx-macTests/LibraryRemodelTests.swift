@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import Vision
 import XCTest
 
 @testable import mlx_workbench
@@ -503,5 +504,23 @@ final class LibraryRemodelTests: XCTestCase {
             updatedAt: stamp,
             lastKnownAgentState: nil
         )
+    }
+}
+
+extension LibraryRemodelTests {
+    /// A selected model with a linked service shows one Serving link, not the old connection list.
+    @MainActor
+    func testSelectedModelWithAServiceShowsOneServingLink() async throws {
+        let app = try await ServingWorld.host()
+        let alder = try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == "/models/Alder" })
+        let dune = try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == ServingWorld.selectedModel })
+        let linked = try await ServingWorld.renderedLines(
+            LibraryServingLinks(model: alder, inventory: app.servingInventory) {}, size: CGSize(width: 400, height: 120)
+        ).map { $0.lowercased() }
+        XCTAssertTrue(linked.contains { $0.contains("serving") && $0.contains("1") }, "\(linked)")
+        XCTAssertFalse(linked.contains { $0.contains("manage served models") })
+        let unlinked = try await ServingWorld.renderedLines(
+            LibraryServingLinks(model: dune, inventory: app.servingInventory) {}, size: CGSize(width: 400, height: 120))
+        XCTAssertFalse(unlinked.contains { $0.lowercased().contains("serving") }, "A model no service uses shows no link")
     }
 }

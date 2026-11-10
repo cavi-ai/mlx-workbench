@@ -56,10 +56,6 @@ struct MlxWorkbenchApp: App {
         }
         .defaultSize(width: WorkbenchSize.Compare.meshInspectorWidth, height: WorkbenchSize.Compare.meshInspectorHeight)
         .commandsRemoved()
-        Window("Served models", id: ServedModelsWindow.id) {
-            ServedModelsView(appHost: appHost).workbenchTheme()
-        }
-        .defaultSize(width: 640, height: 620)
         MenuBarExtra {
             MenuBarView(appHost: appHost)
         } label: {

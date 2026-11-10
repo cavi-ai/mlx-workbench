@@ -4,8 +4,8 @@ import SwiftUI
 
 struct ContentView: View {
     private let appHost: AppHost
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var endpoint: EndpointSupervisor
+    @ObservedObject private var servingInventory: ServingInventoryCoordinator
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var setup: SetupCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
@@ -23,6 +23,7 @@ struct ContentView: View {
     init(appHost: AppHost) {
         self.appHost = appHost
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+        _servingInventory = ObservedObject(wrappedValue: appHost.servingInventory)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _setup = ObservedObject(wrappedValue: appHost.setup)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
@@ -49,6 +50,12 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations
+                .sheet(isPresented: inventoryReviewBinding, onDismiss: {
+                    servingInventory.cancelReview()
+                    Task { await servingInventory.refresh() }
+                }) {
+                    ServingInventoryReviewSheet(inventory: servingInventory, hosts: appHost.modelHosts)
+                }
                 .workbenchCanvas()
                 .workbenchScrollEdge()
                 .navigationTitle(selectedRoute.label)
@@ -175,6 +182,10 @@ struct ContentView: View {
         selectedRouteID = route.rawValue
     }
 
+    private var inventoryReviewBinding: Binding<Bool> {
+        Binding(get: { servingInventory.actionReview != nil }, set: { if !$0 { servingInventory.cancelReview() } })
+    }
+
     private var sidebarBadges: [AppRoute: String] {
         var badges: [AppRoute: String] = [:]
         if let reclaimBadge = appHost.reclaim.badgeText {
@@ -234,9 +245,16 @@ struct ContentView: View {
     private var contextToolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
             SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, hosts: appHost.modelHosts,
-                                 servingInventory: appHost.servingInventory, onManageServing: {
-                openWindow(id: ServedModelsWindow.id)
+                                 servingInventory: appHost.servingInventory,
+                                 servers: modelWorkflow.servers,
+                                 libraryModels: appHost.librarySnapshot?.models ?? [],
+                                 compactLabel: viewport.width < WorkbenchSize.ResourceHeader.fullLabelWindowMinimum,
+                                 historyLoaded: comparison.hasLoadedHistory,
+                                 onManageServing: { rowID in
+                appHost.handoffs.send(ServingFocusRequest(rowID: rowID), as: .openServing)
+                navigate(to: .run)
             },
+                                 onRefreshServers: { await appHost.modelWorkflow.refreshServers() },
                                  onOpenHost: { host in
                 appHost.handoffs.send(HostedModelsRequest(host: host), as: .openHostedModels)
                 navigate(to: .library)
@@ -266,31 +284,6 @@ struct ContentView: View {
                 .help("Conversion \(modelWorkflow.workflow.state.rawValue). Open Activity.")
                 .accessibilityLabel("Conversion status: \(modelWorkflow.workflow.state.rawValue)")
             }
-        }
-        if !endpoint.fleet.slots.isEmpty {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    navigate(to: .run)
-                } label: {
-                    Label(endpoint.state.summary, systemImage: EndpointIcon.name(for: endpoint.state))
-                        .font(WorkbenchTypography.label)
-                        .foregroundStyle(endpointStatus.color)
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-                .help("Endpoint: \(endpoint.state.summary). Open Run.")
-                .accessibilityLabel("Endpoint: \(endpoint.state.summary)")
-            }
-        }
-    }
-
-    private var endpointStatus: WorkbenchStatus {
-        switch endpoint.state {
-        case .disabled: return .disabled
-        case .starting, .waitingForServer: return .pending
-        case .running: return .running
-        case .modelMismatch: return .warning
-        case .degraded: return .failure
         }
     }
 }

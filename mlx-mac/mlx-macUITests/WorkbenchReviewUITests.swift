@@ -3797,58 +3797,46 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: [service]).write(to: root.appendingPathComponent("discovered-services.json"))
         launch(appearance: "Dark")
         app.buttons["system-memory-header"].click()
-        let manage = app.popovers.buttons["Manage…"].firstMatch
-        XCTAssertTrue(manage.waitForExistence(timeout: 10))
-        manage.click()
-        let manager = app.windows["Served models"]
-        XCTAssertTrue(manager.waitForExistence(timeout: 10))
-        XCTAssertTrue(manager.staticTexts["ExternalStrata"].waitForExistence(timeout: 15))
-        XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "MLX Agent", "MLX Agent")).firstMatch.exists)
+        let openServing = app.popovers.buttons["Open Serving"].firstMatch
+        XCTAssertTrue(openServing.waitForExistence(timeout: 10))
+        openServing.click()
+        XCTAssertTrue(app.staticTexts["ExternalStrata"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "MLX Agent", "MLX Agent")).firstMatch.exists)
         for detail in ["Model path: " + model, "Receipts: " + receipts] {
-            XCTAssertTrue(manager.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", detail, detail)).firstMatch.exists)
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", detail, detail)).firstMatch.exists)
         }
-        XCTAssertTrue(manager.staticTexts["Model process RAM: Unknown"].exists)
-        let unload = manager.buttons["Unload model…"].firstMatch
+        XCTAssertTrue(app.staticTexts["Model process RAM: Unknown"].exists)
+        let unload = app.buttons["Unload model…"].firstMatch
         XCTAssertTrue(unload.waitForExistence(timeout: 10))
-        let managerScroll = manager.scrollViews.firstMatch
+        let runScroll = app.scrollViews.firstMatch
         for _ in 0..<3 where !unload.isHittable {
-            managerScroll.scroll(byDeltaX: 0, deltaY: unload.frame.midY < managerScroll.frame.minY ? 250 : -250)
+            runScroll.scroll(byDeltaX: 0, deltaY: unload.frame.midY < runScroll.frame.minY ? 250 : -250)
         }
         XCTAssertTrue(unload.isHittable, "The unload control must be visible before opening its review")
         unload.click()
-        let review = manager.sheets.firstMatch
+        let review = app.sheets.firstMatch
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", model, model)).firstMatch.exists)
         review.buttons["Cancel"].click()
         XCTAssertTrue(review.waitForNonExistence(timeout: 10))
         capture("External-Strata-serving-inventory")
-        for window in app.windows.allElementsBoundByIndex where window.title != "Served models" {
-            window.buttons[XCUIIdentifierCloseWindow].click()
-        }
-        manager.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertNotEqual(app.state, .notRunning)
     }
 
-    func testServingManagerOffersBothResidencyModes() throws {
+    func testRunSaveAsEndpointOffersBothResidencyModes() throws {
         _ = try installTaskModel(kind: "classification", name: "Local classifier")
         launch(appearance: "Dark", route: "models", isolatedHome: true)
-        app.buttons["system-memory-header"].click()
-        let manage = app.popovers.buttons["Manage…"].firstMatch
-        XCTAssertTrue(manage.waitForExistence(timeout: 10))
-        manage.click()
-        let manager = app.windows["Served models"]
-        XCTAssertTrue(manager.waitForExistence(timeout: 10))
-        let query = manager.textFields["Search models to serve"]
-        XCTAssertTrue(query.waitForExistence(timeout: 10))
-        query.click()
-        query.typeText("Local classifier")
-        let add = manager.buttons["Add Local classifier to served models"].firstMatch
-        XCTAssertTrue(add.waitForExistence(timeout: 10))
-        add.click()
-        let sheet = manager.sheets.firstMatch
-        let modes = sheet.popUpButtons["serve-model-residency"]
+        select("Library")
+        let classifier = app.staticTexts["Local classifier"].firstMatch
+        XCTAssertTrue(classifier.waitForExistence(timeout: 15))
+        classifier.click()
+        select("Run")
+        let saveAsEndpoint = app.radioGroups["Serve mode"].radioButtons["Save as endpoint"]
+        XCTAssertTrue(saveAsEndpoint.waitForExistence(timeout: 10))
+        saveAsEndpoint.click()
+        let modes = app.popUpButtons["serve-model-residency"]
         XCTAssertTrue(modes.waitForExistence(timeout: 10))
-        let authentication = sheet.checkBoxes["serve-model-authentication"]
+        let authentication = app.checkBoxes["serve-model-authentication"]
         XCTAssertTrue(authentication.waitForExistence(timeout: 10))
         XCTAssertEqual(String(describing: authentication.value ?? ""), "0")
         authentication.click()
@@ -3858,6 +3846,12 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.menuItems["Keep loaded between requests"].click()
         XCTAssertTrue(modes.value as? String == "Keep loaded between requests")
         capture("Serving-residency-options")
+        let add = app.buttons["Add unverified endpoint…"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.staticTexts["Add this endpoint?"].exists)
         sheet.buttons["Cancel"].click()
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)

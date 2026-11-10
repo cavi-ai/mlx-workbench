@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 import SwiftUI
+import Vision
 
 @testable import mlx_workbench
 
@@ -1111,5 +1112,617 @@ extension RunRemodelTests {
 
         XCTAssertTrue(stopped)
         XCTAssertEqual(counter.count("serveStop"), 1)
+    }
+}
+
+// MARK: - Serving surface fixtures
+
+/// One enabled endpoint (Alder), one third-party local service (Birch) and one launched server with
+/// no endpoint (Cedar), all behind fakes; nothing starts a process or touches real state.
+@MainActor
+enum ServingWorld {
+    /// Hosts a view in a window of the given size and returns the text recognised in its rendering.
+    static func renderedLines<Content: View>(_ content: Content, size: CGSize) async throws -> [String] {
+        let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.light))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(400))
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let image = try XCTUnwrap(bitmap.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
+
+    static let managed = "/receipts/workbench"
+    static let other = "/receipts/other"
+    static let selectedModel = "/models/Dune"
+
+    static func model(_ name: String, path: String, bytes: Int64 = 4_000_000_000, signature: String? = nil) -> LibraryModel {
+        LibraryModel(item: ModelItem(path: path, name: name, bytes: bytes, modifiedAt: nil,
+            shard: nil, modelKey: name, architecture: "llama", quantization: "4-bit", parameters: "7B", structure: nil,
+            signature: signature ?? "weights-\(name)", companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil))
+    }
+
+    static func server(_ name: String, port: Int, pid: Int, managedByWorkbench: Bool) -> ServerInfo {
+        ServerInfo(path: "/models/\(name)", runtime: "mlx", port: port, pid: pid, state: "running", jit: false, modelState: "loaded",
+                   receiptsDirectory: managedByWorkbench ? managed : other, processStartedAt: "2026-01-01T00:00:00Z")
+    }
+
+    /// `accelerated` gives the endpoint a role and acceleration facts; `onEngineFetch` runs on each inventory read;
+    /// `extraModels` adds Library models by name and size in bytes.
+    static func host(populated: Bool = true, serversError: Bool = false, accelerated: Bool = false,
+                     verification: VerificationCoordinator? = nil, extraModels: [(String, Int64)] = [],
+                     onEngineFetch: @escaping @Sendable () -> Void = {}) async throws -> AppHost {
+        let root = WorkbenchStatePaths.hostedTestRoot
+        var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
+        if accelerated {
+            slot.role = UseCase.allCases.first
+            slot.acceleration = LocalAccelerationOptions(m5Prefill: true, promptLookup: true)
+        }
+        let endpointServer = server("Alder", port: 8766, pid: 101, managedByWorkbench: true)
+        let third = server("Birch", port: 11434, pid: 102, managedByWorkbench: false)
+        let bare = server("Cedar", port: 9001, pid: 103, managedByWorkbench: true)
+        let world = FakeServeWorld()
+        if populated { world.preload(repo: slot.modelPath, port: slot.port) }
+        let fleet = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("serving-fleet-\(UUID().uuidString).json"))
+        try fleet.replaceAll([EndpointFleetConfig(slots: populated ? [slot] : [], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore(fileURL: root.appendingPathComponent("serving-endpoint-\(UUID().uuidString).json")), fleetStore: fleet)
+        let workflowServers = populated ? [endpointServer, bare] : []
+        let api = ModelWorkflowAPI(
+            convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },
+            servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] },
+            serveStatus: { if serversError { throw WorkflowEvidenceError.invalid("Serving status is offline.") }; return workflowServers },
+            serveStop: { _ in [:] })
+        let inventory = ServingInventoryCoordinator(managedReceipts: managed,
+            fetchEngine: {
+                onEngineFetch()
+                return ServingEngineSnapshot(servers: populated ? [endpointServer, bare, third] : [],
+                    errors: serversError ? ["engine:\(other)": "Receipts are unreadable."] : [:])
+            },
+            readMemory: { _ in nil })
+        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured,
+            runtimeReport: .checking, modelWorkflowAPI: api,
+            modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }),
+            verification: verification, servingInventory: inventory, endpoint: supervisor)
+        await supervisor.reconcile()
+        let library = ([("Dune", selectedModel, 4_000_000_000), ("Alder", "/models/Alder", 4_000_000_000)]
+            + extraModels.map { ($0.0, "/models/\($0.0)", $0.1) }).map { name, path, bytes in
+            model(name, path: path, bytes: bytes)
+        }
+        app.librarySnapshot = LibrarySnapshot(models: library, groups: [], hardware: app.hardwareProfile, generatedAt: Date())
+        app.selectedModelPath = selectedModel
+        await app.modelWorkflow.refreshServers()
+        await inventory.refresh()
+        return app
+    }
+}
+
+/// Whether the hosted route is the one the window shows.
+@MainActor
+final class RouteFlag: ObservableObject {
+    @Published var active = true
+}
+
+private struct RunPage: View {
+    let app: AppHost
+    @ObservedObject var route: RouteFlag
+    let review: EndpointChangeReview?
+    let hold: FleetOverrideHold?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            WorkbenchPageHeading(route: .run)
+            ServeView(appHost: app, initialReview: review, fleetHold: hold)
+        }
+        .environment(\.isRouteActive, route.active)
+    }
+}
+
+extension RunRemodelTests {
+    /// The Run page as the window shows it: the page heading above the route.
+    private func hostRun(_ app: AppHost, detail: CGSize, dark: Bool, route: RouteFlag? = nil,
+                         review: EndpointChangeReview? = nil, hold: FleetOverrideHold? = nil) -> (NSWindow, NSHostingView<AnyView>) {
+        let content = RunPage(app: app, route: route ?? RouteFlag(), review: review, hold: hold)
+        .frame(width: detail.width, height: detail.height)
+        .background(WorkbenchColor.canvas)
+        .preferredColorScheme(dark ? .dark : .light)
+        let hosting = NSHostingView(rootView: AnyView(content))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: detail), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting
+        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderFront(nil)
+        hosting.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        return (window, hosting)
+    }
+
+    private func pngData(_ hosting: NSView) throws -> Data {
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+
+    private func saveCapture(_ data: Data, name: String) throws {
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDER_OUTPUT"] {
+            let url = URL(fileURLWithPath: folder)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try data.write(to: url.appendingPathComponent(name + ".png"))
+        }
+    }
+
+    /// Text recognised in the rendered page, one entry per line of text.
+    private func renderedLines(_ data: Data) throws -> [String] {
+        let image = try XCTUnwrap(NSBitmapImageRep(data: data)?.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
+
+    func testRunRendersTheServingFixtureForReview() async throws {
+        guard ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1" else {
+            throw XCTSkip("Set MLX_WORKBENCH_RENDERS=1 to write Run captures.")
+        }
+        let app = try await ServingWorld.host()
+        for (size, label) in [(CGSize(width: 1220, height: 848), "1220x848"), (CGSize(width: 520, height: 508), "520x508")] {
+            for dark in [false, true] {
+                let (window, hosting) = hostRun(app, detail: size, dark: dark)
+                try await Task.sleep(for: .milliseconds(400))
+                try saveCapture(try pngData(hosting), name: "run-\(label)-\(dark ? "dark" : "light")")
+                window.close()
+            }
+        }
+        // Served models scrolled to the top of the viewport, at the minimum and the 740 detail widths.
+        for (size, label) in [(CGSize(width: 520, height: 508), "520x508"), (CGSize(width: 740, height: 508), "740x508")] {
+            let (window, hosting) = hostRun(app, detail: size, dark: false)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(400))
+            try await scrollToServedModels(app, hosting: hosting, size: size)
+            try saveCapture(try pngData(hosting), name: "run-\(label)-rows-light")
+        }
+        // Save as endpoint, with the model unverified.
+        do {
+            let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(400))
+            try selectSaveAsEndpoint(hosting)
+            try await Task.sleep(for: .milliseconds(300))
+            try saveCapture(try pngData(hosting), name: "run-520x508-save-endpoint-light")
+        }
+        // Empty, and a failing status read.
+        do {
+            let empty = try await ServingWorld.host(populated: false)
+            let (window, hosting) = hostRun(empty, detail: CGSize(width: 1220, height: 848), dark: false)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(400))
+            try await scrollToServedModels(empty, hosting: hosting, size: CGSize(width: 1220, height: 848))
+            try saveCapture(try pngData(hosting), name: "run-1220x848-empty-light")
+        }
+        // A failing status read together with a refused action.
+        do {
+            let failing = try await ServingWorld.host(serversError: true)
+            let (window, hosting) = hostRun(failing, detail: CGSize(width: 1220, height: 848), dark: true)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(400))
+            failing.servingInventory.mayChange = { _ in false }
+            await failing.servingInventory.prepare(.stop, service: try cedarService(app))
+            try await Task.sleep(for: .milliseconds(500))
+            try saveCapture(try pngData(hosting), name: "run-1220x848-error-dark")
+        }
+        // Open Serving from another page, naming the launched server's row, on a page already scrolled.
+        do {
+            let (window, hosting) = hostRun(app, detail: CGSize(width: 740, height: 508), dark: false)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(400))
+            try scroll(hosting, to: 40)
+            app.handoffs.send(ServingFocusRequest(rowID: try serverRowID(app)), as: .openServing)
+            try await Task.sleep(for: .milliseconds(500))
+            try saveCapture(try pngData(hosting), name: "run-740x508-handoff-light")
+        }
+    }
+
+    private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+
+    private func scrollView(in hosting: NSView) throws -> NSScrollView {
+        try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSScrollView }.first)
+    }
+
+    private func selectSaveAsEndpoint(_ hosting: NSView) throws {
+        let control = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }.first)
+        control.selectedSegment = 1
+        _ = control.sendAction(control.action, to: control.target)
+        hosting.layoutSubtreeIfNeeded()
+    }
+
+    /// Scrolls the hosted page so the Served models header is at the top of the viewport.
+    private func scrollToServedModels(_ app: AppHost, hosting: NSView, size: CGSize) async throws {
+        let (tall, tallHosting) = hostRun(app, detail: CGSize(width: size.width, height: 2600), dark: false)
+        defer { tall.close() }
+        try await Task.sleep(for: .milliseconds(300))
+        let image = try XCTUnwrap(NSBitmapImageRep(data: try pngData(tallHosting))?.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let anchor = try XCTUnwrap((request.results ?? []).first { $0.topCandidates(1).first?.string.lowercased().hasPrefix("served models") == true })
+        let fromTop = (1 - anchor.boundingBox.maxY) * tallHosting.bounds.height
+        let tallScroll = try scrollView(in: tallHosting)
+        let scrollTop = tallHosting.bounds.height - tallScroll.convert(tallScroll.bounds, to: tallHosting).maxY
+        let target = max(0, fromTop - scrollTop - 56)
+        let scroll = try scrollView(in: hosting)
+        let flipped = scroll.documentView?.isFlipped ?? true
+        let documentHeight = scroll.documentView?.bounds.height ?? 0
+        let y = flipped ? target : max(0, documentHeight - target - scroll.contentView.bounds.height)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        hosting.layoutSubtreeIfNeeded()
+    }
+
+    func testNewEndpointPortsStayInRangeAndUnclaimed() {
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
+        let server = ServingWorld.server("Cedar", port: 9001, pid: 103, managedByWorkbench: true)
+        for port in [80, 1023, 65536, 8766, 9001] {
+            XCTAssertFalse(ServeView.isUsablePort(port, slots: [slot], servers: [server]), "\(port)")
+        }
+        for port in [1024, 8767, 65535] {
+            XCTAssertTrue(ServeView.isUsablePort(port, slots: [slot], servers: [server]), "\(port)")
+        }
+    }
+
+    /// Open Serving brings the served models into view and finishes the request.
+    func testOpenServingScrollsToServedModelsAndFinishesTheRequest() async throws {
+        let app = try await ServingWorld.host()
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(400))
+        let scroll = try scrollView(in: hosting)
+        XCTAssertEqual(scroll.contentView.bounds.origin.y, 0, accuracy: 1)
+        app.handoffs.send(ServingFocusRequest(), as: .openServing)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertNil(app.handoffs[.openServing], "The request is finished once applied")
+        XCTAssertGreaterThan(abs(scroll.contentView.bounds.origin.y), 100, "The served models are brought into view")
+    }
+
+    func testRunListsEachServedThingExactlyOnce() async throws {
+        let app = try await ServingWorld.host()
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 1220, height: 2600), dark: false)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(400))
+        let lines = try renderedLines(try pngData(hosting))
+        // A row's header is its state pill (when it has one) and its name alone on a line.
+        func rows(named name: String) -> Int {
+            lines.filter { $0.lowercased().range(of: "^\\W*(running\\s+)?\(name)\\W*$", options: .regularExpression) != nil }.count
+        }
+        XCTAssertEqual(rows(named: "alder"), 1, "The endpoint and its running server are one row")
+        XCTAssertEqual(rows(named: "birch"), 1, "The third-party local service has a row")
+        XCTAssertEqual(rows(named: "cedar"), 1, "A launched server without an endpoint has one row")
+    }
+
+    func testRunWithNothingServingSaysSo() async throws {
+        let app = try await ServingWorld.host(populated: false)
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 1220, height: 1800), dark: false)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(400))
+        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
+        XCTAssertTrue(lines.contains { $0.contains("nothing is serving") })
+    }
+
+    // MARK: Endpoint changes
+
+    private func persistedSlots(_ app: AppHost) throws -> [EndpointSlot] {
+        try JSONStore<EndpointFleetConfig>(fileURL: app.endpoint.fleetFileURL).load().first?.slots ?? []
+    }
+
+    private func libraryModel(_ app: AppHost, _ path: String) throws -> LibraryModel {
+        try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == path })
+    }
+
+    private func replaceLibrary(_ app: AppHost, _ transform: ([LibraryModel]) -> [LibraryModel]) throws {
+        let snapshot = try XCTUnwrap(app.librarySnapshot)
+        app.librarySnapshot = LibrarySnapshot(models: transform(snapshot.models), groups: [], hardware: snapshot.hardware, generatedAt: snapshot.generatedAt)
+    }
+
+    private func settle(_ milliseconds: Int = 500) async {
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+    }
+
+    private func endSheets(_ window: NSWindow) {
+        for sheet in window.sheets { window.endSheet(sheet) }
+    }
+
+    private func makeVerification(passing: [(path: String, signature: String)], gate: ProtectionGate) async throws -> VerificationCoordinator {
+        let store = VerificationStore(fileURL: WorkbenchStatePaths.hostedTestRoot.appendingPathComponent("run-flows-\(UUID().uuidString).json"))
+        for entry in passing {
+            try store.upsert(VerificationReport(id: UUID(), modelPath: entry.path, modelSignature: entry.signature, workflowRecordID: nil,
+                suiteVersion: CanarySuite.version, canaries: [], tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+                metricsEstimated: false, startedAt: Date(), finishedAt: Date(), outcome: .passed))
+        }
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in }, stop: { _ in }),
+            prober: GatedProber(gate: gate), readyPollIntervalNanoseconds: 1_000_000, pickPort: { 9999 })
+        let verification = VerificationCoordinator(probe: probe, store: store)
+        await verification.waitForHistory()
+        return verification
+    }
+
+    private func addReview(_ app: AppHost, model path: String, port: String) throws -> EndpointChangeReview {
+        let outcome = EndpointChanges(appHost: app).reviewAdd(model: try libraryModel(app, path), portText: port, suggestedPort: 8767,
+            role: nil, loadOnRequest: true, keepLoaded: false, requireKey: false)
+        guard case .review(let review) = outcome else {
+            XCTFail("Expected a review for port \(port)")
+            throw CancellationError()
+        }
+        return review
+    }
+
+    /// Save as endpoint: a model that left the Library between review and confirmation adds nothing.
+    func testAddedEndpointIsNotSavedWhenTheModelLeftTheLibraryBeforeConfirm() async throws {
+        let app = try await ServingWorld.host()
+        await app.comparison.waitForHistory()
+        let review = try addReview(app, model: ServingWorld.selectedModel, port: "9100")
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"], "Reviewing saves nothing")
+        try replaceLibrary(app) { $0.filter { $0.item.path != ServingWorld.selectedModel } }
+        let error = await EndpointChanges(appHost: app).confirm(review) { _, _ in }
+        XCTAssertEqual(error, "Model, port or memory conditions changed; review the endpoint again.")
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
+    }
+
+    /// Save as endpoint: the memory verdict read at review no longer holds at confirmation.
+    func testAddedEndpointIsNotSavedWhenTheMemoryVerdictChangedBeforeConfirm() async throws {
+        let app = try await ServingWorld.host(extraModels: [("Whale", 900_000_000_000)])
+        await app.comparison.waitForHistory()
+        let review = try addReview(app, model: "/models/Whale", port: "9100")
+        await app.resources.refreshMemory()
+        let error = await EndpointChanges(appHost: app).confirm(review) { _, _ in }
+        XCTAssertEqual(error, "Model, port or memory conditions changed; review the endpoint again.")
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
+    }
+
+    /// Save as endpoint: a port that is out of range or already used is refused with the inline message.
+    func testAddedEndpointPortOutsideTheRangeOrInUseIsRefusedAndNothingIsSaved() async throws {
+        let app = try await ServingWorld.host()
+        await app.comparison.waitForHistory()
+        let changes = EndpointChanges(appHost: app)
+        let dune = try libraryModel(app, ServingWorld.selectedModel)
+        for port in ["80", "70000", "8766", "9001", "11434"] {
+            let outcome = changes.reviewAdd(model: dune, portText: port, suggestedPort: 8767, role: nil, loadOnRequest: true, keepLoaded: false, requireKey: false)
+            guard case .portRejected(let message) = outcome else { XCTFail("Port \(port) was not refused"); continue }
+            XCTAssertEqual(message, "Choose a port from 1024 to 65535 that no endpoint or server uses.", port)
+        }
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
+        guard case .review = changes.reviewAdd(model: dune, portText: "9100", suggestedPort: 8767, role: nil, loadOnRequest: true, keepLoaded: false, requireKey: false) else {
+            return XCTFail("A free port gives a review")
+        }
+    }
+
+    /// Remove…: the review sheet is up and the saved fleet is untouched until the user confirms.
+    func testRemoveChangesTheFleetOnlyWhenConfirmed() async throws {
+        let app = try await ServingWorld.host()
+        await app.comparison.waitForHistory()
+        let changes = EndpointChanges(appHost: app)
+        let review = changes.review(slot: try XCTUnwrap(app.endpoint.fleet.slots.first), remove: true)
+        let (window, _) = hostRun(app, detail: CGSize(width: 1220, height: 848), dark: false, review: review)
+        defer { endSheets(window); window.close() }
+        await settle()
+        XCTAssertEqual(window.sheets.count, 1, "The removal waits on its confirmation sheet")
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
+        let error = await changes.confirm(review) { _, _ in }
+        XCTAssertNil(error)
+        XCTAssertEqual(try persistedSlots(app), [])
+    }
+
+    /// Start…: verification is read again at confirmation, and a changed answer leaves the endpoint stopped.
+    func testStartRechecksVerificationAtConfirmationBeforeEnabling() async throws {
+        let verification = try await makeVerification(passing: [("/models/Alder", "weights-Alder")], gate: ProtectionGate())
+        let app = try await ServingWorld.host(verification: verification)
+        await app.comparison.waitForHistory()
+        XCTAssertTrue(app.isModelVerified("/models/Alder"))
+        let changes = EndpointChanges(appHost: app)
+        await app.endpoint.setSlotEnabled(id: try XCTUnwrap(app.endpoint.fleet.slots.first).id, false)
+        let stopped = try XCTUnwrap(app.endpoint.fleet.slots.first)
+        XCTAssertFalse(stopped.enabled)
+
+        let stale = changes.review(slot: stopped, remove: false)
+        XCTAssertFalse(stale.unverified)
+        try replaceLibrary(app) { $0.map { $0.item.path == "/models/Alder" ? ServingWorld.model("Alder", path: "/models/Alder", signature: "weights-Alder-changed") : $0 } }
+        let refused = await changes.confirm(stale) { _, _ in }
+        XCTAssertEqual(refused, "Verification changed; review the endpoint again.")
+        XCTAssertEqual(try persistedSlots(app).first?.enabled, false)
+
+        let current = changes.review(slot: stopped, remove: false)
+        XCTAssertTrue(current.unverified)
+        let started = await changes.confirm(current) { _, _ in }
+        XCTAssertNil(started)
+        XCTAssertEqual(try persistedSlots(app).first?.enabled, true)
+    }
+
+    /// Stop is refused while work holds the model, for the Stop button and for a confirmed removal alike.
+    func testStopIsRefusedWhileWorkHoldsTheModel() async throws {
+        let gate = ProtectionGate()
+        let verification = try await makeVerification(passing: [], gate: gate)
+        let app = try await ServingWorld.host(verification: verification)
+        await app.comparison.waitForHistory()
+        let changes = EndpointChanges(appHost: app)
+        let alder = try XCTUnwrap(app.endpoint.fleet.slots.first)
+        app.verification.verifyNow(modelPath: alder.modelPath, signature: nil)
+        XCTAssertTrue(app.occupancy.blocksStop(modelIdentity: alder.modelPath))
+
+        let message = "Finish the operation using this model before stopping or removing its endpoint."
+        let stopped = await changes.stop(alder)
+        XCTAssertEqual(stopped, message)
+        let removed = await changes.confirm(changes.review(slot: alder, remove: true)) { _, _ in }
+        XCTAssertEqual(removed, message)
+        XCTAssertEqual(try persistedSlots(app).map(\.enabled), [true])
+
+        await gate.open()
+        let deadline = Date().addingTimeInterval(5)
+        while app.verification.activeModelPath != nil, Date() < deadline { await settle(20) }
+        let released = await changes.stop(alder)
+        XCTAssertNil(released)
+        XCTAssertEqual(try persistedSlots(app).map(\.enabled), [false])
+    }
+
+    // MARK: Pages that are not shown
+
+    /// A confirmation raised on a page the window is not showing waits until that page is shown.
+    func testHiddenRunPresentsNoSheetUntilItIsShown() async throws {
+        let app = try await ServingWorld.host()
+        await app.comparison.waitForHistory()
+        let review = EndpointChanges(appHost: app).review(slot: try XCTUnwrap(app.endpoint.fleet.slots.first), remove: true)
+        let route = RouteFlag()
+        route.active = false
+        let (window, _) = hostRun(app, detail: CGSize(width: 1220, height: 848), dark: false, route: route, review: review)
+        defer { endSheets(window); window.close() }
+        await settle()
+        XCTAssertTrue(window.sheets.isEmpty, "A hidden page presents nothing")
+        route.active = true
+        await settle()
+        XCTAssertEqual(window.sheets.count, 1, "The same confirmation appears once the page is shown")
+    }
+
+    /// The serving review belongs to the window, so one sheet appears whichever page is shown, and dismissing it cancels and refreshes.
+    func testInventoryReviewPresentsExactlyOneSheetFromAnyPageAndDismissRefreshes() async throws {
+        let fetches = CallCounter()
+        let app = try await ServingWorld.host(onEngineFetch: { fetches.hit("fetch") })
+        let suite = try XCTUnwrap(UserDefaults(suiteName: "run-remodel-\(UUID().uuidString)"))
+        suite.set(AppRoute.library.rawValue, forKey: AppRoute.selectionStorageKey)
+        let hosting = NSHostingView(rootView: AnyView(ContentView(appHost: app).defaultAppStorage(suite).frame(width: 1220, height: 848)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 848), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { endSheets(window); window.close() }
+        await settle(800)
+        XCTAssertTrue(window.sheets.isEmpty)
+
+        await app.servingInventory.prepare(.stop, service: try cedarService(app))
+        XCTAssertNotNil(app.servingInventory.actionReview)
+        await settle(800)
+        XCTAssertEqual(window.sheets.count, 1)
+
+        let before = fetches.count("fetch")
+        window.endSheet(try XCTUnwrap(window.sheets.first))
+        await settle(800)
+        XCTAssertNil(app.servingInventory.actionReview, "Dismissing cancels the review")
+        XCTAssertGreaterThan(fetches.count("fetch"), before, "Dismissing refreshes the serving inventory")
+    }
+
+    private func cedarService(_ app: AppHost) throws -> ServingServiceObservation {
+        try XCTUnwrap(app.servingInventory.snapshot.services.first { $0.server?.port == 9001 })
+    }
+
+    // MARK: Reveals
+
+    private func scroll(_ hosting: NSView, to offset: CGFloat) throws {
+        let scroll = try scrollView(in: hosting)
+        let flipped = scroll.documentView?.isFlipped ?? true
+        let documentHeight = scroll.documentView?.bounds.height ?? 0
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: flipped ? offset : max(0, documentHeight - offset - scroll.contentView.bounds.height)))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        hosting.layoutSubtreeIfNeeded()
+    }
+
+    private func offset(_ hosting: NSView) throws -> CGFloat {
+        let scroll = try scrollView(in: hosting)
+        let flipped = scroll.documentView?.isFlipped ?? true
+        let documentHeight = scroll.documentView?.bounds.height ?? 0
+        let y = scroll.contentView.bounds.origin.y
+        return flipped ? y : max(0, documentHeight - y - scroll.contentView.bounds.height)
+    }
+
+    private func rowIDs(_ app: AppHost) -> [String] {
+        ServingRows.build(slots: app.endpoint.fleet.slots, servers: app.modelWorkflow.servers, snapshot: app.servingInventory.snapshot).map(\.id)
+    }
+
+    private func serverRowID(_ app: AppHost) throws -> String {
+        try XCTUnwrap(rowIDs(app).first { $0.hasPrefix("server-") })
+    }
+
+    /// Open Serving names a row: a page that kept its scroll position moves to that row, further rows land further down.
+    func testOpenServingMovesAPageThatKeptItsScrollPositionToTheNamedRow() async throws {
+        let app = try await ServingWorld.host()
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
+        defer { window.close() }
+        await settle(400)
+        try scroll(hosting, to: 40)
+        XCTAssertEqual(try offset(hosting), 40, accuracy: 1)
+
+        app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
+        await settle()
+        let first = try offset(hosting)
+        XCTAssertNil(app.handoffs[.openServing])
+        XCTAssertGreaterThan(first, 100, "The endpoint row is brought to the top")
+
+        app.handoffs.send(ServingFocusRequest(rowID: try serverRowID(app)), as: .openServing)
+        await settle()
+        XCTAssertNil(app.handoffs[.openServing])
+        XCTAssertGreaterThan(try offset(hosting), first, "The launched server's row lies below the endpoint row")
+    }
+
+    /// A request that arrives while the page is hidden stays pending and is applied when the page is shown.
+    func testOpenServingWaitsForAHiddenRunPageAndThenScrolls() async throws {
+        let app = try await ServingWorld.host()
+        let route = RouteFlag()
+        route.active = false
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false, route: route)
+        defer { window.close() }
+        await settle(400)
+        app.handoffs.send(ServingFocusRequest(), as: .openServing)
+        await settle()
+        XCTAssertNotNil(app.handoffs[.openServing], "A hidden page does not consume the request")
+        XCTAssertEqual(try offset(hosting), 0, accuracy: 1)
+        route.active = true
+        await settle()
+        XCTAssertNil(app.handoffs[.openServing])
+        XCTAssertGreaterThan(try offset(hosting), 100)
+    }
+
+    /// A fleet override that appears while the page is open is scrolled into view with its question.
+    func testRaisedFleetOverrideIsScrolledIntoView() async throws {
+        let app = try await ServingWorld.host()
+        let hold = FleetOverrideHold()
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false, hold: hold)
+        defer { window.close() }
+        await settle(400)
+        XCTAssertEqual(try offset(hosting), 0, accuracy: 1)
+        hold.hold("needs 40.0 GB, 12.0 GB short") {}
+        await settle()
+        XCTAssertGreaterThan(try offset(hosting), 50)
+        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
+        XCTAssertTrue(lines.contains { $0.contains("enable anyway") }, "The override question is on screen")
+    }
+
+    /// A refused action shows its error in view when it first appears, not on every refresh.
+    func testNewActionErrorIsScrolledIntoViewWhenItAppears() async throws {
+        let app = try await ServingWorld.host()
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
+        defer { window.close() }
+        await settle(400)
+        XCTAssertEqual(try offset(hosting), 0, accuracy: 1)
+        app.servingInventory.mayChange = { _ in false }
+        await app.servingInventory.prepare(.stop, service: try cedarService(app))
+        await settle()
+        XCTAssertNotNil(app.servingInventory.actionError)
+        XCTAssertGreaterThan(try offset(hosting), 100)
+        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
+        XCTAssertTrue(lines.contains { $0.contains("in use") }, "The error text is on screen")
+    }
+
+    // MARK: Wide rows
+
+    /// At the narrowest one-line width, an endpoint whose facts cannot fit beside its name shows them whole on a second line.
+    func testWideEndpointRowWithLongFactsFallsBackToTwoLines() async throws {
+        let app = try await ServingWorld.host(accelerated: true)
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 2600), dark: false)
+        defer { window.close() }
+        await settle(500)
+        XCTAssertFalse(RunLayout(viewportWidth: 800).isTwoLine)
+        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
+        XCTAssertTrue(lines.contains { $0.contains("code-edit acceleration requested") }, "The acceleration fact reads in full")
+        XCTAssertFalse(lines.contains { $0.contains("…") && $0.contains("accel") }, "No fact is truncated")
     }
 }

@@ -926,8 +926,8 @@ struct LibraryView: View {
         if let selectedModel {
             VStack(spacing: 0) {
                 LibraryServingLinks(model: selectedModel, inventory: appHost.servingInventory) {
-                    openWindow(id: ServedModelsWindow.id)
-                    NSApp.activate(ignoringOtherApps: true)
+                    appHost.handoffs.send(ServingFocusRequest(), as: .openServing)
+                    onRouteSelection(.run)
                 }
                 ModelDetailsView(appHost: appHost, model: selectedModel, onRouteSelection: onRouteSelection)
             }
@@ -1080,7 +1080,7 @@ private extension View {
     }
 }
 
-private struct LibraryServingLinks: View {
+struct LibraryServingLinks: View {
     let model: LibraryModel
     @ObservedObject var inventory: ServingInventoryCoordinator
     let onManage: () -> Void
@@ -1088,27 +1088,14 @@ private struct LibraryServingLinks: View {
     var body: some View {
         let services = ServingInventoryPresentation.linkedServices(for: model, in: inventory.snapshot)
         if !services.isEmpty {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                DisclosureGroup("Serving connections · \(services.count)") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        ForEach(services) { service in
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                                Text(service.providerName + " · " + service.statusText)
-                                    .font(WorkbenchTypography.label)
-                                if let endpoint = service.baseURL {
-                                    Text(endpoint).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                                }
-                                if let path = service.modelPath {
-                                    Text(path).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                                }
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        Button("Manage served models…", action: onManage).buttonStyle(.borderless)
-                    }.padding(.top, WorkbenchSpacing.xs)
-                }
+            Button(action: onManage) {
+                Label("Serving · \(services.count)", systemImage: "play.circle")
             }
+            .buttonStyle(.borderless)
             .font(WorkbenchTypography.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(WorkbenchSpacing.md)
+            .help("Open Serving")
             .accessibilityIdentifier("library-serving-connections")
             Divider()
         }

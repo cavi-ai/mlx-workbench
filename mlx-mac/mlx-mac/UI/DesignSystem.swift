@@ -666,3 +666,14 @@ extension EnvironmentValues {
         set { self[RouteActiveKey.self] = newValue }
     }
 }
+
+extension WorkbenchSize {
+    /// Toolbar resource label and popover dimensions.
+    enum ResourceHeader {
+        /// Windows narrower than this show the short memory label.
+        static let fullLabelWindowMinimum: CGFloat = WorkbenchSize.sidebarIdeal + Run.compactThreshold
+            + Run.surfaceChrome + 2 * WorkbenchSpacing.pageInset
+        static let popoverWidth: CGFloat = 420
+        static let popoverMaxHeight: CGFloat = 620
+    }
+}

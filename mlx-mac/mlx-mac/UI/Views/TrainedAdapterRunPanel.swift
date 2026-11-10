@@ -42,7 +42,7 @@ struct TrainedAdapterRunPanel: View {
                     if let server = coordinator.runningServer {
                         Label("Trained adapter running on port \(server.port.map(String.init) ?? "unknown")", systemImage: "server.rack")
                             .font(WorkbenchTypography.emphasis)
-                        Text("Stop or unload it in Now serving below.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        Text("Stop or unload it in Served models below.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     }
                     ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.sm) {
                         if coordinator.canConfirm {

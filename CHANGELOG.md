@@ -12,6 +12,10 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
 
+### Changed
+
+- Run: one serving surface. Served models, API keys and other local services moved from the Served models window into Run; the toolbar and menu bar open Run.
+
 ## [0.8.0] - 2026-11-07
 ### Added
 
