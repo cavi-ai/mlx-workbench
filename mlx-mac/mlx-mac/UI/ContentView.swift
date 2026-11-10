@@ -129,7 +129,7 @@ struct ContentView: View {
                 ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
                     let isActive = route == selectedRoute
                     VStack(spacing: 0) {
-                        if route != .library && route != .compare { WorkbenchPageHeading(route: route) }
+                        if route != .library && route != .compare && route != .use { WorkbenchPageHeading(route: route) }
                         routeDestination(route)
                     }
                         .environment(\.isRouteActive, isActive)
@@ -152,6 +152,8 @@ struct ContentView: View {
         case .library, .lmStudio:
             LibraryWorkspace(appHost: appHost,
                 lmStudioRequested: selectedRouteID == AppRoute.lmStudio.rawValue, onRouteSelection: navigate)
+        case .use:
+            UseWorkspaceView(appHost: appHost, onRouteSelection: navigate)
         case .prepare:
             ConvertView(appHost: appHost, onRouteSelection: navigate)
         case .compare:

@@ -440,6 +440,7 @@ struct InferenceTaskPanel: View {
 struct RecentTaskList: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
     var filterModel: LibraryModel?
+    var filterModelPath: String? = nil
     var reuseModel: LibraryModel?
     var videoPreviewReloadRevision: UUID?
     var videoPreviewEnabled: Bool
@@ -448,17 +449,19 @@ struct RecentTaskList: View {
     @State private var resultJSONExpanded = false
 
     private var visibleTasks: [TaskRecord] {
-        Self.visibleTasks(in: coordinator.recent, for: filterModel)
+        if let filterModelPath { return coordinator.recent.filter { Quarantine.resolve($0.modelPath) == Quarantine.resolve(filterModelPath) } }
+        return Self.visibleTasks(in: coordinator.recent, for: filterModel)
     }
 
     private var visibleSelectedTask: TaskRecord? {
         Self.visibleSelectedTask(coordinator.selectedTask, in: visibleTasks)
     }
 
-    init(coordinator: InferenceTaskCoordinator, filterModel: LibraryModel? = nil, reuseModel: LibraryModel? = nil,
+    init(coordinator: InferenceTaskCoordinator, filterModel: LibraryModel? = nil, reuseModel: LibraryModel? = nil, filterModelPath: String? = nil,
          videoPreviewReloadRevision: UUID? = nil, videoPreviewEnabled: Bool = true) {
         self.coordinator = coordinator
         self.filterModel = filterModel
+        self.filterModelPath = filterModelPath
         self.reuseModel = reuseModel
         self.videoPreviewReloadRevision = videoPreviewReloadRevision
         self.videoPreviewEnabled = videoPreviewEnabled

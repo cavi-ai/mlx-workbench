@@ -140,7 +140,8 @@ class ReleaseDocsContractTests(unittest.TestCase):
             for section in navigation["sections"]
             for page in section["pages"]
         ]
-        self.assertEqual(len(paths), 22)
+        self.assertEqual(len(paths), 23)
+        self.assertIn("workflows/use.md", paths)
         self.assertEqual(len(paths), len(set(paths)))
         self.assertTrue(all((source / "pages" / path).is_file() for path in paths))
 

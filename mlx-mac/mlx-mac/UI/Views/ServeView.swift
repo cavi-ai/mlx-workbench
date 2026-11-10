@@ -30,6 +30,7 @@ struct ServeView: View {
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
     @ObservedObject private var endpointTest: EndpointTestCoordinator
     @ObservedObject private var servedTasks: ServedTaskSessions
+    @ObservedObject private var useWorkspace: UseWorkspaceCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
@@ -80,6 +81,7 @@ struct ServeView: View {
          onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _servedTasks = ObservedObject(wrappedValue: appHost.servedTasks)
+        _useWorkspace = ObservedObject(wrappedValue: appHost.useWorkspace)
         _action = State(initialValue: initialReview)
         _fleetHold = StateObject(wrappedValue: fleetHold ?? FleetOverrideHold())
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
@@ -123,6 +125,15 @@ struct ServeView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                        if let request = appHost.handoffs[.returnToUse] {
+                            HStack(spacing: WorkbenchSpacing.sm) {
+                                Text("Review the server, then return to your work session.").font(WorkbenchTypography.secondary)
+                                Spacer()
+                                Button("Return to Use") { Task { await returnToUse(request) } }
+                                    .disabled(!useWorkspace.canChange)
+                                    .accessibilityIdentifier("run-return-to-use")
+                            }
+                        }
                         if trainedAdapters.selectedJob != nil {
                             TrainedAdapterRunPanel(coordinator: trainedAdapters) { await modelWorkflow.refreshServers() }
                         } else if isCompact {
@@ -296,6 +307,7 @@ struct ServeView: View {
                 }
             }
             if isSelected { selectedServerDetails(server) }
+            useButton(server)
             taskButton(server)
             Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
                 .buttonStyle(.bordered).controlSize(.small)
@@ -823,6 +835,19 @@ struct ServeView: View {
     }
 
     @ViewBuilder
+    private func useButton(_ server: ServerInfo) -> some View {
+        if let model = models.first(where: { $0.readiness == .ready && UseChatClient.matches(server, modelPath: $0.item.path) }),
+           !UseMode.modes(for: model).isEmpty {
+            Button("Use…") {
+                appHost.handoffs.send(UseModelRequest(modelPath: model.item.path, server: server), as: .useModel)
+                onRouteSelection(.use)
+            }.buttonStyle(.bordered).controlSize(.small)
+                .disabled(modelWorkflow.serversError != nil)
+                .accessibilityIdentifier("run-use-model-\(server.port ?? 0)")
+        }
+    }
+
+    @ViewBuilder
     private func taskButton(_ server: ServerInfo) -> some View {
         if let origin = try? ServedTaskOrigin(server: server),
            let model = models.first(where: { $0.readiness == .ready && Quarantine.resolve($0.item.path) == Quarantine.resolve(server.path!) }) {
@@ -833,6 +858,19 @@ struct ServeView: View {
         }
     }
 
+    private func returnToUse(_ request: UseServerReviewRequest) async {
+        do {
+            if useWorkspace.selected?.id != request.sessionID { try await useWorkspace.select(id: request.sessionID) }
+            let candidates = modelWorkflow.servers.filter { server in
+                guard UseChatClient.matches(server, modelPath: request.modelPath) else { return false }
+                return useWorkspace.selected?.mode == .tasks ? (try? ServedTaskOrigin(server: server)) != nil : UseChatClient.supports(server)
+            }
+            if candidates.count == 1, let current = candidates.first { try await useWorkspace.setEndpoint(current) }
+            appHost.handoffs.finish(request, as: .returnToUse)
+            onRouteSelection(.use)
+        } catch { useWorkspace.showError(error); onRouteSelection(.use) }
+    }
+
     private func revealModel(_ path: String) {
         appHost.selectedModelPath = path
         appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
@@ -841,6 +879,7 @@ struct ServeView: View {
 
     @ViewBuilder
     private func promptButtons(_ server: ServerInfo, name: String) -> some View {
+        useButton(server)
         taskButton(server)
         Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
             .buttonStyle(.bordered).controlSize(.small)

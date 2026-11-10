@@ -4,11 +4,11 @@ import Foundation
 /// protection read the same claims and one identity rule (`HFRepoID.matches`).
 struct ModelOccupancy: Equatable, Sendable {
     enum Holder: Equatable, Sendable {
-        case verification, comparison, hostedComparison, promptTest
+        case verification, comparison, hostedComparison, promptTest, servedTask, workSession
         case runningServer, endpoint, preference, retention, inferenceTask, conversion, modelUpdate
 
         /// Runs that serve the model themselves and fail if its server stops.
-        var needsServer: Bool { self == .verification || self == .comparison || self == .hostedComparison || self == .promptTest }
+        var needsServer: Bool { self == .verification || self == .comparison || self == .hostedComparison || self == .promptTest || self == .servedTask || self == .workSession }
     }
 
     struct Claim: Equatable, Sendable {

@@ -14,6 +14,7 @@
       "title": "Workflows",
       "pages": [
         { "title": "Library and Overview", "path": "workflows/library.md" },
+        { "title": "Use models", "path": "workflows/use.md" },
         { "title": "Add from Hugging Face", "path": "workflows/hugging-face.md" },
         { "title": "Prepare and verify", "path": "workflows/prepare.md" },
         { "title": "Run and endpoints", "path": "workflows/run.md" },

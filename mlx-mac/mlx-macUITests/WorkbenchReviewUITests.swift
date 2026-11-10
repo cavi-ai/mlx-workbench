@@ -1092,6 +1092,218 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Library-history-with-another-model-selected")
     }
 
+    private func installUseFixture(runtime: String = "mlx_lm") throws -> (HostedUIFixture, UInt16, URL) {
+        let model = try installTaskModel(kind: runtime == "mlx-vlm" ? "vision_language" : "text_llm", name: "Local work model")
+        let peer = try HostedUIFixture(root: root)
+        let port = try peer.start()
+        let receipts = root.appendingPathComponent("chat-server").path
+        let server: [String: Any] = ["repo": "fixture/LocalWork", "path": model.path, "runtime": runtime, "port": Int(port), "pid": 12345,
+            "state": "running", "jit": true, "model_state": "loaded", "started_at": "2026-11-10T12:00:00Z",
+            "process_started_at": "Tue Nov 10 07:00:00 2026", "receipts_dir": receipts,
+            "receipt": receipts + "/.mlx-agent-receipts/serve/\(port).json"]
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("chat-endpoint.json"))
+        let reply = #"data: {"choices":[{"delta":{"content":"Saved local answer"},"finish_reason":"stop"}]}"# + "\n\ndata: [DONE]\n\n"
+        try Data(reply.utf8).write(to: root.appendingPathComponent("prompt-response"))
+        return (peer, port, model)
+    }
+    private func useRequests() throws -> [[String: Any]] {
+        let file = root.appendingPathComponent("chat-requests.jsonl")
+        guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+        return try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+        }
+    }
+    private func waitForUseCompletion() {
+        let stop = app.buttons["use-stop"]
+        XCTAssertTrue(stop.waitForNonExistence(timeout: 20))
+        XCTAssertTrue(text(containing: "Answer complete").waitForExistence(timeout: 15), app.debugDescription)
+    }
+    private func openUseFromLibrary() {
+        let row = app.outlines.staticTexts["Local work model"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        let use = app.buttons["library-use-model"]
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); use.click()
+        XCTAssertTrue(app.textViews["use-message"].waitForExistence(timeout: 15))
+        let connection = app.popUpButtons["use-endpoint"]
+        if (connection.value as? String)?.contains("Choose") == true {
+            connection.click()
+            connection.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Running")).firstMatch.click()
+        }
+    }
+
+    func testUseWorkspaceConversationSurvivesRestart() throws {
+        let (peer, _, model) = try installUseFixture()
+        defer { peer.stop() }
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        openUseFromLibrary()
+        app.buttons["use-settings"].click()
+        let settings = app.sheets.firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        replace(settings.textFields["use-token-limit"], with: "512")
+        replace(settings.textFields["use-temperature"], with: "0.2")
+        replace(settings.textViews["use-system-prompt"], with: "Be concise.")
+        settings.buttons["use-apply-settings"].click()
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 10))
+        let input = app.textViews["use-message"]
+        replace(input, with: "First question")
+        app.typeKey(.return, modifierFlags: .command); waitForUseCompletion()
+        replace(input, with: "Follow up")
+        app.buttons["use-send"].click(); waitForUseCompletion()
+        let second = try XCTUnwrap(useRequests().last)
+        XCTAssertEqual(second["model"] as? String, model.path)
+        XCTAssertEqual(second["max_tokens"] as? Int, 512)
+        XCTAssertEqual(second["temperature"] as? Double, 0.2)
+        let messages = try XCTUnwrap(second["messages"] as? [[String: Any]])
+        XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["system", "user", "assistant", "user"])
+        XCTAssertEqual(messages[2]["content"] as? String, "Saved local answer")
+        capture("Use-Dark-conversation-standard")
+        app.terminate()
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Use")
+        XCTAssertTrue(app.textViews["use-message"].waitForExistence(timeout: 15))
+        XCTAssertEqual(try useRequests().count, 2, "Restoring history must send nothing")
+        replace(app.textViews["use-message"], with: "After restart")
+        app.buttons["use-send"].click(); waitForUseCompletion()
+        let restored = try XCTUnwrap(useRequests().last?["messages"] as? [[String: Any]])
+        XCTAssertEqual(restored.compactMap { $0["role"] as? String }, ["system", "user", "assistant", "user", "assistant", "user"])
+        replace(app.textViews["use-message"], with: "Keep this draft during server review")
+        app.buttons["use-manage-server"].click()
+        let returnToUse = app.buttons["run-return-to-use"]
+        XCTAssertTrue(returnToUse.waitForExistence(timeout: 10)); returnToUse.click()
+        XCTAssertTrue(app.textViews["use-message"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.textViews["use-message"].value as? String, "Keep this draft during server review")
+        XCTAssertEqual(try useRequests().count, 3, "Reviewing a server must send nothing")
+        let export = app.descendants(matching: .any).matching(identifier: "use-export").firstMatch
+        XCTAssertTrue(export.waitForExistence(timeout: 5), app.debugDescription); export.click()
+        app.menuItems.matching(NSPredicate(format: "title == %@", "Export Markdown…")).firstMatch.click()
+        let save = app.windows["save-panel"].buttons["OKButton"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10), app.debugDescription)
+        app.typeKey("g", modifierFlags: [.command, .shift]); app.typeText(root.path); app.typeKey(.return, modifierFlags: [])
+        save.click()
+        let exported = root.appendingPathComponent("conversation.md")
+        let exists = expectation(for: NSPredicate { _, _ in FileManager.default.fileExists(atPath: exported.path) }, evaluatedWith: nil)
+        wait(for: [exists], timeout: 10)
+        XCTAssertTrue(try String(contentsOf: exported, encoding: .utf8).contains("After restart"))
+        resizeWindow(width: 740, height: 560)
+        let send = app.buttons["use-send"]
+        XCTAssertTrue(send.isHittable)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(send.frame))
+        XCTAssertTrue(app.buttons["use-history"].isHittable)
+        capture("Use-Dark-conversation-minimum")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("[\"serve\", \"start\"") || calls.contains("[\"task\", \"start\""))
+    }
+
+    func testUseWorkspaceCancellationAndServerDrift() throws {
+        let (peer, port, _) = try installUseFixture()
+        defer { peer.stop() }
+        launch(appearance: "Light", isolatedHome: true)
+        select("Run")
+        let open = app.buttons["run-use-model-\(port)"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+        let input = app.textViews["use-message"]
+        XCTAssertTrue(input.waitForExistence(timeout: 15)); replace(input, with: "Keep this input")
+        try Data().write(to: root.appendingPathComponent("unauthorized"))
+        app.buttons["use-send"].click()
+        XCTAssertTrue(text(containing: "HTTP 401").waitForExistence(timeout: 15))
+        XCTAssertEqual(input.value as? String, "Keep this input")
+        XCTAssertTrue(try useRequests().isEmpty)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("unauthorized"))
+        try Data().write(to: root.appendingPathComponent("hold-prompt"))
+        let prefix = #"data: {"choices":[{"delta":{"content":"Partial local answer"}}]}"# + "\n\n"
+        try Data(prefix.utf8).write(to: root.appendingPathComponent("chat-stream-prefix"))
+        app.buttons["use-send"].click()
+        XCTAssertTrue(text(containing: "Partial local answer").waitForExistence(timeout: 15))
+        resizeWindow(width: 740, height: 560)
+        let stop = app.buttons["use-stop"]
+        XCTAssertTrue(stop.isHittable); XCTAssertTrue(app.windows.firstMatch.frame.contains(stop.frame))
+        capture("Use-Light-streaming-minimum")
+        stop.click()
+        XCTAssertTrue(text(containing: "server may still be finishing").waitForExistence(timeout: 15))
+        XCTAssertTrue(stop.waitForNonExistence(timeout: 10))
+        var server = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("chat-endpoint.json"))) as? [String: Any])
+        server["pid"] = 54321
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        try FileManager.default.removeItem(at: root.appendingPathComponent("hold-prompt"))
+        replace(input, with: "Do not send to a replacement")
+        app.buttons["use-send"].click()
+        XCTAssertTrue(text(containing: "server changed").waitForExistence(timeout: 15))
+        XCTAssertEqual(try useRequests().count, 1)
+        XCTAssertEqual(input.value as? String, "Do not send to a replacement")
+        resizeWindow(width: 1050, height: 720)
+        capture("Use-Light-server-changed-standard")
+        let connection = app.popUpButtons["use-endpoint"]
+        connection.click()
+        let current = connection.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Running")).firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 10)); current.click()
+        app.buttons["use-send"].click(); waitForUseCompletion()
+        XCTAssertEqual(try useRequests().count, 2)
+        capture("Use-Light-reconnected-standard")
+    }
+
+    func testUseWorkspaceVisionInputPersistsForFollowUp() throws {
+        let (peer, _, _) = try installUseFixture(runtime: "mlx-vlm")
+        defer { peer.stop() }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let source = root.appendingPathComponent("chosen.png"); try png.write(to: source)
+        launch(appearance: "Light", route: "models", isolatedHome: true)
+        openUseFromLibrary()
+        app.buttons["use-add-image"].click()
+        let choose = app.buttons["OKButton"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 10), app.debugDescription)
+        app.typeKey("g", modifierFlags: [.command, .shift]); app.typeText(source.path); app.typeKey(.return, modifierFlags: [])
+        choose.click()
+        XCTAssertTrue(text(containing: "chosen.png").waitForExistence(timeout: 10))
+        replace(app.textViews["use-message"], with: "Describe this image")
+        app.buttons["use-send"].click(); waitForUseCompletion()
+        try FileManager.default.removeItem(at: source)
+        replace(app.textViews["use-message"], with: "Tell me more")
+        app.buttons["use-send"].click(); waitForUseCompletion()
+        let request = try XCTUnwrap(useRequests().last)
+        let messages = try XCTUnwrap(request["messages"] as? [[String: Any]])
+        let content = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+        let image = try XCTUnwrap(content.last?["image_url"] as? [String: Any])
+        let encoded = try XCTUnwrap(image["url"] as? String)
+        XCTAssertEqual(Data(base64Encoded: String(encoded.split(separator: ",", maxSplits: 1).last!)), png)
+        XCTAssertNil(request["previous_response_id"])
+        capture("Use-Light-vision-follow-up")
+    }
+
+    func testUseWorkspaceServedTaskHistorySurvivesRestart() throws {
+        let model = try installTaskModel(kind: "music_generation", name: "Resident music workspace")
+        let peer = try HostedUIFixture(root: root); let port = try peer.start()
+        defer { peer.stop() }
+        let receipts = root.appendingPathComponent("server-state").path
+        let server: [String: Any] = ["path": model.path, "runtime": "tasks", "port": Int(port), "pid": 12345,
+            "state": "running", "jit": true, "model_state": "loaded", "task_kinds": ["music_generation"],
+            "started_at": "2026-11-10T12:00:00Z", "process_started_at": "Tue Nov 10 07:00:00 2026",
+            "receipts_dir": receipts, "receipt": receipts + "/.mlx-agent-receipts/serve/\(port).json"]
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
+        try Data().write(to: root.appendingPathComponent("finish-music-task"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Run")
+        let open = app.buttons["run-use-model-\(port)"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+        let caption = app.textFields["task-music-caption"]
+        XCTAssertTrue(caption.waitForExistence(timeout: 15)); replace(caption, with: "Instrumental music")
+        app.buttons["task-start"].click(); waitForTaskState("succeeded")
+        XCTAssertTrue(app.buttons["task-export-audio"].waitForExistence(timeout: 15))
+        capture("Use-Dark-served-task")
+        app.terminate()
+        launch(appearance: "Dark", isolatedHome: true); select("Use")
+        let history = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-history-row-")).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 15)); history.click()
+        XCTAssertTrue(app.buttons["task-export-audio"].waitForExistence(timeout: 15))
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        let requests = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
+        XCTAssertEqual(requests.components(separatedBy: "POST /v1/tasks ").count - 1, 1)
+        capture("Use-Dark-restored-task")
+    }
+
     func testServedMusicTaskUsesEndpointAndRetainsHistory() throws {
         let model = try installTaskModel(kind: "music_generation", name: "Resident music")
         let peer = try HostedUIFixture(root: root)
