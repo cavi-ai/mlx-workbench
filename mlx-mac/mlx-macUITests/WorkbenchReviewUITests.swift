@@ -1233,6 +1233,13 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(input.value as? String, "Do not send to a replacement")
         resizeWindow(width: 1050, height: 720)
         capture("Use-Light-server-changed-standard")
+        let refresh = app.buttons["use-refresh-servers"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+        let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)
+        wait(for: [enabled], timeout: 10)
+        refresh.click()
+        let refreshed = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)
+        wait(for: [refreshed], timeout: 10)
         let connection = app.popUpButtons["use-endpoint"]
         connection.click()
         let current = connection.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Running")).firstMatch

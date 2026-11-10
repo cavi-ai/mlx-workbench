@@ -20,6 +20,8 @@ A missing key or changed server refuses the request and retains the draft.
 A replacement process on the same port is a different connection; select it
 explicitly before continuing. Every recorded reply keeps its original server
 identity and request settings.
+Use the refresh control beside Server to read the current connections. The list
+also refreshes when opening Use and after a request, without changing the selected connection.
 
 **Request settings** controls the response token limit, temperature and system
 instructions. Apply them to the conversation, or save them as defaults for new

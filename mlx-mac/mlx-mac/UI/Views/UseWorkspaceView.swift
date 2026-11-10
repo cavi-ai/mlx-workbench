@@ -12,6 +12,7 @@ struct UseWorkspaceView: View {
     @State private var showHistory = false
     @State private var showSettings = false
     @State private var filePanelPresented = false
+    @State private var refreshingServers = false
     private var controlsPresented: Bool { showHistory || showSettings || filePanelPresented }
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void) {
@@ -59,6 +60,7 @@ struct UseWorkspaceView: View {
             guard isRouteActive else { return }
             await coordinator.load()
             await servedTasks.load()
+            if !coordinator.isSending { await refreshServers() }
             await consumeHandoff()
         }
         .onChange(of: controlsPresented, initial: true) { _, value in coordinator.isPresentingPanel = value }
@@ -162,9 +164,23 @@ struct UseWorkspaceView: View {
     }
     private func connection(_ session: UseSession) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: WorkbenchSpacing.sm) { endpointPicker(session); manageServer(session) }
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { endpointPicker(session); manageServer(session) }
+            HStack(spacing: WorkbenchSpacing.sm) { endpointPicker(session); refreshServersButton; manageServer(session) }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(spacing: WorkbenchSpacing.sm) { endpointPicker(session); refreshServersButton }
+                manageServer(session)
+            }
         }
+    }
+    private var refreshServersButton: some View {
+        Button { Task { await refreshServers() } } label: { Image(systemName: "arrow.clockwise") }
+            .accessibilityLabel("Refresh servers").accessibilityIdentifier("use-refresh-servers")
+            .disabled(coordinator.isSending || refreshingServers)
+    }
+    private func refreshServers() async {
+        guard !refreshingServers else { return }
+        refreshingServers = true
+        defer { refreshingServers = false }
+        await workflow.refreshServers()
     }
     private func endpointPicker(_ session: UseSession) -> some View {
         Picker("Server", selection: Binding(get: { session.endpoint.map { UseConnectionChoice($0).id } ?? "" }, set: { id in
