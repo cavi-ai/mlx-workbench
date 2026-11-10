@@ -22,6 +22,10 @@ struct InferenceTaskPanel: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 if model.item.task?.type == .classification {
                     classifier
+                } else if model.item.task?.type == .embedding {
+                    embedding
+                } else if model.item.task?.type == .meshGeneration {
+                    meshGeneration
                 } else if model.item.task?.type == .musicGeneration {
                     music
                 } else if model.item.task?.type == .speechToText {
@@ -131,6 +135,73 @@ struct InferenceTaskPanel: View {
                 Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             taskActions(kind: .musicGeneration)
+        }
+    }
+
+    private var embedding: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Embed text")
+            Text("Add one text per entry. Results keep this order.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            ForEach($coordinator.embeddingDraft.inputs) { $input in
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    TextField("Text to embed", text: $input.text, axis: .vertical)
+                        .lineLimit(2...5)
+                        .accessibilityLabel("Text to embed")
+                        .accessibilityIdentifier("task-embedding-text-\(coordinator.embeddingDraft.inputs.firstIndex(where: { $0.id == input.id }) ?? 0)")
+                    if coordinator.embeddingDraft.inputs.count > 1 {
+                        Button("Remove text") { coordinator.embeddingDraft.inputs.removeAll { $0.id == input.id } }
+                            .buttonStyle(.borderless)
+                    }
+                }
+            }
+            Button("Add text") { coordinator.embeddingDraft.inputs.append(EmbeddingTextDraft()) }
+                .disabled(coordinator.embeddingDraft.inputs.count >= 128)
+                .accessibilityIdentifier("task-embedding-add-text")
+            DisclosureGroup("Advanced options") {
+                LabeledContent("Maximum tokens") {
+                    TextField("512 · engine default", text: $coordinator.embeddingDraft.maxLength)
+                        .accessibilityIdentifier("task-embedding-max-length")
+                }
+            }
+            if coordinator.embeddingDraft.inputs.contains(where: { !$0.text.isEmpty }), let error = coordinator.embeddingDraft.validationError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            taskActions(kind: .embedding)
+        }
+    }
+
+    private var meshGeneration: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Generate 3D mesh")
+            HStack {
+                TextField("Choose an image file", text: $coordinator.meshGenerationDraft.imagePath)
+                    .textSelection(.enabled).accessibilityIdentifier("task-mesh-image-path")
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.png, .jpeg] + [UTType(filenameExtension: "webp")].compactMap { $0 }
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.begin { response in
+                        if response == .OK, let url = panel.url { coordinator.meshGenerationDraft.imagePath = url.path }
+                    }
+                }.accessibilityIdentifier("task-mesh-choose-image")
+            }
+            Text("The engine retains the input image. Blank settings use the model’s defaults.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            DisclosureGroup("Advanced options") {
+                Grid(alignment: .leading, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.xs) {
+                    GridRow { Text("Steps"); TextField("Model default", text: $coordinator.meshGenerationDraft.steps).accessibilityIdentifier("task-mesh-steps") }
+                    GridRow { Text("Seed"); TextField("42 · engine default", text: $coordinator.meshGenerationDraft.seed).accessibilityIdentifier("task-mesh-seed") }
+                    GridRow { Text("Resolution"); TextField("Model default", text: $coordinator.meshGenerationDraft.resolution).accessibilityIdentifier("task-mesh-resolution") }
+                    GridRow { Text("Guidance"); TextField("Model default", text: $coordinator.meshGenerationDraft.guidance).accessibilityIdentifier("task-mesh-guidance") }
+                    GridRow { Text("Maximum faces"); TextField("500000 · engine default", text: $coordinator.meshGenerationDraft.maxFaces).accessibilityIdentifier("task-mesh-max-faces") }
+                }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
+            }
+            if !coordinator.meshGenerationDraft.imagePath.isEmpty, let error = coordinator.meshGenerationDraft.validationError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            taskActions(kind: .meshGeneration)
         }
     }
 
@@ -479,6 +550,58 @@ struct RecentTaskList: View {
                    let raw = coordinator.verifiedResult?.json {
                     ClassificationTaskAnswerSummary(projection: TaskResultProjection(raw: raw))
                 }
+                if task.kind == .embedding, let result = coordinator.embeddingResult {
+                    SectionTitle(text: "Text embeddings")
+                    Text("\(result.count) vectors · \(result.dimensions) dimensions")
+                        .font(WorkbenchTypography.tabular).accessibilityIdentifier("task-embedding-result")
+                    Text("Vector order matches the submitted texts. Pooling and normalization come from the model.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    Button("Export vectors…") {
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "task-\(task.id)-embeddings.json"
+                        panel.allowedContentTypes = [.json]
+                        panel.begin { response in
+                            guard response == .OK, let url = panel.url else { return }
+                            Task {
+                                do { try await coordinator.export(id: task.id, to: url); exportError = nil }
+                                catch { exportError = AppHost.render(error) }
+                            }
+                        }
+                    }.accessibilityIdentifier("task-export-embeddings")
+                }
+                if task.kind == .meshGeneration, let output = coordinator.verifiedOutput {
+                    SectionTitle(text: "Generated 3D mesh")
+                    if let input = coordinator.verifiedInput {
+                        DisclosureGroup("Input image") {
+                            TaskImagePreview(artifact: input, label: "Verified mesh input image")
+                                .accessibilityIdentifier("task-mesh-input")
+                        }
+                    }
+                    if let mesh = output.mesh {
+                        ComparisonMeshPreview(url: output.url, verifiedMesh: mesh, scrollsPage: true)
+                            .frame(minHeight: 220, idealHeight: 320, maxHeight: 420)
+                            .accessibilityIdentifier("task-mesh-output")
+                        Text("Drag to rotate and pinch to zoom.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    } else {
+                        Text("This mesh exceeds the 100 MB preview limit. Export the verified GLB to inspect it in a 3D app.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    Text("Verified GLB · \(output.reference.bytes) bytes · \(output.reference.sha256)")
+                        .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    Button("Export GLB…") {
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "task-\(task.id)-output.glb"
+                        panel.allowedContentTypes = [UTType(filenameExtension: "glb") ?? .data]
+                        panel.begin { response in
+                            guard response == .OK, let url = panel.url else { return }
+                            Task {
+                                do { try await coordinator.exportMesh(id: task.id, to: url); exportError = nil }
+                                catch { exportError = AppHost.render(error) }
+                            }
+                        }
+                    }.accessibilityIdentifier("task-export-mesh")
+                }
                 if task.kind == .transcribe {
                     if let input = coordinator.verifiedInput {
                         Text("Verified input audio · \(input.reference.bytes) bytes · \(input.reference.sha256)")
@@ -779,6 +902,8 @@ private extension TaskKind {
     var title: String {
         switch self {
         case .classification: "Classification"
+        case .embedding: "Embedding"
+        case .meshGeneration: "3D generation"
         case .musicGeneration: "Music generation"
         case .transcribe: "Transcription"
         case .speak: "Speech"

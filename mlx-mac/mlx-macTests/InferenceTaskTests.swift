@@ -7,6 +7,266 @@ import XCTest
 @testable import mlx_workbench
 
 final class InferenceTaskTests: XCTestCase {
+    func testEmbeddingAndMeshUseSupportedV2Contracts() throws {
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: Self.engineCapabilitiesFixture()))
+        for (wireKind, modelType, parameters) in [
+            ("embedding", ModelTaskType.embedding, ["input": JSONValue.array([.string("First text"), .string("Second text")])]),
+            ("mesh_generation", ModelTaskType.meshGeneration, ["image_path": JSONValue.string("/Inputs/shape.png")]),
+        ] {
+            let kind = try JSONDecoder().decode(TaskKind.self, from: JSONEncoder().encode(wireKind))
+            XCTAssertTrue(kind.isSupported, wireKind)
+            XCTAssertEqual(kind.modelTaskType, modelType)
+            let request = TaskRequest(kind: kind, modelPath: "/Models/local", parameters: parameters)
+            XCTAssertEqual(request.schema, "task-request/2")
+            XCTAssertNoThrow(try request.validate())
+            XCTAssertNil(capabilities.unavailabilityReason(for: request))
+            let record = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111111", kind: wireKind,
+                                              modelPath: request.modelPath,
+                                              request: TaskArtifactReference(path: "/tasks/request.json", sha256: String(repeating: "a", count: 64), bytes: 1), input: nil)
+            XCTAssertTrue(record.isSupported, wireKind)
+        }
+    }
+
+    func testEmbeddingDraftPreservesBatchOrderAndValidatesEngineLimits() throws {
+        var draft = EmbeddingTaskDraft()
+        draft.inputs = [EmbeddingTextDraft(text: "First\nparagraph"), EmbeddingTextDraft(text: "Second text")]
+        let request = try draft.request(modelPath: "/Models/embedding")
+        XCTAssertEqual(request.parameters, ["input": .array([.string("First\nparagraph"), .string("Second text")])])
+        draft.maxLength = "8192"
+        XCTAssertEqual(try draft.request(modelPath: request.modelPath).parameters["max_length"], .number(8192))
+        var restored = EmbeddingTaskDraft()
+        try restored.load(request)
+        XCTAssertEqual(restored.inputs.map(\.text), ["First\nparagraph", "Second text"])
+        XCTAssertEqual(restored.maxLength, "")
+        for inputs in [[], [EmbeddingTextDraft(text: " ")], Array(repeating: EmbeddingTextDraft(text: "text"), count: 129),
+                       [EmbeddingTextDraft(text: String(repeating: "x", count: 32_769))]] {
+            draft.inputs = inputs
+            XCTAssertNotNil(draft.validationError)
+            XCTAssertThrowsError(try draft.request(modelPath: request.modelPath))
+        }
+        draft.inputs = [EmbeddingTextDraft(text: "Valid")]
+        for length in ["0", "8193", "1.5", "nan"] {
+            draft.maxLength = length
+            XCTAssertNotNil(draft.validationError)
+        }
+        for parameters: [String: JSONValue] in [
+            ["input": .string("not a batch")], ["input": .array([.string("text")]), "max_length": .bool(true)],
+            ["input": .array([.string("text")]), "unknown": .number(1)],
+        ] {
+            XCTAssertThrowsError(try TaskRequest(kind: .embedding, modelPath: request.modelPath, parameters: parameters).validate())
+        }
+    }
+
+    func testMeshDraftOmitsDefaultsAndReusesRetainedImage() throws {
+        var draft = MeshGenerationTaskDraft(imagePath: "/Inputs/object.png")
+        let request = try draft.request(modelPath: "/Models/mesh")
+        XCTAssertEqual(request.parameters, ["image_path": .string("/Inputs/object.png")])
+        draft.steps = "20"; draft.seed = "42"; draft.resolution = "384"; draft.guidance = "6.5"; draft.maxFaces = "10000"
+        let configured = try draft.request(modelPath: request.modelPath)
+        XCTAssertEqual(configured.parameters, ["image_path": .string("/Inputs/object.png"), "steps": .number(20),
+                                               "seed": .number(42), "resolution": .number(384), "guidance": .number(6.5), "max_faces": .number(10000)])
+        var reused = MeshGenerationTaskDraft()
+        try reused.load(configured, retainedImagePath: "/tasks/input.png")
+        XCTAssertEqual(reused.imagePath, "/tasks/input.png")
+        XCTAssertEqual(reused.resolution, "384", "Model-specific resolution choices belong to the engine.")
+        for invalid in [MeshGenerationTaskDraft(imagePath: "relative.png"), MeshGenerationTaskDraft(imagePath: "/image.png", steps: "101"),
+                        MeshGenerationTaskDraft(imagePath: "/image.png", seed: "-1"), MeshGenerationTaskDraft(imagePath: "/image.png", resolution: "0"),
+                        MeshGenerationTaskDraft(imagePath: "/image.png", guidance: "nan"), MeshGenerationTaskDraft(imagePath: "/image.png", maxFaces: "999")] {
+            XCTAssertNotNil(invalid.validationError)
+            XCTAssertThrowsError(try invalid.request(modelPath: request.modelPath))
+        }
+    }
+
+    func testEmbeddingResultRequiresFiniteRectangularVectorsAndMatchingDimensions() throws {
+        let valid = JSONValue.object(["schema": .string("embed/1"), "dimensions": .number(2),
+                                      "embeddings": .array([.array([.number(0.5), .number(-0.5)]), .array([.number(0), .number(1)])])])
+        let result = try EmbeddingTaskResult(raw: valid)
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result.dimensions, 2)
+        for replacement in [JSONValue.array([]), .array([.array([])]), .array([.array([.number(1)]), .array([.number(1), .number(2)])]),
+                            .array([.array([.number(.infinity), .number(1)])]), .array([.array([.bool(true), .number(1)])])] {
+            var fields = try XCTUnwrap(valid.objectValue)
+            fields["embeddings"] = replacement
+            XCTAssertThrowsError(try EmbeddingTaskResult(raw: .object(fields)))
+        }
+        var fields = try XCTUnwrap(valid.objectValue)
+        fields["schema"] = .string("embed/9")
+        XCTAssertThrowsError(try EmbeddingTaskResult(raw: .object(fields)))
+        fields["schema"] = .string("embed/1"); fields["dimensions"] = .number(3)
+        XCTAssertThrowsError(try EmbeddingTaskResult(raw: .object(fields)))
+    }
+
+    @MainActor
+    func testEmbeddingHistoryReuseAndExportVerifyRecordedResults() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let model = Self.libraryModel(type: .embedding)
+        let request = TaskRequest(kind: .embedding, modelPath: model.item.path, parameters: ["input": .array([.string("One"), .string("Two")])])
+        let data = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: data)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "embedding", modelPath: model.item.path,
+                                          request: fixture.reference(requestURL, data: data), input: nil)
+        let payload = JSONValue.object(["schema": .string("embed/1"), "dimensions": .number(2),
+                                        "embeddings": .array([.array([.number(1), .number(0)]), .array([.number(0), .number(1)])]),
+                                        "model": .string(model.item.path), "input": request.parameters["input"]!])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let response = TaskResultResponse(task: record, artifact: fixture.reference(resultURL, data: resultData), inline: true, result: payload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record], resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        await coordinator.refreshRecent()
+        await coordinator.inspect(id: record.id)
+        XCTAssertNil(coordinator.readError)
+        XCTAssertEqual(try EmbeddingTaskResult(raw: XCTUnwrap(coordinator.verifiedResult?.json)).count, 2)
+        await coordinator.reuse(id: record.id, for: model)
+        XCTAssertNil(coordinator.error)
+        XCTAssertEqual(coordinator.embeddingDraft.inputs.map(\.text), ["One", "Two"])
+        let submitted = await api.startEvidence()
+        XCTAssertTrue(submitted.isEmpty)
+        let destination = fixture.root.appendingPathComponent("exports/vectors.json")
+        try await coordinator.export(id: record.id, to: destination)
+        let exported = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: destination))
+        XCTAssertEqual(exported.objectValue?["embeddings"], payload.objectValue?["embeddings"])
+        XCTAssertNil(exported.objectValue?["model"])
+        XCTAssertNil(exported.objectValue?["input"])
+        try Data("changed".utf8).write(to: resultURL)
+        let refused = fixture.root.appendingPathComponent("exports/changed.json")
+        do { try await coordinator.export(id: record.id, to: refused); XCTFail("Changed vectors must not be exported") } catch { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: refused.path))
+    }
+
+    @MainActor
+    func testMeshHistoryVerifiesInputPreviewAndExportAndRefusesChangedOutput() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let model = Self.libraryModel(type: .meshGeneration)
+        let request = TaskRequest(kind: .meshGeneration, modelPath: model.item.path, parameters: ["image_path": .string("/Inputs/removed.png")])
+        let data = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: data)
+        let image = try Self.pngData()
+        let inputURL = try fixture.write("input.png", data: image)
+        let input = fixture.reference(inputURL, data: image)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "mesh_generation", modelPath: model.item.path,
+                                          request: fixture.reference(requestURL, data: data), input: input)
+        let mesh = Self.meshGLB()
+        let outputURL = try fixture.write("output.glb", data: mesh)
+        let output = fixture.reference(outputURL, data: mesh)
+        func value(_ reference: TaskArtifactReference) throws -> JSONValue { try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(reference)) }
+        let payload = JSONValue.object(["schema": .string("mesh/1"), "output_artifact": try value(output), "input_artifact": try value(input)])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let response = TaskResultResponse(task: record, artifact: fixture.reference(resultURL, data: resultData), inline: true, result: payload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record], resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        await coordinator.refreshRecent()
+        await coordinator.inspect(id: record.id)
+        XCTAssertNil(coordinator.readError)
+        XCTAssertEqual(coordinator.verifiedInput?.reference, input)
+        XCTAssertEqual(coordinator.verifiedOutput?.mesh?.positions.count, 3)
+        XCTAssertEqual(coordinator.verifiedOutput?.mesh?.indices, [0, 1, 2])
+        XCTAssertNil(coordinator.verifiedOutput?.data, "Preview keeps parsed geometry without retaining another GLB byte buffer.")
+        let destination = fixture.root.appendingPathComponent("exports/shape.glb")
+        try await coordinator.exportMesh(id: record.id, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), mesh)
+        await coordinator.reuse(id: record.id, for: model)
+        XCTAssertNil(coordinator.error)
+        XCTAssertEqual(coordinator.meshGenerationDraft.imagePath, inputURL.path)
+        try Data("changed".utf8).write(to: outputURL)
+        let refused = fixture.root.appendingPathComponent("exports/changed.glb")
+        do { try await coordinator.exportMesh(id: record.id, to: refused); XCTFail("Changed meshes must not be exported") } catch { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: refused.path))
+        let malformed = Data("not a GLB".utf8)
+        let badURL = try fixture.write("bad.glb", data: malformed)
+        do {
+            _ = try await TaskArtifactVerifier.verifyMesh(reference: fixture.reference(badURL, data: malformed), taskID: fixture.taskID, root: fixture.root)
+            XCTFail("A digest match alone must not authorize mesh preview")
+        } catch { }
+    }
+
+    @MainActor
+    func testEmbeddingAndMeshStartAndCancelUseOwnedTaskIDs() async throws {
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: Self.engineCapabilitiesFixture()))
+        for kind in [TaskKind.embedding, .meshGeneration] {
+            let model = Self.libraryModel(type: try XCTUnwrap(kind.modelTaskType))
+            let base = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111111", kind: kind.wireValue,
+                modelPath: model.item.path, request: TaskArtifactReference(path: "/tasks/request.json", sha256: String(repeating: "a", count: 64), bytes: 1), input: nil)
+            var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+            fields["state"] = "running"
+            let record = try JSONDecoder().decode(TaskRecord.self, from: JSONSerialization.data(withJSONObject: fields))
+            let api = FakeInferenceTaskAPI(record: record, capabilities: capabilities)
+            let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+            coordinator.embeddingDraft.inputs = [EmbeddingTextDraft(text: "Embed this")]
+            coordinator.meshGenerationDraft.imagePath = "/Inputs/object.png"
+            await coordinator.start(kind: kind, model: model)
+            XCTAssertNil(coordinator.error)
+            XCTAssertEqual(coordinator.selectedTask?.id, record.id)
+            XCTAssertTrue(coordinator.activeModelPaths.contains(model.item.path))
+            let requests = await api.startEvidence()
+            XCTAssertEqual(requests.count, 1)
+            XCTAssertEqual(requests.first?.kind, kind)
+            XCTAssertEqual(requests.first?.schema, "task-request/2")
+            await coordinator.cancel(id: record.id)
+            let cancelled = await api.cancelledIDs()
+            XCTAssertEqual(cancelled, [record.id])
+        }
+    }
+
+    func testLargeMeshExportsWithoutRetainingPreviewBytesOrGeometry() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        var bytes = Self.meshGLB()
+        let size = 100_000_004
+        let jsonSize = bytes.withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self))) }
+        func replaceWord(at offset: Int, with value: Int) {
+            var word = UInt32(value).littleEndian
+            withUnsafeBytes(of: &word) { bytes.replaceSubrange(offset..<(offset + 4), with: $0) }
+        }
+        replaceWord(at: 8, with: size)
+        replaceWord(at: 20 + jsonSize, with: size - 28 - jsonSize)
+        let source = try fixture.write("output.glb", data: bytes)
+        let file = try FileHandle(forWritingTo: source)
+        try file.truncate(atOffset: UInt64(size))
+        try file.close()
+        func digest(_ url: URL) throws -> String {
+            let file = try FileHandle(forReadingFrom: url)
+            defer { try? file.close() }
+            var hash = SHA256()
+            while let chunk = try file.read(upToCount: 64 * 1024), !chunk.isEmpty { hash.update(data: chunk) }
+            return Data(hash.finalize()).map { String(format: "%02x", $0) }.joined()
+        }
+        let reference = TaskArtifactReference(path: source.path, sha256: try digest(source), bytes: size)
+        let verified = try await TaskArtifactVerifier.verifyMesh(reference: reference, taskID: fixture.taskID, root: fixture.root)
+        XCTAssertNil(verified.mesh)
+        XCTAssertNil(verified.data)
+        let destination = fixture.root.appendingPathComponent("exports/large.glb")
+        try await TaskArtifactVerifier.exportMesh(reference: reference, taskID: fixture.taskID, root: fixture.root, to: destination)
+        XCTAssertEqual(try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize, size)
+        XCTAssertEqual(try digest(destination), reference.sha256)
+    }
+
+    private static func meshGLB() -> Data {
+        let document = """
+        {"asset":{"version":"2.0"},"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":3,"type":"SCALAR"}]}
+        """
+        var json = Data(document.utf8)
+        while json.count % 4 != 0 { json.append(0x20) }
+        var binary = Data()
+        for value: Float in [0, 0, 0, 1, 0, 0, 0, 1, 0] {
+            var bits = value.bitPattern.littleEndian
+            withUnsafeBytes(of: &bits) { binary.append(contentsOf: $0) }
+        }
+        for value: UInt32 in [0, 1, 2] {
+            var bits = value.littleEndian
+            withUnsafeBytes(of: &bits) { binary.append(contentsOf: $0) }
+        }
+        var data = Data()
+        func append(_ word: UInt32) { var little = word.littleEndian; withUnsafeBytes(of: &little) { data.append(contentsOf: $0) } }
+        append(0x46546C67); append(2); append(UInt32(28 + json.count + binary.count))
+        append(UInt32(json.count)); append(0x4E4F534A); data.append(json)
+        append(UInt32(binary.count)); append(0x004E4942); data.append(binary)
+        return data
+    }
+
     func testOptInRealEngineMediaTaskAcceptance() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let kindValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_KIND"],

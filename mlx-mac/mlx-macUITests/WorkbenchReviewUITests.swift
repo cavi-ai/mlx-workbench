@@ -95,6 +95,19 @@ final class WorkbenchReviewUITests: XCTestCase {
                     return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
                 pixels = b''.join(bytes((0,)) + bytes((220, 70, 40, 255)) * width for _ in range(height))
                 return bytes((137, 80, 78, 71, 13, 10, 26, 10)) + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b'')
+            def glb():
+                positions = [-1,-1,-1, 1,-1,-1, 1,1,-1, -1,1,-1, -1,-1,1, 1,-1,1, 1,1,1, -1,1,1]
+                faces = [0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 3,7,6, 3,6,2, 0,4,7, 0,7,3, 1,2,6, 1,6,5]
+                vertices = struct.pack('<24f', *positions)
+                indices = struct.pack('<36I', *faces)
+                document = dict(asset=dict(version='2.0'), buffers=[dict(byteLength=len(vertices)+len(indices))],
+                    bufferViews=[dict(buffer=0,byteOffset=0,byteLength=len(vertices)),dict(buffer=0,byteOffset=len(vertices),byteLength=len(indices))],
+                    accessors=[dict(bufferView=0,componentType=5126,count=8,type='VEC3'),dict(bufferView=1,componentType=5125,count=36,type='SCALAR')],
+                    meshes=[dict(primitives=[dict(attributes=dict(POSITION=0),indices=1)])],nodes=[dict(mesh=0)],scenes=[dict(nodes=[0])],scene=0)
+                encoded = json.dumps(document).encode()
+                encoded += b' ' * ((-len(encoded)) % 4)
+                binary = vertices + indices
+                return struct.pack('<5I',0x46546c67,2,28+len(encoded)+len(binary),len(encoded),0x4e4f534a) + encoded + struct.pack('<2I',len(binary),0x004e4942) + binary
             def artifact(identifier, name, value):
                 folder = task_root / 'artifacts' / identifier
                 folder.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -109,6 +122,14 @@ final class WorkbenchReviewUITests: XCTestCase {
                     result = dict(schema='decide/1', model=record['model_path'], backend='mlx-embeddings', seconds=0.1,
                         answers={name:dict(type='choice', choice='billing', probabilities=dict(billing=0.9, technical=0.1))
                                  for name in request['parameters']['questions']})
+                elif record['kind'] == 'embedding':
+                    result = dict(schema='embed/1', model=record['model_path'], backend='mlx-embeddings', dimensions=3,
+                        embeddings=[[float(index), 0.5, -0.5] for index, _ in enumerate(request['parameters']['input'])])
+                elif record['kind'] == 'mesh_generation':
+                    path = folder / 'output.glb'
+                    path.write_bytes(glb()); path.chmod(0o600)
+                    result = dict(schema='mesh/1', model=record['model_path'], backend='mlx-3d',
+                        output_artifact=reference(path), input_artifact=record['input_artifact'], vertices=8, faces=12)
                 elif record['kind'] == 'transcribe':
                     result = dict(schema='transcribe/1', model=record['model_path'], backend='mlx-audio',
                         text='Fixture transcript retained from the accepted audio.', input_artifact=record['input_artifact'])
@@ -160,28 +181,32 @@ final class WorkbenchReviewUITests: XCTestCase {
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
                     dict(kind='video_understanding', result_schema='describe/1', cancellation=True, requires_local_model=True,
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
+                data['tasks'].extend([
+                    dict(kind=kind, result_schema=result, cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2')
+                    for kind, result in [('embedding','embed/1'), ('mesh_generation','mesh/1')]])
                 if (root / 'legacy-image-tasks').exists():
                     data['tasks'] = [task for task in data['tasks'] if task['kind'] != 'image_generation']
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
                 input_artifact = None
-                if request['kind'] in ('transcribe', 'image_understanding', 'video_understanding'):
-                    source_key, filename = ('audio_path', 'input.wav') if request['kind'] == 'transcribe' else (('image_path', 'input.png') if request['kind'] == 'image_understanding' else ('video_path', 'input.mp4'))
+                if request['kind'] in ('transcribe', 'image_understanding', 'video_understanding', 'mesh_generation'):
+                    source_key, filename = ('audio_path', 'input.wav') if request['kind'] == 'transcribe' else (('image_path', 'input.png') if request['kind'] in ('image_understanding', 'mesh_generation') else ('video_path', 'input.mp4'))
                     source = pathlib.Path(request['parameters'][source_key])
                     destination = task_root / 'artifacts' / identifier / filename
                     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                     shutil.copyfile(source, destination)
                     destination.chmod(0o600)
                     input_artifact = reference(destination)
-                record = dict(schema='task-run/2' if request['kind'] in ('transcribe', 'speak', 'image_generation', 'image_understanding', 'video_generation', 'video_understanding') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
+                record = dict(schema='task-run/2' if request['kind'] in ('embedding', 'mesh_generation', 'transcribe', 'speak', 'image_generation', 'image_understanding', 'video_generation', 'video_understanding') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
                     created_at='2026-01-01T00:00:00Z', started_at='2026-01-01T00:00:00Z', completed_at=None,
                     cancel_requested=False, execution_unresolved=False, supervisor=dict(pid=101), execution=dict(pid=102),
                     request=artifact(identifier, 'request.json', request), result=None, error=None,
                     identity=dict(backend='mlx-embeddings' if request['kind'] == 'classification' else 'mlx-audio',
                         backend_version='1.0', engine_version='0.7.0', python_version='3.12', model_fingerprint='a' * 64),
                     input_artifact=input_artifact)
-                if request['kind'] in ('classification', 'transcribe', 'speak', 'image_generation', 'image_understanding', 'video_generation', 'video_understanding'): finish(record)
+                if request['kind'] in ('classification', 'embedding', 'mesh_generation', 'transcribe', 'speak', 'image_generation', 'image_understanding', 'video_generation', 'video_understanding'): finish(record)
                 records.insert(0, record)
                 data = dict(task=record)
             elif action == 'list':
@@ -908,6 +933,84 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 15))
         let settled = expectation(for: NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", state, state), evaluatedWith: status)
         wait(for: [settled], timeout: 20)
+    }
+
+    func testLibraryEmbeddingBatchResultsAndRestartHistory() throws {
+        _ = try installTaskModel(kind: "embedding", name: "Fixture text embedder")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Fixture text embedder"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        XCTAssertFalse(app.buttons["task-start"].isEnabled)
+        replace(app.textFields["task-embedding-text-0"], with: "First text")
+        app.buttons["task-embedding-add-text"].click()
+        XCTAssertFalse(app.buttons["task-start"].isEnabled)
+        replace(app.textFields["task-embedding-text-1"], with: "Second text")
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        capture("Library-embedding-batch-form")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        let result = app.staticTexts["task-embedding-result"].firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        XCTAssertTrue((result.value as? String ?? result.label).contains("2 vectors · 3 dimensions"))
+        XCTAssertTrue(app.buttons["task-export-embeddings"].exists)
+        capture("Library-embedding-result")
+        app.terminate()
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let reopened = app.outlines.staticTexts["Fixture text embedder"].firstMatch
+        XCTAssertTrue(reopened.waitForExistence(timeout: 15)); reopened.doubleClick()
+        let history = app.buttons["task-history-row-00000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(history.waitForExistence(timeout: 15)); history.click()
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        app.buttons["task-reuse"].click()
+        let restored = expectation(for: NSPredicate(format: "value == %@", "First text"), evaluatedWith: app.textFields["task-embedding-text-0"])
+        wait(for: [restored], timeout: 15)
+        XCTAssertEqual(app.textFields["task-embedding-text-0"].value as? String, "First text")
+        XCTAssertEqual(app.textFields["task-embedding-text-1"].value as? String, "Second text")
+        XCTAssertEqual(try taskSubmissions().count, 1, "History and reuse must not resubmit inference")
+        capture("Library-embedding-restart-and-reuse")
+    }
+
+    func testLibraryMeshTaskPreviewAndRetainedInputReuse() throws {
+        _ = try installTaskModel(kind: "mesh_generation", name: "Fixture 3D generator")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        for y in 0..<2 { for x in 0..<2 { bitmap.setColor(.systemRed, atX: x, y: y) } }
+        let source = root.appendingPathComponent("mesh-input.png")
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Fixture 3D generator"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        XCTAssertFalse(app.buttons["task-start"].isEnabled)
+        replace(app.textFields["task-mesh-image-path"], with: source.path)
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        capture("Library-mesh-form")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        let preview = app.descendants(matching: .any).matching(identifier: "task-mesh-output").firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
+        let export = app.buttons["task-export-mesh"]
+        XCTAssertTrue(export.waitForExistence(timeout: 10))
+        let scroll = app.scrollViews.containing(.button, identifier: "task-export-mesh").firstMatch
+        for _ in 0..<8 where !preview.isHittable || preview.frame.maxY > scroll.frame.maxY {
+            scroll.scroll(byDeltaX: 0, deltaY: max(-300, min(300, scroll.frame.midY - preview.frame.midY)))
+        }
+        XCTAssertTrue(preview.isHittable)
+        capture("Library-mesh-verified-preview")
+        try FileManager.default.removeItem(at: source)
+        let reuse = app.buttons["task-reuse"]
+        for _ in 0..<8 where !reuse.isHittable || reuse.frame.minY < scroll.frame.minY || reuse.frame.maxY > scroll.frame.maxY {
+            scroll.scroll(byDeltaX: 0, deltaY: max(-300, min(300, scroll.frame.midY - reuse.frame.midY)))
+        }
+        XCTAssertTrue(reuse.isHittable)
+        reuse.click()
+        let restored = expectation(for: NSPredicate(format: "value != %@", source.path), evaluatedWith: app.textFields["task-mesh-image-path"])
+        wait(for: [restored], timeout: 15)
+        let retained = try XCTUnwrap(app.textFields["task-mesh-image-path"].value as? String)
+        XCTAssertNotEqual(retained, source.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retained))
+        XCTAssertEqual(try taskSubmissions().count, 1)
+        capture("Library-mesh-retained-input-reuse")
     }
 
     func testLibraryClassifierTaskAndMissingModelHistory() throws {

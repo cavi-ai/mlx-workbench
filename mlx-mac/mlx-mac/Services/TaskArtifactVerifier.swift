@@ -11,6 +11,7 @@ struct VerifiedTaskArtifact: Sendable {
     let data: Data?
     let json: JSONValue?
     let request: TaskRequest?
+    let mesh: ComparisonMeshData?
 }
 
 enum TaskArtifactVerificationError: Error, LocalizedError {
@@ -25,6 +26,7 @@ enum TaskArtifactVerificationError: Error, LocalizedError {
     case invalidJSON
     case invalidImage
     case invalidVideo
+    case invalidMesh
 
     var errorDescription: String? {
         switch self {
@@ -39,6 +41,7 @@ enum TaskArtifactVerificationError: Error, LocalizedError {
         case .invalidJSON: "The task result artifact is not valid JSON."
         case .invalidImage: "The task image artifact is not a decodable PNG."
         case .invalidVideo: "The task video artifact is not a playable MP4 with a video stream and positive duration."
+        case .invalidMesh: "The task mesh artifact is not a supported indexed GLB."
         }
     }
 }
@@ -49,6 +52,47 @@ enum TaskArtifactVerifier {
     static func verify(reference: TaskArtifactReference, taskID: String, root: URL) async throws -> VerifiedTaskArtifact {
         try await Task.detached(priority: .userInitiated) {
             try verifySynchronously(reference: reference, taskID: taskID, root: root)
+        }.value
+    }
+
+    static func verifyMesh(reference: TaskArtifactReference, taskID: String, root: URL) async throws -> VerifiedTaskArtifact {
+        try await Task.detached(priority: .userInitiated) {
+            try verifySynchronously(reference: reference, taskID: taskID, root: root, mesh: true)
+        }.value
+    }
+
+    /// Stream the checked artifact to a private temporary file and publish it only after
+    /// the copied bytes match the receipt. Preview capacity never limits export size.
+    static func exportMesh(reference: TaskArtifactReference, taskID: String, root: URL, to destination: URL) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            _ = try verifySynchronously(reference: reference, taskID: taskID, root: root, mesh: true)
+            let input = FileHandle(fileDescriptor: try openWithoutSymlinks(reference.path), closeOnDealloc: true)
+            var info = stat()
+            guard fstat(input.fileDescriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+                throw TaskArtifactVerificationError.notRegularFile
+            }
+            let parent = destination.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            let temporary = parent.appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
+            let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            let output = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? output.close(); try? FileManager.default.removeItem(at: temporary) }
+            var hasher = SHA256()
+            var count = 0
+            while let chunk = try input.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                guard chunk.count <= reference.bytes - count else { throw TaskArtifactVerificationError.changed }
+                count += chunk.count
+                hasher.update(data: chunk)
+                try output.write(contentsOf: chunk)
+            }
+            guard count == reference.bytes,
+                  Data(hasher.finalize()).map({ String(format: "%02x", $0) }).joined() == reference.sha256 else {
+                throw TaskArtifactVerificationError.changed
+            }
+            try output.synchronize()
+            try output.close()
+            guard rename(temporary.path, destination.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         }.value
     }
 
@@ -93,7 +137,7 @@ enum TaskArtifactVerifier {
             && CGImageSourceCreateImageAtIndex(source, 0, nil).map { $0.width > 0 && $0.height > 0 } == true
     }
 
-    private static func verifySynchronously(reference: TaskArtifactReference, taskID: String, root: URL) throws -> VerifiedTaskArtifact {
+    private static func verifySynchronously(reference: TaskArtifactReference, taskID: String, root: URL, mesh: Bool = false) throws -> VerifiedTaskArtifact {
         guard let parsedID = UUID(uuidString: taskID), parsedID.uuidString.lowercased() == taskID else {
             throw TaskArtifactVerificationError.invalidTaskID
         }
@@ -123,10 +167,18 @@ enum TaskArtifactVerifier {
         var byteCount = 0
         var jsonData = Data()
         let shouldDecodeJSON = standardizedFile.pathExtension.lowercased() == "json" && reference.bytes <= jsonDecodeLimit
+        let shouldPreviewMesh = mesh && reference.bytes <= 100_000_000
+        if mesh {
+            guard standardizedFile.pathExtension.lowercased() == "glb", reference.bytes >= 28 else {
+                throw TaskArtifactVerificationError.invalidMesh
+            }
+        }
         while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            guard chunk.count <= reference.bytes - byteCount else { throw TaskArtifactVerificationError.changed }
             byteCount += chunk.count
             hasher.update(data: chunk)
-            if shouldDecodeJSON { jsonData.append(chunk) }
+            if shouldDecodeJSON || shouldPreviewMesh { jsonData.append(chunk) }
+            else if mesh && jsonData.count < 20 { jsonData.append(chunk.prefix(20 - jsonData.count)) }
         }
         guard byteCount == reference.bytes,
               Data(hasher.finalize()).map({ String(format: "%02x", $0) }).joined() == reference.sha256 else {
@@ -156,8 +208,23 @@ enum TaskArtifactVerifier {
             throw TaskArtifactVerificationError.invalidRequest
         }
 
+        var meshData: ComparisonMeshData?
+        if mesh {
+            func word(_ offset: Int) -> UInt32 {
+                jsonData.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self)) }
+            }
+            guard jsonData.count >= 20, word(0) == 0x46546C67, word(4) == 2,
+                  Int(word(8)) == reference.bytes, word(16) == 0x4E4F534A,
+                  word(12) > 0, word(12) % 4 == 0, Int(word(12)) <= reference.bytes - 28 else {
+                throw TaskArtifactVerificationError.invalidMesh
+            }
+            if shouldPreviewMesh {
+                do { meshData = try ComparisonMeshData.read(jsonData) }
+                catch { throw TaskArtifactVerificationError.invalidMesh }
+            }
+        }
         return VerifiedTaskArtifact(reference: reference, url: standardizedFile,
-                                    data: shouldDecodeJSON ? jsonData : nil, json: json, request: request)
+                                    data: shouldDecodeJSON ? jsonData : nil, json: json, request: request, mesh: meshData)
     }
 
     /// Opens each directory component with O_NOFOLLOW, then verifies the final descriptor.
