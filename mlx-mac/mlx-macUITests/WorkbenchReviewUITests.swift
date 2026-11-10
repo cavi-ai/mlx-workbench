@@ -1136,7 +1136,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
         let destination = app.popUpButtons["task-destination"]
         XCTAssertTrue(destination.waitForExistence(timeout: 10)); destination.click()
-        app.menuItems.matching(NSPredicate(format: "label CONTAINS %@", ":\(port)")).firstMatch.click()
+        destination.menuItems.matching(NSPredicate(format: "title CONTAINS %@", ":\(port)")).firstMatch.click()
         let history = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-history-row-")).firstMatch
         XCTAssertTrue(history.waitForExistence(timeout: 15)); history.click()
         XCTAssertTrue(app.buttons["task-export-audio"].waitForExistence(timeout: 15))
