@@ -16,6 +16,14 @@ extension HandoffKind where Value == ComparisonModelRequest { static var compare
 extension HandoffKind where Value == ServingProfileComparisonSetup { static var compareServingProfiles: Self { Self(name: "compareServingProfiles") } }
 extension HandoffKind where Value == WorkflowReportImportRequest { static var importWorkflowReport: Self { Self(name: "importWorkflowReport") } }
 
+extension HandoffKind where Value == ServingFocusRequest { static var openServing: Self { Self(name: "openServing") } }
+
+/// Brings Run's served models, or one served row, into view.
+struct ServingFocusRequest: Equatable {
+    let id = UUID()
+    var rowID: String? = nil
+}
+
 /// Read a recorded comparison; this request never starts or replays inference.
 struct ComparisonResultsRequest: Equatable, Identifiable {
     let id = UUID()

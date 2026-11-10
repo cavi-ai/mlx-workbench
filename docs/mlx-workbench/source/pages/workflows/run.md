@@ -8,7 +8,7 @@
 2. Read the memory runway: what is already loaded, what this model needs (weights, KV cache and runtime overhead) and whether it **fits**, is **tight** or **won't fit** at the chosen context. A won't-fit verdict suggests a maximum context. Unavailable memory readings show as unknown.
 3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
-Run retains controls for its saved endpoints. **Manage served models…** shows the shared inventory of engine services and recognized local providers. Refreshing reads status without loading models.
+Run is the one place that shows what is serving. **Served models** lists saved endpoints, servers started from Run and other local services from the shared inventory, each once, with its own controls. **Open Serving** in the toolbar popover, the menu bar and the Library inspector selects Run and scrolls to the list. Refreshing reads status without loading models.
 
 **Experimental M5 prompt acceleration** opts the server started with **Preview
 serve** into the engine's Q4 prompt kernel. It requires an M5 GPU, macOS 26,
@@ -102,32 +102,31 @@ used here.
 
 ## Serve models to other apps
 
-Choose **Manage served models…** from the menu bar to open the model manager.
-Search ready local models and choose **Add…**, review the model, port, verification
-and memory warnings, then confirm. New selections use the existing load-on-request
-endpoints; there is no separate serving process for the manager. Up to four models
-can be selected, each on its own stable port. Models already selected are omitted
-from the add list.
+Select a ready model, then choose **Save as endpoint** in **Serve a model** (**Start now** starts one server instead).
+Set the port, role and **Load on request**, and, with load on request, whether weights are
+released after each request or kept loaded. Choose **Add endpoint…** (**Add unverified endpoint…** for a
+model that has not passed verification) and review the model, port, verification and memory warnings, then
+confirm. Up to four endpoints can be saved, each on its own stable port between 1024 and 65535
+that no endpoint or server already uses.
 
-Each selection shows its state and base URL. Chat endpoints use the OpenAI-compatible API; typed endpoints advertise their operations at `/v1/models` and accept jobs at `/v1/tasks`. Use **Copy base URL**
+Each endpoint row shows its state and base URL. Chat endpoints use the OpenAI-compatible API; typed endpoints advertise their operations at `/v1/models` and accept jobs at `/v1/tasks`. Use **Copy base URL**
 and, when a matching running server reports it, **Copy model ID** in the other
-application's matching provider settings. **Refresh status** updates the
-reported servers. The menu bar also lists each selected model with status and copy
-controls. **Start…** opens the manager for review; **Stop** stops its endpoint.
+application's matching provider settings. The toolbar popover and the menu bar list the same
+rows with status and copy controls. **Start…** reviews fit and verification before starting; **Stop** stops its endpoint.
 
-**Remove…** removes a serving selection and stops its endpoint after confirmation.
+**Remove…** in a row's overflow menu removes an endpoint and stops it after confirmation.
 The model files stay in Library. Work using that model must finish before its
-endpoint can stop. **Serving settings…** opens Run for memory policy, acceleration,
-login startup and client configuration. Acceleration remains opt-in; serving a
+endpoint can stop. The overflow menu also holds role, load mode, memory management, acceleration,
+API key and **Show in Library** actions, and **Wire roles…** and login startup sit below the list. Acceleration remains opt-in; serving a
 model does not establish that one configuration is fastest for every workload.
 
 ## Always-on endpoints
 
-The **Endpoints** section keeps chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
+Saved endpoints in **Served models** keep chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
 
-- **Add endpoint** suggests the next free port. Up to four endpoints.
+- **Add endpoint…** suggests the next free port. Up to four endpoints.
 - Endpoints require a verified model unless you explicitly override for an unverified one.
-- Each endpoint row shows status, restarts, a fit chip, a role, and enable, disable and remove controls.
+- Each endpoint row shows status, restarts, a fit chip, a role, **Stop** or **Start…**, and an overflow menu with the remaining controls.
 - The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
@@ -161,11 +160,11 @@ New endpoints default to **Load on request**. The engine runs a loopback gateway
 
 - Concurrent cold requests share one load.
 - Streaming responses hold the model until they finish; a model cannot unload mid-stream.
-- **Unload** releases the model and keeps the endpoint enabled. The next request loads it again.
-- **Stop server** stops an eager endpoint and saves its desired state as disabled, so it is not restarted. Model files stay on disk.
+- **Unload model…** releases the model and keeps the endpoint enabled. The next request loads it again.
+- **Stop** stops an endpoint and saves its desired state as disabled, so it is not restarted. Model files stay on disk.
 - Model file identity is checked before and after loading; changed files require a fresh plan.
 
-Endpoints created before this mode existed keep eager serving until you change them. Changing the mode restarts the endpoint. Comparison and verification always use eager serving. While verification, a comparison or a hosted comparison's local lane is serving a model, **Stop server** and **Unload** refuse its server.
+Endpoints created before this mode existed keep eager serving until you change them. Changing the mode restarts the endpoint. Comparison and verification always use eager serving. While verification, a comparison or a hosted comparison's local lane is serving a model, **Stop** and **Unload** refuse its server.
 
 ## Memory policy
 
@@ -183,7 +182,7 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 ## The memory header
 
-The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Open it for serving status and the same **Unload** and **Stop server** controls. Its context selector feeds model-fit reviews, not server configuration.
+The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes and flags an endpoint that is starting or degraded. Open it for the same rows as Run's **Served models**, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
 
 Choose **What’s using memory…** from Run’s memory runway or the toolbar popover
 for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.
@@ -208,7 +207,7 @@ If disabling or removing an endpoint cannot confirm its server stopped, Run keep
 
 ## Local serving inventory and menu bar
 
-**Manage served models…** shows Workbench endpoints alongside services started by MLX Agent, including Strata, and recognized local Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible server processes. Discovery reads this user’s listening processes and provider APIs at their actual ports. Engine services are found through registered receipt locations and live engine process arguments. Discovery does not search model folders or add external servers to automatic restart supervision. An older engine reports that cross-location engine discovery needs an update.
+**Served models** shows Workbench endpoints alongside services started by MLX Agent, including Strata, and recognized local Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible server processes. Discovery reads this user’s listening processes and provider APIs at their actual ports. Engine services are found through registered receipt locations and live engine process arguments. Discovery does not search model folders or add external servers to automatic restart supervision. An older engine reports that cross-location engine discovery needs an update.
 
 Rows distinguish loaded, unloaded, loading, failed and unknown residency. The same service reported through its engine receipt and listening process appears once. Failed sources retain dated observations and an error. Paths, runtime, active requests and process identity appear when available. Provider APIs may omit storage locations or residency.
 
@@ -276,7 +275,7 @@ client wiring and role routing are available only for chat endpoints.
 
 ## Require an API key
 
-When adding a model in **Served models**, turn on **Require API key**. The
+When saving a model as an endpoint in **Serve a model**, turn on **Require API key**; an existing endpoint's overflow menu offers **Require API key…**, **Reset API key…** and **Disable authentication…** while it is stopped. The
 endpoint stays on loopback and loads weights on request. Use **Copy base URL**,
 **Copy model ID** and **Copy API key** to configure each authorized client.
 Keys are generated securely and saved in Keychain. Endpoint settings, launch

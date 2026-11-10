@@ -764,3 +764,17 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertNotEqual(split.running[0].id, split.earlier[0].id)
     }
 }
+
+extension ActivityRemodelTests {
+    /// Running servers collapse into one link to Run; the history keeps its own title.
+    func testRunningServersBecomeOneLinkToServing() async throws {
+        let app = try await ServingWorld.host()
+        let lines = try await ServingWorld.renderedLines(
+            JobsView(appHost: app).environment(\.isRouteActive, true), size: CGSize(width: 900, height: 2000)
+        ).map { $0.lowercased() }
+        // Recognition can misread single letters, so match the stable prefixes.
+        XCTAssertTrue(lines.contains { $0.contains("server hist") }, "\(lines)")
+        XCTAssertTrue(lines.contains { $0.contains("2 serving") && $0.contains("open serving") }, "\(lines)")
+        XCTAssertFalse(lines.contains { $0.contains("127.0.0.1:8766") }, "Running servers are listed in Run, not here")
+    }
+}

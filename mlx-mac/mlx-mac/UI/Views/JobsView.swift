@@ -327,7 +327,7 @@ struct JobsView: View {
     private var serversSection: some View {
         let split = ActivityServerRow.split(modelWorkflow.servers, models: appHost.librarySnapshot?.models ?? [], now: Date())
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Servers")
+            SectionTitle(text: "Server history")
             if let error = modelWorkflow.serversError {
                 statusRecovery(error, context: "server")
                 if !modelWorkflow.servers.isEmpty {
@@ -342,7 +342,12 @@ struct JobsView: View {
                 if split.running.isEmpty {
                     if modelWorkflow.serversError == nil { designedState(symbol: "server.rack", text: "No server is running.") }
                 } else {
-                    serverSurface(split.running, style: isCompact ? .twoLine : .wide)
+                    Button("\(split.running.count) serving · Open Serving") {
+                        appHost.handoffs.send(ServingFocusRequest(), as: .openServing)
+                        onRouteSelection(.run)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("activity-open-serving")
                 }
                 if !split.earlier.isEmpty {
                     DisclosureGroup(isExpanded: $showsEarlierServers) {

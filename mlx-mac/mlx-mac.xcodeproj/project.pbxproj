@@ -12,6 +12,8 @@
 		MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNGTSTF1 /* ManagedModelInstallStoreTests.swift */; };
 		MEMRVB1 /* EndpointMemoryReviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMRVF1 /* EndpointMemoryReviewSheet.swift */; };
 		SIVTSTB1 /* ServingInventoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVTSTF1 /* ServingInventoryPresentationTests.swift */; };
+		SRVRTB1 /* ServingRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRVRTF1 /* ServingRowsTests.swift */; };
+		SRVRWB1 /* ServingRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRVRWF1 /* ServingRows.swift */; };
 		MIDTSTB1 /* ModelUpdateCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */; };
 		MIDUIB1 /* ModelUpdateReviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDUIF1 /* ModelUpdateReviewSheet.swift */; };
 		MIDCOB1 /* ModelUpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDCOF1 /* ModelUpdateCoordinator.swift */; };
@@ -353,6 +355,8 @@
 		MNGTSTF1 /* ManagedModelInstallStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStoreTests.swift; path = ManagedModelInstallStoreTests.swift; sourceTree = "<group>"; };
 		MEMRVF1 /* EndpointMemoryReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointMemoryReviewSheet.swift; path = UI/Views/EndpointMemoryReviewSheet.swift; sourceTree = "<group>"; };
 		SIVTSTF1 /* ServingInventoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryPresentationTests.swift; path = ServingInventoryPresentationTests.swift; sourceTree = "<group>"; };
+		SRVRTF1 /* ServingRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRowsTests.swift; path = ServingRowsTests.swift; sourceTree = "<group>"; };
+		SRVRWF1 /* ServingRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRows.swift; path = Models/ServingRows.swift; sourceTree = "<group>"; };
 		MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateCoordinatorTests.swift; path = ModelUpdateCoordinatorTests.swift; sourceTree = "<group>"; };
 		MIDUIF1 /* ModelUpdateReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateReviewSheet.swift; path = UI/Views/ModelUpdateReviewSheet.swift; sourceTree = "<group>"; };
 		MIDCOF1 /* ModelUpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateCoordinator.swift; path = Services/ModelUpdateCoordinator.swift; sourceTree = "<group>"; };
@@ -834,6 +838,7 @@
 				SIVLOCF1 /* LocalModelHostDiscovery.swift */,
 				SIVCOOF1 /* ServingInventoryCoordinator.swift */,
 				SIVMODF1 /* ServingInventoryModels.swift */,
+				SRVRWF1 /* ServingRows.swift */,
 				MEMRVF1 /* EndpointMemoryReviewSheet.swift */,
 				MIDUIF1 /* ModelUpdateReviewSheet.swift */,
 				MIDCOF1 /* ModelUpdateCoordinator.swift */,
@@ -1036,6 +1041,7 @@
 				MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */,
 				MNGTSTF1 /* ManagedModelInstallStoreTests.swift */,
 				SIVTSTF1 /* ServingInventoryPresentationTests.swift */,
+				SRVRTF1 /* ServingRowsTests.swift */,
 				MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 				29A710000000000000000003 /* InferenceTaskTests.swift */,
@@ -1436,6 +1442,7 @@
 				SIVLOCB1 /* LocalModelHostDiscovery.swift in Sources */,
 				SIVCOOB1 /* ServingInventoryCoordinator.swift in Sources */,
 				SIVMODB1 /* ServingInventoryModels.swift in Sources */,
+				SRVRWB1 /* ServingRows.swift in Sources */,
 				MEMRVB1 /* EndpointMemoryReviewSheet.swift in Sources */,
 				MIDUIB1 /* ModelUpdateReviewSheet.swift in Sources */,
 				MIDCOB1 /* ModelUpdateCoordinator.swift in Sources */,
@@ -1543,6 +1550,7 @@
 				MEMTSTB1 /* EndpointMemoryPolicyReviewTests.swift in Sources */,
 				MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */,
 				SIVTSTB1 /* ServingInventoryPresentationTests.swift in Sources */,
+				SRVRTB1 /* ServingRowsTests.swift in Sources */,
 				MIDTSTB1 /* ModelUpdateCoordinatorTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 				29A710000000000000000013 /* InferenceTaskTests.swift in Sources */,
