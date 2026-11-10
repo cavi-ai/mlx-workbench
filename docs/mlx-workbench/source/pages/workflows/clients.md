@@ -38,7 +38,7 @@ The result reports zero, partial or full outcomes per client. The opencode adapt
 
 ## API-key protected endpoints
 
-Protected endpoints appear in the same server picker and **Wire into clients** handoff. Preview checks that Workbench can read the matching inference key from Keychain. Confirmation rechecks the running process, model and key identity before writing. A missing or reset key requires a new preview; authentication is never disabled to complete setup.
+Protected endpoints appear in the same server picker and **Wire into clients** handoff. Preview checks that Workbench can read the matching inference key from Keychain. Confirmation rechecks the running process, model and key identity before writing. Key lookups run off the UI thread and refuse permission prompts. A missing, locked or reset key requires a new preview; authentication is never disabled to complete setup.
 
 OpenCode, Continue’s legacy JSON adapter and Aider receive the inference key in their supported configuration fields. Configs, temporary writes and backups are readable and writable only by your macOS user. The review names the credential destination and masks key values. Wiring history records paths and content digests, never keys. Keep these config files and backups out of shared folders and source control.
 

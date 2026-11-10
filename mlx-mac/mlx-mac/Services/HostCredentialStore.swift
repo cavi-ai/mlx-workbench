@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import CryptoKit
+import LocalAuthentication
 
 /// Inference credentials are separate from host credentials and exported endpoint settings.
 enum EndpointCredentialStore {
@@ -19,32 +20,53 @@ enum EndpointCredentialStore {
     }
 
     static func save(_ token: String) throws {
-        guard (32...512).contains(token.utf8.count), token.utf8.allSatisfy({ (33...126).contains($0) }) else {
-            throw WorkflowEvidenceError.invalid("The API key must contain 32–512 printable characters without spaces.")
+        try withoutInteraction {
+            guard (32...512).contains(token.utf8.count), token.utf8.allSatisfy({ (33...126).contains($0) }) else {
+                throw WorkflowEvidenceError.invalid("The API key must contain 32–512 printable characters without spaces.")
+            }
+            let hash = digest(token)
+            var item = try identity(hash)
+            item[kSecValueData as String] = Data(token.utf8)
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw unavailable }
         }
-        let hash = digest(token)
-        var item = try identity(hash)
-        item[kSecValueData as String] = Data(token.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw unavailable }
     }
 
     static func token(for hash: String) throws -> String {
-        var query = try identity(hash)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data, let token = String(data: data, encoding: .utf8), digest(token) == hash else {
-            throw unavailable
+        return try withoutInteraction {
+            var query = try identity(hash)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+            var result: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+                  let data = result as? Data, let token = String(data: data, encoding: .utf8), digest(token) == hash else {
+                throw unavailable
+            }
+            return token
         }
-        return token
     }
 
     static func remove(_ hash: String) throws {
-        let result = SecItemDelete(try identity(hash) as CFDictionary)
-        guard result == errSecSuccess || result == errSecItemNotFound else { throw unavailable }
+        try withoutInteraction {
+            let result = SecItemDelete(try identity(hash) as CFDictionary)
+            guard result == errSecSuccess || result == errSecItemNotFound else { throw unavailable }
+        }
+    }
+
+    private static let interactionLock = NSLock()
+
+    /// Legacy keychains need their own interaction fence; LAContext covers data-protection items.
+    private static func withoutInteraction<T>(_ operation: () throws -> T) throws -> T {
+        interactionLock.lock()
+        defer { interactionLock.unlock() }
+        var allowed = DarwinBoolean(false)
+        guard SecKeychainGetUserInteractionAllowed(&allowed) == errSecSuccess,
+              SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { throw unavailable }
+        defer { SecKeychainSetUserInteractionAllowed(allowed.boolValue) }
+        return try operation()
     }
 
     private static var unavailable: WorkflowEvidenceError {

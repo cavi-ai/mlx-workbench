@@ -552,7 +552,7 @@ struct WireView: View {
             serverMessage = "Selected server stopped or changed. Choose a running server and preview again."
             return false
         }
-        wiring.preview(server: current, clientIDs: clientIDs)
+        await wiring.preview(server: current, clientIDs: clientIDs)
         return !wiring.plans.isEmpty
     }
 

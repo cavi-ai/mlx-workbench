@@ -59,7 +59,7 @@ final class WiringCoordinator: ObservableObject {
     private let home: URL
     private let fileManager: FileManager
     private let configSource: ClientConfigSource
-    private let credential: (String) throws -> String
+    private let credential: @MainActor (String) async throws -> String
     private let store: JSONStore<WiringTransaction>
     /// Moves a file to the macOS Trash; rollback never deletes permanently.
     private let moveToTrash: (URL) throws -> Void
@@ -90,7 +90,9 @@ final class WiringCoordinator: ObservableObject {
         fileManager: FileManager = .default,
         configSource: @escaping ClientConfigSource = ClientConfigFile.live,
         store: JSONStore<WiringTransaction>,
-        credential: @escaping (String) throws -> String = EndpointCredentialStore.token,
+        credential: @escaping @MainActor (String) async throws -> String = { hash in
+            try await Task.detached(priority: .utility) { try EndpointCredentialStore.token(for: hash) }.value
+        },
         moveToTrash: ((URL) throws -> Void)? = nil,
         now: @escaping () -> Date = Date.init
     ) {
@@ -157,6 +159,13 @@ final class WiringCoordinator: ObservableObject {
     /// under a preview hash.
     func preview(endpoint: WireEndpoint, clientIDs: Set<String>? = nil) {
         guard !isCheckingServer, !isApplying else { return }
+        guard endpoint.apiKeySHA256 == nil else {
+            invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return
+        }
+        buildPreview(endpoint: endpoint, clientIDs: clientIDs, key: nil)
+    }
+
+    private func buildPreview(endpoint: WireEndpoint, clientIDs: Set<String>?, key: String?) {
         previewedServer = nil
         detect()
         lastError = nil
@@ -169,11 +178,6 @@ final class WiringCoordinator: ObservableObject {
             }
             targets = setupClients.filter { clientIDs.contains($0.clientID) }
         } else { targets = installations }
-        let key: String?
-        do { key = try inferenceKey(for: endpoint) }
-        catch {
-            invalidateServerPreview(); lastError = WiringError.credentialUnavailable.errorDescription; return
-        }
         var built: [ClientEditPlan] = []
         for installation in targets where !installation.advisoryOnly {
             guard let adapter = adapters.first(where: { $0.clientID == installation.clientID }),
@@ -209,13 +213,22 @@ final class WiringCoordinator: ObservableObject {
         previewHash = Self.hash(plans: built, endpoint: endpoint)
     }
 
-    func preview(server: ServerInfo, clientIDs: Set<String>? = nil) {
+    func preview(server: ServerInfo, clientIDs: Set<String>? = nil) async {
         guard !isCheckingServer, !isApplying else { return }
         guard let endpoint = WireEndpoint(server: server) else {
             invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return
         }
-        preview(endpoint: endpoint, clientIDs: clientIDs)
-        previewedServer = server
+        isCheckingServer = true
+        defer { isCheckingServer = false }
+        do {
+            let key = try await inferenceKey(for: endpoint)
+            try Task.checkCancellation()
+            buildPreview(endpoint: endpoint, clientIDs: clientIDs, key: key)
+            previewedServer = server
+        } catch {
+            invalidateServerPreview()
+            lastError = Task.isCancelled ? nil : WiringError.credentialUnavailable.errorDescription
+        }
     }
 
     /// Read authoritative status immediately before the existing config-write boundary.
@@ -229,7 +242,10 @@ final class WiringCoordinator: ObservableObject {
         isCheckingServer = true
         defer { isCheckingServer = false }
         do {
+            _ = try await inferenceKey(for: endpoint)
+            try Task.checkCancellation()
             let servers = try await currentServers()
+            try Task.checkCancellation()
             let matches = servers.filter { $0.port == reviewed.port && $0.state?.lowercased() == "running" }
             guard matches.count == 1, ClientWiringSelection.sameServer(reviewed, matches[0]),
                   previewedServer == reviewed, previewHash == hash else {
@@ -238,7 +254,8 @@ final class WiringCoordinator: ObservableObject {
             return applyPreview(endpoint: endpoint, previewHash: hash)
         } catch {
             invalidateServerPreview()
-            lastError = "Server status unavailable; no client files changed: \(AppHost.render(error))"
+            lastError = Task.isCancelled ? nil : (error is WiringError ? AppHost.render(error)
+                : "Server status unavailable; no client files changed: \(AppHost.render(error))")
             return nil
         }
     }
@@ -251,20 +268,22 @@ final class WiringCoordinator: ObservableObject {
         isCheckingServer = true
         defer { isCheckingServer = false }
         try Task.checkCancellation()
+        let key = try await inferenceKey(for: endpoint)
+        try Task.checkCancellation()
         let servers = try await currentServers()
         try Task.checkCancellation()
         let candidates = servers.filter { $0.port == server.port }
         guard candidates.count == 1, ClientWiringSelection.sameServer(server, candidates[0]) else {
             throw WiringError.serverChanged
         }
-        guard let key = try inferenceKey(for: endpoint) else { throw WiringError.credentialUnavailable }
+        guard let key else { throw WiringError.credentialUnavailable }
         return key
     }
 
-    private func inferenceKey(for endpoint: WireEndpoint) throws -> String? {
+    private func inferenceKey(for endpoint: WireEndpoint) async throws -> String? {
         guard let hash = endpoint.apiKeySHA256 else { return nil }
         do {
-            let key = try credential(hash)
+            let key = try await credential(hash)
             guard (32...512).contains(key.utf8.count), key.utf8.allSatisfy({ (33...126).contains($0) }),
                   EndpointCredentialStore.digest(key) == hash else { throw WiringError.credentialUnavailable }
             return key
@@ -280,7 +299,7 @@ final class WiringCoordinator: ObservableObject {
     /// roll back prior successes — backups make every write reversible.
     @discardableResult
     func confirm(endpoint: WireEndpoint, previewHash hash: String) -> WiringTransaction? {
-        guard !isCheckingServer, previewedServer == nil else {
+        guard !isCheckingServer, previewedServer == nil, endpoint.apiKeySHA256 == nil else {
             lastError = "Confirm this preview with a fresh server status check."
             return nil
         }
@@ -295,10 +314,6 @@ final class WiringCoordinator: ObservableObject {
         guard previewedEndpoint == endpoint, previewHash == hash else {
             lastError = WiringError.previewHashMismatch.errorDescription
             return nil
-        }
-        do { _ = try inferenceKey(for: endpoint) }
-        catch {
-            invalidateServerPreview(); lastError = WiringError.credentialUnavailable.errorDescription; return nil
         }
         isApplying = true
         defer { isApplying = false }

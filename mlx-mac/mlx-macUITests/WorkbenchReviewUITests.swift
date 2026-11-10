@@ -3090,24 +3090,48 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     func testProtectedClientSetupUsesKeychainAndKeepsKeysOutOfZed() throws {
-        let key = "mlxw_ui_" + UUID().uuidString + UUID().uuidString
-        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        var digest: String?
         let service = "xyz.cavi.mlx-workbench.endpoint"
-        func keychain(_ args: [String]) throws {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-            process.arguments = args
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try process.run(); process.waitUntilExit()
-            XCTAssertEqual(process.terminationStatus, 0, "The isolated VM fixture key could not be updated")
-        }
-        try keychain(["add-generic-password", "-a", digest, "-s", service, "-w", key, "-A"])
         defer {
             app.terminate()
-            try? keychain(["delete-generic-password", "-a", digest, "-s", service])
+            if let digest {
+                let remove = Process()
+                remove.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+                remove.arguments = ["delete-generic-password", "-a", digest, "-s", service]
+                remove.standardOutput = FileHandle.nullDevice; remove.standardError = FileHandle.nullDevice
+                do {
+                    try remove.run(); remove.waitUntilExit()
+                    XCTAssertEqual(remove.terminationStatus, 0)
+                } catch { XCTFail("The isolated fixture key could not be removed") }
+            }
             NSPasteboard.general.clearContents()
         }
+        let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [["enabled": false, "port": 8766,
+            "modelPath": "org/Protected-local", "installedAtLogin": false, "loadOnRequest": true]])
+            .write(to: state.appendingPathComponent("endpoint-config.json"))
+        try Data("[]".utf8).write(to: root.appendingPathComponent("servers.json"))
+        try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
+        launch(appearance: "Light", isolatedHome: true)
+        select("Run")
+        let actions = app.menuButtons["Actions for Protected-local"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        actions.click(); app.menuItems["Require API key…"].click()
+        let authentication = app.sheets.firstMatch
+        XCTAssertTrue(authentication.waitForExistence(timeout: 10))
+        authentication.buttons["Save authentication"].click()
+        let saved = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: authentication)
+        wait(for: [saved], timeout: 15)
+        let records = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: state.appendingPathComponent("endpoint-fleet.json"))) as? [[String: Any]])
+        let fleet = try XCTUnwrap(records.first)
+        let slots = try XCTUnwrap(fleet["slots"] as? [[String: Any]])
+        digest = try XCTUnwrap(slots.first?["apiKeySHA256"] as? String)
+        actions.click(); app.menuItems["Copy API key"].click()
+        let key = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+        XCTAssertEqual(SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined(), digest)
+        NSPasteboard.general.clearContents()
+        app.terminate()
         let opencode = root.appendingPathComponent(".config/opencode/opencode.jsonc")
         let zed = root.appendingPathComponent(".config/zed/settings.json")
         for config in [opencode, zed] {
@@ -3115,7 +3139,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             try "{}".write(to: config, atomically: true, encoding: .utf8)
         }
         try JSONSerialization.data(withJSONObject: [["repo": "org/Protected-local", "runtime": "mlx_lm",
-            "port": 8766, "pid": 123, "state": "running", "api_key_sha256": digest]])
+            "port": 8766, "pid": 123, "state": "running", "api_key_sha256": try XCTUnwrap(digest)]])
             .write(to: root.appendingPathComponent("servers.json"))
         for appearance in ["Light", "Dark"] {
             launch(appearance: appearance, isolatedHome: true)
@@ -3147,6 +3171,40 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Clients-\(appearance)-protected-connected-narrow")
             app.terminate()
         }
+    }
+
+    func testProtectedClientRefusesKeychainPermissionWithoutDialog() throws {
+        let key = "mlxw_denied_" + UUID().uuidString
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let service = "xyz.cavi.mlx-workbench.endpoint"
+        func keychain(_ arguments: [String]) throws {
+            let command = Process()
+            command.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+            command.arguments = arguments
+            command.standardOutput = FileHandle.nullDevice; command.standardError = FileHandle.nullDevice
+            try command.run(); command.waitUntilExit()
+            XCTAssertEqual(command.terminationStatus, 0)
+        }
+        try keychain(["add-generic-password", "-a", digest, "-s", service, "-w", key, "-T", "/usr/bin/security"])
+        defer { app.terminate(); try? keychain(["delete-generic-password", "-a", digest, "-s", service]) }
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{}".write(to: config, atomically: true, encoding: .utf8)
+        try JSONSerialization.data(withJSONObject: [["repo": "org/Protected-local", "runtime": "mlx_lm",
+            "port": 8766, "pid": 123, "state": "running", "api_key_sha256": digest]])
+            .write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Clients")
+        let picker = app.popUpButtons["client-wiring-endpoint"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        picker.click(); app.menuItems["Protected-local :8766"].click()
+        app.buttons["Preview client wiring"].click()
+        let unavailable = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "inference key is unavailable", "inference key is unavailable")).firstMatch
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Preview client wiring"].isEnabled)
+        XCTAssertFalse(app.buttons["Confirm client wiring"].exists)
+        XCTAssertEqual(try String(contentsOf: config), "{}")
+        capture("Clients-protected-permission-refused")
     }
 
     func testClientWiringPreviewAndEndpointSelection() throws {
