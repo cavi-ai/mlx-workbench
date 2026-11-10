@@ -5,6 +5,30 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testAgentBudgetDecodesEnginePolicyAndPreservesTheMemoryUnits() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertEqual(argv, ["serve", "budget"])
+            return ["agent_budget": ["limit_bytes": Int64(64_000_000_000),
+                "reserve_bytes": Int64(8_000_000_000), "accounted_bytes": Int64(21_000_000_000),
+                "within_budget": true]]
+        })
+        let current = try await api.agentMemoryBudget()
+        let budget = try XCTUnwrap(current)
+        XCTAssertEqual(budget.limitBytes, 64_000_000_000)
+        XCTAssertEqual(budget.accountedBytes, 21_000_000_000)
+    }
+
+    func testInvalidAgentBudgetCannotInvokeTheEngine() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
+            XCTFail("Invalid settings must fail before any engine mutation")
+            return [:]
+        })
+        do {
+            _ = try await api.configureAgentMemoryBudget(limitGB: 64, reserveGB: 64)
+            XCTFail("The transient reserve must be smaller than the limit")
+        } catch {}
+    }
+
     func testPreparedGGUFPreviewKeepsSourceProjectorAndFetchEvidenceAsArgvTokens() async throws {
         let recorder = AgentCallRecorder()
         let preparation = updatePreparation(kind: .gguf)

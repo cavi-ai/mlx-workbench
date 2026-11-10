@@ -2,6 +2,22 @@ import Foundation
 import Darwin
 import os
 
+struct AgentMemoryBudget: Decodable, Sendable {
+    let limitBytes: Int64
+    let reserveBytes: Int64
+    let accountedBytes: Int64
+    let withinBudget: Bool
+    enum CodingKeys: String, CodingKey {
+        case limitBytes = "limit_bytes", reserveBytes = "reserve_bytes"
+        case accountedBytes = "accounted_bytes", withinBudget = "within_budget"
+    }
+}
+
+private struct AgentMemoryBudgetEnvelope: Decodable, Sendable {
+    let agentBudget: AgentMemoryBudget?
+    enum CodingKeys: String, CodingKey { case agentBudget = "agent_budget" }
+}
+
 // MARK: - WorkbenchAPI
 //
 // Typed wrapper over CLIProcess mirroring mlx_workbench/bridge.py. Every method
@@ -89,6 +105,18 @@ actor WorkbenchAPI {
     }
 
     // MARK: - Durable inference tasks
+
+    func agentMemoryBudget() async throws -> AgentMemoryBudget? {
+        try await runOffActor(AgentMemoryBudgetEnvelope.self, ["serve", "budget"], timeout: 15).agentBudget
+    }
+
+    func configureAgentMemoryBudget(limitGB: Double, reserveGB: Double) async throws -> AgentMemoryBudget {
+        guard limitGB.isFinite, reserveGB.isFinite, limitGB > 0, reserveGB >= 0, reserveGB < limitGB else {
+            throw WorkflowEvidenceError.invalid("Enter a positive memory limit and a smaller transient reserve.")
+        }
+        return try await runOffActor(AgentMemoryBudget.self,
+            ["serve", "budget", "--limit-gb", String(limitGB), "--reserve-gb", String(reserveGB)], timeout: 15)
+    }
 
     func taskCapabilities() async throws -> TaskCapabilities {
         try Self.decodeTask(TaskCapabilities.self, envelope: await taskEnvelope(["task", "capabilities"]))

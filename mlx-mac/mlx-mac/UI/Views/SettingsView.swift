@@ -107,6 +107,10 @@ struct SettingsView: View {
     @State private var notice: String?
     @State private var noticeIsError = false
     @State private var loadedSignature = ""
+    @State private var agentBudgetLimit = "64"
+    @State private var agentBudgetReserve = "8"
+    @State private var agentBudgetMessage = ""
+    @State private var agentBudgetBusy = false
     @State private var layout = SettingsLayout()
     @State private var directories: [String: SettingsDirectoryState] = [:]
     @FocusState private var focusedField: SettingsInputValidation.Field?
@@ -145,6 +149,7 @@ struct SettingsView: View {
         }
         .onAppear { loadFromConfig() }
         .task(id: probeKey) { await runProbe() }
+        .task(id: appHost.config.mlxAgentPath) { await refreshAgentBudget() }
         .onChange(of: isRouteActive) { _, active in
             if !active, engineDetection.isDetecting { engineDetection.cancel() }
         }
@@ -358,9 +363,71 @@ struct SettingsView: View {
             SettingsRow(label: "Model endpoints", stacked: layout.stacksRows) {
                 Button("Open Run") { onRouteSelection(.run) }
             }
+            SettingsSeparator()
+            SettingsRow(label: "Agent memory limit", hint: "Shared by MLX Agent model workers and included agent processes.", stacked: layout.stacksRows) {
+                HStack {
+                    TextField("Agent memory limit in GB", text: $agentBudgetLimit)
+                        .frame(width: 72).accessibilityIdentifier("agent-memory-limit")
+                    Text("GB")
+                }
+            }
+            SettingsSeparator()
+            SettingsRow(label: "Transient reserve", hint: "Kept inside the agent limit for temporary allocations.", stacked: layout.stacksRows) {
+                HStack {
+                    TextField("Transient reserve in GB", text: $agentBudgetReserve)
+                        .frame(width: 72).accessibilityIdentifier("agent-memory-reserve")
+                    Text("GB")
+                }
+            }
+            SettingsSeparator()
+            SettingsRow(label: "Memory policy", stacked: layout.stacksRows) {
+                VStack(alignment: .leading) {
+                    HStack {
+                        Button("Apply budget") { Task { await applyAgentBudget() } }
+                            .disabled(agentBudgetBusy || !agentBudgetInputValid)
+                            .accessibilityIdentifier("apply-agent-memory-budget")
+                        Button("Refresh") { Task { await refreshAgentBudget() } }.disabled(agentBudgetBusy)
+                        if agentBudgetBusy { ProgressView().controlSize(.small) }
+                    }
+                    if !agentBudgetMessage.isEmpty {
+                        Text(agentBudgetMessage).font(.caption).foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
         } footer: {
             Text("Manage loopback servers and each endpoint's port in Run.")
         }
+    }
+
+    private var agentBudgetInputValid: Bool {
+        guard let limit = Double(agentBudgetLimit), let reserve = Double(agentBudgetReserve) else { return false }
+        return limit.isFinite && reserve.isFinite && limit > 0 && reserve >= 0 && reserve < limit
+    }
+
+    @MainActor private func refreshAgentBudget() async {
+        guard !WorkbenchStatePaths.isHostedUnitTest() else { return }
+        agentBudgetBusy = true
+        defer { agentBudgetBusy = false }
+        do {
+            guard let budget = try await appHost.api.agentMemoryBudget() else {
+                agentBudgetMessage = "No shared agent memory budget is configured."
+                return
+            }
+            agentBudgetLimit = String(Double(budget.limitBytes) / 1e9)
+            agentBudgetReserve = String(Double(budget.reserveBytes) / 1e9)
+            agentBudgetMessage = String(format: "%.1f GB accounted · %.1f GB limit", Double(budget.accountedBytes) / 1e9, Double(budget.limitBytes) / 1e9)
+        } catch { agentBudgetMessage = error.localizedDescription }
+    }
+
+    @MainActor private func applyAgentBudget() async {
+        guard let limit = Double(agentBudgetLimit), let reserve = Double(agentBudgetReserve), agentBudgetInputValid else { return }
+        agentBudgetBusy = true
+        defer { agentBudgetBusy = false }
+        do {
+            let budget = try await appHost.api.configureAgentMemoryBudget(limitGB: limit, reserveGB: reserve)
+            agentBudgetMessage = budget.withinBudget ? "Budget applied. New model jobs use the shared limit." : "Budget applied. Unload an idle model before starting another job."
+        } catch { agentBudgetMessage = error.localizedDescription }
     }
 
     // MARK: - Conversion defaults

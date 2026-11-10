@@ -174,6 +174,12 @@ Endpoints created before this mode existed keep eager serving until you change t
 
 ## Memory policy
 
+**Settings → Serving** can apply a shared agent memory limit and a transient
+reserve within that limit. The engine accounts for pending loads, resident model
+workers and included agent processes. This limit is separate from system headroom
+and each Strata model's memory budget. Applying it preserves the engine's included
+process identities; it does not stop unrelated applications.
+
 Each load-on-request endpoint has compact controls for:
 
 | Control | Default for new endpoints |
