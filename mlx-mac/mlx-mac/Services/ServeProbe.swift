@@ -185,17 +185,43 @@ struct StrataComparisonOptions: Codable, Equatable, Sendable {
     var speculation = false
     var expertMemoryGB: Double? = nil
     var contextTokens = 131072
+    /// Absent in older profiles: their on switch chooses MTP when prepared, otherwise lookup.
+    var decoding: String? = nil
+
+    var decodingSelection: String {
+        get { decoding ?? (speculation ? "automatic" : "plain") }
+        set {
+            speculation = newValue == "automatic"
+            decoding = speculation ? nil : newValue
+        }
+    }
+    var decodingTitle: String {
+        switch decodingSelection {
+        case "plain": return "Standard decoding"
+        case "lookup": return "Prompt lookup"
+        case "mtp": return "MTP draft head"
+        case "automatic": return "Automatic draft or lookup"
+        default: return "Unsupported decoding"
+        }
+    }
 
     var validationError: String? {
+        if let decoding, speculation || !["plain", "lookup", "mtp"].contains(decoding) { return "Choose standard decoding, prompt lookup or MTP." }
         if let budget = expertMemoryGB, !budget.isFinite || !(0.5...64).contains(budget) {
             return "Expert memory must be from 0.5 to 64 GB."
         }
         return (512...131072).contains(contextTokens) ? nil : "Context must be from 512 to 131072 tokens."
     }
-    var isDefault: Bool { !speculation && expertMemoryGB == nil && contextTokens == 131072 }
+    var isDefault: Bool { !speculation && (decoding == nil || decoding == "plain") && expertMemoryGB == nil && contextTokens == 131072 }
     var arguments: [String] {
-        ["--strata-speculation", speculation ? "on" : "off", "--strata-context-tokens", String(contextTokens)]
+        (decoding.map { ["--strata-decoding", $0] } ?? ["--strata-speculation", speculation ? "on" : "off"])
+            + ["--strata-context-tokens", String(contextTokens)]
             + (expertMemoryGB.map { ["--strata-expert-memory-gb", String($0)] } ?? [])
+    }
+
+    func matches(_ evidence: ProbeServingEvidence) -> Bool {
+        evidence.contextTokens == contextTokens && evidence.expertMemoryGB == expertMemoryGB &&
+            (decoding.map { evidence.decoding == $0 } ?? (evidence.speculation == speculation))
     }
 }
 
@@ -211,9 +237,10 @@ struct ProbeServingEvidence: Codable, Equatable, Sendable {
     let speculation: Bool?
     let expertMemoryGB: Double?
     let contextTokens: Int?
+    var decoding: String? = nil
 
     var hasCustomOptions: Bool {
-        speculation == true || expertMemoryGB != nil || contextTokens.map { $0 != 131072 } == true
+        speculation == true || decoding.map { $0 != "plain" } == true || expertMemoryGB != nil || contextTokens.map { $0 != 131072 } == true
     }
 
     init?(plan: [String: Any]) {
@@ -228,6 +255,7 @@ struct ProbeServingEvidence: Codable, Equatable, Sendable {
         speculation = plan["strata_speculation"] as? Bool
         expertMemoryGB = plan["strata_expert_memory_gb"] as? Double
         contextTokens = plan["strata_context_tokens"] as? Int
+        decoding = plan["strata_decoding"] as? String
     }
 
     var summary: String {
@@ -320,23 +348,24 @@ struct ServeLifecycle: Sendable {
     var reviewedPreview: (@Sendable (_ modelPath: String, _ port: Int) async throws -> ProbeServePreview)? = nil
     var startWithReceipt: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> ComparisonServerReceipt?)? = nil
     var authenticated: (@Sendable (_ keySHA256: String) -> ServeLifecycle)? = nil
+    var configured: (@Sendable (LocalInferenceOptions) -> ServeLifecycle)? = nil
 }
 
 extension ServeLifecycle {
     /// Production lifecycle: the agent selects the declared loader from local model metadata.
     /// `thinkingOff` serves with the chat template's reasoning switched off (canary verification).
     static func live(api: WorkbenchAPI, runtime: String = "auto", strataOptions: StrataComparisonOptions? = nil,
-                     thinkingOff: Bool = false, acceleration: LocalAccelerationOptions = .init(), apiKeySHA256: String? = nil) -> ServeLifecycle {
+                     thinkingOff: Bool = false, acceleration: LocalInferenceOptions = .init(), apiKeySHA256: String? = nil) -> ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
                     timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
@@ -344,12 +373,12 @@ extension ServeLifecycle {
             stopObserved: { server in try await api.changeDiscoveredService(server, action: "stop") },
             jitPreview: { modelPath, port, policy in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
                 return response.string("preview_hash") ?? ""
             },
             jitStart: { modelPath, port, hash, policy in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
             },
             unload: { port, pid in
                 _ = try await api.serveUnload(port: port, expectedPID: pid)
@@ -359,17 +388,19 @@ extension ServeLifecycle {
             },
             reviewedPreview: { modelPath, port in
                 let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             },
             startWithReceipt: { path, port, hash in
                 let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
                     timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
                 return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             },
             authenticated: { digest in .live(api: api, runtime: runtime, strataOptions: strataOptions,
-                thinkingOff: thinkingOff, acceleration: acceleration, apiKeySHA256: digest) }
+                thinkingOff: thinkingOff, acceleration: acceleration, apiKeySHA256: digest) },
+            configured: { options in .live(api: api, runtime: runtime, strataOptions: strataOptions,
+                thinkingOff: thinkingOff, acceleration: options, apiKeySHA256: apiKeySHA256) }
         )
     }
 }
@@ -410,7 +441,7 @@ struct ServeProbe: Sendable {
             guard expected.modelFingerprint?.isEmpty == false, expected.runtimeFingerprint?.isEmpty == false,
                   let actual = preview.evidence, actual.runtime == expected.runtime,
                   actual.modelFingerprint == expected.modelFingerprint, actual.runtimeFingerprint == expected.runtimeFingerprint,
-                  actual.speculation == expected.speculation, actual.expertMemoryGB == expected.expertMemoryGB,
+                  actual.speculation == expected.speculation, (expected.decoding == nil || actual.decoding == expected.decoding), actual.expertMemoryGB == expected.expertMemoryGB,
                   actual.contextTokens == expected.contextTokens else {
                 throw WorkflowEvidenceError.invalid("The suggested model, runtime or settings changed. Run the comparison again before verifying its suggestion.")
             }

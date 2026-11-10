@@ -1,28 +1,39 @@
 import Foundation
 
-struct LocalAccelerationOptions: Codable, Equatable, Sendable {
+struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var m5Prefill = false
     var promptLookup = false
     var visionCache = false
-    var textRequested: Bool { m5Prefill || promptLookup }
-    var requested: Bool { textRequested || visionCache }
-
-    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) {
-        self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
+    var thinkingOff = false
+    var maximumTokens: Int? = nil
+    var textRequested: Bool { m5Prefill || promptLookup || thinkingOff }
+    var accelerationRequested: Bool { m5Prefill || promptLookup || visionCache }
+    var requested: Bool { textRequested || visionCache || maximumTokens != nil }
+    var validationError: String? {
+        if let maximumTokens, !(256...65536).contains(maximumTokens) { return "Default output length must be from 256 to 65536 tokens." }
+        if visionCache && (textRequested || maximumTokens != nil) { return "Choose vision feature reuse separately from text-server settings." }
+        return nil
     }
 
-    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache }
+    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil) {
+        self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
+        self.thinkingOff = thinkingOff; self.maximumTokens = maximumTokens
+    }
+
+    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         m5Prefill = try values.decodeIfPresent(Bool.self, forKey: .m5Prefill) ?? false
         promptLookup = try values.decodeIfPresent(Bool.self, forKey: .promptLookup) ?? false
         visionCache = try values.decodeIfPresent(Bool.self, forKey: .visionCache) ?? false
+        thinkingOff = try values.decodeIfPresent(Bool.self, forKey: .thinkingOff) ?? false
+        maximumTokens = try values.decodeIfPresent(Int.self, forKey: .maximumTokens)
     }
 }
 
-struct EndpointAccelerationPreview {
+struct EndpointInferencePreview {
     let slot: EndpointSlot
-    let options: LocalAccelerationOptions
+    let options: LocalInferenceOptions
     let hash: String
 }
 
@@ -114,10 +125,11 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var memoryPolicy: EndpointMemoryPolicy?
     var servingProfile: ServingProfile? = nil
     var profilePreviewHash: String? = nil
-    var acceleration: LocalAccelerationOptions? = nil
+    /// Existing fleet files use this storage key for local inference settings.
+    var acceleration: LocalInferenceOptions? = nil
     var accelerationPreviewHash: String? = nil
     var apiKeySHA256: String? = nil
-    var accelerationOptions: LocalAccelerationOptions { acceleration ?? .init() }
+    var inferenceOptions: LocalInferenceOptions { acceleration ?? .init() }
     var usesJIT: Bool { loadOnRequest == true }
 
     init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
@@ -151,6 +163,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case duplicatePort(Int)
     case duplicateRole(UseCase)
     case invalidMemoryPolicy(UUID)
+    case invalidInference(UUID, String)
     case incompatibleAcceleration(UUID)
     case invalidAuthentication(UUID)
 }
@@ -168,8 +181,10 @@ extension EndpointFleetValidation: LocalizedError {
             return "Role \(role.title) is already assigned to another endpoint."
         case .invalidMemoryPolicy:
             return "Memory policy requires an idle timeout of 0–86400 seconds and a finite reserve of 0–1024 GB."
+        case .invalidInference(_, let reason):
+            return reason
         case .incompatibleAcceleration:
-            return "Local acceleration requires MLX-LM without a Strata serving profile."
+            return "Strata profiles use their own decoding controls. Only the default output length can be set separately."
         case .invalidAuthentication:
             return "API key authentication requires Load on request and a valid credential reference."
         }
@@ -190,8 +205,10 @@ extension EndpointFleetConfig {
                !slot.usesJIT || digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) == nil {
                 throw EndpointFleetValidation.invalidAuthentication(slot.id)
             }
-            if (slot.servingProfile != nil && slot.accelerationOptions.requested) ||
-                (slot.accelerationOptions.visionCache && slot.accelerationOptions.textRequested) {
+            if let reason = slot.inferenceOptions.validationError {
+                throw EndpointFleetValidation.invalidInference(slot.id, reason)
+            }
+            if slot.servingProfile != nil && (slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
             }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }

@@ -262,7 +262,7 @@ struct EndpointMemoryReviewSheet: View {
 
     @MainActor private func preview(_ policy: EndpointMemoryPolicy) async throws -> [String: Any] {
         if let profile = slot.servingProfile { return try await profile.preview(api: api, port: slot.port, jit: true, policy: policy) }
-        let options = slot.accelerationOptions
+        let options = slot.inferenceOptions
         return try await api.servePreview(repo: slot.modelPath, runtime: "auto", port: slot.port, jit: true,
             memoryPolicy: policy, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
     }

@@ -44,7 +44,7 @@ struct ComparisonProfileVerificationSheet: View {
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             if let existingProfile {
                 Text(profile?.name ?? existingProfile.name).font(WorkbenchTypography.label)
-                Text("Draft-and-verify \(existingProfile.options.speculation ? "on" : "off") · expert memory \(existingProfile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(existingProfile.options.contextTokens) context tokens")
+                Text("\(existingProfile.options.decodingTitle) · expert memory \(existingProfile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(existingProfile.options.contextTokens) context tokens")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             } else { TextField("Profile name", text: $name).textFieldStyle(.roundedBorder).disabled(profileID != nil || working) }
             if working { ProgressView("Verifying profile…") }
@@ -127,8 +127,8 @@ struct ServingProfileControls: View {
     @ObservedObject var endpoint: EndpointSupervisor
     let modelPath: String?
     var onCompare: ((ServingProfileComparisonSetup) -> String?)? = nil
-    @State private var port = String(EndpointConfig.defaultPort)
-    @State private var jit = true
+    var onPrepareModel: (() -> Void)? = nil
+    @State private var creatingProfile = false
     @State private var renameRequest: ServingProfile?
     @State private var removalRequest: ServingProfile?
     @State private var copyRequest: ServingProfile?
@@ -143,17 +143,21 @@ struct ServingProfileControls: View {
     private var selected: ServingProfile? { profiles.profiles.first { $0.id == workflow.servingProfile?.id } }
 
     var body: some View {
-        if !choices.isEmpty || workflow.servingProfile != nil {
+        if modelPath != nil {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 Picker("Serving profile", selection: Binding<UUID?>(
                     get: { workflow.servingProfile?.id },
                     set: { id in
                         evidenceError = nil
+                        onPrepareModel?()
                         workflow.selectServingProfile(id.flatMap { id in choices.first { $0.id == id } })
                     })) {
                     Text("Runtime defaults").tag(Optional<UUID>.none)
                     ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
                 }.disabled(readingEvidence || workflow.isServeSubmissionInFlight || profiles.activeID != nil)
+                Button("New profile…") { creatingProfile = true }
+                    .disabled(profiles.activeID != nil || workflow.isServeSubmissionInFlight)
+                    .accessibilityIdentifier("serve-create-profile")
                 Button("Review profiles…") {
                     guard let modelPath else { return }
                     readEvidence {
@@ -164,7 +168,7 @@ struct ServingProfileControls: View {
                 }.disabled(readingEvidence || workflow.isServeSubmissionInFlight || profiles.activeID != nil || modelPath == nil)
                 if readingEvidence { ProgressView("Reading comparison evidence…").controlSize(.small) }
                 if let profile = selected {
-                    Text("Draft-and-verify \(profile.options.speculation ? "on" : "off") · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
+                    Text("\(profile.options.decodingTitle) · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                     Text(profile.hasPassedVerification ? "Canaries passed. Settings and fingerprints are checked again before serving." : "Profile verification is required before serving.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -196,24 +200,24 @@ struct ServingProfileControls: View {
                             }
                         }
                     }
-                    HStack {
-                        TextField("Endpoint port", text: $port).frame(width: 110).textFieldStyle(.roundedBorder)
-                        Toggle("Load on request", isOn: $jit)
-                        Button("Use profile for endpoint") {
-                            guard let number = Int(port) else { return }
-                            Task { await endpoint.enableProfile(profile, port: number, loadOnRequest: jit) }
-                        }.disabled(!profile.hasPassedVerification || profiles.activeID != nil || Int(port).map { !(1...65535).contains($0) } ?? true)
-                    }
-                    Text("The endpoint keeps this profile across relaunches. Its loopback port stays stable.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+
                 }
                 ErrorBanner(text: evidenceError)
                 ErrorBanner(text: profiles.lastError)
                 ErrorBanner(text: endpoint.lastError)
             }.padding(.vertical, WorkbenchSpacing.sm)
+                .sheet(isPresented: $creatingProfile) {
+                    if let modelPath {
+                        CreateServingProfileSheet(profiles: profiles, modelPath: modelPath) { profile in
+                            onPrepareModel?()
+                            workflow.selectServingProfile(profile)
+                        }
+                    }
+                }
                 .sheet(item: $evidenceRequest) { evidence in ServingProfileComparisonSheet(evidence: evidence) }
                 .sheet(item: $chooserRequest) { request in
                     ServingProfileChooserSheet(profiles: profiles, request: request, selectedID: workflow.servingProfile?.id) { profile in
+                        onPrepareModel?()
                         guard !workflow.isServeSubmissionInFlight, profile.modelPath == workflow.workflow.completedModelPath else {
                             return "The Run model changed or serving is in progress. Reopen profile selection."
                         }
@@ -222,7 +226,7 @@ struct ServingProfileControls: View {
                     }
                 }
                 .sheet(item: $copyRequest) { profile in
-                    ServingProfileCopySheet(profiles: profiles, profile: profile) { copy in workflow.selectServingProfile(copy) }
+                    ServingProfileCopySheet(profiles: profiles, profile: profile) { copy in onPrepareModel?(); workflow.selectServingProfile(copy) }
                 }
                 .sheet(item: $comparisonRequest) { profile in
                     ServingProfileComparisonSetupSheet(profiles: profiles, baseline: profile) { setup in
@@ -297,7 +301,7 @@ struct ServingProfileChooserSheet: View {
                                 Spacer()
                                 if choice.id == selectedID { Text("Selected").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted) }
                             }
-                            Text("Draft-and-verify \(choice.profile.options.speculation ? "on" : "off") · expert memory \(choice.profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(choice.profile.options.contextTokens) context tokens")
+                            Text("\(choice.profile.options.decodingTitle) · expert memory \(choice.profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(choice.profile.options.contextTokens) context tokens")
                                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
                             Text(choice.profile.hasPassedVerification ? "Canaries passed · serving rechecks fingerprints" : "Canary verification required")
                                 .font(WorkbenchTypography.secondary)
@@ -445,7 +449,7 @@ struct ServingProfileComparisonSetupSheet: View {
     }
 
     private func settings(_ profile: ServingProfile) -> some View {
-        Text("Draft-and-verify \(profile.options.speculation ? "on" : "off") · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
+        Text("\(profile.options.decodingTitle) · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
             .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
     }
 
@@ -602,5 +606,36 @@ struct ServingProfileRemovalSheet: View {
                 }.disabled(profiles.activeID != nil)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 460)
+    }
+}
+
+private struct CreateServingProfileSheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let modelPath: String
+    let onCreate: (ServingProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var options = StrataComparisonOptions()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("New serving profile").font(WorkbenchTypography.cardTitle)
+            Text("Save decoding and memory settings for this model. Verify the profile in Run before serving with it.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            TextField("Profile name", text: $name).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("serve-profile-name")
+            StrataComparisonControls(options: $options, helpText: "Shorter context leaves more headroom. A smaller expert budget keeps more weights on disk and can increase loading work.")
+            ErrorBanner(text: profiles.lastError)
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save profile") {
+                    if let profile = profiles.createProfile(name: name, modelPath: modelPath, options: options) {
+                        onCreate(profile); dismiss()
+                    }
+                }.buttonStyle(.workbenchPrimary)
+                    .disabled(ServingProfile.nameValidationError(name) != nil || options.validationError != nil)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 500)
     }
 }

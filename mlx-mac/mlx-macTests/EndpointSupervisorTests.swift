@@ -5,6 +5,70 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testServingInferenceFlagsAndDecodingSurvivePersistence() throws {
+        let input = Data(#"{"m5Prefill":false,"promptLookup":false,"visionCache":false,"thinkingOff":true,"maximumTokens":2048}"#.utf8)
+        let options = try JSONDecoder().decode(LocalInferenceOptions.self, from: input)
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(options)) as? [String: Any])
+        XCTAssertEqual(encoded["thinkingOff"] as? Bool, true)
+        XCTAssertEqual(encoded["maximumTokens"] as? Int, 2048)
+        XCTAssertTrue(options.requested)
+        let strata = try JSONDecoder().decode(StrataComparisonOptions.self, from: Data(#"{"speculation":false,"contextTokens":8192,"decoding":"lookup"}"#.utf8))
+        XCTAssertTrue(strata.arguments.contains("--strata-decoding"))
+        XCTAssertTrue(strata.arguments.contains("lookup"))
+        XCTAssertFalse(strata.arguments.contains("--strata-speculation"))
+        XCTAssertFalse(strata.isDefault)
+    }
+
+    func testInferenceOptionBoundsAndLegacyFleetDecoding() throws {
+        let legacy = try JSONDecoder().decode(LocalInferenceOptions.self, from: Data(#"{"promptLookup":true}"#.utf8))
+        XCTAssertTrue(legacy.promptLookup); XCTAssertFalse(legacy.thinkingOff); XCTAssertNil(legacy.maximumTokens)
+        for value in [255, 65537] { XCTAssertNotNil(LocalInferenceOptions(maximumTokens: value).validationError) }
+        XCTAssertNotNil(LocalInferenceOptions(visionCache: true, thinkingOff: true).validationError)
+        XCTAssertNil(LocalInferenceOptions(thinkingOff: true, maximumTokens: 2048).validationError)
+    }
+
+    func testNewStrataProfileStaysUnverifiedUntilExplicitVerification() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = JSONStore<ServingProfile>(fileURL: home.appendingPathComponent("profiles.json"))
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            XCTFail("Saving configuration must not load or verify a model")
+            return ServeProbe(lifecycle: .init(preview: { _, _ in "reviewed" }, start: { _, _, _ in }, stop: { _ in }), prober: OpenAIEndpointProber())
+        })
+        let profile = try XCTUnwrap(coordinator.createProfile(name: "Prompt reuse", modelPath: "/Models/strata", options: .init(contextTokens: 8192, decoding: "lookup")))
+        XCTAssertFalse(profile.hasPassedVerification)
+        XCTAssertNil(profile.verification)
+        XCTAssertEqual(try store.load().first?.options.decoding, "lookup")
+        XCTAssertNil(coordinator.createProfile(name: "Invalid", modelPath: "/Models/strata", options: .init(decoding: "unknown")))
+        XCTAssertEqual(try store.load().count, 1)
+    }
+
+    func testNewEndpointPreviewsInferenceBeforeSavingAndRejectsInvalidProfiles() async throws {
+        let (supervisor, world) = makeSupervisor()
+        let options = LocalInferenceOptions(thinkingOff: true, maximumTokens: 2048)
+        var previewed = false
+        supervisor.inferenceLifecycle = { requested in
+            XCTAssertEqual(requested, options)
+            var lifecycle = world.lifecycle
+            lifecycle.preview = { _, _ in
+                previewed = true
+                return "reviewed-inference"
+            }
+            return lifecycle
+        }
+        await supervisor.addSlot(modelPath: "/Models/chat", port: 8927, loadOnRequest: false, inference: options)
+        XCTAssertTrue(previewed)
+        XCTAssertEqual(supervisor.fleet.slots.first?.inferenceOptions, options)
+        XCTAssertEqual(supervisor.fleet.slots.first?.accelerationPreviewHash, "reviewed-inference")
+        let before = supervisor.fleet
+        await supervisor.addSlot(modelPath: "/Models/chat", port: 8928, loadOnRequest: false, inference: .init(maximumTokens: 255))
+        XCTAssertEqual(supervisor.fleet, before)
+        let profile = ServingProfile(id: UUID(), name: "Unverified", modelPath: "/Models/strata", options: .init(decoding: "lookup"))
+        await supervisor.addSlot(modelPath: profile.modelPath, port: 8929, loadOnRequest: false, profile: profile)
+        XCTAssertEqual(supervisor.fleet, before)
+        XCTAssertTrue(supervisor.lastError?.contains("Verify") == true)
+    }
+
     nonisolated private static func authenticationLifecycle(_ digest: String? = nil) -> ServeLifecycle {
         ServeLifecycle(preview: { _, _ in digest ?? "plain" }, start: { _, _, _ in }, stop: { _ in },
             jitPreview: { _, _, _ in digest ?? "plain" }, jitStart: { _, _, _, _ in },
@@ -406,7 +470,7 @@ final class EndpointSupervisorTests: XCTestCase {
         try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: fleet)
-        supervisor.accelerationLifecycle = { _ in
+        supervisor.inferenceLifecycle = { _ in
             var selected = world.lifecycle
             selected.preview = { _, _ in hash }
             return selected
@@ -437,7 +501,7 @@ final class EndpointSupervisorTests: XCTestCase {
         func supervisor() -> EndpointSupervisor {
             let owner = EndpointSupervisor(lifecycle: .live(api: api), statusProvider: { try await api.serveStatus() },
                 store: legacy, fleetStore: fleet)
-            owner.accelerationLifecycle = { .live(api: api, acceleration: $0) }
+            owner.inferenceLifecycle = { .live(api: api, acceleration: $0) }
             return owner
         }
         func current() async throws -> ServerInfo {
@@ -493,9 +557,9 @@ final class EndpointSupervisorTests: XCTestCase {
             let stopped = try await api.serveStatus()
             guard stopped.isEmpty else { throw WorkflowEvidenceError.invalid("Acceptance endpoint did not stop.") }
             owned = nil
-            let options = LocalAccelerationOptions(m5Prefill: true, promptLookup: true)
-            let preview = try await owner.previewSlotAcceleration(id: id, options: options)
-            let saved = await owner.confirmSlotAcceleration(preview)
+            let options = LocalInferenceOptions(m5Prefill: true, promptLookup: true)
+            let preview = try await owner.previewSlotInference(id: id, options: options)
+            let saved = await owner.confirmSlotInference(preview)
             XCTAssertTrue(saved, owner.lastError ?? "Acceleration settings were not saved")
             await owner.setSlotEnabled(id: id, true)
             owned = try readOwnedReceipt(expectedHash: owner.fleet.slots.first?.accelerationPreviewHash)
@@ -601,9 +665,9 @@ final class EndpointSupervisorTests: XCTestCase {
         let store = JSONStore<EndpointFleetConfig>(fileURL: url, replaceItem: { _, _ in throw StubError.offline })
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: store)
-        supervisor.accelerationLifecycle = { _ in world.lifecycle }
-        let preview = try await supervisor.previewSlotAcceleration(id: slot.id, options: .init(promptLookup: true))
-        let saved = await supervisor.confirmSlotAcceleration(preview)
+        supervisor.inferenceLifecycle = { _ in world.lifecycle }
+        let preview = try await supervisor.previewSlotInference(id: slot.id, options: .init(promptLookup: true))
+        let saved = await supervisor.confirmSlotInference(preview)
         XCTAssertFalse(saved)
         XCTAssertEqual(supervisor.fleet, original)
         XCTAssertEqual(try JSONStore<EndpointFleetConfig>(fileURL: url).load(), [original])
@@ -614,24 +678,24 @@ final class EndpointSupervisorTests: XCTestCase {
         let world = FakeServeWorld()
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL))
-        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        supervisor.inferenceLifecycle = { _ in world.lifecycle }
         await supervisor.enable(modelPath: "/Models/a", port: 8766)
         let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
-        let options = LocalAccelerationOptions(m5Prefill: true, promptLookup: true)
+        let options = LocalInferenceOptions(m5Prefill: true, promptLookup: true)
         do {
-            _ = try await supervisor.previewSlotAcceleration(id: id, options: options)
+            _ = try await supervisor.previewSlotInference(id: id, options: options)
             XCTFail("Running endpoint must be disabled first")
         } catch {}
         await supervisor.disable()
-        let preview = try await supervisor.previewSlotAcceleration(id: id, options: options)
-        let saved = await supervisor.confirmSlotAcceleration(preview)
+        let preview = try await supervisor.previewSlotInference(id: id, options: options)
+        let saved = await supervisor.confirmSlotInference(preview)
         XCTAssertTrue(saved)
         XCTAssertEqual(supervisor.fleet.slots.first?.acceleration, options)
         let persisted = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL))
         XCTAssertEqual(persisted.fleet.slots.first?.acceleration, options)
         await supervisor.updateSlot(id: id, modelPath: "/Models/b", port: 8766, role: nil)
-        let rejected = await supervisor.confirmSlotAcceleration(preview)
+        let rejected = await supervisor.confirmSlotInference(preview)
         XCTAssertFalse(rejected)
         XCTAssertNil(supervisor.fleet.slots.first?.acceleration)
     }
@@ -640,21 +704,21 @@ final class EndpointSupervisorTests: XCTestCase {
         let world = FakeServeWorld()
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL))
-        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        supervisor.inferenceLifecycle = { _ in world.lifecycle }
         await supervisor.enable(modelPath: "/Models/a", port: 8766)
         await supervisor.disable()
         let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
-        let preview = try await supervisor.previewSlotAcceleration(id: id,
-            options: LocalAccelerationOptions(promptLookup: true))
+        let preview = try await supervisor.previewSlotInference(id: id,
+            options: LocalInferenceOptions(promptLookup: true))
         var changed = world.lifecycle
         changed.preview = { _, _ in "different-runtime-hash" }
-        supervisor.accelerationLifecycle = { _ in changed }
-        let driftRejected = await supervisor.confirmSlotAcceleration(preview)
+        supervisor.inferenceLifecycle = { _ in changed }
+        let driftRejected = await supervisor.confirmSlotInference(preview)
         XCTAssertFalse(driftRejected)
         XCTAssertNil(supervisor.fleet.slots.first?.acceleration)
-        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        supervisor.inferenceLifecycle = { _ in world.lifecycle }
         world.preload(repo: "/Models/other", port: 8766)
-        let occupiedRejected = await supervisor.confirmSlotAcceleration(preview)
+        let occupiedRejected = await supervisor.confirmSlotInference(preview)
         XCTAssertFalse(occupiedRejected)
         XCTAssertNil(supervisor.fleet.slots.first?.acceleration)
     }
@@ -662,7 +726,7 @@ final class EndpointSupervisorTests: XCTestCase {
     func testLegacyEndpointsDefaultToNativeAccelerationAndMalformedMetadataIsRefused() throws {
         let slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/Models/a")
         let restored = try JSONDecoder().decode(EndpointSlot.self, from: JSONEncoder().encode(slot))
-        XCTAssertFalse(restored.accelerationOptions.requested)
+        XCTAssertFalse(restored.inferenceOptions.requested)
         let native = ServerInfo(repo: "/Models/a")
         XCTAssertTrue(native.matchesAcceleration(.init()))
         let malformed = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [["repo": "/Models/a", "decode_profile": "invalid"]]])?.first)

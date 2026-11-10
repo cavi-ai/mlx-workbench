@@ -857,7 +857,7 @@ actor WorkbenchAPI {
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                                previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                               apiKeySHA256: String? = nil) -> [String] {
+                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
@@ -865,6 +865,7 @@ actor WorkbenchAPI {
         if m5Prefill { args += ["--m5-prefill"] }
         if promptLookup { args += ["--prompt-lookup"] }
         if visionCache { args += ["--vision-cache"] }
+        if let maximumTokens { args += ["--max-tokens", String(maximumTokens)] }
         if let apiKeySHA256 { args += ["--api-key-sha256", apiKeySHA256] }
         if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
         return args
@@ -872,7 +873,7 @@ actor WorkbenchAPI {
 
     func loginItemPlan(slot: EndpointSlot, fleetURL: URL) async throws -> LoginItemPlan {
         guard slot.enabled, !slot.modelPath.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
-        guard slot.servingProfile == nil || !slot.accelerationOptions.requested else {
+        guard slot.servingProfile == nil || !slot.inferenceOptions.accelerationRequested else {
             throw WorkflowEvidenceError.invalid("Local acceleration cannot be combined with a Strata serving profile.")
         }
         let capturedAgent = agentPath
@@ -881,43 +882,51 @@ actor WorkbenchAPI {
         let preview: [String: Any]
         if let profile = slot.servingProfile {
             guard profile.modelPath == slot.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            preview = try await profile.preview(api: self, port: slot.port, jit: slot.usesJIT, policy: slot.memoryPolicy, apiKeySHA256: slot.apiKeySHA256)
+            preview = try await profile.preview(api: self, port: slot.port, jit: slot.usesJIT, policy: slot.memoryPolicy, apiKeySHA256: slot.apiKeySHA256, inference: slot.inferenceOptions)
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
-                jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy,
-                m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache, apiKeySHA256: slot.apiKeySHA256)
+                jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, thinkingOff: slot.inferenceOptions.thinkingOff, maximumTokens: slot.inferenceOptions.maximumTokens,
+                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup, visionCache: slot.accelerationOptions.visionCache, apiKeySHA256: slot.apiKeySHA256)
+            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256)
         if let options { args += options.arguments }
+        if slot.inferenceOptions.thinkingOff { args += ["--thinking", "off"] }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
     }
 
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
-                      thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
+                      thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
                       apiKeySHA256: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, apiKeySHA256: apiKeySHA256)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
             argv += strataOptions.arguments
         }
-        return Self.unwrapPlan(try await raw(argv, timeout: timeout))
+        let plan = Self.unwrapPlan(try await raw(argv, timeout: timeout))
+        if let maximumTokens {
+            guard (256...65536).contains(maximumTokens), let resolvedRuntime = plan.string("runtime"), ["mlx_lm", "strata"].contains(resolvedRuntime),
+                  plan.int("max_tokens") == maximumTokens else {
+                throw WorkflowEvidenceError.invalid("Default output length is supported by MLX-LM and Strata. Set output length in the client for other runtimes.")
+            }
+        }
+        return plan
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
-                    thinkingOff: Bool = false, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
+                    thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
                     apiKeySHA256: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, apiKeySHA256: apiKeySHA256)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }

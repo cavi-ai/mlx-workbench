@@ -376,7 +376,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
 
     /// Receipt metadata records requested acceleration, including native fallback.
     /// Presence is not proof that a particular request used an accelerated path.
-    func matchesAcceleration(_ options: LocalAccelerationOptions) -> Bool {
+    func matchesAcceleration(_ options: LocalInferenceOptions) -> Bool {
         func matches(_ value: LabValue?, requested: Bool, name: String) -> Bool {
             guard requested else { return value == nil }
             guard let fields = value?.object, fields["name"]?.text == name,

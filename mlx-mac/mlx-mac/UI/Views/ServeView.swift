@@ -44,9 +44,8 @@ struct ServeView: View {
     @State private var reportedActionError: String?
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
-    @State private var m5Prefill = false
-    @State private var promptLookup = false
-    @State private var visionCache = false
+    @State private var inferenceOptions = LocalInferenceOptions()
+    @State private var revealInferenceRevision = UUID()
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
@@ -60,7 +59,7 @@ struct ServeView: View {
     @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
     @State private var loginPlan: LoginItemPlan?
-    @State private var accelerationSlot: EndpointSlot?
+    @State private var inferenceSlot: EndpointSlot?
     @State private var memoryReviewSlot: EndpointSlot?
     @State private var loginPlist = ""
     @State private var loginBusy = false
@@ -136,8 +135,13 @@ struct ServeView: View {
                     .frame(maxWidth: .infinity)
                     .padding(WorkbenchSpacing.pageInset)
                 }
+                .accessibilityIdentifier("run-content-scroll")
                 .onChange(of: viewport.size.width, initial: true) { _, width in viewportWidth = width }
-                .onChange(of: shownPath, initial: true) { _, _ in revealServeBlock(proxy) }
+                .onChange(of: shownPath, initial: true) { old, new in
+                    if old != new { inferenceOptions = .init() }
+                    revealServeBlock(proxy)
+                }
+                .onChange(of: revealInferenceRevision) { _, _ in proxy.scrollTo("run-serve-primary", anchor: .top) }
                 .onChange(of: isRouteActive) { _, _ in revealServeBlock(proxy); revealServing(proxy) }
                 .onChange(of: appHost.handoffs[.openServing], initial: true) { _, _ in revealServing(proxy) }
                 .onChange(of: pendingFleetAction?.id) { _, id in if id != nil { proxy.scrollTo("run-fleet-pending") } }
@@ -155,8 +159,18 @@ struct ServeView: View {
                 onRouteSelection(.clientSetup)
             }
         }
-        .sheet(item: $accelerationSlot) { slot in
-            EndpointAccelerationEditor(endpoint: endpoint, slot: slot)
+        .sheet(item: $inferenceSlot) { slot in
+            EndpointInferenceEditor(endpoint: endpoint, slot: slot,
+                context: ServingInferenceContext.resolve(model: models.first { $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath) }, profile: slot.servingProfile, chip: appHost.hardwareProfile.chip),
+                onManageProfile: { profile in
+                    guard let model = models.first(where: { $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath) }), model.readiness == .ready else { return }
+                    appHost.selectedModelPath = model.item.path
+                    modelWorkflow.prepareServe(model: model)
+                    modelWorkflow.selectServingProfile(profile)
+                    inferenceOptions = slot.inferenceOptions
+                    inferenceSlot = nil
+                    revealInferenceRevision = UUID()
+                })
         }
         .sheet(item: $memoryReviewSlot) { slot in
             EndpointMemoryReviewSheet(slot: slot, endpoint: endpoint, api: appHost.api)
@@ -169,6 +183,19 @@ struct ServeView: View {
             else { closePrompt() }
         }
         .onDisappear(perform: closePrompt)
+        .onChange(of: inferenceOptions) { _, _ in modelWorkflow.invalidateServePreview() }
+        .onChange(of: runtime) { _, _ in
+            inferenceOptions = inferenceContext.normalized(inferenceOptions)
+            modelWorkflow.invalidateServePreview()
+        }
+        .onChange(of: mode) { _, _ in
+            inferenceOptions = inferenceContext.normalized(inferenceOptions)
+            modelWorkflow.invalidateServePreview()
+        }
+        .onChange(of: modelWorkflow.servingProfile) { _, _ in
+            inferenceOptions = inferenceContext.normalized(inferenceOptions)
+        }
+        .onChange(of: portText) { _, _ in modelWorkflow.invalidateServePreview() }
         .onAppear {
             if endpointPortText.isEmpty {
                 endpointPortText = String(suggestedPort)
@@ -350,15 +377,18 @@ struct ServeView: View {
     }
 
     private func selectedServerDetails(_ server: ServerInfo) -> some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: innerWidth < WorkbenchSize.Run.compactThreshold ? 1 : 2),
-            alignment: .leading,
-            spacing: WorkbenchSpacing.xxs
-        ) {
-            detailLine("PID", server.pid.map(String.init), identifier: true)
-            detailLine("Started", server.startedAt)
-            detailLine("Receipt", server.receipt, identifier: true, accessibilityID: "active-server-receipt")
-            detailLine("Log path", server.logPath, identifier: true)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: innerWidth < WorkbenchSize.Run.compactThreshold ? 1 : 2),
+                alignment: .leading,
+                spacing: WorkbenchSpacing.xxs
+            ) {
+                detailLine("PID", server.pid.map(String.init), identifier: true)
+                detailLine("Started", server.startedAt)
+                detailLine("Receipt", server.receipt, identifier: true, accessibilityID: "active-server-receipt")
+                detailLine("Log path", server.logPath, identifier: true)
+            }
+            ServingInferenceEvidenceView(rows: InferenceOptionEvidence.rows(prefill: server.prefillKernel, lookup: server.decodeProfile, vision: server.visionProfile))
         }
     }
 
@@ -453,16 +483,12 @@ struct ServeView: View {
                         onRouteSelection(.library)
                     }
                         .buttonStyle(.bordered)
-                case .notEligible:
-                    if presentation.canPrepareSelection {
-                        serveControls(presentation)
+                case .notEligible where !presentation.canPrepareSelection:
+                    if let error = presentation.selectionError { InlineMessage(kind: .info, text: error) }
+                    if presentation.needsWorkflowReview {
+                        Button("Review Prepare") { onRouteSelection(.prepare) }.buttonStyle(.bordered)
                     } else {
-                        if let error = presentation.selectionError { InlineMessage(kind: .info, text: error) }
-                        if presentation.needsWorkflowReview {
-                            Button("Review Prepare") { onRouteSelection(.prepare) }.buttonStyle(.bordered)
-                        } else {
-                            Button("Open Library") { onRouteSelection(.library) }.buttonStyle(.bordered)
-                        }
+                        Button("Open Library") { onRouteSelection(.library) }.buttonStyle(.bordered)
                     }
                 default:
                     serveControls(presentation)
@@ -511,7 +537,13 @@ struct ServeView: View {
             Spacer()
             Button("Open Health") { onRouteSelection(.health) }.buttonStyle(.bordered)
         }
-        if isCompact {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                launchFields
+                Spacer(minLength: WorkbenchSpacing.xs)
+                stateWords(presentation)
+                serveActions(presentation)
+            }.fixedSize(horizontal: true, vertical: false)
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     serveActions(presentation)
@@ -519,40 +551,35 @@ struct ServeView: View {
                 }
                 launchFields
             }
-        } else {
-            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
-                launchFields
-                Spacer(minLength: WorkbenchSpacing.xs)
-                stateWords(presentation)
-                serveActions(presentation)
-            }
         }
-        ServingProfileControls(profiles: appHost.servingProfiles, workflow: modelWorkflow, endpoint: endpoint,
-            modelPath: modelWorkflow.workflow.completedModelPath, onCompare: { setup in
-                guard appHost.comparison.activeRunID == nil, !appHost.comparison.savingPromptSet else {
-                    return "Wait for the current comparison or prompt-set save to finish."
-                }
-                appHost.handoffs.send(setup, as: .compareServingProfiles)
-                onRouteSelection(.compare)
-                return nil
-            })
-        Toggle("Experimental M5 prompt acceleration", isOn: $m5Prefill)
-            .toggleStyle(.checkbox)
-            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || visionCache || modelWorkflow.isServeSubmissionInFlight)
-            .help("MLX-LM only. Unsupported hardware and models use native MLX. First load compiles the M5 Q4 prompt kernel.")
-            .onChange(of: runtime) { _, value in if value == "mlx-vlm" { m5Prefill = false; promptLookup = false }; if value == "mlx_lm" { visionCache = false } }
-            .onChange(of: modelWorkflow.servingProfile) { _, value in if value != nil { m5Prefill = false; promptLookup = false; visionCache = false } }
-        Toggle("Experimental code-edit acceleration", isOn: $promptLookup)
-            .toggleStyle(.checkbox)
-            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || visionCache || modelWorkflow.isServeSubmissionInFlight)
-            .help("For greedy edits that reuse source text in the prompt. Serves those requests one at a time. Other settings use native generation; speed depends on the workload.")
-        Toggle("Reuse image features", isOn: $visionCache)
-            .toggleStyle(.checkbox)
-            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx_lm" || m5Prefill || promptLookup || modelWorkflow.isServeSubmissionInFlight)
-            .help("MLX-VLM only. Reuses image features for repeated images; the engine preview checks model and runtime support.")
+        inferenceSettings
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
         }
+    }
+
+    private var inferenceContext: ServingInferenceContext {
+        ServingInferenceContext.resolve(model: selectedModel, override: mode == .startNow ? runtime : "auto", profile: modelWorkflow.servingProfile, chip: appHost.hardwareProfile.chip)
+    }
+
+    @ViewBuilder
+    private var inferenceSettings: some View {
+        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext)
+            .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
+        if inferenceContext.isStrata {
+            ServingProfileControls(profiles: appHost.servingProfiles, workflow: modelWorkflow, endpoint: endpoint,
+                modelPath: shownPath, onCompare: { setup in
+                    guard appHost.comparison.activeRunID == nil, !appHost.comparison.savingPromptSet else {
+                        return "Wait for the current comparison or prompt-set save to finish."
+                    }
+                    appHost.handoffs.send(setup, as: .compareServingProfiles)
+                    onRouteSelection(.compare)
+                    return nil
+                }, onPrepareModel: {
+                    if let selectedModel { modelWorkflow.prepareServe(model: selectedModel) }
+                })
+        }
+        ServingInferenceEvidenceView(rows: modelWorkflow.inferenceEvidence)
     }
 
     @ViewBuilder
@@ -570,8 +597,8 @@ struct ServeView: View {
         let fields = Group {
             Picker("Runtime", selection: $runtime) {
                 Text("Automatic").tag("auto")
-                Text("mlx_lm").tag("mlx_lm")
-                Text("mlx-vlm").tag("mlx-vlm")
+                Text("Text · MLX-LM").tag("mlx_lm")
+                Text("Vision · MLX-VLM").tag("mlx-vlm")
             }
             .frame(width: WorkbenchSize.Run.runtimeWidth)
             .disabled(modelWorkflow.servingProfile != nil)
@@ -602,21 +629,17 @@ struct ServeView: View {
         guard presentation.selectedCompletedModel != nil else { return }
         let port = portInput.port
         let runtime = runtime
-        let m5Prefill = m5Prefill
-        let promptLookup = promptLookup
-        let visionCache = visionCache
-        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache) }
+        let options = inferenceOptions
+        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache, thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens) }
     }
 
     private func confirmServeAction() {
         guard portInput.error == nil else { return }
         let port = portInput.port
         let runtime = runtime
-        let m5Prefill = m5Prefill
-        let promptLookup = promptLookup
-        let visionCache = visionCache
+        let options = inferenceOptions
         Task {
-            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
+            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache, thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens)
             if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
         }
     }
@@ -624,7 +647,7 @@ struct ServeView: View {
     @ViewBuilder
     private func serveActions(_ presentation: RunPresentation) -> some View {
         let busy = modelWorkflow.isServeSubmissionInFlight || portInput.error != nil
-            || (modelWorkflow.servingProfile.map { !$0.hasPassedVerification } ?? false) || appHost.servingProfiles.activeID != nil
+            || inferenceOptions.validationError != nil || (modelWorkflow.servingProfile.map { !$0.hasPassedVerification } ?? false) || appHost.servingProfiles.activeID != nil
         // Exactly one action is armed at a time: preview until the intent is
         // ready to confirm, then confirm.
         if presentation.canConfirm {
@@ -926,10 +949,8 @@ struct ServeView: View {
         Text(slot.usesJIT ? "Load on request" : "Always loaded")
             .font(WorkbenchTypography.metadata)
             .foregroundStyle(WorkbenchColor.muted)
-        if slot.accelerationOptions.requested {
-            Text(slot.accelerationOptions.promptLookup
-                 ? (slot.accelerationOptions.m5Prefill ? "M5 + code-edit acceleration requested" : "Code-edit acceleration requested")
-                 : "M5 prompt acceleration requested")
+        if slot.inferenceOptions.requested {
+            Text(slot.inferenceOptions.summary)
                 .font(WorkbenchTypography.metadata)
                 .foregroundStyle(WorkbenchColor.muted)
         }
@@ -990,11 +1011,9 @@ struct ServeView: View {
             if slot.usesJIT {
                 Button("Memory management…") { expandedMemorySlots.insert(slot.id) }
             }
-            if slot.servingProfile == nil {
-                Button("Acceleration…") { accelerationSlot = slot }
-                    .disabled(slot.enabled || endpoint.pendingStops[slot.id] != nil)
-                    .help("Disable this endpoint before reviewing acceleration settings.")
-            }
+            Button("Inference settings…") { inferenceSlot = slot }
+                .disabled(endpoint.pendingStops[slot.id] != nil)
+                .help("Review inference settings. Stop the endpoint before changing them.")
             if let connection { Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) } }
             else if slot.apiKeySHA256 != nil, let server {
                 Button("Copy model ID") { ServedModelsSelection.copy(server.modelIdentity) }
@@ -1177,6 +1196,7 @@ struct ServeView: View {
             if let endpointPortError {
                 Text(endpointPortError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
+            inferenceSettings
             if unverified {
                 InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.")
             }
@@ -1188,7 +1208,7 @@ struct ServeView: View {
                 Spacer(minLength: WorkbenchSpacing.xs)
                 Button(unverified ? "Add unverified endpoint…" : "Add endpoint…") { prepareAddEndpoint() }
                     .buttonStyle(.workbenchPrimary)
-                    .disabled(!presentation.canAddEndpoint || endpoint.isChanging || !comparison.hasLoadedHistory)
+                    .disabled(!presentation.canAddEndpoint || endpoint.isChanging || !comparison.hasLoadedHistory || inferenceOptions.validationError != nil || (modelWorkflow.servingProfile.map { !$0.hasPassedVerification } ?? false))
                     .help(presentation.addEndpointBlockedReason ?? "Review and add the model shown above as a saved endpoint.")
             }
         }
@@ -1227,7 +1247,7 @@ struct ServeView: View {
 
     private func prepareAddEndpoint() {
         switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: newSlotRole,
-                                 loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey) {
+                                 loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey, inference: inferenceOptions, profile: modelWorkflow.servingProfile) {
         case .noModel: return
         case .portRejected(let message): endpointPortError = message
         case .review(let review): endpointPortError = nil; action = review
@@ -1252,6 +1272,10 @@ struct ServeView: View {
                     Text("Only clients with a new API key can use inference. The endpoint stays on loopback; the key is saved in Keychain.")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
+            }
+            if !pending.remove, pending.slot == nil {
+                Text(pending.inference.summary).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if let profile = pending.profile { Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary) }
             }
             if pending.unverified { InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.") }
             if let warning = pending.memoryWarning { InlineMessage(kind: .warning, text: warning) }
@@ -1424,6 +1448,8 @@ struct EndpointChangeReview: Identifiable {
     let memoryWarning: String?
     let unverified: Bool
     let remove: Bool
+    var inference = LocalInferenceOptions()
+    var profile: ServingProfile? = nil
 }
 
 /// Reviews endpoint changes and rechecks them against current state when confirmed.
@@ -1445,8 +1471,12 @@ struct EndpointChanges {
     }
 
     func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: UseCase?, loadOnRequest: Bool,
-                   keepLoaded: Bool, requireKey: Bool) -> AddOutcome {
+                   keepLoaded: Bool, requireKey: Bool, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil) -> AddOutcome {
         guard let model else { return .noModel }
+        if let error = inference.validationError { return .portRejected(error) }
+        if let profile, !profile.hasPassedVerification || profile.modelPath != model.item.path {
+            return .portRejected("Verify the selected serving profile for this model before adding the endpoint.")
+        }
         let text = portText.trimmingCharacters(in: .whitespacesAndNewlines)
         let port = text.isEmpty ? suggestedPort : (Int(text) ?? 0)
         guard ServeView.isUsablePort(port, slots: appHost.endpoint.fleet.slots, servers: occupiedServers) else {
@@ -1454,7 +1484,7 @@ struct EndpointChanges {
         }
         return .review(EndpointChangeReview(model: model, slot: nil, port: port, role: role, loadOnRequest: loadOnRequest,
             keepLoaded: keepLoaded, requireKey: requireKey, memoryWarning: memoryWarning(for: model.item.path),
-            unverified: !appHost.isModelVerified(model.item.path), remove: false))
+            unverified: !appHost.isModelVerified(model.item.path), remove: false, inference: inference, profile: profile))
     }
 
     func review(slot: EndpointSlot, remove: Bool) -> EndpointChangeReview {
@@ -1512,7 +1542,7 @@ struct EndpointChanges {
                     loadOnRequest: review.loadOnRequest,
                     memoryPolicy: review.loadOnRequest ? EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: review.keepLoaded,
                         minimumHeadroomGB: 2, releaseAfterRequest: !review.keepLoaded) : nil,
-                    requireAPIKey: review.requireKey)
+                    requireAPIKey: review.requireKey, inference: review.inference, profile: review.profile)
             }
         }
         return nil
@@ -1529,47 +1559,54 @@ struct EndpointChanges {
     }
 }
 
-private struct EndpointAccelerationEditor: View {
+private struct EndpointInferenceEditor: View {
     @ObservedObject var endpoint: EndpointSupervisor
     let slot: EndpointSlot
+    let context: ServingInferenceContext
+    var onManageProfile: ((ServingProfile) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @State private var options: LocalAccelerationOptions
-    @State private var preview: EndpointAccelerationPreview?
+    @State private var options: LocalInferenceOptions
+    @State private var preview: EndpointInferencePreview?
     @State private var busy = false
     @State private var error: String?
 
-    init(endpoint: EndpointSupervisor, slot: EndpointSlot) {
+    init(endpoint: EndpointSupervisor, slot: EndpointSlot, context: ServingInferenceContext, onManageProfile: ((ServingProfile) -> Void)? = nil) {
         self.endpoint = endpoint
         self.slot = slot
-        _options = State(initialValue: slot.accelerationOptions)
+        self.context = context
+        self.onManageProfile = onManageProfile
+        _options = State(initialValue: slot.inferenceOptions)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Endpoint acceleration").font(WorkbenchTypography.emphasis)
-            Text(verbatim: "\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) · :\(slot.port)")
-                .font(WorkbenchTypography.secondary)
-            Text("These experimental options apply to this endpoint, including load-on-request and login startup. Native MLX is the default.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            Toggle("M5 prompt acceleration", isOn: $options.m5Prefill).toggleStyle(.checkbox)
-            Text("For supported M5 Q4 models. Other hardware and models use native MLX.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            Toggle("Code-edit acceleration", isOn: $options.promptLookup).toggleStyle(.checkbox)
-            Text("Set temperature to 0 in your client. Greedy requests run one at a time; edits that copy source text can be faster. Other settings use native generation.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            Toggle("Reuse image features (MLX-VLM)", isOn: $options.visionCache).toggleStyle(.checkbox)
-                .disabled(options.textRequested)
-            Text("For repeated images. Choose this separately from MLX-LM text acceleration; the launch preview checks compatibility.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            if let error { InlineMessage(kind: .error, text: error) }
-            if busy { ProgressView("Checking launch configuration…") }
-            if let preview {
-                Text("Launch preview: \(preview.hash)")
-                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                    .textSelection(.enabled)
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Text("Endpoint inference settings").font(WorkbenchTypography.cardTitle)
+                    Text(verbatim: "\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) · :\(slot.port)")
+                        .font(WorkbenchTypography.secondary)
+                    if slot.enabled {
+                        InlineMessage(kind: .info, text: "Stop this endpoint to change its inference settings.")
+                    }
+                    ServingInferenceControls(options: $options, context: context).disabled(slot.enabled)
+                    if let profile = slot.servingProfile {
+                        Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary)
+                        if let onManageProfile {
+                            Button("Manage profile in Run") { onManageProfile(profile) }.disabled(slot.enabled)
+                        }
+                    }
+                    if let error { InlineMessage(kind: .error, text: error) }
+                    if busy { ProgressView("Checking launch configuration…") }
+                    if let preview {
+                        Text("Launch preview: \(preview.hash)")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            .textSelection(.enabled)
+                    }
+                    Text("After saving, enable the endpoint. Reinstall an existing login item to capture the changed settings.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
             }
-            Text("After saving, enable the endpoint. Reinstall an existing login item to capture the changed settings.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            .frame(maxHeight: 560)
             HStack {
                 Button("Cancel") { dismiss() }.disabled(busy)
                 Spacer()
@@ -1577,30 +1614,30 @@ private struct EndpointAccelerationEditor: View {
                     Button("Confirm and save") {
                         busy = true
                         Task {
-                            if await endpoint.confirmSlotAcceleration(preview) { dismiss() }
+                            if await endpoint.confirmSlotInference(preview) { dismiss() }
                             else { error = endpoint.lastError; self.preview = nil }
                             busy = false
                         }
-                    }.buttonStyle(.workbenchPrimary).disabled(busy || endpoint.isChanging)
+                    }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
                 } else {
-                    Button("Preview acceleration") {
+                    Button("Preview settings") {
                         busy = true; error = nil
                         Task {
                             do {
                                 guard endpoint.fleet.slots.contains(slot) else {
-                                    throw WorkflowEvidenceError.invalid("Endpoint settings changed. Close and reopen acceleration settings.")
+                                    throw WorkflowEvidenceError.invalid("Endpoint settings changed. Close and reopen inference settings.")
                                 }
-                                preview = try await endpoint.previewSlotAcceleration(id: slot.id, options: options)
+                                preview = try await endpoint.previewSlotInference(id: slot.id, options: options)
                             }
                             catch { self.error = AppHost.render(error) }
                             busy = false
                         }
-                    }.buttonStyle(.workbenchPrimary).disabled(busy || endpoint.isChanging)
+                    }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
                 }
             }
         }
         .padding(WorkbenchSpacing.md)
-        .frame(width: WorkbenchSize.Run.loginSheetWidth)
+        .frame(width: 560)
         .disabled(busy)
         .onChange(of: options) { _, _ in preview = nil; error = nil }
         .interactiveDismissDisabled(busy)

@@ -23,13 +23,15 @@ final class LaunchAgentManagerTests: XCTestCase {
         for jit in [false, true] {
             var slot = EndpointSlot(enabled: true, port: 19997, modelPath: model.path,
                 loadOnRequest: jit, memoryPolicy: jit ? .automatic : nil)
-            slot.acceleration = .init(m5Prefill: true, promptLookup: true)
+            slot.acceleration = .init(m5Prefill: true, promptLookup: true, thinkingOff: true, maximumTokens: 2048)
             let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.path, receiptDirectory: home.path)
             let plan = try await api.loginItemPlan(slot: slot, fleetURL: home.appendingPathComponent("fleet.json"))
             XCTAssertTrue(plan.arguments.contains("--path"))
             XCTAssertTrue(plan.arguments.contains("--confirm"))
             XCTAssertTrue(plan.arguments.contains("--m5-prefill"))
             XCTAssertTrue(plan.arguments.contains("--prompt-lookup"))
+            XCTAssertEqual(plan.arguments[try XCTUnwrap(plan.arguments.firstIndex(of: "--max-tokens")) + 1], "2048")
+            XCTAssertEqual(plan.arguments[try XCTUnwrap(plan.arguments.firstIndex(of: "--thinking")) + 1], "off")
             XCTAssertEqual(plan.arguments.contains("--jit"), jit)
             let hashIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--preview-hash")) + 1
             var changed = plan.arguments; changed[hashIndex] = "unreviewed"
@@ -64,6 +66,10 @@ final class LaunchAgentManagerTests: XCTestCase {
             try process.run(); process.waitUntilExit(); return process.terminationStatus
         }
         XCTAssertEqual(try execute(), 0)
+        XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
+        slot.acceleration = .init(m5Prefill: true, promptLookup: true, thinkingOff: true, maximumTokens: 2048)
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
+        XCTAssertNotEqual(try execute(), 0)
         XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
         slot.acceleration = .init(m5Prefill: true)
         try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
