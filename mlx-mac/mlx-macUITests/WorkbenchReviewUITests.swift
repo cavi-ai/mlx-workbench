@@ -3089,6 +3089,124 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Health navigation must not recreate a rolled-back config")
     }
 
+    func testProtectedClientSetupUsesKeychainAndKeepsKeysOutOfZed() throws {
+        var digest: String?
+        let service = "xyz.cavi.mlx-workbench.endpoint"
+        defer {
+            app.terminate()
+            if let digest {
+                let remove = Process()
+                remove.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+                remove.arguments = ["delete-generic-password", "-a", digest, "-s", service]
+                remove.standardOutput = FileHandle.nullDevice; remove.standardError = FileHandle.nullDevice
+                do {
+                    try remove.run(); remove.waitUntilExit()
+                    XCTAssertEqual(remove.terminationStatus, 0)
+                } catch { XCTFail("The isolated fixture key could not be removed") }
+            }
+            NSPasteboard.general.clearContents()
+        }
+        let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [["enabled": false, "port": 8766,
+            "modelPath": "org/Protected-local", "installedAtLogin": false, "loadOnRequest": true]])
+            .write(to: state.appendingPathComponent("endpoint-config.json"))
+        try Data("[]".utf8).write(to: root.appendingPathComponent("servers.json"))
+        try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
+        launch(appearance: "Light", isolatedHome: true)
+        select("Run")
+        let actions = app.menuButtons["Actions for Protected-local"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        actions.click(); app.menuItems["Require API key…"].click()
+        let authentication = app.sheets.firstMatch
+        XCTAssertTrue(authentication.waitForExistence(timeout: 10))
+        authentication.buttons["Save authentication"].click()
+        let saved = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: authentication)
+        wait(for: [saved], timeout: 15)
+        let records = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: state.appendingPathComponent("endpoint-fleet.json"))) as? [[String: Any]])
+        let fleet = try XCTUnwrap(records.first)
+        let slots = try XCTUnwrap(fleet["slots"] as? [[String: Any]])
+        digest = try XCTUnwrap(slots.first?["apiKeySHA256"] as? String)
+        actions.click(); app.menuItems["Copy API key"].click()
+        let key = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+        XCTAssertEqual(SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined(), digest)
+        NSPasteboard.general.clearContents()
+        app.terminate()
+        let opencode = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        let zed = root.appendingPathComponent(".config/zed/settings.json")
+        for config in [opencode, zed] {
+            try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "{}".write(to: config, atomically: true, encoding: .utf8)
+        }
+        try JSONSerialization.data(withJSONObject: [["repo": "org/Protected-local", "runtime": "mlx_lm",
+            "port": 8766, "pid": 123, "state": "running", "api_key_sha256": try XCTUnwrap(digest)]])
+            .write(to: root.appendingPathComponent("servers.json"))
+        for appearance in ["Light", "Dark"] {
+            launch(appearance: appearance, isolatedHome: true)
+            select("Clients")
+            let picker = app.popUpButtons["client-wiring-endpoint"].firstMatch
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            picker.click(); app.menuItems["Protected-local :8766"].click()
+            app.buttons["Preview client wiring"].click()
+            let protected = app.descendants(matching: .any)["client-wiring-protected"].firstMatch
+            XCTAssertTrue(protected.waitForExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts.allElementsBoundByIndex.contains { $0.label.contains(key) || ($0.value as? String)?.contains(key) == true })
+            capture("Clients-\(appearance)-protected-review")
+            let confirm = app.buttons["Confirm client wiring"]
+            for _ in 0..<6 where !confirm.isHittable { app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -200) }
+            confirm.click()
+            let copy = app.buttons["client-copy-inference-key"]
+            XCTAssertTrue(copy.waitForExistence(timeout: 10))
+            let parsed = try JSONSerialization.jsonObject(with: Data(contentsOf: opencode)) as? [String: Any]
+            let providers = parsed?["provider"] as? [String: Any]
+            let local = providers?["mlx-local"] as? [String: Any]
+            XCTAssertEqual((local?["options"] as? [String: Any])?["apiKey"] as? String, key)
+            XCTAssertFalse(try String(contentsOf: zed).contains(key))
+            for _ in 0..<6 where !copy.isHittable { app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -200) }
+            copy.click()
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Inference key copied", "Inference key copied")).firstMatch.waitForExistence(timeout: 10))
+            XCTAssertEqual(NSPasteboard.general.string(forType: .string), key)
+            NSPasteboard.general.clearContents()
+            resizeWindow(width: 800, height: 680)
+            capture("Clients-\(appearance)-protected-connected-narrow")
+            app.terminate()
+        }
+    }
+
+    func testProtectedClientRefusesKeychainPermissionWithoutDialog() throws {
+        let key = "mlxw_denied_" + UUID().uuidString
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let service = "xyz.cavi.mlx-workbench.endpoint"
+        func keychain(_ arguments: [String]) throws {
+            let command = Process()
+            command.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+            command.arguments = arguments
+            command.standardOutput = FileHandle.nullDevice; command.standardError = FileHandle.nullDevice
+            try command.run(); command.waitUntilExit()
+            XCTAssertEqual(command.terminationStatus, 0)
+        }
+        try keychain(["add-generic-password", "-a", digest, "-s", service, "-w", key, "-T", "/usr/bin/security"])
+        defer { app.terminate(); try? keychain(["delete-generic-password", "-a", digest, "-s", service]) }
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{}".write(to: config, atomically: true, encoding: .utf8)
+        try JSONSerialization.data(withJSONObject: [["repo": "org/Protected-local", "runtime": "mlx_lm",
+            "port": 8766, "pid": 123, "state": "running", "api_key_sha256": digest]])
+            .write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Clients")
+        let picker = app.popUpButtons["client-wiring-endpoint"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        picker.click(); app.menuItems["Protected-local :8766"].click()
+        app.buttons["Preview client wiring"].click()
+        let unavailable = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "inference key is unavailable", "inference key is unavailable")).firstMatch
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Preview client wiring"].isEnabled)
+        XCTAssertFalse(app.buttons["Confirm client wiring"].exists)
+        XCTAssertEqual(try String(contentsOf: config), "{}")
+        capture("Clients-protected-permission-refused")
+    }
+
     func testClientWiringPreviewAndEndpointSelection() throws {
         let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
         try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)

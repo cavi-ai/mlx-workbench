@@ -36,6 +36,18 @@ The board reads each writable client's config and draws what it points at agains
 
 The result reports zero, partial or full outcomes per client. The opencode adapter adds opencode's `$schema` when it is missing or empty, since opencode rewrites a loaded config without one.
 
+## API-key protected endpoints
+
+Protected endpoints appear in the same server picker and **Wire into clients** handoff. Preview checks that Workbench can read the matching inference key from Keychain. Confirmation rechecks the running process, model and key identity before writing. Key lookups run off the UI thread and refuse permission prompts. A missing, locked or reset key requires a new preview; authentication is never disabled to complete setup.
+
+OpenCode, Continue’s legacy JSON adapter and Aider receive the inference key in their supported configuration fields. Configs, temporary writes and backups are readable and writable only by your macOS user. The review names the credential destination and masks key values. Wiring history records paths and content digests, never keys. Keep these config files and backups out of shared folders and source control.
+
+Zed stores API keys in its own system-keychain entry. Workbench writes its endpoint settings and shows **Finish API-key setup in Zed**. Use **Copy inference key**, then paste it into Zed’s OpenAI provider in Agent Settings. Workbench never puts the key in Zed’s settings file. Continue’s current YAML format remains a guided setup; use its official secret configuration instructions.
+
+**Try a prompt…** checks the selected endpoint with its configured inference key. It generates output and may load a model configured to load on request. A successful prompt proves endpoint access, not that another client has used it. Missing or wrong credentials are refused by the endpoint. Keys authorize requests; they do not identify an operating-system process. Each endpoint has one inference key: resetting it affects every app using that key. Control credentials are never given to clients.
+
+Client credential formats: [OpenCode](https://opencode.ai/docs/providers/), [Aider](https://aider.chat/docs/config/api-keys.html), [Zed](https://zed.dev/docs/ai/use-api-access), [Continue](https://docs.continue.dev/guides/configuring-models-rules-tools).
+
 ## Manual wiring
 
 For a model by Hugging Face repository id, enter the repo id, a config file path and a target runtime, then **Preview Wire**. The review lists all three; **Confirm manual wiring** applies the engine's wire transaction.

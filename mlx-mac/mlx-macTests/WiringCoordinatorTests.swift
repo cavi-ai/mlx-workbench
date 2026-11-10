@@ -50,6 +50,216 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/zed/settings.json").path))
     }
 
+    func testServingStatusPreservesAuthenticationAndRejectsMalformedKeyMetadata() throws {
+        let digest = String(repeating: "a", count: 64)
+        let row: [String: Any] = ["repo": "org/protected", "runtime": "mlx_lm", "port": 8766,
+                                  "pid": 123, "state": "running", "api_key_sha256": digest]
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        XCTAssertEqual(server.apiKeySHA256, digest)
+        let malformedValues: [Any] = [42, true, "", "plaintext-not-a-digest"]
+        for malformed in malformedValues {
+            var changed = row; changed["api_key_sha256"] = malformed
+            XCTAssertNil(WorkbenchAPI.servers(from: ["servers": [changed]]))
+        }
+        var unprotected = row; unprotected["api_key_sha256"] = NSNull()
+        XCTAssertNil(try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [unprotected]])?.first).apiKeySHA256)
+    }
+
+    func testMalformedAuthenticationStatusDoesNotBecomeAnEmptyInventory() async throws {
+        let home = try makeHome()
+        let script = home.appendingPathComponent("scripts/mlx-agent")
+        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        import json
+        print(json.dumps({"status":"ok","data":{"servers":[{"repo":"org/protected","runtime":"mlx_lm","port":8766,"pid":123,"state":"running","api_key_sha256":42}]}}))
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: home.path)
+        do {
+            _ = try await api.serveStatus()
+            XCTFail("Malformed authentication status must remain unavailable")
+        } catch BridgeError.remote(let code, _, _) {
+            XCTAssertEqual(code, "invalid_service_inventory")
+        }
+    }
+
+    func testProtectedServerCanBeSelectedWithoutReadingItsKey() throws {
+        let server = ServerInfo(repo: "org/protected", runtime: "mlx_lm", port: 8766, pid: 123,
+                                state: "running", apiKeySHA256: String(repeating: "a", count: 64))
+        let request = try XCTUnwrap(ClientWiringRequest.forServer(server))
+        XCTAssertEqual(request.expectedServer, server)
+        XCTAssertEqual(ClientWiringSelection.matchingServers(request: request, servers: [server]), [server])
+    }
+
+    func testProtectedConfigWritesOnlyInferenceKeyAndKeepsHistoryRedacted() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let server = protectedServer(key: key)
+        let home = try makeHome()
+        let storeURL = home.appendingPathComponent("history.json")
+        let coordinator = WiringCoordinator(home: home, store: JSONStore(fileURL: storeURL), credential: { _ in key })
+        await coordinator.preview(server: server, clientIDs: ["opencode", "aider"])
+        XCTAssertEqual(coordinator.plans.count, 2, coordinator.lastError ?? "")
+        for plan in coordinator.plans {
+            XCTAssertFalse(plan.redactedDiff.contains { $0.text.contains(key) })
+            XCTAssertFalse(plan.summary.contains(key))
+        }
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        let applied = await coordinator.confirm(server: server, previewHash: hash, currentServers: { [server] })
+        let transaction = try XCTUnwrap(applied)
+        XCTAssertEqual(transaction.receipts.count, 2)
+        for receipt in transaction.receipts {
+            let url = URL(fileURLWithPath: receipt.configPath)
+            let contents = try String(contentsOf: url)
+            XCTAssertTrue(contents.contains(key))
+            XCTAssertFalse(contents.contains("control-key"))
+            let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+            XCTAssertEqual(mode.map { $0 & 0o777 }, 0o600)
+        }
+        XCTAssertFalse(try String(contentsOf: storeURL).contains(key))
+    }
+
+    func testProtectedPreviewRefusesMissingOrMismatchedKeyWithoutLeakingErrors() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let server = protectedServer(key: key)
+        let lookups: [(String) throws -> String] = [
+            { _ in throw NSError(domain: key, code: 1) },
+            { _ in "mlxw_wrong_key_012345678901234567890123456" },
+        ]
+        for lookup in lookups {
+            let home = try makeHome()
+            let coordinator = WiringCoordinator(home: home,
+                store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: lookup)
+            await coordinator.preview(server: server, clientIDs: ["opencode"])
+            XCTAssertTrue(coordinator.plans.isEmpty)
+            XCTAssertNil(coordinator.previewHash)
+            XCTAssertNotNil(coordinator.lastError)
+            XCTAssertFalse(coordinator.lastError?.contains(key) == true)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/opencode/opencode.jsonc").path))
+        }
+    }
+
+    func testProtectedConfirmationRefusesRotatedKeyAndMissingCredential() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let server = protectedServer(key: key)
+        let rotated = protectedServer(key: "mlxw_rotated_0123456789012345678901234567")
+        for changed in [false, true] {
+            let home = try makeHome()
+            var available = true
+            let coordinator = WiringCoordinator(home: home,
+                store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in
+                    guard available else { throw CocoaError(.fileReadNoPermission) }; return key
+                })
+            await coordinator.preview(server: server, clientIDs: ["opencode"])
+            let hash = try XCTUnwrap(coordinator.previewHash)
+            available = changed
+            let result = await coordinator.confirm(server: server, previewHash: hash, currentServers: { [changed ? rotated : server] })
+            XCTAssertNil(result)
+            XCTAssertTrue(coordinator.transactions.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/opencode/opencode.jsonc").path))
+        }
+    }
+
+    func testProtectedZedReviewKeepsKeyOutOfSettingsAndExplainsNativeSetup() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let home = try makeHome()
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in key })
+        await coordinator.preview(server: protectedServer(key: key), clientIDs: ["zed"])
+        let plan = try XCTUnwrap(coordinator.plans.first)
+        XCTAssertFalse(plan.after.contains(key))
+        XCTAssertFalse(plan.after.contains("api_key"))
+        XCTAssertNotNil(plan.credentialInstruction)
+    }
+
+    func testProtectedBackupAndRollbackKeepOwnerOnlyPermissions() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let server = protectedServer(key: key)
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = "{\"theme\":\"dark\"}"
+        try original.write(to: config, atomically: true, encoding: .utf8)
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in key })
+        await coordinator.preview(server: server, clientIDs: ["opencode"])
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        let applied = await coordinator.confirm(server: server, previewHash: hash, currentServers: { [server] })
+        let transaction = try XCTUnwrap(applied)
+        let backup = try XCTUnwrap(transaction.receipts.first?.backupPath)
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: backup)[.posixPermissions] as? Int).map { $0 & 0o777 }, 0o600)
+        coordinator.rollback()
+        XCTAssertEqual(try String(contentsOf: config), original)
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: config.path)[.posixPermissions] as? Int).map { $0 & 0o777 }, 0o600)
+    }
+
+    func testProtectedKeyTransferRechecksIdentityAndNeverReturnsControlMaterial() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let server = protectedServer(key: key)
+        let home = try makeHome()
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in key })
+        let transferred = try await coordinator.inferenceKey(server: server, currentServers: { [server] })
+        XCTAssertEqual(transferred, key)
+        let changed = ServerInfo(repo: "org/protected", runtime: "mlx_lm", port: 8766, pid: 999,
+                                 state: "running", apiKeySHA256: EndpointCredentialStore.digest(key))
+        for current in [[changed], [server, server], []] {
+            do {
+                _ = try await coordinator.inferenceKey(server: server, currentServers: { current })
+                XCTFail("A changed or ambiguous endpoint cannot transfer a credential")
+            } catch {
+                XCTAssertFalse(error.localizedDescription.contains(key))
+            }
+        }
+        XCTAssertTrue(coordinator.transactions.isEmpty)
+    }
+
+    func testAiderProtectedPlanQuotesKeyAndReplacesEveryOldKey() async throws {
+        let key = "mlxw_quoted_key_01234567890123456789\"#:$"
+        let server = protectedServer(key: key)
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".aider.conf.yml")
+        try "# retain this comment\nopenai-api-key: old-one\nother: true\nopenai-api-key: old-two\n".write(to: config, atomically: true, encoding: .utf8)
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in key })
+        await coordinator.preview(server: server, clientIDs: ["aider"])
+        let plan = try XCTUnwrap(coordinator.plans.first)
+        let keys = plan.after.split(separator: "\n").filter { $0.hasPrefix("openai-api-key:") }
+        XCTAssertEqual(keys.count, 1)
+        let encoded = keys[0].dropFirst("openai-api-key:".count).trimmingCharacters(in: .whitespaces)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(encoded.utf8), options: .fragmentsAllowed) as? String, key)
+        XCTAssertTrue(plan.after.contains("# retain this comment"))
+        XCTAssertTrue(plan.after.contains("other: true"))
+        XCTAssertFalse(plan.redactedDiff.contains { $0.text.contains("old-one") || $0.text.contains("old-two") || $0.text.contains("quoted_key") })
+    }
+
+    func testProtectedLookupCanBeCancelledWithoutPublishingAReview() async throws {
+        let key = "mlxw_fixture_inference_01234567890123456789"
+        let server = protectedServer(key: key)
+        let entered = expectation(description: "credential lookup started")
+        let home = try makeHome()
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in
+                entered.fulfill()
+                try await Task.sleep(for: .seconds(60))
+                return key
+            })
+        let pending = Task { await coordinator.preview(server: server, clientIDs: ["opencode"]) }
+        await fulfillment(of: [entered], timeout: 2)
+        XCTAssertTrue(coordinator.isCheckingServer)
+        XCTAssertTrue(coordinator.plans.isEmpty)
+        pending.cancel()
+        await pending.value
+        XCTAssertFalse(coordinator.isCheckingServer)
+        XCTAssertNil(coordinator.previewHash)
+        XCTAssertTrue(coordinator.plans.isEmpty)
+        XCTAssertNil(coordinator.lastError)
+    }
+
+    private func protectedServer(key: String) -> ServerInfo {
+        ServerInfo(repo: "org/protected", runtime: "mlx_lm", port: 8766, pid: 123,
+                   state: "running", apiKeySHA256: EndpointCredentialStore.digest(key))
+    }
+
     // MARK: - JSONC tolerance
 
     func testJSONCStripsCommentsAndTrailingCommasButNotInsideStrings() throws {
@@ -244,7 +454,7 @@ final class WiringCoordinatorTests: XCTestCase {
         let server = ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123,
                                 state: "running", startedAt: "first", receipt: "receipt-a")
         XCTAssertFalse(coordinator.previewMatches(server: server))
-        coordinator.preview(server: server)
+        await coordinator.preview(server: server)
         XCTAssertTrue(coordinator.previewMatches(server: server))
         let reviewed = try XCTUnwrap(coordinator.reviewedEndpoint)
         for changed in [
@@ -272,11 +482,11 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: config), original)
     }
 
-    func testEmptyOrEndpointOnlyPreviewCannotEnableServerConfirmation() throws {
+    func testEmptyOrEndpointOnlyPreviewCannotEnableServerConfirmation() async throws {
         let home = try makeHome()
         let coordinator = makeCoordinator(home: home)
         let server = ServerInfo(repo: "org/model", port: 8766, pid: 123, state: "running")
-        coordinator.preview(server: server)
+        await coordinator.preview(server: server)
         XCTAssertTrue(coordinator.plans.isEmpty)
         XCTAssertFalse(coordinator.previewMatches(server: server))
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".config/opencode"), withIntermediateDirectories: true)
@@ -297,7 +507,7 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(endpoint.baseURL, "http://127.0.0.1:8766/v1")
         XCTAssertEqual(endpoint.modelName, "/models/qwen-converted")
         let coordinator = makeCoordinator(home: home)
-        coordinator.preview(server: server)
+        await coordinator.preview(server: server)
         let hash = try XCTUnwrap(coordinator.previewHash)
         let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { [server] })
         XCTAssertEqual(transaction?.receipts.count, 1)
@@ -318,7 +528,7 @@ final class WiringCoordinatorTests: XCTestCase {
             [ServerInfo(path: "/models/other", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")],
             [ServerInfo(path: "/models/chosen", runtime: "mlx_lm", port: 8766, pid: 456, state: "running")]]
         for servers in invalid {
-            coordinator.preview(server: server)
+            await coordinator.preview(server: server)
             let hash = try XCTUnwrap(coordinator.previewHash)
             let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { servers })
             XCTAssertNil(transaction)
@@ -333,7 +543,7 @@ final class WiringCoordinatorTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let coordinator = makeCoordinator(home: home)
         let server = ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
-        coordinator.preview(server: server)
+        await coordinator.preview(server: server)
         let hash = try XCTUnwrap(coordinator.previewHash)
         XCTAssertNil(coordinator.confirm(endpoint: try XCTUnwrap(WireEndpoint(server: server)), previewHash: hash))
         let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { throw CocoaError(.fileReadUnknown) })
@@ -351,7 +561,7 @@ final class WiringCoordinatorTests: XCTestCase {
         try original.write(to: config, atomically: true, encoding: .utf8)
         let coordinator = makeCoordinator(home: home)
         let server = ServerInfo(path: "/models/chosen", port: 8766, pid: 123, state: "running")
-        coordinator.preview(server: server)
+        await coordinator.preview(server: server)
         let hash = try XCTUnwrap(coordinator.previewHash)
         let edited = "{\"theme\":\"light\"}"
         let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: {

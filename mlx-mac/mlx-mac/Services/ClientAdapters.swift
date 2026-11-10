@@ -15,9 +15,23 @@ struct ClientAdapter: Sendable {
     let relativeConfigPath: String?
     let advisoryOnly: Bool
     let advisoryNote: String?
+    /// Native credential destination. nil means keys belong in the client's own credential store.
+    var apiKeyPlan: (@Sendable (_ config: String, _ key: String) throws -> String)? = nil
+    var credentialInstruction: String? = nil
     /// The inverse of `plan`: the local endpoints a config's contents point at.
     let read: @Sendable (_ contents: String) -> ClientConfigReading
     let plan: @Sendable (_ before: String?, _ endpoint: WireEndpoint) throws -> String
+
+    func authenticatedPlan(_ before: String?, _ endpoint: WireEndpoint, key: String?) throws -> String {
+        let after = try plan(before, endpoint)
+        guard endpoint.apiKeySHA256 != nil else { return after }
+        guard let key, EndpointCredentialStore.digest(key) == endpoint.apiKeySHA256 else {
+            throw WiringError.credentialUnavailable
+        }
+        if let apiKeyPlan { return try apiKeyPlan(after, key) }
+        guard credentialInstruction != nil else { throw WiringError.credentialUnsupported(client: displayName) }
+        return after
+    }
 
     /// A supported setup target, independent of whether its directory exists.
     func configurationInstallation(home: URL) -> ClientInstallation? {
@@ -75,6 +89,15 @@ enum ClientAdapters {
         relativeConfigPath: ".config/opencode/opencode.jsonc",
         advisoryOnly: false,
         advisoryNote: nil,
+        apiKeyPlan: { contents, key in
+            var config = try JSONCTolerant.parse(contents)
+            var providers = config["provider"] as? [String: Any] ?? [:]
+            var local = providers[providerID] as? [String: Any] ?? [:]
+            var options = local["options"] as? [String: Any] ?? [:]
+            options["apiKey"] = key
+            local["options"] = options; providers[providerID] = local; config["provider"] = providers
+            return try JSONCTolerant.serialize(config)
+        },
         read: { contents in
             readJSON(contents) { config in
                 let providers = config["provider"] as? [String: Any]
@@ -115,6 +138,14 @@ enum ClientAdapters {
         relativeConfigPath: ".continue/config.json",
         advisoryOnly: false,
         advisoryNote: nil,
+        apiKeyPlan: { contents, key in
+            var config = try JSONCTolerant.parse(contents)
+            var models = config["models"] as? [[String: Any]] ?? []
+            guard !models.isEmpty else { throw WiringError.credentialUnsupported(client: "Continue") }
+            models[models.count - 1]["apiKey"] = key
+            config["models"] = models
+            return try JSONCTolerant.serialize(config)
+        },
         read: { contents in
             readJSON(contents) { config in
                 var entries: [ClientConfigEntry] = []
@@ -153,6 +184,7 @@ enum ClientAdapters {
         relativeConfigPath: ".config/zed/settings.json",
         advisoryOnly: false,
         advisoryNote: nil,
+        credentialInstruction: "Finish API-key setup in Zed: open Agent Settings, choose the OpenAI provider and paste this endpoint’s inference key. Zed keeps it in its system keychain.",
         read: { contents in
             readJSON(contents) { config in
                 let openai = (config["language_models"] as? [String: Any])?["openai"] as? [String: Any]
@@ -183,6 +215,14 @@ enum ClientAdapters {
         relativeConfigPath: ".aider.conf.yml",
         advisoryOnly: false,
         advisoryNote: nil,
+        apiKeyPlan: { contents, key in
+            var lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            lines.removeAll { $0.hasPrefix("openai-api-key:") }
+            if lines.last == "" { lines.removeLast() }
+            let encoded = try JSONSerialization.data(withJSONObject: key, options: .fragmentsAllowed)
+            lines.append("openai-api-key: " + String(decoding: encoded, as: UTF8.self))
+            return lines.joined(separator: "\n") + "\n"
+        },
         read: { contents in
             let lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             guard let base = yamlValue("openai-api-base", in: lines),

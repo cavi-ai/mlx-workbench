@@ -514,7 +514,10 @@ actor WorkbenchAPI {
 
     func serveStatus() async throws -> [ServerInfo] {
         let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory])
-        return Self.servers(from: data, defaultReceiptsDirectory: receiptDirectory) ?? []
+        guard let servers = Self.servers(from: data, defaultReceiptsDirectory: receiptDirectory) else {
+            throw BridgeError.remote(code: "invalid_service_inventory", message: "The engine returned unreadable server status.", remediation: "Update the engine and refresh serving status.")
+        }
+        return servers
     }
 
     func discoverServingServices() async throws -> ServingEngineSnapshot {
@@ -1074,6 +1077,12 @@ actor WorkbenchAPI {
 
     static func servers(from data: [String: Any], key: String = "servers", defaultReceiptsDirectory: String? = nil) -> [ServerInfo]? {
         guard let raw = data[key] as? [[String: Any]] else { return nil }
+        for row in raw {
+            if let value = row["api_key_sha256"], !(value is NSNull) {
+                guard let hash = value as? String,
+                      hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
+            }
+        }
         return raw.map { r in
             let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding", "prefill_kernel", "decode_profile", "vision_profile", "memory_allocation"].contains($0.key) }
             let adapter = (try? JSONSerialization.data(withJSONObject: adapterFields))
@@ -1107,7 +1116,8 @@ actor WorkbenchAPI {
                 memoryAllocation: adapter?.memoryAllocation,
                 requestBlockedReason: r.string("request_blocked_reason"),
                 lastUnloadReason: r.string("last_unload_reason"),
-                taskKinds: r["task_kinds"] as? [String]
+                taskKinds: r["task_kinds"] as? [String],
+                apiKeySHA256: r.string("api_key_sha256")
             )
         }
     }

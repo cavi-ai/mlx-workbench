@@ -1150,17 +1150,17 @@ final class ClientsRenderTests: XCTestCase {
             Scenario(name: "pendingPreview", servers: [qwen, other], selected: qwen, expected: [.pending]) { home, coordinator in
                 try F.write(plain, ".config/opencode/opencode.jsonc", in: home)
                 coordinator.detect()
-                coordinator.preview(server: qwen)
+                await coordinator.preview(server: qwen)
             },
             Scenario(name: "stalePreview", servers: [qwen, other], selected: qwen, expected: []) { home, coordinator in
                 try F.write(plain, ".config/opencode/opencode.jsonc", in: home)
                 coordinator.detect()
-                coordinator.preview(server: other)
+                await coordinator.preview(server: other)
             },
             Scenario(name: "afterConfirm", servers: [qwen, other], selected: qwen, expected: [.live]) { home, coordinator in
                 try F.write(plain, ".config/opencode/opencode.jsonc", in: home)
                 coordinator.detect()
-                coordinator.preview(server: qwen)
+                await coordinator.preview(server: qwen)
                 let hash = try XCTUnwrap(coordinator.previewHash)
                 let transaction = await coordinator.confirm(server: qwen, previewHash: hash, currentServers: { [qwen, other] })
                 XCTAssertNotNil(transaction)
@@ -1168,7 +1168,7 @@ final class ClientsRenderTests: XCTestCase {
             Scenario(name: "afterRollback", servers: [qwen, other], selected: qwen, expected: []) { home, coordinator in
                 try F.write(plain, ".config/opencode/opencode.jsonc", in: home)
                 coordinator.detect()
-                coordinator.preview(server: qwen)
+                await coordinator.preview(server: qwen)
                 let hash = try XCTUnwrap(coordinator.previewHash)
                 _ = await coordinator.confirm(server: qwen, previewHash: hash, currentServers: { [qwen, other] })
                 coordinator.rollback()

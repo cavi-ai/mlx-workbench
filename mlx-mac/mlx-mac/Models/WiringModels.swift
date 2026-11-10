@@ -12,16 +12,23 @@ import Foundation
 struct WireEndpoint: Equatable, Sendable {
     let baseURL: String        // e.g. http://127.0.0.1:8766/v1
     let modelName: String
+    let apiKeySHA256: String?
 
-    init(baseURL: String, modelName: String) {
+    init(baseURL: String, modelName: String, apiKeySHA256: String? = nil) {
         self.baseURL = baseURL
         self.modelName = modelName
+        self.apiKeySHA256 = apiKeySHA256
     }
 
     init?(server: ServerInfo) {
-        guard server.supportsChatCompletions, server.apiKeySHA256 == nil, server.state?.lowercased() == "running", let port = server.port, (1...65535).contains(port),
+        guard server.supportsChatCompletions, server.state?.lowercased() == "running", let port = server.port, (1...65535).contains(port),
               !server.modelIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        self.init(baseURL: "http://127.0.0.1:\(port)/v1", modelName: server.modelIdentity)
+        if let hash = server.apiKeySHA256 {
+            guard hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  let pid = server.pid, pid > 0 else { return nil }
+        }
+        self.init(baseURL: "http://127.0.0.1:\(port)/v1", modelName: server.modelIdentity,
+                  apiKeySHA256: server.apiKeySHA256)
     }
 }
 
@@ -176,6 +183,7 @@ struct ClientEditPlan: Equatable, Identifiable, Sendable {
     /// True when the write normalizes/reformats the file (e.g. JSONC → JSON).
     /// Surfaced in the UI so the user consents to reformatting.
     let rewritesFile: Bool
+    var credentialInstruction: String? = nil
 
     var id: String { clientID }
 
@@ -200,6 +208,7 @@ struct ClientEditReceipt: Codable, Equatable, Sendable {
     /// Older receipts without this evidence require manual backup recovery.
     var writtenFileSHA256: String? = nil
     let appliedAt: Date
+    var credentialInstruction: String? = nil
 }
 
 struct WiringTransaction: Codable, Equatable, Identifiable, Sendable {
