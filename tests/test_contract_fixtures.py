@@ -6,7 +6,10 @@ Swift side; see tests/fixtures/README.md.
 """
 
 import json
+import os
 import shutil
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -40,6 +43,31 @@ class ScanContractFixtureTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.validate_scan(_fixture("convert-scan-missing-bytes.json"))
         self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+
+class TaskCapabilityContractFixtureTests(unittest.TestCase):
+    def test_pinned_engine_preserves_contracts_consumed_by_native_task_forms(self):
+        root = FIXTURES.parent.parent
+        expected = _fixture("task-capabilities.json")
+        with TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(root / "vendor/mlx-agent/scripts/mlx-agent"), "task", "capabilities", "--json"],
+                cwd=root, check=True, capture_output=True, text=True, timeout=15,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "XDG_CACHE_HOME": directory},
+            )
+        envelope = json.loads(result.stdout)
+        self.assertEqual(envelope["status"], "ok")
+        actual = envelope["data"]
+        for field in ("schema", "request_schema", "run_schema"):
+            self.assertEqual(actual[field], expected[field])
+        contracts = {item["kind"]: item for item in actual["tasks"]}
+        native_kinds = {"classification", "music_generation", "transcribe", "speak", "image_generation",
+                        "image_understanding", "video_generation", "video_understanding"}
+        self.assertEqual({item["kind"] for item in expected["tasks"] if item["kind"] in native_kinds}, native_kinds)
+        for entry in expected["tasks"]:
+            if entry["kind"] in native_kinds:
+                for field, value in entry.items():
+                    self.assertEqual(contracts[entry["kind"]][field], value)
 
 
 class ConfigContractFixtureTests(unittest.TestCase):
