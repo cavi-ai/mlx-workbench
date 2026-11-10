@@ -5,6 +5,116 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testStrataInferenceDefaultsKeepVerifiedModeThroughAuthenticationAndLogin() async throws {
+        let options = StrataComparisonOptions(contextTokens: 8192, decoding: "lookup")
+        var profile = ServingProfile(id: UUID(), name: "Prompt reuse", modelPath: "/Models/strata", options: options)
+        profile.verification = ServingProfileVerification(options: options, modelFingerprint: "model", runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: CanarySuite.cases.map {
+                CanaryResult(id: $0.id, title: $0.title, passed: true, failureReason: nil, responseExcerpt: "fixture",
+                    tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+            }, verifiedAt: Date())
+        XCTAssertTrue(profile.hasPassedVerification)
+        let key = String(repeating: "b", count: 64)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-decoding")) + 1], "lookup")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--max-tokens")) + 1], "4096")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--api-key-sha256")) + 1], key)
+            XCTAssertFalse(argv.contains("--strata-speculation"))
+            return ["plan": ["runtime": "strata", "preview_hash": "reviewed", "max_tokens": 4096,
+                "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_context_tokens": 8192,
+                "strata_speculation": false, "strata_decoding": "lookup"]]
+        })
+        let base = ServeLifecycle.verifiedProfile(profile, api: api)
+        let configured = try XCTUnwrap(base.configured)(.init(maximumTokens: 4096))
+        let lifecycle = try XCTUnwrap(configured.authenticated)(key)
+        _ = try await lifecycle.preview(profile.modelPath, 9999)
+        _ = try await XCTUnwrap(lifecycle.reviewedPreview)(profile.modelPath, 9999)
+        try await lifecycle.start(profile.modelPath, 9999, "reviewed")
+        _ = try await XCTUnwrap(lifecycle.startWithReceipt)(profile.modelPath, 9999, "reviewed")
+        _ = try await XCTUnwrap(lifecycle.jitPreview)(profile.modelPath, 9999, .automatic)
+        try await XCTUnwrap(lifecycle.jitStart)(profile.modelPath, 9999, "reviewed", .automatic)
+        var slot = EndpointSlot(enabled: true, port: 9999, modelPath: profile.modelPath, loadOnRequest: true, memoryPolicy: .automatic)
+        slot.servingProfile = profile; slot.acceleration = .init(maximumTokens: 4096); slot.apiKeySHA256 = key
+        let login = try await api.loginItemPlan(slot: slot, fleetURL: URL(fileURLWithPath: "/state/fleet.json"))
+        XCTAssertEqual(login.arguments[try XCTUnwrap(login.arguments.firstIndex(of: "--strata-decoding")) + 1], "lookup")
+        XCTAssertEqual(login.arguments[try XCTUnwrap(login.arguments.firstIndex(of: "--max-tokens")) + 1], "4096")
+        var drift: [String: Any] = ["runtime": "strata", "preview_hash": "changed", "strata_model_fingerprint": "model",
+            "strata_runtime_fingerprint": "runtime", "strata_context_tokens": 8192, "strata_speculation": false, "strata_decoding": "mtp"]
+        XCTAssertThrowsError(try profile.validate(plan: drift))
+        drift["strata_decoding"] = "lookup"
+        XCTAssertNoThrow(try profile.validate(plan: drift))
+    }
+
+    func testLocalInferenceDefaultsReachEveryLaunchAndAuthenticationPath() async throws {
+        let key = String(repeating: "a", count: 64)
+        let options = LocalInferenceOptions(promptLookup: true, thinkingOff: true, maximumTokens: 2048)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertTrue(argv.contains("--prompt-lookup"))
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--thinking")) + 1], "off")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--max-tokens")) + 1], "2048")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--api-key-sha256")) + 1], key)
+            return ["plan": ["runtime": "mlx_lm", "preview_hash": "reviewed", "max_tokens": 2048, "thinking": "off"]]
+        })
+        let base = ServeLifecycle.live(api: api, acceleration: options)
+        let lifecycle = try XCTUnwrap(base.authenticated)(key)
+        _ = try await lifecycle.preview("/Models/text", 9999)
+        _ = try await XCTUnwrap(lifecycle.reviewedPreview)("/Models/text", 9999)
+        try await lifecycle.start("/Models/text", 9999, "reviewed")
+        _ = try await XCTUnwrap(lifecycle.startWithReceipt)("/Models/text", 9999, "reviewed")
+        _ = try await XCTUnwrap(lifecycle.jitPreview)("/Models/text", 9999, .automatic)
+        try await XCTUnwrap(lifecycle.jitStart)("/Models/text", 9999, "reviewed", .automatic)
+        let configured = try XCTUnwrap(lifecycle.configured)(options)
+        _ = try await configured.preview("/Models/text", 9999)
+    }
+
+    func testOutputDefaultsRefuseARuntimeThatDoesNotApplyThem() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
+            ["plan": ["runtime": "mlx-vlm", "preview_hash": "reviewed", "max_tokens": 2048]]
+        })
+        do {
+            _ = try await api.servePreview(repo: "/Models/vision", runtime: "auto", port: nil, maximumTokens: 2048)
+            XCTFail("An ignored server default must not be presented as applied")
+        } catch { }
+    }
+
+    func testExplicitStrataModesBindEvidenceAndLegacyModesKeepTheirArguments() throws {
+        for mode in ["plain", "lookup", "mtp"] {
+            let options = StrataComparisonOptions(contextTokens: 8192, decoding: mode)
+            XCTAssertNil(options.validationError)
+            XCTAssertEqual(Array(options.arguments.prefix(2)), ["--strata-decoding", mode])
+            XCTAssertFalse(options.arguments.contains("--strata-speculation"))
+            var plan: [String: Any] = ["runtime": "strata", "preview_hash": "reviewed", "strata_speculation": false,
+                "strata_decoding": mode, "strata_context_tokens": 8192]
+            XCTAssertTrue(options.matches(try XCTUnwrap(ProbeServingEvidence(plan: plan))))
+            plan["strata_decoding"] = mode == "plain" ? "lookup" : "plain"
+            XCTAssertFalse(options.matches(try XCTUnwrap(ProbeServingEvidence(plan: plan))))
+        }
+        let saved = try JSONDecoder().decode(StrataComparisonOptions.self, from: Data(#"{"speculation":true,"contextTokens":8192}"#.utf8))
+        XCTAssertNil(saved.decoding)
+        XCTAssertEqual(saved.decodingSelection, "automatic")
+        XCTAssertEqual(Array(saved.arguments.prefix(2)), ["--strata-speculation", "on"])
+        let future = try JSONDecoder().decode(StrataComparisonOptions.self, from: Data(#"{"speculation":false,"contextTokens":8192,"decoding":"future"}"#.utf8))
+        XCTAssertEqual(future.decoding, "future")
+        XCTAssertNotNil(future.validationError)
+        XCTAssertFalse(StrataComparisonOptions(decoding: "mtp").isDefault)
+    }
+
+    func testInferenceControlsOfferOnlyApplicableOptionsAndReportFallbackHonestly() {
+        let text = ServingInferenceContext(runtime: "mlx_lm", chip: "Apple M5 Max")
+        XCTAssertTrue(text.isText); XCTAssertTrue(text.supportsM5); XCTAssertTrue(text.hasGenerationDefaults)
+        let all = LocalInferenceOptions(m5Prefill: true, promptLookup: true, visionCache: true, thinkingOff: true, maximumTokens: 2048)
+        let vision = ServingInferenceContext(runtime: "mlx-vlm", chip: "Apple M4")
+        XCTAssertFalse(vision.supportsM5)
+        XCTAssertEqual(vision.normalized(all), LocalInferenceOptions(visionCache: true))
+        XCTAssertEqual(ServingInferenceContext(runtime: "strata").normalized(all), LocalInferenceOptions(maximumTokens: 2048))
+        XCTAssertEqual(ServingInferenceContext(runtime: "tasks").normalized(all), LocalInferenceOptions())
+        let rows = InferenceOptionEvidence.rows(prefill: .object(["adapter_enabled": .boolean(false)]), lookup: .object(["adapter_enabled": .boolean(true)]), vision: .object([:]))
+        XCTAssertTrue(rows[0].detail.contains("Native fallback"))
+        XCTAssertTrue(rows[1].detail.contains("Configured"))
+        XCTAssertTrue(rows[2].detail.contains("not reported"))
+        XCTAssertEqual(LocalInferenceOptions(visionCache: true).summary, "Image feature reuse")
+    }
+
     func testM5PrefillIsExplicitInPreviewAndConfirmationArguments() {
         let stock = WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: "/state")
         XCTAssertFalse(stock.contains("--m5-prefill"))

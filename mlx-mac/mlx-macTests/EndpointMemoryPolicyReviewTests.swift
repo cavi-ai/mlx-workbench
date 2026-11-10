@@ -42,7 +42,7 @@ final class EndpointMemoryPolicyReviewTests: XCTestCase {
 
     func testExtendedAdmissionPolicyRoundTripsWithoutChangingEndpointOptions() throws {
         var target = slot()
-        target.acceleration = LocalAccelerationOptions(visionCache: true)
+        target.acceleration = LocalInferenceOptions(visionCache: true)
         let original = target
         let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 300, keepLoaded: false, minimumHeadroomGB: 4,
             unloadUnderPressure: true, contextTokens: 16384)
@@ -199,7 +199,7 @@ final class EndpointMemoryPolicyReviewTests: XCTestCase {
         }
         XCTAssertFalse(EndpointMemoryReviewRules.canConfirm(reviewed, draft: draft, slots: [], freshHash: "reviewed"))
         var changed = target
-        changed.acceleration = LocalAccelerationOptions(visionCache: true)
+        changed.acceleration = LocalInferenceOptions(visionCache: true)
         XCTAssertFalse(EndpointMemoryReviewRules.canConfirm(reviewed, draft: draft, slots: [changed], freshHash: "reviewed"))
         changed = target; changed.memoryPolicy = .legacy
         XCTAssertFalse(EndpointMemoryReviewRules.canConfirm(reviewed, draft: draft, slots: [changed], freshHash: "reviewed"))

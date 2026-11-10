@@ -1184,7 +1184,7 @@ enum ServingWorld {
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
         if accelerated {
             slot.role = UseCase.allCases.first
-            slot.acceleration = LocalAccelerationOptions(m5Prefill: true, promptLookup: true)
+            slot.acceleration = LocalInferenceOptions(m5Prefill: true, promptLookup: true)
         }
         let endpointServer = server("Alder", port: 8766, pid: 101, managedByWorkbench: true)
         let third = server("Birch", port: 11434, pid: 102, managedByWorkbench: false)
@@ -1743,7 +1743,7 @@ extension RunRemodelTests {
         await settle(500)
         XCTAssertFalse(RunLayout(viewportWidth: 800).isTwoLine)
         let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("code-edit acceleration requested") }, "The acceleration fact reads in full")
-        XCTAssertFalse(lines.contains { $0.contains("…") && $0.contains("accel") }, "No fact is truncated")
+        XCTAssertTrue(lines.contains { $0.contains("prompt text reuse") }, "The inference setting reads in full")
+        XCTAssertFalse(lines.contains { $0.contains("…") && $0.contains("reuse") }, "No fact is truncated")
     }
 }

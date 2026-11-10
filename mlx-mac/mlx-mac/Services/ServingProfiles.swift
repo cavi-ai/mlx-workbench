@@ -53,8 +53,7 @@ struct ServingProfileComparisonEvidence: Identifiable {
               run.state == .completed, run.effectiveMode == .chat, run.results.filter({ $0.id == laneID }).count == 1,
               let result = run.results.first(where: { $0.id == laneID }), result.error == nil, result.modelPath == profile.modelPath,
               let serving = result.servingEvidence, serving.runtime == "strata",
-              serving.speculation == profile.options.speculation, serving.expertMemoryGB == profile.options.expertMemoryGB,
-              serving.contextTokens == profile.options.contextTokens else {
+              profile.options.matches(serving) else {
             throw WorkflowEvidenceError.invalid("The source comparison no longer matches this profile's model, lane or settings.")
         }
         if let proof = profile.verification {
@@ -85,8 +84,7 @@ struct ServingProfileMemoryReview: Identifiable {
         guard profile.isValid, plan.string("path") == profile.modelPath,
               let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
               evidence.modelFingerprint?.isEmpty == false, evidence.runtimeFingerprint?.isEmpty == false,
-              evidence.speculation == profile.options.speculation, evidence.expertMemoryGB == profile.options.expertMemoryGB,
-              evidence.contextTokens == profile.options.contextTokens,
+              profile.options.matches(evidence),
               let bytes = plan.int("strata_memory_estimate_bytes"), bytes > 0 else {
             throw WorkflowEvidenceError.invalid("The runtime preview did not return a memory estimate for this profile's model and settings.")
         }
@@ -139,27 +137,27 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
         guard hasPassedVerification, let proof = verification,
               let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
               evidence.modelFingerprint == proof.modelFingerprint, evidence.runtimeFingerprint == proof.runtimeFingerprint,
-              evidence.speculation == options.speculation, evidence.expertMemoryGB == options.expertMemoryGB,
-              evidence.contextTokens == options.contextTokens else {
+              options.matches(evidence) else {
             throw WorkflowEvidenceError.invalid("This serving profile needs verification for the current model, runtime and settings.")
         }
     }
 
-    func preview(api: WorkbenchAPI, port: Int?, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil) async throws -> [String: Any] {
+    func preview(api: WorkbenchAPI, port: Int?, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil, inference: LocalInferenceOptions = .init()) async throws -> [String: Any] {
         guard hasPassedVerification else { throw WorkflowEvidenceError.invalid("Verify the serving profile before previewing it.") }
+        guard inference.validationError == nil, !inference.accelerationRequested, !inference.thinkingOff else { throw WorkflowEvidenceError.invalid("Strata profiles use their own decoding controls.") }
         let plan = try await api.servePreview(repo: modelPath, runtime: "strata", port: port,
-                                              jit: jit, memoryPolicy: policy, strataOptions: options, apiKeySHA256: apiKeySHA256)
+                                              jit: jit, memoryPolicy: policy, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256)
         try validate(plan: plan)
         return plan
     }
 
-    func start(api: WorkbenchAPI, port: Int?, hash: String, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil) async throws -> [String: Any] {
-        let plan = try await preview(api: api, port: port, jit: jit, policy: policy, apiKeySHA256: apiKeySHA256)
+    func start(api: WorkbenchAPI, port: Int?, hash: String, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil, inference: LocalInferenceOptions = .init()) async throws -> [String: Any] {
+        let plan = try await preview(api: api, port: port, jit: jit, policy: policy, apiKeySHA256: apiKeySHA256, inference: inference)
         guard plan.string("preview_hash") == hash else {
             throw WorkflowEvidenceError.invalid("The serving profile preview changed. Preview it again before confirming.")
         }
         return try await api.serveStart(repo: modelPath, runtime: "strata", port: port, previewHash: hash,
-                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options, apiKeySHA256: apiKeySHA256)
+                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256)
     }
 
     /// Receipt ownership is established by serve status; bind its exact confirmed plan as well.
@@ -179,34 +177,35 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
 }
 
 extension ServeLifecycle {
-    static func verifiedProfile(_ profile: ServingProfile, api: WorkbenchAPI, apiKeySHA256: String? = nil) -> ServeLifecycle {
-        var lifecycle = live(api: api, runtime: "strata", strataOptions: profile.options, apiKeySHA256: apiKeySHA256)
-        lifecycle.authenticated = { digest in .verifiedProfile(profile, api: api, apiKeySHA256: digest) }
+    static func verifiedProfile(_ profile: ServingProfile, api: WorkbenchAPI, apiKeySHA256: String? = nil, inference: LocalInferenceOptions = .init()) -> ServeLifecycle {
+        var lifecycle = live(api: api, runtime: "strata", strataOptions: profile.options, acceleration: inference, apiKeySHA256: apiKeySHA256)
+        lifecycle.authenticated = { digest in .verifiedProfile(profile, api: api, apiKeySHA256: digest, inference: inference) }
+        lifecycle.configured = { options in .verifiedProfile(profile, api: api, apiKeySHA256: apiKeySHA256, inference: options) }
         lifecycle.reviewedPreview = { path, port in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            let plan = try await profile.preview(api: api, port: port, apiKeySHA256: apiKeySHA256)
+            let plan = try await profile.preview(api: api, port: port, apiKeySHA256: apiKeySHA256, inference: inference)
             return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
         }
         lifecycle.preview = { path, port in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            return try await profile.preview(api: api, port: port, apiKeySHA256: apiKeySHA256).string("preview_hash") ?? ""
+            return try await profile.preview(api: api, port: port, apiKeySHA256: apiKeySHA256, inference: inference).string("preview_hash") ?? ""
         }
         lifecycle.start = { path, port, hash in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            _ = try await profile.start(api: api, port: port, hash: hash, apiKeySHA256: apiKeySHA256)
+            _ = try await profile.start(api: api, port: port, hash: hash, apiKeySHA256: apiKeySHA256, inference: inference)
         }
         lifecycle.startWithReceipt = { path, port, hash in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            let response = try await profile.start(api: api, port: port, hash: hash, apiKeySHA256: apiKeySHA256)
+            let response = try await profile.start(api: api, port: port, hash: hash, apiKeySHA256: apiKeySHA256, inference: inference)
             return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
         }
         lifecycle.jitPreview = { path, port, policy in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            return try await profile.preview(api: api, port: port, jit: true, policy: policy, apiKeySHA256: apiKeySHA256).string("preview_hash") ?? ""
+            return try await profile.preview(api: api, port: port, jit: true, policy: policy, apiKeySHA256: apiKeySHA256, inference: inference).string("preview_hash") ?? ""
         }
         lifecycle.jitStart = { path, port, hash, policy in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            _ = try await profile.start(api: api, port: port, hash: hash, jit: true, policy: policy, apiKeySHA256: apiKeySHA256)
+            _ = try await profile.start(api: api, port: port, hash: hash, jit: true, policy: policy, apiKeySHA256: apiKeySHA256, inference: inference)
         }
         return lifecycle
     }
@@ -243,12 +242,26 @@ final class ServingProfileCoordinator: ObservableObject {
                 throw WorkflowEvidenceError.invalid("Select a successful Strata lane with recorded serving settings.")
             }
             let profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: result.modelPath,
-                options: StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context),
+                options: run.laneConfigurations?.first(where: { $0.id == laneID })?.strataOptions
+                    ?? run.strataOptions?[result.modelPath]
+                    ?? StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context, decoding: speculation ? nil : evidence.decoding),
                 sourceRunID: run.id, sourceLaneID: result.id)
-            guard profile.isValid else { throw WorkflowEvidenceError.invalid("Enter a profile name of 1–80 characters and valid settings.") }
+            guard profile.isValid, profile.options.matches(evidence) else { throw WorkflowEvidenceError.invalid("Enter a profile name of 1–80 characters and valid settings matching the recorded lane.") }
             try store.upsert(profile, id: \.id)
             profiles = try store.load()
             lastError = nil
+            return profile
+        } catch { lastError = AppHost.render(error); return nil }
+    }
+
+    @discardableResult
+    func createProfile(name: String, modelPath: String, options: StrataComparisonOptions) -> ServingProfile? {
+        do {
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+            let profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: modelPath, options: options)
+            guard profile.isValid else { throw WorkflowEvidenceError.invalid(ServingProfile.nameValidationError(name) ?? options.validationError ?? "Choose a local model path.") }
+            try store.upsert(profile, id: \.id)
+            profiles = try store.load(); lastError = nil
             return profile
         } catch { lastError = AppHost.render(error); return nil }
     }
@@ -480,10 +493,10 @@ final class ServingProfileCoordinator: ObservableObject {
             let result = try await suggestionSource(run)
             try Task.checkCancellation()
             guard activeID == nil else { throw WorkflowEvidenceError.invalid("Profile verification is already running.") }
-            guard let evidence = result.servingEvidence, let context = evidence.contextTokens, let speculation = evidence.speculation,
+            guard let evidence = result.servingEvidence, evidence.contextTokens != nil, evidence.speculation != nil,
                   let profile = try store.load().first(where: { $0.id == profileID }), profile.sourceRunID == run.id,
                   profile.sourceLaneID == result.id, profile.modelPath == result.modelPath,
-                  profile.options == StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context) else {
+                  profile.options.matches(evidence) else {
                 throw WorkflowEvidenceError.invalid("The saved profile no longer matches this suggestion.")
             }
             await verify(id: profileID, expectedEvidence: evidence, beforePublishing: { _ = try await suggestionSource(run) })
@@ -564,8 +577,7 @@ final class ServingProfileCoordinator: ObservableObject {
             let outcome = try await selectedProbe.run(modelPath: original.modelPath, prompts: prompts)
             guard let evidence = outcome.servingEvidence, evidence.runtime == "strata",
                   let model = evidence.modelFingerprint, let runtime = evidence.runtimeFingerprint,
-                  evidence.speculation == original.options.speculation, evidence.expertMemoryGB == original.options.expertMemoryGB,
-                  evidence.contextTokens == original.options.contextTokens else {
+                  original.options.matches(evidence) else {
                 throw WorkflowEvidenceError.invalid("The verification server did not record the selected settings and fingerprints.")
             }
             let canaries = CanarySuite.cases.map { kase -> CanaryResult in

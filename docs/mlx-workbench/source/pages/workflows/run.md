@@ -10,40 +10,44 @@
 
 Run is the one place that shows what is serving. **Served models** lists saved endpoints, servers started from Run and other local services from the shared inventory, each once, with its own controls. **Open Serving** in the toolbar popover, the menu bar and the Library inspector selects Run and scrolls to the list. Refreshing reads status without loading models.
 
-**Experimental M5 prompt acceleration** opts the server started with **Preview
-serve** into the engine's Q4 prompt kernel. It requires an M5 GPU, macOS 26,
-MLX/`mlx-metal` 0.31.1 and `mlx-lm` 0.29.1. It targets inference-only Qwen2 MLPs
-with FP16 activations, affine 4-bit weights and group size 64, on prompt batches
-of at least 128 rows. Original weight storage is retained; inputs with fewer than 128 rows use native MLX.
-Unsupported inputs and a failed preparation compile use native MLX. The first
-load compiles the kernel; speed depends on model and prompt shape. The server log
-reports the adapted layer count. No speedup is guaranteed.
-The engine wraps only its own Python environment's MLX-LM entrypoint; separately
-installed runtimes retain their native launch and report `adapter_enabled: false`
-in the preview. Selecting another serving runtime requires disabling this option.
+## Inference settings
 
-The option is off by default. Saved endpoints have separate acceleration settings;
-comparisons, verification, LoRA adapters and Strata profiles retain their existing
-execution. Changing the option after preview requires a new
-preview. Source and dependency hashes are bound into the engine plan and receipt.
+Run shows controls for the selected model's runtime. The same settings are
+available in **Start now** and **Save as endpoint**. Changing a launch setting
+clears its preview; review the new plan before confirming.
+
+- **Text · MLX-LM:** choose **Standard** for native decoding and batching, or
+  **Reuse prompt text** for edits that copy supplied source. Prompt reuse needs
+  client temperature zero and runs eligible requests one at a time, without a
+  draft model. General chat and concurrent workloads may favor Standard.
+- **Vision · MLX-VLM:** **Reuse image features** caches repeated images on
+  supported Qwen2.5-VL and Qwen3-VL models, up to 20 entries or 128 MiB while
+  loaded. Other models retain native processing.
+- **Strata:** choose decoding, expert memory and context in a serving profile.
+  **New profile…** saves configuration without loading weights. Verify it before
+  serving; see [Strata](strata.md).
+- **Task endpoints:** generation controls belong to the typed request. Server
+  residency and memory controls remain available.
+
+**Generation defaults** offers **Skip reasoning** for MLX-LM models whose chat
+template supports it, and a default output length for MLX-LM and Strata. Output
+length ranges from 256 to 65,536 tokens; the engine default is 8,192. Client
+requests can supply their own token limits. Temperature and sampling belong to
+the client. Reasoning overrides can trade deliberation for shorter responses.
+
+Under **Hardware acceleration**, **M5 prompt processing** requests the engine's
+experimental Q4 kernel. It requires an M5 GPU and supported Qwen2 models, FP16
+activations, affine 4-bit weights and group size 64. First load compiles kernels;
+unsupported inputs use native MLX. The control is unavailable on other chips.
+It can be combined with prompt text reuse.
+
+The launch configuration shows whether the engine configured an adapter,
+reported native fallback, or did not report activation. A configured adapter
+still depends on eligible models and requests; it does not establish a measured
+speedup. These options are off by default and download no draft weights.
 
 The status timeout includes engine startup and time spent waiting behind another
 status check; replacing the status process does not reset that timeout.
-
-**Experimental code-edit acceleration** uses text already in the prompt to propose
-short continuations, then verifies them with the loaded model. It is intended for
-small edits that copy most of the supplied source. Set the client temperature to
-zero. Plain greedy requests run one at a time on this server; keep the option off
-when concurrent chat throughput matters. Speed depends on how much text the model
-can reuse, and prompts without matching source may be slower.
-
-This option requires MLX/`mlx-metal` 0.31.1 and `mlx-lm` 0.29.1 on macOS. Sampled
-requests, logit penalties or biases, seeds, logprobs and LoRA or draft models use
-native generation. Unsupported cache types and runtimes also use native generation.
-No draft model is downloaded and weights are unchanged. The option is off by
-default, can also be selected for saved endpoints, and can be combined with M5
-prompt acceleration. Changing either option requires a new preview. The engine
-records the requested configuration as `decode_profile` in the plan and receipt.
 
 Choose **Configure clients…** on a running endpoint to open Clients with that
 server selected. Clients rechecks its process and adapter identity; a changed or
@@ -116,7 +120,7 @@ rows with status and copy controls. **Start…** reviews fit and verification be
 
 **Remove…** in a row's overflow menu removes an endpoint and stops it after confirmation.
 The model files stay in Library. Work using that model must finish before its
-endpoint can stop. The overflow menu also holds role, load mode, memory management, acceleration,
+endpoint can stop. The overflow menu also holds role, load mode, memory management, inference settings,
 API key and **Show in Library** actions, and **Wire roles…** and login startup sit below the list. Acceleration remains opt-in; serving a
 model does not establish that one configuration is fastest for every workload.
 
@@ -130,24 +134,21 @@ Saved endpoints in **Served models** keep chosen models serving on stable ports.
 - The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
-The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, acceleration, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
+The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
 
-### Acceleration for saved endpoints
+### Inference settings for saved endpoints
 
-Disable the endpoint and wait for its server to stop. Open its actions menu and
-choose **Acceleration…**, select **M5 prompt acceleration**, **Code-edit
-acceleration**, or both, then **Preview acceleration** and **Confirm and save**.
-Enable the endpoint again to use the saved settings. Existing endpoints keep native
-MLX defaults until you change them. Changing the model clears its acceleration
-settings; Strata profiles use their own controls.
+Open an endpoint's actions menu and choose **Inference settings…** to review its
+configuration. Stop it before changing settings, then **Preview settings** and
+**Confirm and save**. Enable it again to use the saved configuration. Existing
+endpoints retain runtime defaults until changed. Changing the model clears its
+inference settings; Strata decoding stays in its verified profile.
 
-Saved acceleration applies to eager servers, load-on-request workers, automatic
-restarts and the first endpoint's generated login command. Reinstall an existing
-login item after changing these settings. Code-edit requests need client temperature
-zero and run one at a time. Hardware and request restrictions are the same as for
-manual launches. The endpoint row reports acceleration as requested; unsupported
-inputs may still use native execution. A running server must match the saved acceleration settings and either its recorded
-launch receipt or a fresh launch preview before it is adopted.
+The settings apply to eager servers, load-on-request workers, automatic restarts
+and the first endpoint's generated login command. Reinstall an existing login
+item after changing them. The endpoint row summarizes its saved choices; live
+adapter details distinguish configured options from native fallback. Adoption
+requires matching accelerator metadata and a confirmed receipt or fresh preview.
 
 ## Load on request
 

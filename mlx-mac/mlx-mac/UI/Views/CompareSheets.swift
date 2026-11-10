@@ -245,7 +245,15 @@ struct StrataComparisonControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Toggle("Draft-and-verify speculation", isOn: $options.speculation)
+            Picker("Decoding", selection: $options.decodingSelection) {
+                Text("Standard").tag("plain")
+                Text("Reuse prompt text").tag("lookup")
+                Text("Draft head · MTP").tag("mtp")
+                if options.speculation && options.decoding == nil {
+                    Text("Automatic · saved setting").tag("automatic")
+                }
+            }.accessibilityIdentifier("serve-strata-decoding")
+            Text(decodingExplanation).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             Picker("Expert memory", selection: $options.expertMemoryGB) {
                 Text("Automatic").tag(Optional<Double>.none)
                 ForEach(Array(Set([0.5, 2, 4, 8, 12, 16, 24, 32, 48, 64] + (options.expertMemoryGB.map { [$0] } ?? []))).sorted(), id: \.self) { budget in
@@ -261,5 +269,14 @@ struct StrataComparisonControls: View {
             Text(helpText)
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
         }.padding(.top, WorkbenchSpacing.sm)
+    }
+
+    private var decodingExplanation: String {
+        switch options.decodingSelection {
+        case "lookup": "Copies and verifies repeated prompt text. No draft weights are loaded. Best for edits and repeated source text."
+        case "mtp": "Predicts and verifies with a prepared local MTP draft head. Requires those assets and additional model memory."
+        case "automatic": "Preserves this saved setting: use a prepared MTP head when available, otherwise prompt lookup."
+        default: "Uses the target model directly, without prompt lookup or draft-head memory."
+        }
     }
 }

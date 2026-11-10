@@ -4,7 +4,7 @@ private struct ServeIntent: Equatable {
     let runtime: String
     let port: Int?
     let profile: ServingProfile?
-    let acceleration: LocalAccelerationOptions
+    let acceleration: LocalInferenceOptions
 }
 
 enum ModelWorkflowAPIUnavailable: LocalizedError {
@@ -22,8 +22,10 @@ struct ModelWorkflowAPI {
     let serveStop: (Int) async throws -> [String: Any]
     var profilePreview: (ServingProfile, Int?) async throws -> [String: Any] = { _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
     var profileStart: (ServingProfile, Int?, String) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
-    var accelerationPreview: (String, String, Int?, LocalAccelerationOptions) async throws -> [String: Any] = { _, _, _, _ in throw WorkflowEvidenceError.invalid("Local acceleration is unavailable.") }
-    var accelerationStart: (String, String, Int?, String, LocalAccelerationOptions) async throws -> [String: Any] = { _, _, _, _, _ in throw WorkflowEvidenceError.invalid("Local acceleration is unavailable.") }
+    var profileInferencePreview: (ServingProfile, Int?, LocalInferenceOptions) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("Profile inference settings are unavailable.") }
+    var profileInferenceStart: (ServingProfile, Int?, String, LocalInferenceOptions) async throws -> [String: Any] = { _, _, _, _ in throw WorkflowEvidenceError.invalid("Profile inference settings are unavailable.") }
+    var accelerationPreview: (String, String, Int?, LocalInferenceOptions) async throws -> [String: Any] = { _, _, _, _ in throw WorkflowEvidenceError.invalid("Local acceleration is unavailable.") }
+    var accelerationStart: (String, String, Int?, String, LocalInferenceOptions) async throws -> [String: Any] = { _, _, _, _, _ in throw WorkflowEvidenceError.invalid("Local acceleration is unavailable.") }
     var convertRepoPreview: (RepoConversionRequest) async throws -> [String: Any] = { _ in
         throw ModelWorkflowAPIUnavailable.repoConversion
     }
@@ -44,11 +46,13 @@ struct ModelWorkflowAPI {
         )
         workflowAPI.profilePreview = { profile, port in try await resolveProfile(profile).preview(api: api, port: port) }
         workflowAPI.profileStart = { profile, port, hash in try await resolveProfile(profile).start(api: api, port: port, hash: hash) }
+        workflowAPI.profileInferencePreview = { profile, port, options in try await resolveProfile(profile).preview(api: api, port: port, inference: options) }
+        workflowAPI.profileInferenceStart = { profile, port, hash, options in try await resolveProfile(profile).start(api: api, port: port, hash: hash, inference: options) }
         workflowAPI.accelerationPreview = { repo, runtime, port, options in
-            try await api.servePreview(repo: repo, runtime: runtime, port: port, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
+            try await api.servePreview(repo: repo, runtime: runtime, port: port, thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
         }
         workflowAPI.accelerationStart = { repo, runtime, port, hash, options in
-            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
+            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
         }
         workflowAPI.convertRepoPreview = { request in
             try await api.convertRepoPreview(
@@ -110,6 +114,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     @Published private(set) var isConversionSubmissionInFlight = false
     @Published private(set) var isServeSubmissionInFlight = false
     @Published private(set) var servingProfile: ServingProfile?
+    @Published private(set) var inferenceEvidence: [InferenceOptionEvidence] = []
 
     private let api: ModelWorkflowAPI
     private let persistence: ModelWorkflowPersistence
@@ -215,6 +220,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewOutput = nil
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         switch ModelWorkflowResolver.destination(for: source, library: snapshot) {
         case .reuseExisting(let model):
             let exactPath = preferredModelPath(
@@ -261,6 +267,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewOutput = nil
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         let bits = Self.allowedBits(qBits, allowed: intake.qBits)
         let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, subfolder: intake.source.subfolder, qBits: bits)
         var record = repoRecord(repo: intake.source.repo, subfolder: intake.source.subfolder, backend: intake.backend ?? "mlx-lm", output: output)
@@ -566,6 +573,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         if servingProfile?.modelPath != selectedPath { servingProfile = nil }
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         // A completed or verified record of the selected model is served exactly as recorded.
         if RunPresentation.runnableStates.contains(workflow.state),
            let current = workflow.completedModelPath,
@@ -583,14 +591,20 @@ final class ModelWorkflowCoordinator: ObservableObject {
         )
     }
 
+    func invalidateServePreview() {
+        guard !isServeSubmissionInFlight, servePreviewHash != nil else { return }
+        servePreviewHash = nil; servePreviewIntent = nil; inferenceEvidence = []
+        update(serveState: .idle, message: "Settings changed. Preview the serving configuration again.", errorMessage: .some(nil))
+    }
+
     func selectServingProfile(_ profile: ServingProfile?) {
         guard !isServeSubmissionInFlight else { return }
         servingProfile = profile
-        servePreviewHash = nil; servePreviewIntent = nil
+        servePreviewHash = nil; servePreviewIntent = nil; inferenceEvidence = []
         update(serveState: .idle, message: "Preview the selected serving configuration.", errorMessage: .some(nil))
     }
 
-    func previewServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async {
+    func previewServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil) async {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
@@ -602,6 +616,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         let request = nextServersRequest()
         do {
             let snapshot = try await api.serveStatus()
@@ -616,18 +631,20 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
 
         update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: .some(nil))
-        let acceleration = LocalAccelerationOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
+        let acceleration = LocalInferenceOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, thinkingOff: thinkingOff, maximumTokens: maximumTokens)
         do {
             if let profile = servingProfile, profile.modelPath != model { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
-            if (acceleration.requested && servingProfile != nil) || (acceleration.textRequested && (runtime == "mlx-vlm" || acceleration.visionCache)) || (acceleration.visionCache && runtime == "mlx_lm") { throw WorkflowEvidenceError.invalid("Choose text acceleration for MLX-LM or vision feature reuse for MLX-VLM, without a Strata profile.") }
+            if let error = acceleration.validationError { throw WorkflowEvidenceError.invalid(error) }
+            if ((acceleration.accelerationRequested || acceleration.thinkingOff) && servingProfile != nil) || (acceleration.textRequested && (runtime == "mlx-vlm" || acceleration.visionCache)) || (acceleration.visionCache && runtime == "mlx_lm") { throw WorkflowEvidenceError.invalid("Choose text acceleration for MLX-LM or vision feature reuse for MLX-VLM, without a Strata profile.") }
             let response: [String: Any]
-            if let profile = servingProfile { response = try await api.profilePreview(profile, port) }
+            if let profile = servingProfile { response = try await (acceleration.requested ? api.profileInferencePreview(profile, port, acceleration) : api.profilePreview(profile, port)) }
             else if acceleration.requested { response = try await api.accelerationPreview(model, runtime, port, acceleration) }
             else { response = try await api.servePreview(model, runtime, port) }
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 update(serveState: .failed, message: "Serve preview did not include a preview hash.", errorMessage: "Missing serve preview hash.")
                 return
             }
+            inferenceEvidence = InferenceOptionEvidence.rows(plan: response)
             servePreviewHash = hash
             servePreviewIntent = ServeIntent(runtime: runtime, port: port, profile: servingProfile, acceleration: acceleration)
             update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: .some(nil))
@@ -636,7 +653,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
-    func confirmServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false) async {
+    func confirmServe(runtime: String, port: Int?, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil) async {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
@@ -650,10 +667,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
             update(serveState: .failed, message: "Preview serving before confirming it.", errorMessage: "Missing serve preview hash.")
             return
         }
-        let acceleration = LocalAccelerationOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache)
+        let acceleration = LocalInferenceOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, thinkingOff: thinkingOff, maximumTokens: maximumTokens)
         guard intent.runtime == runtime, intent.port == port, intent.profile == servingProfile, intent.acceleration == acceleration else {
             servePreviewHash = nil
             servePreviewIntent = nil
+            inferenceEvidence = []
             update(
                 serveState: .failed,
                 message: "Serve intent changed after preview. Preview it again before confirming.",
@@ -667,11 +685,15 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         let submitted = workflow
         do {
             let requestedID = workflow.id
             guard await save(workflow), workflow.id == requestedID else { return }
-            if let profile = servingProfile { _ = try await api.profileStart(profile, port, hash) }
+            if let profile = servingProfile {
+                if acceleration.requested { _ = try await api.profileInferenceStart(profile, port, hash, acceleration) }
+                else { _ = try await api.profileStart(profile, port, hash) }
+            }
             else if acceleration.requested { _ = try await api.accelerationStart(model, runtime, port, hash, acceleration) }
             else { _ = try await api.serveStart(model, runtime, port, hash) }
             let statusAvailable = await refreshOperationalStatus()
@@ -699,6 +721,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         let stopped = workflow
         do {
             _ = try await api.serveStop(port)
@@ -726,6 +749,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewOutput = nil
         servePreviewHash = nil
         servePreviewIntent = nil
+        inferenceEvidence = []
         if let index = history.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
             history[index] = record
         } else {

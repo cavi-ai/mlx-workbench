@@ -329,6 +329,24 @@ final class WorkbenchReviewUITests: XCTestCase {
             inventory = root / 'discovered-services.json'
             data = {'schema_version': 1, 'services': json.loads(inventory.read_text()) if inventory.exists() else [],
                     'errors': [], 'capabilities': {'scoped_doctor': True, 'scoped_watch': True, 'expected_pid_stop': True, 'model_update_preparation': True, 'model_storage_admission': True}}
+        elif args[:2] == ['serve', 'start'] and (root / 'inference-serving-fixture').exists():
+            def option(name, default=None):
+                return args[args.index(name) + 1] if name in args else default
+            assert '--confirm' not in args, 'Inference settings review must not start a model'
+            path = option('--path', option('--repo'))
+            runtime = option('--runtime', 'auto')
+            if runtime == 'auto':
+                runtime = 'mlx-vlm' if 'vision_language' in path else 'mlx_lm'
+            plan = {'path':path, 'runtime':runtime, 'preview_hash':'inference-options-preview',
+                    'max_tokens':int(option('--max-tokens', '8192'))}
+            if '--thinking' in args: plan['thinking'] = option('--thinking')
+            if '--prompt-lookup' in args:
+                plan['decode_profile'] = {'name':'prompt-lookup-v1', 'adapter_enabled':True}
+            if '--m5-prefill' in args:
+                plan['prefill_kernel'] = {'name':'m5-q4-prefill-v1', 'adapter_enabled':False}
+            if '--vision-cache' in args:
+                plan['vision_profile'] = {'name':'vision-features-v1', 'adapter_enabled':False}
+            data = {'plan':plan}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():
@@ -3926,6 +3944,129 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertNotEqual(app.state, .notRunning)
     }
 
+    private func openInferenceModel(kind: String, name: String, runtime: String? = nil) throws {
+        _ = try installTaskModel(kind: kind, name: name)
+        let scanURL = root.appendingPathComponent("scan-result.json")
+        var scan = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: scanURL)) as? [String: Any])
+        var outputs = try XCTUnwrap(scan["outputs"] as? [[String: Any]])
+        outputs[0]["backend"] = ["id": kind == "vision_language" ? "mlx-vlm" : "mlx-lm", "installed": true]
+        if let runtime { outputs[0]["runtime"] = runtime }
+        scan["outputs"] = outputs
+        try JSONSerialization.data(withJSONObject: scan).write(to: scanURL)
+        try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
+        try Data("[]".utf8).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        resizeWindow(width: 1160, height: 920)
+        let row = app.outlines.staticTexts[name].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
+        select("Run")
+    }
+
+    private func revealInferenceControl(_ control: XCUIElement) {
+        XCTAssertTrue(control.waitForExistence(timeout: 10), app.debugDescription)
+        let scroll = app.scrollViews["run-content-scroll"]
+        let visible = scroll.frame.intersection(app.windows.firstMatch.frame)
+        for _ in 0..<8 where !control.isHittable || control.frame.minY < visible.minY || control.frame.maxY > visible.maxY {
+            let delta = max(-300, min(300, visible.midY - control.frame.midY))
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(control.isHittable, app.debugDescription)
+    }
+
+    private func expandGenerationDefaults() {
+        let disclosure = app.disclosureTriangles["Generation defaults"].firstMatch
+        revealInferenceControl(disclosure)
+        if disclosure.value as? Int != 1 {
+            let window = app.windows.firstMatch, frame = disclosure.frame.intersection(app.windows.firstMatch.frame)
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
+                dy: frame.midY - window.frame.minY)).click()
+        }
+        XCTAssertEqual(disclosure.value as? Int, 1)
+    }
+
+    func testRunTextInferenceSettingsPreviewAndInvalidate() throws {
+        try openInferenceModel(kind: "text_llm", name: "Local text model")
+        let decoding = app.radioGroups["serve-text-decoding"].radioButtons["Reuse prompt text"]
+        revealInferenceControl(decoding); decoding.click()
+        XCTAssertFalse(app.checkBoxes["serve-vision-cache"].exists)
+        expandGenerationDefaults()
+        let reasoning = app.popUpButtons["serve-thinking"]
+        revealInferenceControl(reasoning); reasoning.click(); app.menuItems["Skip reasoning"].click()
+        let output = app.popUpButtons["serve-output-length"]
+        revealInferenceControl(output); output.click(); app.menuItems["2,048 tokens"].click()
+        let preview = app.buttons["Preview serve"].firstMatch
+        revealInferenceControl(preview); XCTAssertTrue(preview.isEnabled); preview.click()
+        let confirm = app.buttons["Confirm and run"].firstMatch
+        let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: confirm)
+        wait(for: [enabled], timeout: 15)
+        XCTAssertTrue(text(containing: "Configured · eligible").waitForExistence(timeout: 10))
+        revealInferenceControl(app.staticTexts["Launch configuration"].firstMatch)
+        capture("Text-inference-settings-and-preview")
+        revealInferenceControl(output); output.click(); app.menuItems["4,096 tokens"].click()
+        XCTAssertFalse(confirm.isEnabled)
+        XCTAssertFalse(app.staticTexts["Launch configuration"].exists)
+        let save = app.radioButtons["Save as endpoint"].firstMatch
+        revealInferenceControl(save); save.click()
+        let add = app.buttons["Add unverified endpoint…"].firstMatch
+        revealInferenceControl(add); add.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@",
+            "4,096 output tokens", "4,096 output tokens")).firstMatch.exists, sheet.debugDescription)
+        capture("Endpoint-inference-settings-review")
+        sheet.buttons["Cancel"].click()
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        let starts = try calls.split(separator: "\n").compactMap { line -> [String]? in
+            let argv = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String]
+            return argv?.prefix(2) == ["serve", "start"] ? argv : nil
+        }
+        XCTAssertEqual(starts.count, 1)
+        let argv = try XCTUnwrap(starts.first)
+        XCTAssertTrue(argv.contains("--prompt-lookup")); XCTAssertTrue(argv.contains("--thinking"))
+        XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--max-tokens")) + 1], "2048")
+        XCTAssertFalse(argv.contains("--confirm"))
+    }
+
+    func testRunVisionInferenceSettingsShowNativeFallback() throws {
+        try openInferenceModel(kind: "vision_language", name: "Local vision model")
+        let cache = app.checkBoxes["serve-vision-cache"]
+        revealInferenceControl(cache); cache.click()
+        XCTAssertFalse(app.radioGroups["serve-text-decoding"].exists)
+        XCTAssertFalse(app.disclosureTriangles["Generation defaults"].exists)
+        let preview = app.buttons["Preview serve"].firstMatch
+        revealInferenceControl(preview); preview.click()
+        XCTAssertTrue(text(containing: "Native fallback · adapter unavailable").waitForExistence(timeout: 15))
+        capture("Vision-inference-settings-and-fallback")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertTrue(calls.contains("--vision-cache")); XCTAssertFalse(calls.contains("--prompt-lookup"))
+        XCTAssertFalse(calls.contains("--confirm"))
+    }
+
+    func testRunStrataDecodingProfileRequiresVerification() throws {
+        try openInferenceModel(kind: "text_llm", name: "Local Strata model", runtime: "strata")
+        XCTAssertFalse(app.radioGroups["serve-text-decoding"].exists)
+        let create = app.buttons["serve-create-profile"]
+        revealInferenceControl(create); create.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        replace(sheet.textFields["serve-profile-name"], with: "Prompt reuse")
+        let decoding = sheet.popUpButtons["serve-strata-decoding"]
+        decoding.click(); app.menuItems["Draft head · MTP"].click()
+        XCTAssertTrue(text(containing: "prepared local").exists)
+        decoding.click(); app.menuItems["Reuse prompt text"].click()
+        capture("Strata-decoding-profile-options")
+        sheet.buttons["Save profile"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Verify profile"].waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: "Profile verification is required").exists)
+        XCTAssertFalse(app.buttons["Preview serve"].firstMatch.isEnabled)
+        capture("Strata-profile-verification-required")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"serve\", \"start\""))
+        XCTAssertFalse(calls.contains("\"task\", \"start\""))
+    }
+
     func testRunSaveAsEndpointOffersBothResidencyModes() throws {
         _ = try installTaskModel(kind: "classification", name: "Local classifier")
         launch(appearance: "Dark", route: "models", isolatedHome: true)
@@ -3934,13 +4075,14 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(classifier.waitForExistence(timeout: 15))
         classifier.click()
         select("Run")
-        let saveAsEndpoint = app.radioGroups["Serve mode"].radioButtons["Save as endpoint"]
+        let saveAsEndpoint = app.radioButtons["Save as endpoint"].firstMatch
         XCTAssertTrue(saveAsEndpoint.waitForExistence(timeout: 10))
         saveAsEndpoint.click()
         let modes = app.popUpButtons["serve-model-residency"]
         XCTAssertTrue(modes.waitForExistence(timeout: 10))
         let authentication = app.checkBoxes["serve-model-authentication"]
         XCTAssertTrue(authentication.waitForExistence(timeout: 10))
+        revealInferenceControl(authentication)
         XCTAssertEqual(String(describing: authentication.value ?? ""), "0")
         authentication.click()
         XCTAssertEqual(String(describing: authentication.value ?? ""), "1")
@@ -3951,6 +4093,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Serving-residency-options")
         let add = app.buttons["Add unverified endpoint…"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 10))
+        revealInferenceControl(add)
         add.click()
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))

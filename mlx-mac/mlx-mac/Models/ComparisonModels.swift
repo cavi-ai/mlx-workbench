@@ -725,7 +725,7 @@ struct StrataSettingsSearchGoal: Codable, Equatable, Sendable {
     func matches(_ lanes: [ComparisonLaneConfiguration]) -> Bool {
         guard isValid, lanes.count == 4, lanes.allSatisfy(\.isValid), Set(lanes.map(\.id)).count == 4,
               Set(lanes.map(\.modelPath)).count == 1, Set(lanes.map(\.modelSignature)).count == 1,
-              lanes.allSatisfy({ $0.strataOptions?.contextTokens == contextTokens && $0.strataOptions?.expertMemoryGB != nil }) else { return false }
+              lanes.allSatisfy({ $0.strataOptions?.decoding == nil && $0.strataOptions?.contextTokens == contextTokens && $0.strataOptions?.expertMemoryGB != nil }) else { return false }
         let budgets = Set(lanes.compactMap { $0.strataOptions?.expertMemoryGB })
         return budgets.count == 2 && budgets.allSatisfy { budget in
             Set(lanes.filter { $0.strataOptions?.expertMemoryGB == budget }.compactMap { $0.strataOptions?.speculation }) == [false, true]
@@ -1100,7 +1100,7 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
                   let evidence = result.servingEvidence, evidence.runtime == "strata",
                   let model = evidence.modelFingerprint, !model.isEmpty, let runtime = evidence.runtimeFingerprint, !runtime.isEmpty,
                   evidence.contextTokens == goal.contextTokens, evidence.expertMemoryGB == lane.strataOptions?.expertMemoryGB,
-                  evidence.speculation == lane.strataOptions?.speculation,
+                  lane.strataOptions?.matches(evidence) == true,
                   let memory = result.systemMemory, memory.isValid,
                   result.samples.count == prompts.count, Set(result.samples.map(\.promptID)) == Set(prompts.map(\.id)) else {
                 return .unavailable("Each lane needs matching runtime settings, valid memory evidence and the complete recorded prompt cohort.")

@@ -56,11 +56,11 @@ Admission excludes the disk-backed n-gram companion from resident weights. Autom
 
 Select the prepared model and an existing MLX model in chat Compare and run a prompt set. Each model warms up on the endpoint used for its measured prompts and stops before the next starts. Warm-up output is excluded; server startup time is recorded separately from first-token latency.
 
-Select the same Strata model in two lanes and expand **Strata settings** in each to compare speculation, expert memory and context independently. Both lanes replay the same prompts sequentially without copying or converting weights. Runs with custom settings or repeated model paths are excluded from default recommendations, aggregated performance and winner promotion.
+Select the same Strata model in two lanes and expand **Strata settings** in each to compare decoding, expert memory and context independently. Both lanes replay the same prompts sequentially without copying or converting weights. Runs with custom settings or repeated model paths are excluded from default recommendations, aggregated performance and winner promotion.
 
 Strata result cards also record:
 
-- Runtime, weight format, declared quantization, model and runtime fingerprints, speculation setting, expert budget and context. Older runs show **Runtime not recorded**.
+- Runtime, weight format, declared quantization, model and runtime fingerprints, decoding setting, expert budget and context. Older runs show **Runtime not recorded**.
 - Draft tokens offered and accepted, with the acceptance percentage, when the server reports both counts.
 - New and cached input tokens and server prompt-processing time, shown apart from client first-token latency.
 - System headroom before loading, its lowest sample during the run (every half second) and before cleanup. Headroom includes other apps and file caching; it is not model-only RAM.
@@ -77,11 +77,16 @@ A lane is suggested only when all four lanes completed with matching fingerprint
 
 ## Serving profiles
 
-A serving profile saves a lane's settings for serving.
+A serving profile saves decoding and memory settings for one model. Choose
+**Standard**, **Reuse prompt text** (no draft weights), or **Draft head · MTP**
+(requires prepared local assets and additional model memory). Existing automatic
+profiles keep their original behavior: MTP when prepared, otherwise prompt lookup.
+
+Create a profile directly in Run with **New profile…**, or save a measured lane:
 
 1. On a completed lane, **Save serving profile…**, or **Save and verify suggestion…** on a suggested lane.
 2. In Run, select the model and the profile, then **Verify profile**. Verification runs the canary prompts with up to 1,024 generated tokens each; missing or unfinished answers fail. The verdict binds the settings, canary version and model and runtime fingerprints.
-3. **Preview serve** and **Confirm and run** carry the profile through the normal confirmation. **Use profile for endpoint** applies it to the first always-on endpoint with an explicit port and mode.
+3. **Preview serve** and **Confirm and run** carry the profile through the normal confirmation. **Save as endpoint** keeps the selected profile, generation defaults, port and residency mode together.
 
 Serving rechecks the profile's verification against a fresh plan; changed settings, files or runtime sources block serving until it passes again. Profiles are stored in `serving-profiles.json`, separately from configuration.
 

@@ -222,7 +222,9 @@ enum ComparisonViewLogic {
 
     static func servingDetails(_ result: VariantResult) -> [String] {
         var lines = [result.servingEvidence?.summary ?? "Runtime not recorded"]
-        if let speculation = result.servingEvidence?.speculation {
+        if let decoding = result.servingEvidence?.decoding {
+            lines.append(StrataComparisonOptions(decoding: decoding).decodingTitle)
+        } else if let speculation = result.servingEvidence?.speculation {
             lines.append(speculation ? "Draft-and-verify on" : "Draft-and-verify off")
         }
         if result.servingEvidence?.runtime == "strata" {
