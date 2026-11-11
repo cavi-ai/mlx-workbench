@@ -2,7 +2,7 @@
 
 ## Overview
 
-The app opens on Library. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
+The app opens on Library. The sidebar's **Models** group lists **All models** and one row per model type with its count; choosing a type filters the table to it. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
 The **Next step** follows the model selected in Library: ready supported models open
 Run for a serve preview, sources needing conversion open Prepare, and other task

@@ -504,6 +504,7 @@ struct LibraryView: View {
     /// picker only; memory readings never reach the Library body.
     @State private var contextTokens = FitAdvisor.defaultContextTokens
     @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
+    @AppStorage(LibraryTypeFilter.storageKey) private var typeFilterRaw = ""
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workbenchViewport) private var viewport
@@ -526,12 +527,17 @@ struct LibraryView: View {
 
     private var groups: [LibraryGroupViewModel] {
         guard let snapshot else { return [] }
-        return LibraryPresentation.filteredGroups(
+        let filtered = LibraryPresentation.filteredGroups(
             in: snapshot,
             search: search,
             readiness: readinessFilter,
             quantization: quantizationFilter
         )
+        guard let type = LibraryTypeFilter.type(from: typeFilterRaw) else { return filtered }
+        return filtered.compactMap { group in
+            let variants = group.variants.filter { ($0.item.task?.type ?? .other) == type }
+            return variants.isEmpty ? nil : LibraryGroupViewModel(sourceGroup: group.sourceGroup, variants: variants)
+        }
     }
 
     private var rows: [LibraryRow] {

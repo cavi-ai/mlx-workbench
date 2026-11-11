@@ -46,7 +46,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges)
+            AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges,
+                       modelCounts: Dictionary(grouping: appHost.librarySnapshot?.models ?? []) { $0.item.task?.type ?? .other }.mapValues(\.count))
                 .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations
