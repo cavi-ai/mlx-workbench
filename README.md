@@ -40,7 +40,7 @@ To build from source instead, run `make start` in the checkout after `make insta
 1. **Library** lists the GGUF and MLX weights already on disk, with whether each fits in memory now.
 2. Paste a Hugging Face link anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
 3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
-4. **Run** previews and starts a loopback server for the verified model.
+4. **Serving** previews and starts a loopback server for the verified model.
 5. **Clients** points opencode, Continue, Zed or Aider at that server, with backups and rollback.
 
 See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
@@ -60,7 +60,7 @@ Qwen3.8-Flash-Next can also run on the optional [Strata runtime](docs/mlx-workbe
 Hosted at [cavi-ai.xyz/docs/mlx-workbench](https://cavi-ai.xyz/docs/mlx-workbench).
 
 - Start: [Overview](docs/mlx-workbench/source/pages/introduction/overview.md), [Installation](docs/mlx-workbench/source/pages/introduction/installation.md), [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md)
-- Workflows: [Library](docs/mlx-workbench/source/pages/workflows/library.md), [Add from Hugging Face](docs/mlx-workbench/source/pages/workflows/hugging-face.md), [Prepare and verify](docs/mlx-workbench/source/pages/workflows/prepare.md), [Run and endpoints](docs/mlx-workbench/source/pages/workflows/run.md), [Compare](docs/mlx-workbench/source/pages/workflows/compare.md), [Clients](docs/mlx-workbench/source/pages/workflows/clients.md), [Reclaim](docs/mlx-workbench/source/pages/workflows/reclaim.md), [Discover](docs/mlx-workbench/source/pages/workflows/discover.md), [Health and alerts](docs/mlx-workbench/source/pages/workflows/health.md), [Training and studies](docs/mlx-workbench/source/pages/workflows/training.md), [Strata](docs/mlx-workbench/source/pages/workflows/strata.md)
+- Workflows: [Library](docs/mlx-workbench/source/pages/workflows/library.md), [Add from Hugging Face](docs/mlx-workbench/source/pages/workflows/hugging-face.md), [Prepare and verify](docs/mlx-workbench/source/pages/workflows/prepare.md), [Serving and Monitor](docs/mlx-workbench/source/pages/workflows/run.md), [Compare](docs/mlx-workbench/source/pages/workflows/compare.md), [Clients](docs/mlx-workbench/source/pages/workflows/clients.md), [Reclaim](docs/mlx-workbench/source/pages/workflows/reclaim.md), [Discover](docs/mlx-workbench/source/pages/workflows/discover.md), [Health and alerts](docs/mlx-workbench/source/pages/workflows/health.md), [Training and studies](docs/mlx-workbench/source/pages/workflows/training.md), [Strata](docs/mlx-workbench/source/pages/workflows/strata.md)
 - Reference: [Configuration](docs/mlx-workbench/source/pages/reference/configuration.md), [State and files](docs/mlx-workbench/source/pages/reference/state.md), [Make targets](docs/mlx-workbench/source/pages/reference/make-targets.md)
 - Operate: [Troubleshooting](docs/mlx-workbench/source/pages/guides/troubleshooting.md), [Security model](docs/mlx-workbench/source/pages/security/model.md), [Version and support](docs/mlx-workbench/source/pages/release/version-and-support.md)
 

@@ -32,7 +32,7 @@ A failed canary marks the workflow **verification failed**. Always-on endpoints 
 
 ## A model will not load on request
 
-The cold-load check needs fresh headroom for weights × 1.10 + 1.5 GB + the endpoint's reserve. Unknown memory or weight size blocks the load. Free memory, lower the endpoint's reserve in Run, or unload another endpoint. Changed model files require a fresh serving plan.
+The cold-load check needs fresh headroom for weights × 1.10 + 1.5 GB + the endpoint's reserve. Unknown memory or weight size blocks the load. Free memory, lower the endpoint's reserve in Serving, or unload another endpoint. Changed model files require a fresh serving plan.
 
 ## Client wiring is refused
 

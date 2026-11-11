@@ -18,7 +18,7 @@ screen's title.
 | Install the app and its engine | [Installation](installation.md) |
 | Get one model converted, verified and serving | [Your first model](quickstart.md) |
 | Bring in a model from Hugging Face Hub | [Add from Hugging Face](../workflows/hugging-face.md) |
-| Keep a model serving for your coding tools | [Run and endpoints](../workflows/run.md), then [Clients](../workflows/clients.md) |
+| Keep a model serving for your coding tools | [Serving and Monitor](../workflows/run.md), then [Clients](../workflows/clients.md) |
 | Decide between quantizations or models | [Compare](../workflows/compare.md) |
 | Classify content or generate music with one model | [Library tasks](../workflows/library.md#local-inference-tasks) |
 | Free disk space safely | [Reclaim](../workflows/reclaim.md) |
@@ -37,7 +37,8 @@ The sidebar groups thirteen screens.
 | | **Reclaim** | Quarantine, Trash, source cleanup and restore |
 | Workspaces | **Use** | Persistent conversations, selected model servers and typed task results |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
-| | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
+| | **Serving** | Model APIs, authentication, inference settings, memory and client connections |
+| | **Monitor** | Live serving status, reported token usage and response throughput |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | | **Studies** | Controlled experiments, generation jobs and blind review |
 | System | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |

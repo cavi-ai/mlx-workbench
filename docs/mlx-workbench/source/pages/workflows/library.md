@@ -259,7 +259,7 @@ reuse telemetry. Exporting a request does not copy model weights or input media.
 
 The engine labels each model with a task type. The type decides what the app offers.
 
-| Task type | Run and endpoints | Quality gate canary | Compare modes |
+| Task type | Serving and Monitor | Quality gate canary | Compare modes |
 |---|---|---|---|
 | Text LLM | Yes | Served canary prompts | Chat |
 | Vision-language | Yes | Served canary prompts | Chat, Vision, Video understanding |

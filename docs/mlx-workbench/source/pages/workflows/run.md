@@ -30,7 +30,7 @@ to `local-audio-routing.json` under Workbench's Application Support directory.
 The shared option follows the profile's music route; the specific option records
 the selected model, loopback port and receipts directory. The plugin verifies
 the live service and its task capability before submitting. Unloading a shared
-FX route also unloads its music worker. In Run, the purpose picker always uses
+FX route also unloads its music worker. In Serving, the purpose picker always uses
 the model being inspected.
 
 ## Serve a model
@@ -51,7 +51,7 @@ Managed chat gateways report process-lifetime counters, reset when the gateway r
 
 ## Inference settings
 
-Run shows controls for the selected model's runtime. Acceleration and output settings are available in **Start now** and **Save as endpoint**. Changing a launch setting
+Serving shows controls for the selected model's runtime. Acceleration and output settings are available in **Start now** and **Save as endpoint**. Changing a launch setting
 clears its preview; review the new plan before confirming.
 
 - **Text · MLX-LM:** choose **Standard** for native decoding and batching, or
@@ -96,7 +96,7 @@ confirm the new configuration before starting it again.
 
 Choose **Configure clients…** on a running endpoint to open its **Connect apps**
 section. Clients rechecks its process and adapter identity; a changed or
-stopped server requires a fresh selection from Run. Opening Clients does not
+stopped server requires a fresh selection from Serving. Opening Clients does not
 write configuration. Preview and confirm client wiring before applying it.
 
 Model-only Run and endpoint setup do not reuse a server reported with an adapter
@@ -115,7 +115,7 @@ Opening the window and editing the prompt never send a request.
 
 Workbench checks the selected server's process and adapter identity before and
 after the request. A changed or unavailable endpoint requires reopening the test
-from Run. Verification and comparisons keep priority; Stop and Unload are refused
+from Serving. Verification and comparisons keep priority; Stop and Unload are refused
 while this test holds the model.
 
 The window distinguishes a returned answer, a token limit, missing answer text
@@ -234,9 +234,9 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 ## The memory header
 
-The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes, plus the serving count when some served models are not in memory (for example `3 serving · 1 loaded`), and flags an endpoint that is starting or degraded. Open it for the same rows as Run's **Served models**, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
+The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes, plus the serving count when some served models are not in memory (for example `3 serving · 1 loaded`), and flags an endpoint that is starting or degraded. Open it for the same rows as Serving’s endpoint list, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
 
-Choose **What’s using memory…** from Run’s memory runway or the toolbar popover
+Choose **What’s using memory…** from the toolbar popover
 for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.
 The table shows process names, PIDs and a capture time; **Refresh** reads again.
 It never stops a process. **Open Activity Monitor** opens macOS’s process inspector.
