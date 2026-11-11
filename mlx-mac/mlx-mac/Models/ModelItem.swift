@@ -336,7 +336,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         requestBlockedReason: String? = nil,
         lastUnloadReason: String? = nil,
         taskKinds: [String]? = nil,
-        apiKeySHA256: String? = nil
+        apiKeySHA256: String? = nil,
+        inferenceTelemetry: LabValue? = nil,
+        requestDefaults: LabValue? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -368,6 +370,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.lastUnloadReason = lastUnloadReason
         self.taskKinds = taskKinds
         self.apiKeySHA256 = apiKeySHA256
+        self.inferenceTelemetry = inferenceTelemetry
+        self.requestDefaults = requestDefaults
     }
 
     /// The identity serve reports for this server's model: the repo id for

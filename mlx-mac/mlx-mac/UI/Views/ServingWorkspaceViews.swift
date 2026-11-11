@@ -116,9 +116,9 @@ struct ServingModelList: View {
                             Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis).lineLimit(1).truncationMode(.middle)
                             Spacer(minLength: WorkbenchSpacing.xs)
                             if let port = ServingWorkspacePresentation.server(row)?.port {
-                                Text(":\(port)").font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                                Text(verbatim: ":\(port)").font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
                             } else if case .endpoint(let slot, _, _) = row {
-                                Text(":\(slot.port)").font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                                Text(verbatim: ":\(slot.port)").font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
                             }
                         }
                         HStack(spacing: WorkbenchSpacing.xs) {

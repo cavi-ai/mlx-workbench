@@ -5,6 +5,23 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testStatusParserPreservesUsageAndDefaultsIndependentlyOfAdapterFields() throws {
+        let usage: [String: Any] = ["schema": 1, "scope": "gateway-process", "started_at": "2026-11-11T12:00:00Z",
+            "captured_at": "2026-11-11T12:04:00Z", "requests": 4, "completed_requests": 3,
+            "failed_requests": 1, "measured_requests": 2, "input_tokens": 1200, "output_tokens": 480]
+        let row: [String: Any] = ["repo": "org/text", "runtime": "mlx_lm", "port": 8766, "pid": 123,
+            "state": "running", "adapter_path": 42, "inference_telemetry": usage,
+            "request_defaults": ["temperature": 0.0, "top_p": 0.8]]
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        let telemetry = try XCTUnwrap(ServingTelemetry(raw: server.inferenceTelemetry))
+        XCTAssertEqual(telemetry.inputTokens, 1200)
+        XCTAssertEqual(telemetry.outputTokens, 480)
+        XCTAssertEqual(telemetry.measuredRequests, 2)
+        XCTAssertTrue(ServingRequestDefaults.matches(server.requestDefaults, options: .init(temperature: 0, topP: 0.8)))
+        XCTAssertFalse(ServingRequestDefaults.matches(server.requestDefaults, options: .init(temperature: 0.7, topP: 0.8)))
+        XCTAssertNil(server.adapterPath)
+    }
+
     func testGatewayDefaultsPersistAndBindPreviewAndStatus() async throws {
         let defaults = LocalInferenceOptions(systemPrompt: "Explain 'why'\n$HOME stays literal", temperature: 0, topP: 0.8)
         let saved = try JSONDecoder().decode(LocalInferenceOptions.self, from: JSONEncoder().encode(defaults))

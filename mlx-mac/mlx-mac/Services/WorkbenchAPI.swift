@@ -1198,7 +1198,9 @@ actor WorkbenchAPI {
                 requestBlockedReason: r.string("request_blocked_reason"),
                 lastUnloadReason: r.string("last_unload_reason"),
                 taskKinds: r["task_kinds"] as? [String],
-                apiKeySHA256: r.string("api_key_sha256")
+                apiKeySHA256: r.string("api_key_sha256"),
+                inferenceTelemetry: (r["inference_telemetry"] as? [String: Any]).flatMap { try? Self.decode(LabValue.self, from: $0) },
+                requestDefaults: (r["request_defaults"] as? [String: Any]).flatMap { try? Self.decode(LabValue.self, from: $0) }
             )
         }
     }

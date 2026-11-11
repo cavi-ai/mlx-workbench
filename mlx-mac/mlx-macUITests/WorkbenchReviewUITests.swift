@@ -3437,7 +3437,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
         launch(appearance: "Dark", route: "models", isolatedHome: true)
         select("Serving")
-        let second = app.staticTexts[":8767"].firstMatch
+        let second = app.staticTexts.matching(identifier: "serving-model-server-org/Qwen-8767").firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 15)); second.click()
         let configure = app.buttons["run-configure-clients-8767"]
         XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
@@ -4663,7 +4663,7 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     func testServingWorkspaceKeepsSettingsTogether() throws {
         let model = try installTaskModel(kind: "text_llm", name: "Workspace text").path
-        let state = root.appendingPathComponent("state/mlx-workbench")
+        let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
         try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
         let slot: [String: Any] = ["id": UUID().uuidString, "enabled": false, "port": 8766, "modelPath": model, "loadOnRequest": true]
         try JSONSerialization.data(withJSONObject: [["slots": [slot], "installedAtLogin": false]])
