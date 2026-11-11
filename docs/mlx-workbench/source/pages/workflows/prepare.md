@@ -55,4 +55,4 @@ A verified conversion can reclaim the files it was made from. Prepare's **Previe
 
 ## Run from Prepare
 
-A verified chat or vision-language model offers **Run model**. Choosing it opens Run with that model selected and leaves the conversion record unchanged. Non-servable task types do not offer Run.
+A verified chat or vision-language model offers **Serve**. Choosing it opens Run with that model selected and leaves the conversion record unchanged. Non-servable task types do not offer Serve.

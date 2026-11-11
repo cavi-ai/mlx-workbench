@@ -504,7 +504,8 @@ struct LibraryView: View {
     /// The fit context the rows sort by. Follows the monitor's context
     /// picker only; memory readings never reach the Library body.
     @State private var contextTokens = FitAdvisor.defaultContextTokens
-    @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
+    @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.list.rawValue
+    @FocusState private var searchFocused: Bool
     @AppStorage(LibrarySidebarFilter.storageKey) private var sidebarFilterRaw = ""
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
@@ -530,7 +531,7 @@ struct LibraryView: View {
         guard let snapshot else { return [] }
         let filtered = LibraryPresentation.filteredGroups(
             in: snapshot,
-            search: search,
+            search: searchIsLink ? "" : search,
             readiness: readinessFilter,
             quantization: quantizationFilter
         )
@@ -542,10 +543,17 @@ struct LibraryView: View {
         }
     }
 
+    /// A pasted Hugging Face link is an intake request, not a filter.
+    private var searchIsLink: Bool { IntakeCoordinator.looksLikeHFLink(search) }
+
+    private var groupMode: LibraryGroupMode { LibraryGroupMode(rawValue: groupModeRaw) ?? .list }
+
     private var rows: [LibraryRow] {
-        (LibraryGroupMode(rawValue: groupModeRaw) ?? .family) == .type
-            ? LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
-            : LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+        switch groupMode {
+        case .list: return LibraryTablePresentation.listRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+        case .type: return LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+        case .family: return LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+        }
     }
 
     private var visiblePaths: [String] {
@@ -676,7 +684,6 @@ struct LibraryView: View {
                 if !isActive, !usesInspectorColumn { showInspector = false }
             }
             .onReceive(appHost.resources.$contextTokens.removeDuplicates()) { contextTokens = $0 }
-            .routeSearchable(text: $search, prompt: "Search family, variant, path, key, or evidence", isActive: isRouteActive)
             .toolbar { libraryToolbar }
             .onAppear {
                 if appHost.librarySnapshot == nil, !appHost.isScanning {
@@ -723,6 +730,8 @@ struct LibraryView: View {
     private var content: some View {
         if let snapshot {
             VStack(spacing: 0) {
+                searchBar
+                Divider()
                 ErrorBanner(text: appHost.lastError)
                     .padding([.horizontal, .top], WorkbenchSpacing.sm)
                 ErrorBanner(text: reclaim.lastError)
@@ -778,57 +787,91 @@ struct LibraryView: View {
         }
     }
 
+    // MARK: - Search and add
+
+    /// Filters the table, or takes a pasted Hugging Face link to intake.
+    private var searchBar: some View {
+        HStack(spacing: WorkbenchSpacing.xs) {
+            TextField("Search or paste a Hugging Face link", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
+                .onSubmit { if searchIsLink { addModel() } }
+                .accessibilityIdentifier("library-search")
+            Button { addModel() } label: { Label("Add", systemImage: "plus") }
+                .help(searchIsLink ? "Add this Hugging Face model" : "Add a model from Hugging Face")
+                .accessibilityIdentifier("library-add")
+        }
+        .padding(.horizontal, WorkbenchSpacing.sm)
+        .padding(.vertical, WorkbenchSpacing.xs)
+        .background {
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func addModel() {
+        appHost.intake.open(with: searchIsLink ? search : nil)
+        openWindow(id: IntakeWindow.id)
+        if searchIsLink { search = "" }
+    }
+
     // MARK: - Table
 
     private var table: some View {
         let largestLeafBytes = LibraryTablePresentation.largestLeafBytes(in: rows)
+        let isList = groupMode == .list
         return Table(of: LibraryRow.self, selection: Binding(get: { selection }, set: {
             selection = $0
             showInspector = $0 != nil
         }), sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
-            TableColumn("Model", value: \.name) { row in
-                LibraryNameCell(row: row, isSelected: selection == row.id, showsInlineStatus: !tier.showsStatus)
+            TableColumn("Name", value: \.name) { row in
+                LibraryNameCell(row: row, isSelected: selection == row.id, showsInlineStatus: !tier.showsStatus, plain: isList)
             }
             .width(min: WorkbenchSize.Library.modelMinimum, ideal: WorkbenchSize.Library.modelIdeal)
             .customizationID("model")
             .disabledCustomizationBehavior(.visibility)
 
-            TableColumn(LibraryFitPresentation.title, value: \.fitSortKey) { row in
+            TableColumn("Size", value: \.bytes) { row in
+                LibrarySizeCell(row: row, largestLeafBytes: largestLeafBytes, showsBar: false)
+            }
+            .width(min: WorkbenchSize.Library.sizeMinimum, ideal: WorkbenchSize.Library.sizeIdeal, max: WorkbenchSize.Library.sizeMaximum)
+            .customizationID("size")
+
+            TableColumn("Fits", value: \.fitSortKey) { row in
                 LibraryFitCell(
                     row: row,
                     resources: appHost.resources,
                     reserveGB: appHost.config.fitReserveGB,
                     hardware: appHost.hardwareProfile,
-                    showsGauge: tier.showsGauge
+                    showsGauge: tier.showsGauge,
+                    gaugeOnly: true
                 )
             }
             .width(min: WorkbenchSize.Library.fitsMinimum, ideal: WorkbenchSize.Library.fitsIdeal, max: WorkbenchSize.Library.fitsMaximum)
             .customizationID("fits")
             .disabledCustomizationBehavior(.visibility)
 
+            TableColumn("State", value: \.readinessSortKey) { row in
+                LibraryReadinessCell(row: row, verification: appHost.verification, inventory: appHost.servingInventory)
+            }
+            .width(min: WorkbenchSize.Library.statusMinimum, ideal: WorkbenchSize.Library.statusIdeal, max: WorkbenchSize.Library.statusMaximum)
+            .customizationID("status")
+
             TableColumn("Quant", value: \.quantization) { row in
                 LibraryQuantCell(row: row)
             }
             .width(min: WorkbenchSize.Library.quantMinimum, ideal: WorkbenchSize.Library.quantIdeal, max: WorkbenchSize.Library.quantMaximum)
             .customizationID("quant")
-
-            TableColumn("Size", value: \.bytes) { row in
-                LibrarySizeCell(row: row, largestLeafBytes: largestLeafBytes, showsBar: tier.showsSizeBar)
-            }
-            .width(min: WorkbenchSize.Library.sizeMinimum, ideal: WorkbenchSize.Library.sizeIdeal, max: WorkbenchSize.Library.sizeMaximum)
-            .customizationID("size")
-
-            TableColumn("Status", value: \.readinessSortKey) { row in
-                LibraryReadinessCell(row: row, verification: appHost.verification)
-            }
-            .width(min: WorkbenchSize.Library.statusMinimum, ideal: WorkbenchSize.Library.statusIdeal, max: WorkbenchSize.Library.statusMaximum)
-            .customizationID("status")
+            .defaultVisibility(.hidden)
 
             TableColumn("Modified", value: \.modifiedSortKey) { row in
                 LibraryModifiedCell(row: row)
             }
             .width(min: WorkbenchSize.Library.modifiedMinimum, ideal: WorkbenchSize.Library.modifiedIdeal, max: WorkbenchSize.Library.modifiedMaximum)
             .customizationID("modified")
+            .defaultVisibility(.hidden)
         } rows: {
             tableRows(rows)
         }
@@ -858,14 +901,12 @@ struct LibraryView: View {
         }
     }
 
-    /// Hides the columns the current table width has no room for. Model and
-    /// Fits now are never hidden.
+    /// Hides the columns the current table width has no room for. Name and
+    /// Fits are never hidden; Quant and Modified start hidden and are shown from the header menu.
     private func applyTier(_ tier: LibraryColumnTier) {
         func visibility(_ shown: Bool) -> Visibility { shown ? .automatic : .hidden }
-        columnCustomization[visibility: "quant"] = visibility(tier.showsQuant)
         columnCustomization[visibility: "size"] = visibility(tier.showsSize)
         columnCustomization[visibility: "status"] = visibility(tier.showsStatus)
-        columnCustomization[visibility: "modified"] = visibility(tier.showsModified)
     }
 
     @TableRowBuilder<LibraryRow>
@@ -961,33 +1002,29 @@ struct LibraryView: View {
                 }
             }
             ToolbarItem(placement: .automatic) {
-                Picker("Group by", selection: $groupModeRaw) {
-                    ForEach(LibraryGroupMode.allCases) { mode in
-                        Text(mode.title).tag(mode.rawValue)
+                Menu {
+                    Picker("Group by", selection: $groupModeRaw) {
+                        ForEach(LibraryGroupMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-                .help("Group the Library by model family or by type and use case")
-            }
-            ToolbarItem(placement: .automatic) {
-                Picker("Readiness", selection: $readinessFilter) {
-                    Text("All readiness").tag(ModelReadiness?.none)
-                    ForEach(ModelReadiness.allCases) { readiness in
-                        Text(readiness.title).tag(Optional(readiness))
+                    Picker("Readiness", selection: $readinessFilter) {
+                        Text("All readiness").tag(ModelReadiness?.none)
+                        ForEach(ModelReadiness.allCases) { readiness in
+                            Text(readiness.title).tag(Optional(readiness))
+                        }
                     }
-                }
-                .pickerStyle(.menu)
-                .help("Filter by readiness")
-            }
-            ToolbarItem(placement: .automatic) {
-                Picker("Quantization", selection: $quantizationFilter) {
-                    Text("All quantization").tag(String?.none)
-                    ForEach(quantizationOptions, id: \.self) { option in
-                        Text(option).tag(Optional(option))
+                    Picker("Quantization", selection: $quantizationFilter) {
+                        Text("All quantization").tag(String?.none)
+                        ForEach(quantizationOptions, id: \.self) { option in
+                            Text(option).tag(Optional(option))
+                        }
                     }
+                } label: {
+                    Label("View options", systemImage: readinessFilter == nil && quantizationFilter == nil
+                          ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 }
-                .pickerStyle(.menu)
-                .help("Filter by quantization")
+                .help("Group the Library and filter by readiness or quantization")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { showRecentTasks = true } label: {
@@ -1021,15 +1058,9 @@ struct LibraryView: View {
 
     private func footer(_ summary: LibrarySummary) -> some View {
         HStack(spacing: WorkbenchSpacing.md) {
-            Text("\(summary.models) models in \(summary.families) families")
-            Text(summary.storage)
-            Text("\(summary.reclaimable) reclaimable")
+            Text("\(summary.models) models · \(summary.storage) · \(summary.reclaimable) reclaimable")
+                .help("\(summary.families) families. Scanned \(summary.scanned).")
             Spacer()
-            HStack(spacing: WorkbenchSpacing.xxs) {
-                Text("Scanned")
-                Text(summary.scanned)
-                    .foregroundStyle(WorkbenchColor.ink)
-            }
         }
         .font(WorkbenchTypography.secondary)
         .foregroundStyle(WorkbenchColor.muted)

@@ -103,6 +103,19 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(rows[1].detail, "/vault")
     }
 
+    func testListRowsShowEveryModelOnceWithoutFamilyHeadings() {
+        let groups = LibraryPresentation.filteredGroups(in: makeMultiVariantSnapshot(), search: "", readiness: nil, quantization: nil)
+        let rows = LibraryTablePresentation.listRows(
+            groups: groups,
+            sortOrder: [KeyPathComparator(\LibraryRow.bytes, order: .reverse)]
+        )
+
+        XCTAssertEqual(rows.map(\.modelPath), ["/models/assistant-runtime.gguf", "/models/assistant-ready.gguf", "/vault/bravo-ready.gguf"])
+        XCTAssertEqual(rows.map(\.bytes), [4_096, 1_024, 1_024])
+        XCTAssertTrue(rows.allSatisfy { $0.children == nil && $0.isLeaf })
+        XCTAssertEqual(LibraryGroupMode.allCases.first, .list)
+    }
+
     func testTableRowsSortAtEveryLevel() {
         let groups = LibraryPresentation.filteredGroups(in: makeMultiVariantSnapshot(), search: "", readiness: nil, quantization: nil)
         let bySizeDescending = LibraryTablePresentation.rows(

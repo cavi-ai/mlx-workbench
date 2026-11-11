@@ -106,6 +106,16 @@ enum LibraryTablePresentation {
         return top.sorted(using: order)
     }
 
+    /// One row per model, no family or type headings, in the table's sort order.
+    static func listRows(
+        groups: [LibraryGroupViewModel],
+        sortOrder: [KeyPathComparator<LibraryRow>],
+        contextTokens: Int = FitAdvisor.defaultContextTokens
+    ) -> [LibraryRow] {
+        let order = sortOrder.isEmpty ? defaultSortOrder : sortOrder
+        return groups.flatMap(\.variants).map { LibraryRow.variant($0, contextTokens: contextTokens) }.sorted(using: order)
+    }
+
     /// The model path a table selection stands for; family rows stand for none.
     static func modelPath(forSelection id: String?) -> String? {
         guard let id else { return nil }
@@ -169,11 +179,18 @@ enum LibraryTablePresentation {
 // MARK: - Grouping
 
 enum LibraryGroupMode: String, CaseIterable, Identifiable {
+    case list
     case family
     case type
 
     var id: String { rawValue }
-    var title: String { self == .family ? "Family" : "Type" }
+    var title: String {
+        switch self {
+        case .list: return "List"
+        case .family: return "Family"
+        case .type: return "Type"
+        }
+    }
 }
 
 extension LibraryRow {
@@ -406,6 +423,8 @@ struct LibraryNameCell: View {
     var isSelected = false
     /// The Status column is hidden: a non-ready state replaces the subline.
     var showsInlineStatus = false
+    /// A flat list row: the name alone, no type symbol or type line.
+    var plain = false
     @Environment(\.backgroundProminence) private var prominence
 
     private var symbolStyle: Color {
@@ -415,12 +434,14 @@ struct LibraryNameCell: View {
 
     var body: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
-            Image(systemName: row.taskType.symbolName)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(symbolStyle)
-                .frame(width: WorkbenchSize.Library.rowSymbol)
-                .accessibilityLabel(row.taskType.title)
-                .accessibilityHidden(row.model?.item.task != nil)
+            if !plain {
+                Image(systemName: row.taskType.symbolName)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(symbolStyle)
+                    .frame(width: WorkbenchSize.Library.rowSymbol)
+                    .accessibilityLabel(row.taskType.title)
+                    .accessibilityHidden(row.model?.item.task != nil)
+            }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.hairline) {
                 Text(row.name)
                     .font(row.isFamily ? WorkbenchTypography.emphasis : WorkbenchTypography.body)
@@ -430,7 +451,7 @@ struct LibraryNameCell: View {
                 subline
             }
         }
-        .padding(.vertical, WorkbenchSpacing.xs)
+        .padding(.vertical, plain ? WorkbenchSpacing.xxs : WorkbenchSpacing.xs)
     }
 
     @ViewBuilder
@@ -438,7 +459,7 @@ struct LibraryNameCell: View {
         if showsInlineStatus, let readiness = row.readiness, readiness != .ready {
             LibraryStatusLabel(readiness: readiness)
                 .font(WorkbenchTypography.secondary)
-        } else if !row.subline.isEmpty {
+        } else if !plain, !row.subline.isEmpty {
             Text(row.subline)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
@@ -504,20 +525,20 @@ struct LibraryRowStatus: Equatable {
 struct LibraryReadinessCell: View {
     let row: LibraryRow
     @ObservedObject var verification: VerificationCoordinator
+    @ObservedObject var inventory: ServingInventoryCoordinator
     @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         if let readiness = row.readiness, let model = row.model {
-            let status = LibraryRowStatus.resolve(
-                readiness: readiness,
-                verification: verification.status(for: model.item.path, signature: model.item.signature)
-            )
-            HStack(spacing: WorkbenchSpacing.xxs) {
-                Image(systemName: status.symbol)
-                    .symbolRenderingMode(.hierarchical)
-                Text(status.title)
-                    .lineLimit(1)
-            }
+            let serving = !ServingInventoryPresentation.linkedServices(for: model, in: inventory.snapshot).isEmpty
+            let status = serving
+                ? LibraryRowStatus(title: "Serving", symbol: "play.circle.fill", tone: .success)
+                : LibraryRowStatus.resolve(
+                    readiness: readiness,
+                    verification: verification.status(for: model.item.path, signature: model.item.signature)
+                )
+            Text(status.title)
+                .lineLimit(1)
             .font(WorkbenchTypography.body)
             .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : status.color)
             .accessibilityElement(children: .combine)
@@ -603,6 +624,8 @@ struct LibraryFitCell: View {
     let reserveGB: Double
     let hardware: HardwareProfile
     let showsGauge: Bool
+    /// The bar alone when there is an estimate; the verdict stays in the help and the label.
+    var gaugeOnly = false
     @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
@@ -615,7 +638,7 @@ struct LibraryFitCell: View {
                reserveGB: reserveGB,
                hardware: hardware
            ) {
-            LibraryFitContent(fit: fit, showsGauge: showsGauge, isProminent: prominence == .increased)
+            LibraryFitContent(fit: fit, showsGauge: showsGauge, isProminent: prominence == .increased, gaugeOnly: gaugeOnly)
         }
     }
 }
@@ -624,6 +647,7 @@ struct LibraryFitContent: View {
     let fit: LibraryFitPresentation
     let showsGauge: Bool
     let isProminent: Bool
+    var gaugeOnly = false
 
     private var wordStyle: Color {
         if isProminent { return WorkbenchColor.onSelection }
@@ -646,7 +670,9 @@ struct LibraryFitContent: View {
 
     var body: some View {
         Group {
-            if showsGauge && hasGauge {
+            if gaugeOnly && hasGauge {
+                gauge
+            } else if showsGauge && hasGauge {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: WorkbenchSpacing.xs) {
                         gauge
