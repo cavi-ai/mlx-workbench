@@ -121,6 +121,7 @@
 		5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000001 /* InferenceSettings.swift */; };
 		29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A710000000000000000002 /* TaskArtifactVerifier.swift */; };
 		29A710000000000000000013 /* InferenceTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A710000000000000000003 /* InferenceTaskTests.swift */; };
+		A0D100000000000000000011 /* LocalAudioRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D100000000000000000001 /* LocalAudioRouting.swift */; };
 		C0DE00000000000000000011 /* InferenceTaskCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */; };
 		C0DE00000000000000000012 /* InferenceTaskPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* InferenceTaskPanels.swift */; };
 		C0DE00000000000000000013 /* LibraryRecentTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000003 /* LibraryRecentTasks.swift */; };
@@ -443,6 +444,7 @@
 		5A1E5E770000000000000001 /* InferenceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceSettings.swift; path = Models/InferenceSettings.swift; sourceTree = "<group>"; };
 		29A710000000000000000002 /* TaskArtifactVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskArtifactVerifier.swift; path = Services/TaskArtifactVerifier.swift; sourceTree = "<group>"; };
 		29A710000000000000000003 /* InferenceTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceTaskTests.swift; path = InferenceTaskTests.swift; sourceTree = "<group>"; };
+		A0D100000000000000000001 /* LocalAudioRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LocalAudioRouting.swift; path = Services/LocalAudioRouting.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceTaskCoordinator.swift; path = Services/InferenceTaskCoordinator.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000002 /* InferenceTaskPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceTaskPanels.swift; path = UI/Views/InferenceTaskPanels.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000003 /* LibraryRecentTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryRecentTasks.swift; path = UI/Views/LibraryRecentTasks.swift; sourceTree = "<group>"; };
@@ -800,6 +802,7 @@
 				29A710000000000000000001 /* InferenceTaskModels.swift */,
 				5A1E5E770000000000000001 /* InferenceSettings.swift */,
 				29A710000000000000000002 /* TaskArtifactVerifier.swift */,
+				A0D100000000000000000001 /* LocalAudioRouting.swift */,
 				C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */,
 				E70600000000000000000901 /* UseWorkspaceCommands.swift */,
 				E70600000000000000000801 /* UseWorkViews.swift */,
@@ -1335,6 +1338,7 @@
 				29A710000000000000000011 /* InferenceTaskModels.swift in Sources */,
 				5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */,
 				29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */,
+				A0D100000000000000000011 /* LocalAudioRouting.swift in Sources */,
 				C0DE00000000000000000011 /* InferenceTaskCoordinator.swift in Sources */,
 				E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */,
 				E70600000000000000000802 /* UseWorkViews.swift in Sources */,

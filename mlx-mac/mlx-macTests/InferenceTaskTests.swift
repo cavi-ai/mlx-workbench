@@ -1060,6 +1060,22 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertThrowsError(try draft.request(modelPath: "/Models/music"))
     }
 
+    func testSharedAudioPurposesUseMusicContractAndRoundTrip() throws {
+        for purpose in [AudioGenerationPurpose.soundEffects, .ambience] {
+            var draft = MusicTaskDraft(caption: "Ocean waves", lyrics: "Hidden lyrics")
+            draft.purpose = purpose
+            let request = try draft.request(modelPath: "/Models/music")
+            XCTAssertEqual(request.kind, .musicGeneration)
+            XCTAssertEqual(request.parameters["caption"], .string(purpose.caption("Ocean waves")))
+            XCTAssertEqual(request.parameters["lyrics"], .string("[instrumental]"))
+            XCTAssertNil(request.parameters["purpose"])
+            var reused = MusicTaskDraft()
+            try reused.load(request)
+            XCTAssertEqual(reused.purpose, purpose)
+            XCTAssertEqual(reused.caption, "Ocean waves")
+        }
+    }
+
     func testInvalidMusicReuseLeavesExistingDraftUntouched() throws {
         var draft = MusicTaskDraft(caption: "Keep this setup", lyrics: "Keep these words", duration: 8, steps: 12, seed: 7)
         let invalid = TaskRequest(kind: .musicGeneration, modelPath: "/Models/music", parameters: [

@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>MLXWorkbenchInstallationProbe</key>
+	<integer>1</integer>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleName</key>

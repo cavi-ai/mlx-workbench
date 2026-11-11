@@ -122,10 +122,19 @@ struct InferenceTaskPanel: View {
 
     private var music: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            SectionTitle(text: "Generate music")
-            TextField("Describe the music", text: $coordinator.musicDraft.caption, axis: .vertical)
+            SectionTitle(text: "Generate audio")
+            Picker("Purpose", selection: $coordinator.musicDraft.purpose) {
+                ForEach(AudioGenerationPurpose.allCases) { purpose in Text(purpose.label).tag(purpose) }
+            }.accessibilityIdentifier("task-audio-purpose")
+            if coordinator.musicDraft.purpose != .music {
+                Text("Experimental: uses this music model with an instrumental prompt. It may still produce music.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            TextField("Describe the audio", text: $coordinator.musicDraft.caption, axis: .vertical)
                 .lineLimit(2...5).accessibilityIdentifier("task-music-caption")
-            TextField("Lyrics (leave blank for instrumental)", text: $coordinator.musicDraft.lyrics, axis: .vertical).lineLimit(2...5)
+            if coordinator.musicDraft.purpose == .music {
+                TextField("Lyrics (leave blank for instrumental)", text: $coordinator.musicDraft.lyrics, axis: .vertical).lineLimit(2...5)
+            }
             HStack {
                 TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number).frame(width: 145)
                 TextField("Steps", value: $coordinator.musicDraft.steps, format: .number).frame(width: 90)

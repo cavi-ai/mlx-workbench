@@ -108,12 +108,13 @@ struct MusicTaskDraft: Equatable, Sendable {
     var duration = 15.0
     var steps = 30
     var seed = 42
+    var purpose = AudioGenerationPurpose.music
 
     var validationError: String? {
-        guard !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the music to generate." }
+        guard !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the audio to generate." }
         return InferenceSettings.problem {
-            try InferenceSettings.Music.caption.check(caption)
-            if !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try InferenceSettings.Music.lyrics.check(lyrics) }
+            try InferenceSettings.Music.caption.check(purpose.caption(caption))
+            if purpose == .music, !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try InferenceSettings.Music.lyrics.check(lyrics) }
             try InferenceSettings.Music.duration.check(duration)
             try InferenceSettings.Music.steps.check(steps)
             try InferenceSettings.seed.check(seed)
@@ -121,8 +122,10 @@ struct MusicTaskDraft: Equatable, Sendable {
     }
 
     func request(modelPath: String) throws -> TaskRequest {
-        var parameters: [String: JSONValue] = ["caption": .string(caption), "duration": .number(duration), "steps": .number(Double(steps)), "seed": .number(Double(seed))]
-        if !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parameters["lyrics"] = .string(lyrics) }
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["caption": .string(purpose.caption(caption)), "duration": .number(duration), "steps": .number(Double(steps)), "seed": .number(Double(seed))]
+        if purpose != .music { parameters["lyrics"] = .string("[instrumental]") }
+        else if !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parameters["lyrics"] = .string(lyrics) }
         let request = TaskRequest(kind: .musicGeneration, modelPath: modelPath, parameters: parameters)
         try request.validate()
         return request
@@ -132,7 +135,7 @@ struct MusicTaskDraft: Equatable, Sendable {
         guard request.kind == .musicGeneration,
               let caption = request.parameters["caption"]?.stringValue else { throw TaskProtocolError.invalidRequest }
         var draft = MusicTaskDraft()
-        draft.caption = caption
+        (draft.purpose, draft.caption) = AudioGenerationPurpose.restore(caption)
         draft.lyrics = request.parameters["lyrics"]?.stringValue ?? ""
         draft.duration = request.parameters["duration"]?.numberValue ?? 15
         draft.steps = request.parameters["steps"]?.integerValue ?? 30

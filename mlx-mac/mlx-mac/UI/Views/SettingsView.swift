@@ -107,6 +107,15 @@ struct SettingsView: View {
     @State private var notice: String?
     @State private var noticeIsError = false
     @State private var loadedSignature = ""
+    @State private var agentBudgetLimit = "64"
+    @State private var agentBudgetReserve = "8"
+    @State private var agentBudgetMessage = ""
+    @State private var agentBudgetBusy = false
+    @State private var localAudioChoice = LocalAudioRouting()
+    @State private var localAudioEndpoints: [LocalAudioEndpoint] = []
+    @State private var localAudioEndpointID = ""
+    @State private var localAudioMessage = ""
+    @State private var localAudioBusy = false
     @State private var layout = SettingsLayout()
     @State private var directories: [String: SettingsDirectoryState] = [:]
     @FocusState private var focusedField: SettingsInputValidation.Field?
@@ -121,6 +130,7 @@ struct SettingsView: View {
                             locationsSection
                             storageSection
                             servingSection
+                            localAudioSection
                             conversionSection
                             advisorsSection
                             updatesSection
@@ -145,6 +155,8 @@ struct SettingsView: View {
         }
         .onAppear { loadFromConfig() }
         .task(id: probeKey) { await runProbe() }
+        .task(id: appHost.config.mlxAgentPath) { await refreshAgentBudget() }
+        .task { await refreshLocalAudio(loadPreference: true) }
         .onChange(of: isRouteActive) { _, active in
             if !active, engineDetection.isDetecting { engineDetection.cancel() }
         }
@@ -358,9 +370,159 @@ struct SettingsView: View {
             SettingsRow(label: "Model endpoints", stacked: layout.stacksRows) {
                 Button("Open Run") { onRouteSelection(.run) }
             }
+            SettingsSeparator()
+            SettingsRow(label: "Agent memory limit", hint: "Shared by MLX Agent model workers and included agent processes.", stacked: layout.stacksRows) {
+                HStack {
+                    TextField("Agent memory limit in GB", text: $agentBudgetLimit)
+                        .frame(width: 72).accessibilityIdentifier("agent-memory-limit")
+                    Text("GB")
+                }
+            }
+            SettingsSeparator()
+            SettingsRow(label: "Transient reserve", hint: "Kept inside the agent limit for temporary allocations.", stacked: layout.stacksRows) {
+                HStack {
+                    TextField("Transient reserve in GB", text: $agentBudgetReserve)
+                        .frame(width: 72).accessibilityIdentifier("agent-memory-reserve")
+                    Text("GB")
+                }
+            }
+            SettingsSeparator()
+            SettingsRow(label: "Memory policy", stacked: layout.stacksRows) {
+                VStack(alignment: .leading) {
+                    HStack {
+                        Button("Apply budget") { Task { await applyAgentBudget() } }
+                            .disabled(agentBudgetBusy || !agentBudgetInputValid)
+                            .accessibilityIdentifier("apply-agent-memory-budget")
+                        Button("Refresh") { Task { await refreshAgentBudget() } }.disabled(agentBudgetBusy)
+                        if agentBudgetBusy { ProgressView().controlSize(.small) }
+                    }
+                    if !agentBudgetMessage.isEmpty {
+                        Text(agentBudgetMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
         } footer: {
             Text("Manage loopback servers and each endpoint's port in Run.")
         }
+    }
+
+    private var agentBudgetInputValid: Bool {
+        guard let limit = Double(agentBudgetLimit), let reserve = Double(agentBudgetReserve) else { return false }
+        return limit.isFinite && reserve.isFinite && limit > 0 && reserve >= 0 && reserve < limit
+    }
+
+    @MainActor private func refreshAgentBudget() async {
+        guard !WorkbenchStatePaths.isHostedUnitTest() else { return }
+        agentBudgetBusy = true
+        defer { agentBudgetBusy = false }
+        do {
+            guard let budget = try await appHost.api.agentMemoryBudget() else {
+                agentBudgetMessage = "No shared agent memory budget is configured."
+                return
+            }
+            agentBudgetLimit = String(Double(budget.limitBytes) / 1e9)
+            agentBudgetReserve = String(Double(budget.reserveBytes) / 1e9)
+            agentBudgetMessage = String(format: "%.1f GB accounted · %.1f GB limit", Double(budget.accountedBytes) / 1e9, Double(budget.limitBytes) / 1e9)
+        } catch { agentBudgetMessage = error.localizedDescription }
+    }
+
+    @MainActor private func applyAgentBudget() async {
+        guard let limit = Double(agentBudgetLimit), let reserve = Double(agentBudgetReserve), agentBudgetInputValid else { return }
+        agentBudgetBusy = true
+        defer { agentBudgetBusy = false }
+        do {
+            let budget = try await appHost.api.configureAgentMemoryBudget(limitGB: limit, reserveGB: reserve)
+            agentBudgetMessage = budget.withinBudget ? "Budget applied. New model jobs use the shared limit." : "Budget applied. Unload an idle model before starting another job."
+        } catch { agentBudgetMessage = error.localizedDescription }
+    }
+
+    private var localAudioSection: some View {
+        SettingsSection(title: "Artist Brain local audio") {
+            SettingsRow(label: "Sound effects and ambience", stacked: layout.stacksRows) {
+                Picker("Audio source", selection: $localAudioChoice.source) {
+                    ForEach(LocalAudioRouting.Source.allCases, id: \.self) { source in
+                        Text(source.label).tag(source)
+                    }
+                }.labelsHidden().accessibilityIdentifier("local-audio-source")
+            }
+            if localAudioChoice.source == .specific {
+                SettingsSeparator()
+                SettingsRow(label: "Served model", hint: "Start a compatible audio task endpoint in Run, then refresh.", stacked: layout.stacksRows) {
+                    Picker("Served audio model", selection: $localAudioEndpointID) {
+                        Text("Select a served model").tag("")
+                        ForEach(localAudioEndpoints, id: \.baseURL) { endpoint in
+                            Text("\(URL(fileURLWithPath: endpoint.model).lastPathComponent) · \(endpoint.port) · \(endpoint.kind == "music_generation" ? "Music (experimental FX)" : "Sound effects")")
+                                .tag(endpoint.baseURL)
+                        }
+                    }.labelsHidden().accessibilityIdentifier("local-audio-model")
+                }
+            }
+            SettingsSeparator()
+            SettingsRow(label: "Audio routing", stacked: layout.stacksRows) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    HStack {
+                        Button("Save audio choice") { Task { await saveLocalAudio() } }
+                            .disabled(localAudioBusy || (localAudioChoice.source == .specific && !localAudioEndpoints.contains { $0.baseURL == localAudioEndpointID }))
+                            .accessibilityIdentifier("save-local-audio")
+                        Button("Refresh models") { Task { await refreshLocalAudio(loadPreference: false) } }.disabled(localAudioBusy)
+                        if localAudioBusy { ProgressView().controlSize(.small) }
+                    }
+                    if !localAudioMessage.isEmpty {
+                        Text(localAudioMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+                    }
+                }
+            }
+        } footer: {
+            Text("Use the music model shares Artist Brain's music endpoint and JIT worker. FX and ambience from a music model are experimental and may contain music. A specific model must advertise a compatible audio task. In Run, the purpose picker uses the model being inspected.")
+        }
+    }
+
+    @MainActor private func refreshLocalAudio(loadPreference: Bool) async {
+        guard !WorkbenchStatePaths.isHostedUnitTest() else { return }
+        localAudioBusy = true
+        defer { localAudioBusy = false }
+        do {
+            if loadPreference {
+                localAudioChoice = try await Task.detached { try LocalAudioRoutingStore.load() }.value
+                localAudioEndpointID = localAudioChoice.endpoint?.baseURL ?? ""
+            }
+            localAudioEndpoints = try await discoverLocalAudio()
+            if !localAudioEndpoints.contains(where: { $0.baseURL == localAudioEndpointID }) { localAudioEndpointID = "" }
+            localAudioMessage = "\(localAudioEndpoints.count) compatible local endpoint(s). Save to apply the choice to Artist Brain."
+        } catch { localAudioMessage = error.localizedDescription }
+    }
+
+    @MainActor private func discoverLocalAudio() async throws -> [LocalAudioEndpoint] {
+        let snapshot = try await appHost.api.discoverServingServices()
+        let candidates = snapshot.servers.compactMap { server -> LocalAudioEndpoint? in
+            guard server.state == "running", server.runtime == "tasks", server.apiKeySHA256 == nil,
+                  let path = server.path, let port = server.port, let receipts = server.receiptsDirectory,
+                  let kind = ["sound_effects", "music_generation"].first(where: { server.taskKinds?.contains($0) == true }) else { return nil }
+            return LocalAudioEndpoint(model: path, port: port, kind: kind, receiptsDirectory: receipts)
+        }
+        return await Task.detached {
+            candidates.filter { (try? $0.validate()) != nil }.sorted { $0.port < $1.port }
+        }.value
+    }
+
+    @MainActor private func saveLocalAudio() async {
+        localAudioBusy = true
+        defer { localAudioBusy = false }
+        do {
+            var choice = localAudioChoice
+            if choice.source == .specific {
+                let endpoints = try await discoverLocalAudio()
+                guard let endpoint = endpoints.first(where: { $0.baseURL == localAudioEndpointID }) else {
+                    throw LocalAudioRoutingError.invalidEndpoint
+                }
+                choice.endpoint = endpoint
+            } else { choice.endpoint = nil }
+            let saved = choice
+            try await Task.detached { try LocalAudioRoutingStore.save(saved) }.value
+            localAudioChoice = choice
+            localAudioMessage = "Saved. Artist Brain uses \(choice.source == .music ? "its music endpoint" : "the selected audio endpoint") for sound effects and ambience."
+        } catch { localAudioMessage = error.localizedDescription }
     }
 
     // MARK: - Conversion defaults
