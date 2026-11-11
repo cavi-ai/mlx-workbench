@@ -157,6 +157,8 @@ struct ContentView: View {
             ComparisonWorkspace(appHost: appHost, onRouteSelection: navigate)
         case .run:
             ServeView(appHost: appHost, onRouteSelection: navigate)
+        case .monitor:
+            ServingMonitorView(appHost: appHost, onRouteSelection: navigate)
         case .activity:
             JobsView(appHost: appHost, onRouteSelection: navigate)
         case .reclaim:

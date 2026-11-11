@@ -1358,7 +1358,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let (peer, port, _) = try installUseFixture()
         defer { peer.stop() }
         launch(appearance: "Light", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-use-model-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
         let input = app.textViews["use-message"]
@@ -1451,7 +1451,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
         try Data().write(to: root.appendingPathComponent("finish-music-task"))
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-use-model-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
         let caption = app.textFields["task-music-caption"]
@@ -1483,7 +1483,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
         try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-model-task-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
         let caption = app.textFields["task-music-caption"]
@@ -3339,7 +3339,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let recorded = try JSONSerialization.data(withJSONObject: servers)
         try recorded.write(to: serverFile)
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-try-prompt-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15))
         open.click()
@@ -3397,7 +3397,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let failure = root.appendingPathComponent("fail-server-stop")
         try Data().write(to: failure)
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let actions = app.menuButtons["Actions for Qwen"]
         XCTAssertTrue(actions.waitForExistence(timeout: 15))
         let content = app.scrollViews.containing(.menuButton, identifier: "Actions for Qwen").firstMatch
@@ -3431,9 +3431,13 @@ final class WorkbenchReviewUITests: XCTestCase {
         ]
         try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
+        let second = app.staticTexts[":8767"].firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 15)); second.click()
         let configure = app.buttons["run-configure-clients-8767"]
         XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
+        let setup = app.disclosureTriangles["Preview and apply client configuration"].firstMatch
+        if setup.waitForExistence(timeout: 5) { setup.click() }
         let preview = app.buttons["Preview client wiring"]
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)
@@ -3551,7 +3555,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try Data("[]".utf8).write(to: root.appendingPathComponent("servers.json"))
         try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
         launch(appearance: "Light", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let actions = app.menuButtons["Actions for Protected-local"]
         XCTAssertTrue(actions.waitForExistence(timeout: 10))
         actions.click(); app.menuItems["Require API key…"].click()
@@ -4514,7 +4518,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         resizeWindow(width: 1160, height: 920)
         let row = app.outlines.staticTexts[name].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
-        select("Run")
+        select("Serving")
+        app.radioButtons["Start now"].firstMatch.click()
     }
 
     private func revealInferenceControl(_ control: XCUIElement) {
@@ -4529,15 +4534,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func expandGenerationDefaults() {
-        let disclosure = app.disclosureTriangles["Generation defaults"].firstMatch
-        revealInferenceControl(disclosure)
-        if disclosure.value as? Int != 1 {
-            let window = app.windows.firstMatch, frame = disclosure.frame.intersection(app.windows.firstMatch.frame)
-            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
-                dy: frame.midY - window.frame.minY)).click()
-        }
-        XCTAssertEqual(disclosure.value as? Int, 1)
+        revealInferenceControl(app.popUpButtons["serve-output-length"])
     }
 
     func testRunTextInferenceSettingsPreviewAndInvalidate() throws {
@@ -4629,7 +4626,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let classifier = app.staticTexts["Local classifier"].firstMatch
         XCTAssertTrue(classifier.waitForExistence(timeout: 15))
         classifier.click()
-        select("Run")
+        select("Serving")
         let saveAsEndpoint = app.radioButtons["Save as endpoint"].firstMatch
         XCTAssertTrue(saveAsEndpoint.waitForExistence(timeout: 10))
         saveAsEndpoint.click()
@@ -4659,9 +4656,85 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(calls.contains("\"serve\", \"start\""))
     }
 
+    func testServingWorkspaceKeepsSettingsTogether() throws {
+        let model = try installTaskModel(kind: "text_llm", name: "Workspace text").path
+        let state = root.appendingPathComponent("state/mlx-workbench")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let slot: [String: Any] = ["id": UUID().uuidString, "enabled": false, "port": 8766, "modelPath": model, "loadOnRequest": true]
+        try JSONSerialization.data(withJSONObject: [["slots": [slot], "installedAtLogin": false]])
+            .write(to: state.appendingPathComponent("endpoint-fleet.json"))
+        try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
+        launch(appearance: "Dark", isolatedHome: true)
+        resizeWindow(width: 1260, height: 840)
+        select("Serving")
+        XCTAssertTrue(app.textFields["serving-endpoint-port"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.textFields["serving-endpoint-port"].value as? String, "8766")
+        XCTAssertTrue(app.buttons["serving-copy-base-url"].exists)
+        let keyToggle = app.checkBoxes["serving-require-api-key"]
+        XCTAssertTrue(keyToggle.isHittable)
+        capture("Serving-API-security")
+        keyToggle.click()
+        let auth = app.sheets.firstMatch
+        XCTAssertTrue(auth.waitForExistence(timeout: 10)); auth.buttons["Cancel"].click()
+        app.radioButtons["Inference"].click()
+        let prompt = app.textViews["serve-system-prompt"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.click(); prompt.typeText("Use clear explanations.")
+        XCTAssertTrue(app.popUpButtons["serve-thinking"].exists)
+        capture("Serving-inference-defaults")
+        app.radioButtons["Memory"].click()
+        XCTAssertTrue(app.checkBoxes["endpoint-memory-release-after-request"].waitForExistence(timeout: 10))
+        capture("Serving-memory-controls")
+        resizeWindow(width: 740, height: 680)
+        app.radioButtons["API & security"].click()
+        XCTAssertTrue(app.textFields["serving-endpoint-port"].isHittable)
+        capture("Serving-API-security-minimum")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
+    func testMonitorShowsReportedUsageAndOpensExactSettings() throws {
+        let usage: [String: Any] = ["schema": 1, "scope": "gateway-process", "started_at": "2026-11-11T12:00:00Z", "captured_at": "2026-11-11T12:04:00Z", "requests": 4, "completed_requests": 3, "failed_requests": 1, "measured_requests": 2, "input_tokens": 1200, "output_tokens": 480,
+            "last_request": ["completed_at": "2026-11-11T12:04:00Z", "outcome": "completed", "input_tokens": 700, "output_tokens": 240, "response_seconds": 2.0, "output_tokens_per_second": 120.0]]
+        let servers: [[String: Any]] = [
+            ["repo": "org/Measured-text", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running", "receipt": "/fixture/measured.json", "jit": true, "model_state": "loaded", "active_requests": 0, "inference_telemetry": usage],
+            ["repo": "org/Other-text", "runtime": "mlx_lm", "port": 8767, "pid": 456, "state": "running", "receipt": "/fixture/other.json"]]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Light", isolatedHome: true)
+        resizeWindow(width: 1380, height: 820)
+        select("Monitor")
+        XCTAssertTrue(app.staticTexts["1,200"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["480"].exists)
+        XCTAssertTrue(app.staticTexts["120.0"].exists)
+        XCTAssertTrue(text(containing: "2 with token usage").exists)
+        capture("Monitor-live-usage")
+        app.buttons["monitor-open-settings"].click()
+        XCTAssertTrue(app.staticTexts["http://127.0.0.1:8766/v1"].waitForExistence(timeout: 10))
+        app.radioButtons["Connect apps"].click()
+        let picker = app.popUpButtons["serving-client-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click(); app.menuItems["Codex"].click()
+        XCTAssertTrue(text(containing: "wire_api").waitForExistence(timeout: 10))
+        capture("Serving-client-Codex")
+        picker.click(); app.menuItems["Claude Code"].click()
+        XCTAssertTrue(text(containing: "ANTHROPIC_BASE_URL").waitForExistence(timeout: 10))
+        capture("Serving-client-Claude-Code")
+        app.windows.firstMatch.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 10))
+        XCTAssertNotEqual(app.state, .notRunning)
+        let menu = app.menuBarItems.matching(NSPredicate(format: "identifier == %@ OR label == %@", "workbench-menu-bar", "MLX Workbench")).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+        menu.click()
+        XCTAssertTrue(app.menuItems["Live Monitor"].waitForExistence(timeout: 10))
+        app.menuItems["Open MLX Workbench"].click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"serve\", \"stop\""))
+        XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
     func testProcessMemoryInspectorReadsWithoutStartingWork() throws {
         launch(appearance: "Dark")
-        select("Run")
+        select("Serving")
         let inspect = app.buttons["inspect-process-memory"].firstMatch
         XCTAssertTrue(inspect.waitForExistence(timeout: 10))
         XCTAssertTrue(inspect.isHittable)

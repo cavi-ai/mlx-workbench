@@ -359,13 +359,13 @@ extension ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
                     timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
@@ -373,12 +373,12 @@ extension ServeLifecycle {
             stopObserved: { server in try await api.changeDiscoveredService(server, action: "stop") },
             jitPreview: { modelPath, port, policy in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
                 return response.string("preview_hash") ?? ""
             },
             jitStart: { modelPath, port, hash, policy in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
             },
             unload: { port, pid in
                 _ = try await api.serveUnload(port: port, expectedPID: pid)
@@ -388,13 +388,13 @@ extension ServeLifecycle {
             },
             reviewedPreview: { modelPath, port in
                 let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             },
             startWithReceipt: { path, port, hash in
                 let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
                     timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
                 return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             },
             authenticated: { digest in .live(api: api, runtime: runtime, strataOptions: strataOptions,

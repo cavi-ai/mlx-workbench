@@ -22,6 +22,12 @@ enum RunPortInput: Equatable {
     }
 }
 
+private struct ServingPortReview: Identifiable {
+    let id = UUID()
+    let slot: EndpointSlot
+    let port: Int
+}
+
 struct ServeView: View {
     let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
@@ -34,9 +40,16 @@ struct ServeView: View {
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
-    @State private var mode = ServeMode.startNow
+    @State private var mode = ServeMode.saveEndpoint
     @State private var action: EndpointChangeReview?
     @State private var authenticationReview: EndpointAuthenticationReview?
+    @State private var workspaceSelection: String?
+    @State private var workspaceTab = ServingWorkspaceTab.connection
+    @State private var includesAvailable = false
+    @State private var showsServerSetup = false
+    @State private var showsSourceIssues = false
+    @State private var connectionPort = ""
+    @State private var portReview: ServingPortReview?
     @State private var actionError: String?
     @State private var keepModelLoaded = false
     @State private var requireAPIKey = false
@@ -122,48 +135,63 @@ struct ServeView: View {
     var body: some View {
         let presentation = presentation
         GeometryReader { viewport in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                        if let request = appHost.handoffs[.returnToUse] {
-                            HStack(spacing: WorkbenchSpacing.sm) {
-                                Text("Review the server, then return to your work session.").font(WorkbenchTypography.secondary)
-                                Spacer()
-                                Button("Return to Use") { Task { await returnToUse(request) } }
-                                    .disabled(!useWorkspace.canChange)
-                                    .accessibilityIdentifier("run-return-to-use")
-                            }
-                        }
-                        if trainedAdapters.selectedJob != nil {
-                            TrainedAdapterRunPanel(coordinator: trainedAdapters) { await modelWorkflow.refreshServers() }
-                        } else if isCompact {
-                            serveSection(presentation)
-                            heroRegion(presentation)
-                        } else {
-                            heroRegion(presentation)
-                            serveSection(presentation)
-                        }
-                        servedModelsSection(presentation, allowAdd: trainedAdapters.selectedJob == nil)
+            Group {
+                if viewport.size.width >= WorkbenchSize.Serving.splitMinimum {
+                    HStack(spacing: 0) {
+                        ServingModelList(rows: workspaceRows, models: models, states: endpoint.slotStates,
+                            sourceIssueCount: inventory.snapshot.sourceErrors.count,
+                            selectedID: $workspaceSelection, includesAvailable: $includesAvailable,
+                            add: openServerSetup, monitor: { onRouteSelection(.monitor) },
+                            refresh: { Task { await refreshServing() } }, showSources: { showsSourceIssues = true })
+                        Divider()
+                        workspaceDetail
                     }
-                    .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity)
-                    .padding(WorkbenchSpacing.pageInset)
-                }
-                .accessibilityIdentifier("run-content-scroll")
-                .onChange(of: viewport.size.width, initial: true) { _, width in viewportWidth = width }
-                .onChange(of: shownPath, initial: true) { old, new in
-                    if old != new { inferenceOptions = .init() }
-                    revealServeBlock(proxy)
-                }
-                .onChange(of: revealInferenceRevision) { _, _ in proxy.scrollTo("run-serve-primary", anchor: .top) }
-                .onChange(of: isRouteActive) { _, _ in revealServeBlock(proxy); revealServing(proxy) }
-                .onChange(of: appHost.handoffs[.openServing], initial: true) { _, _ in revealServing(proxy) }
-                .onChange(of: pendingFleetAction?.id) { _, id in if id != nil { proxy.scrollTo("run-fleet-pending") } }
-                .onChange(of: visibleActionError) { old, new in
-                    if old == nil, new != nil, isRouteActive { proxy.scrollTo("run-served-errors") }
+                } else {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Menu(selectedWorkspaceRow.map { ServingWorkspacePresentation.name($0, models: models) } ?? "Choose endpoint") {
+                                ForEach(workspaceRows) { row in
+                                    Button(ServingWorkspacePresentation.name(row, models: models)) { workspaceSelection = row.id; showsServerSetup = false }
+                                }
+                                Divider()
+                                Toggle("Include available models", isOn: $includesAvailable)
+                            }
+                            Spacer()
+                            Button("Serve a model", action: openServerSetup).accessibilityIdentifier("serving-add-model")
+                            Button("Monitor") { onRouteSelection(.monitor) }
+                            if !inventory.snapshot.sourceErrors.isEmpty {
+                                Button { showsSourceIssues = true } label: { Image(systemName: "info.circle") }
+                                    .accessibilityLabel("Connection issues")
+                            }
+                        }.padding(WorkbenchSpacing.md)
+                        Divider()
+                        workspaceDetail
+                    }
                 }
             }
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                viewportWidth = width - (width >= WorkbenchSize.Serving.splitMinimum ? WorkbenchSize.Serving.sidebar : 0)
+            }
         }
+        .onChange(of: workspaceSelection) { _, new in
+            if new != nil { showsServerSetup = false; workspaceTab = .connection; synchronizeConnectionPort() }
+        }
+        .onChange(of: workspaceRows.map(\.id), initial: true) { _, ids in
+            if let selection = workspaceSelection, !ids.contains(selection) { workspaceSelection = ids.first }
+            else if workspaceSelection == nil && !showsServerSetup { workspaceSelection = ids.first }
+        }
+        .onChange(of: shownPath, initial: true) { old, _ in
+            if old != shownPath { inferenceOptions = .init() }
+            focusShownModel()
+        }
+        .onChange(of: endpoint.fleet.slots.map(\.id)) { old, new in
+            if showsServerSetup, let id = new.first(where: { !old.contains($0) }) {
+                workspaceSelection = "endpoint-\(id.uuidString)"; showsServerSetup = false
+            }
+        }
+        .onChange(of: appHost.handoffs[.openServing], initial: true) { _, _ in focusRequestedServer() }
+        .sheet(isPresented: $showsSourceIssues) { sourceIssuesSheet }
+        .sheet(item: $portReview) { review in portReviewSheet(review) }
         .sheet(item: gated($action)) { pending in confirmation(pending) }
         .sheet(item: gated($authenticationReview)) { review in authenticationConfirmation(review) }
         .sheet(item: $taskPresentation) { presentation in
@@ -196,7 +224,7 @@ struct ServeView: View {
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
         .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
         .onChange(of: isRouteActive) { _, active in
-            if active { Task { await modelWorkflow.refreshServers() } }
+            if active { focusShownModel(); focusRequestedServer(); Task { await modelWorkflow.refreshServers() } }
             else { closePrompt() }
         }
         .onDisappear(perform: closePrompt)
@@ -205,12 +233,16 @@ struct ServeView: View {
             inferenceOptions = inferenceContext.normalized(inferenceOptions)
             modelWorkflow.invalidateServePreview()
         }
-        .onChange(of: mode) { _, _ in
+        .onChange(of: mode) { _, value in
+            if value == .startNow { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil }
             inferenceOptions = inferenceContext.normalized(inferenceOptions)
             modelWorkflow.invalidateServePreview()
         }
         .onChange(of: modelWorkflow.servingProfile) { _, _ in
             inferenceOptions = inferenceContext.normalized(inferenceOptions)
+        }
+        .onChange(of: newSlotLoadOnRequest) { _, value in
+            if !value { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil }
         }
         .onChange(of: portText) { _, _ in modelWorkflow.invalidateServePreview() }
         .onAppear {
@@ -218,6 +250,293 @@ struct ServeView: View {
                 endpointPortText = String(suggestedPort)
             }
         }
+    }
+
+
+    private var workspaceRows: [ServingRow] {
+        ServingWorkspacePresentation.rows(servingRows, includeAvailable: includesAvailable)
+    }
+
+    private var selectedWorkspaceRow: ServingRow? {
+        guard !showsServerSetup, trainedAdapters.selectedJob == nil else { return nil }
+        return workspaceRows.first { $0.id == workspaceSelection } ?? workspaceRows.first
+    }
+
+    private var workspaceDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                if let request = appHost.handoffs[.returnToUse] {
+                    HStack {
+                        Text("Review this server, then return to your session.").font(WorkbenchTypography.secondary)
+                        Spacer()
+                        Button("Return to Use") { Task { await returnToUse(request) } }.disabled(!useWorkspace.canChange)
+                    }
+                }
+                if trainedAdapters.selectedJob != nil {
+                    TrainedAdapterRunPanel(coordinator: trainedAdapters) { await modelWorkflow.refreshServers() }
+                } else if let row = selectedWorkspaceRow {
+                    selectedWorkspace(row)
+                } else {
+                    newServerWorkspace
+                }
+                if let error = visibleActionError { InlineMessage(kind: .error, text: error) }
+                if !endpoint.pendingStops.isEmpty {
+                    Button("Retry stopping servers") { Task { await endpoint.retryPendingStops() } }.disabled(endpoint.isChanging)
+                }
+            }
+            .padding(WorkbenchSpacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier("run-content-scroll")
+        .id(selectedWorkspaceRow?.id ?? "serving-new-model")
+        .accessibilityIdentifier("serving-model-workspace")
+        .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
+    }
+
+    private var newServerWorkspace: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack {
+                Text("Serve a model").font(WorkbenchTypography.pageTitle)
+                Spacer()
+                if !workspaceRows.isEmpty { Button("Back to endpoints") { showsServerSetup = false } }
+            }
+            Picker("Model", selection: Binding(get: { selectedModel?.item.path ?? "" }, set: { path in
+                guard let model = models.first(where: { $0.item.path == path }) else { return }
+                appHost.selectedModelPath = path
+                modelWorkflow.prepareServe(model: model)
+                showsServerSetup = true
+            })) {
+                Text("Choose a ready model").tag("")
+                ForEach(models.filter { $0.readiness == .ready && ModelTaskPresentation.supportsEndpoint($0) }, id: \.item.path) { model in
+                    Text(model.displayName).tag(model.item.path)
+                }
+            }.accessibilityIdentifier("serving-model-picker")
+            if selectedModel != nil {
+                serveSection(presentation)
+            } else {
+                Text("Choose a model from Library to configure its API and serving settings.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Button("Open Library") { onRouteSelection(.library) }
+            }
+        }
+    }
+
+    private func selectedWorkspace(_ row: ServingRow) -> some View {
+        let server = ServingWorkspacePresentation.server(row)
+        let name = ServingWorkspacePresentation.name(row, models: models)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        Text(name).font(WorkbenchTypography.pageTitle).textSelection(.enabled)
+                        Text(ServingWorkspacePresentation.provider(row) + " · " + ServingWorkspacePresentation.status(row, states: endpoint.slotStates))
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    Spacer()
+                    if case .endpoint(let slot, _, let service) = row {
+                        Button(slot.enabled ? "Stop server" : "Start server…") {
+                            if slot.enabled { Task { if let error = await changes.stop(slot) { actionError = error } } }
+                            else { prepare(slot: slot, remove: false) }
+                        }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging || !comparison.hasLoadedHistory)
+                            .accessibilityIdentifier("serving-toggle-server")
+                        slotMenu(slot, server: server, service: service, name: name)
+                    } else if let service = ServingWorkspacePresentation.service(row), service.canStop {
+                        Button("Stop server…") { Task { await inventory.prepare(.stop, service: service) } }
+                            .disabled(!inventory.mayChange(service) || inventory.isChanging)
+                    }
+                }
+                if let server { HStack(spacing: WorkbenchSpacing.sm) { promptButtons(server, name: name) } }
+            }
+            Picker("Model settings", selection: $workspaceTab) {
+                ForEach(ServingWorkspaceTab.allCases) { tab in Text(tab.title).tag(tab) }
+            }.pickerStyle(.segmented).accessibilityIdentifier("serving-workspace-tabs")
+            switch workspaceTab {
+            case .connection: connectionWorkspace(row)
+            case .inference: inferenceWorkspace(row)
+            case .memory: memoryWorkspace(row)
+            case .clients:
+                if let server, WireEndpoint(server: server) != nil {
+                    ServingClientSetup(appHost: appHost, server: server, onRouteSelection: onRouteSelection)
+                        .id("clients-\(server.id)")
+                } else {
+                    Text(server?.runtime == "tasks" ? "This model uses the typed task API. Copy its API address and run a task from Inference." : "Start this endpoint to connect an app.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    if let url = ServingWorkspacePresentation.baseURL(row) { ServingConnectionField(title: "Base URL", value: url) }
+                }
+            }
+        }
+    }
+
+    private func connectionWorkspace(_ row: ServingRow) -> some View {
+        let server = ServingWorkspacePresentation.server(row)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            if let url = ServingWorkspacePresentation.baseURL(row) {
+                ServingConnectionField(title: "Base URL", value: url, identifier: "serving-copy-base-url")
+            }
+            ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id")
+            if let server {
+                Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            if case .endpoint(let slot, _, _) = row {
+                GroupBox("Connection & security") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        LabeledContent("Address", value: "127.0.0.1 · loopback only")
+                        LabeledContent("Port") {
+                            TextField("Port", text: $connectionPort).accessibilityIdentifier("serving-endpoint-port")
+                            Button("Change…") { reviewConnectionPort(slot) }
+                                .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
+                        }
+                        Toggle("Require an API key", isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
+                            if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
+                        })).toggleStyle(.checkbox).disabled(slot.enabled || endpoint.isChanging)
+                            .accessibilityIdentifier("serving-require-api-key")
+                        if let hash = slot.apiKeySHA256 {
+                            HStack {
+                                Button("Copy API key") {
+                                    do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
+                                    catch { actionError = AppHost.render(error) }
+                                }.accessibilityIdentifier("serving-copy-api-key")
+                                Button("Reset key…") { prepareAuthentication(slot, required: true) }.disabled(slot.enabled || endpoint.isChanging)
+                            }
+                        }
+                        if slot.enabled {
+                            Text("Stop the server to change its port or authentication. Existing settings remain visible here.")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }.padding(WorkbenchSpacing.sm)
+                }
+            } else if let server {
+                LabeledContent("Authentication", value: server.apiKeySHA256 == nil ? "No API key required" : "API key required")
+                if let port = server.port { LabeledContent("Port", value: String(port)) }
+            }
+        }
+        .onAppear(perform: synchronizeConnectionPort)
+    }
+
+    @ViewBuilder
+    private func inferenceWorkspace(_ row: ServingRow) -> some View {
+        if let server = ServingWorkspacePresentation.server(row), server.runtime == "tasks",
+           let model = RunModels.model(for: server.modelIdentity, in: models), let origin = try? ServedTaskOrigin(server: server) {
+            TaskDestinationPanel(appHost: appHost, model: model, initialOrigin: origin)
+        } else if case .endpoint(let slot, _, _) = row {
+            EndpointInferenceEditor(endpoint: endpoint, slot: slot,
+                context: ServingInferenceContext.resolve(model: RunModels.model(for: slot.modelPath, in: models),
+                    override: ServingWorkspacePresentation.server(row)?.runtime ?? "auto",
+                    profile: slot.servingProfile, chip: appHost.hardwareProfile.chip), embedded: true)
+                .id(slot.id)
+        } else if let server = ServingWorkspacePresentation.server(row) {
+            ServingInferenceEvidenceView(rows: InferenceOptionEvidence.rows(prefill: server.prefillKernel, lookup: server.decodeProfile, vision: server.visionProfile))
+            Text("This server was started outside a saved endpoint. Its launch settings are owned by the process that started it.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            HStack { promptButtons(server, name: ServingWorkspacePresentation.name(row, models: models)) }
+        } else {
+            Text("Inference settings are managed by \(ServingWorkspacePresentation.provider(row)).")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func memoryWorkspace(_ row: ServingRow) -> some View {
+        ServingSystemHeadroom(resources: appHost.resources)
+        if case .endpoint(let slot, _, _) = row {
+            Toggle("Load weights on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
+                Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
+            })).toggleStyle(.checkbox).disabled(endpoint.isChanging)
+            if slot.usesJIT {
+                memoryManagement(slot, inline: true)
+            }
+        }
+        if let service = ServingWorkspacePresentation.service(row) {
+            ServingServiceDetails(service: service, inventory: inventory)
+            if service.canUnload {
+                Button(ServingInventoryPresentation.unloadTitle(for: service)) { Task { await inventory.prepare(.unload, service: service) } }
+                    .disabled(inventory.isChanging || !inventory.mayChange(service))
+            }
+        }
+        Button("Model router…") { showFleetRouter = true }
+        loginItemSection
+    }
+
+    private func openServerSetup() {
+        showsServerSetup = true; workspaceSelection = nil; workspaceTab = .connection
+        actionError = nil
+    }
+
+    private func focusShownModel() {
+        guard isRouteActive, let path = shownPath, path != revealedModelPath else { return }
+        revealedModelPath = path
+        if let row = workspaceRows.first(where: { HFRepoID.matches(ServingWorkspacePresentation.modelID($0), path) }) {
+            workspaceSelection = row.id; showsServerSetup = false
+        } else { showsServerSetup = true }
+    }
+
+    private func focusRequestedServer() {
+        guard isRouteActive, let request = appHost.handoffs[.openServing] else { return }
+        if let id = request.rowID {
+            if !workspaceRows.contains(where: { $0.id == id }) { includesAvailable = true }
+            workspaceSelection = id
+        } else if workspaceSelection == nil { workspaceSelection = workspaceRows.first?.id }
+        showsServerSetup = false
+        appHost.handoffs.finish(request, as: .openServing)
+    }
+
+    private func synchronizeConnectionPort() {
+        if let row = selectedWorkspaceRow, case .endpoint(let slot, _, _) = row { connectionPort = String(slot.port) }
+    }
+
+    private func reviewConnectionPort(_ slot: EndpointSlot) {
+        guard let port = Int(connectionPort), (1...65535).contains(port),
+              !endpoint.fleet.slots.contains(where: { $0.id != slot.id && $0.port == port }) else {
+            actionError = "Choose an unused endpoint port from 1 to 65535."; return
+        }
+        portReview = ServingPortReview(slot: slot, port: port)
+    }
+
+    private func portReviewSheet(_ review: ServingPortReview) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Change endpoint port?").font(WorkbenchTypography.cardTitle)
+            Text("Port \(review.slot.port) → \(review.port). Update connected apps to use the new address.")
+            HStack {
+                Button("Cancel") { portReview = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save port") {
+                    Task {
+                        guard endpoint.fleet.slots.contains(review.slot), !review.slot.enabled,
+                              endpoint.pendingStops[review.slot.id] == nil,
+                              !runningServers.contains(where: { $0.port == review.slot.port || $0.port == review.port }),
+                              !endpoint.fleet.slots.contains(where: { $0.id != review.slot.id && $0.port == review.port }) else {
+                            actionError = "Endpoint or port changed. Review the port again."; portReview = nil; return
+                        }
+                        await endpoint.updateSlot(id: review.slot.id, modelPath: review.slot.modelPath, port: review.port, role: review.slot.role)
+                        synchronizeConnectionPort(); portReview = nil
+                    }
+                }.buttonStyle(.workbenchPrimary)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: WorkbenchSize.MediaReuse.reviewWidth)
+    }
+
+    private var sourceIssuesSheet: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack {
+                Text("Connections").font(WorkbenchTypography.cardTitle)
+                Spacer()
+                Button("Refresh") { Task { await refreshServing() } }.disabled(inventory.isRefreshing)
+                Button("Done") { showsSourceIssues = false }.keyboardShortcut(.cancelAction)
+            }
+            Text("These sources did not answer the latest refresh. Other endpoints remain available.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    ForEach(inventory.snapshot.sourceErrors.keys.sorted(), id: \.self) { source in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text(source).font(WorkbenchTypography.label).textSelection(.enabled)
+                            Text(inventory.snapshot.sourceErrors[source] ?? "Unavailable").font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }.padding(WorkbenchSpacing.lg).frame(minWidth: WorkbenchSize.Run.memoryPopoverWidth, idealWidth: WorkbenchSize.windowDefaultWidth / 2, minHeight: WorkbenchSize.Serving.promptMaximum * 2)
     }
 
     private var shownPath: String? {
@@ -229,20 +548,6 @@ struct ServeView: View {
     /// A sheet binding that stays empty while this route is hidden, so a retained page never presents.
     private func gated<Value>(_ binding: Binding<Value?>) -> Binding<Value?> {
         Binding(get: { isRouteActive ? binding.wrappedValue : nil }, set: { binding.wrappedValue = $0 })
-    }
-
-    /// Brings the serve block into view when the shown model changes; no animation.
-    private func revealServeBlock(_ proxy: ScrollViewProxy) {
-        guard isRouteActive, let path = shownPath, path != revealedModelPath else { return }
-        let first = revealedModelPath == nil
-        revealedModelPath = path
-        if !first { proxy.scrollTo("run-serve-primary") }
-    }
-
-    private func revealServing(_ proxy: ScrollViewProxy) {
-        guard isRouteActive, let request = appHost.handoffs[.openServing] else { return }
-        proxy.scrollTo(request.rowID ?? "run-served-models", anchor: .top)
-        appHost.handoffs.finish(request, as: .openServing)
     }
 
     private func closePrompt() {
@@ -264,181 +569,10 @@ struct ServeView: View {
     // MARK: - Served models
 
     /// The memory runway is the page's hero region.
-    private func heroRegion(_ presentation: RunPresentation) -> some View {
-        RunRunwayView(
-            resources: appHost.resources,
-            servers: modelWorkflow.servers,
-            models: models,
-            hardware: appHost.hardwareProfile,
-            reserveGB: appHost.config.fitReserveGB,
-            nextModel: presentation.runwayModel,
-            isCompact: isCompact
-        )
-    }
-
-    private func servingRow(_ server: ServerInfo, presentation: RunPresentation) -> some View {
-        let model = RunModels.model(for: server.modelIdentity, in: models)
-        let baseName = RunModels.name(for: server.modelIdentity, model: model)
-        let name = server.adapterSummary.map { baseName + " · " + $0 } ?? baseName
-        let isSelected = presentation.activeServer == server
-        let protected = appHost.occupancy.blocksStop(server)
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            if isTwoLine {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                    HStack(spacing: WorkbenchSpacing.xs) {
-                        servingChip(server)
-                        servingName(name, identity: server.modelIdentity)
-                        Spacer(minLength: WorkbenchSpacing.xs)
-                        servingAction(server, name: name, isSelected: isSelected, protected: protected)
-                    }
-                    HStack(spacing: WorkbenchSpacing.sm) {
-                        servingPort(server)
-                        servingResidency(server)
-                    }
-                }
-            } else {
-                HStack(spacing: WorkbenchSpacing.sm) {
-                    servingChip(server)
-                    servingName(name, identity: server.modelIdentity)
-                    servingPort(server)
-                    servingResidency(server)
-                    Spacer(minLength: WorkbenchSpacing.xs)
-                    servingAction(server, name: name, isSelected: isSelected, protected: protected)
-                }
-            }
-            if isSelected { selectedServerDetails(server) }
-            useButton(server)
-            taskButton(server)
-            Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
-                .buttonStyle(.bordered).controlSize(.small)
-                .disabled(!EndpointTestCoordinator.supports(server) || modelWorkflow.serversError != nil || protected || endpointTest.isSending || endpointTest.presentationID != nil)
-                .accessibilityIdentifier("run-try-prompt-\(server.port ?? 0)")
-                .accessibilityLabel("Try a prompt with \(name) on port \(String(server.port ?? 0))")
-                .help("Send one prompt to this endpoint. Load-on-request endpoints may load the model.")
-            if let request = ClientWiringRequest.forServer(server) {
-                Button("Configure clients…") {
-                    guard modelWorkflow.serversError == nil else { return }
-                    appHost.handoffs.send(request, as: .wireClient)
-                    onRouteSelection(.clientSetup)
-                }
-                .buttonStyle(.bordered).controlSize(.small)
-                .disabled(modelWorkflow.serversError != nil)
-                .accessibilityIdentifier("run-configure-clients-\(server.port ?? 0)")
-                .accessibilityLabel("Configure clients for \(name) on port \(server.port ?? 0)")
-                .help(modelWorkflow.serversError == nil
-                      ? "Select this endpoint in Clients. Preview and confirm before changing client configuration."
-                      : "Refresh serving status before configuring clients.")
-            }
-        }
-        .padding(WorkbenchSpacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
-    }
-
-    private func servingChip(_ server: ServerInfo) -> some View {
-        StatusPill(state: RunStateWord.word(for: server))
-            .livePulse(RunStateWord.isLoading(server) && isRouteActive)
-            .frame(minWidth: WorkbenchSize.Run.chip, alignment: .leading)
-    }
-
-    private func servingResidency(_ server: ServerInfo) -> some View {
-        Text(server.residencySummary)
-            .font(WorkbenchTypography.metadata)
-            .foregroundStyle(WorkbenchColor.muted)
-            .lineLimit(1)
-            .livePulse(RunStateWord.isLoading(server) && isRouteActive)
-    }
-
-    private func servingName(_ name: String, identity: String) -> some View {
-        Text(name)
-            .font(WorkbenchTypography.emphasis)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .frame(minWidth: WorkbenchSize.Run.nameMinimum, alignment: .leading)
-            .help(identity)
-    }
-
-    private func servingPort(_ server: ServerInfo) -> some View {
-        Text(verbatim: server.port.map { RunFormat.endpoint(port: $0) } ?? "No port")
-            .font(WorkbenchTypography.compactValue)
-            .textSelection(.enabled)
-            .lineLimit(1)
-            .frame(width: WorkbenchSize.Run.portColumn, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func servingAction(_ server: ServerInfo, name: String, isSelected: Bool, protected: Bool) -> some View {
-        if isSelected {
-            Button("Stop server") {
-                Task {
-                    guard let modelPath = presentation.modelPath,
-                          await appHost.stopSelectedServer(modelPath: modelPath) else { return }
-                    if modelWorkflow.workflow.serveState == .stopped { onRouteSelection(.activity) }
-                }
-            }
-            .disabled(modelWorkflow.isServeSubmissionInFlight || protected)
-            .help(protected ? "This model is in use by an active operation." : "Stop this server.")
-        } else {
-            let unloads = server.jit == true
-            Button(unloads ? "Unload" : "Stop") {
-                Task {
-                    _ = await appHost.unloadServing(server)
-                    await modelWorkflow.refreshServers()
-                }
-            }
-            .accessibilityLabel("\(unloads ? "Unload" : "Stop") \(name)")
-            .disabled(endpoint.isUnloading || protected || server.port == nil ||
-                      ["unloaded", "loading", "unloading"].contains(server.modelState ?? "") ||
-                      (server.activeRequests ?? 0) > 0)
-            .help(protected ? "This model is in use by an active operation."
-                  : (unloads ? "Release model weights while keeping this endpoint reachable." : "Stop this server and disable automatic restart."))
-        }
-    }
-
-    private func selectedServerDetails(_ server: ServerInfo) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: innerWidth < WorkbenchSize.Run.compactThreshold ? 1 : 2),
-                alignment: .leading,
-                spacing: WorkbenchSpacing.xxs
-            ) {
-                detailLine("PID", server.pid.map(String.init), identifier: true)
-                detailLine("Started", server.startedAt)
-                detailLine("Receipt", server.receipt, identifier: true, accessibilityID: "active-server-receipt")
-                detailLine("Log path", server.logPath, identifier: true)
-            }
-            ServingInferenceEvidenceView(rows: InferenceOptionEvidence.rows(prefill: server.prefillKernel, lookup: server.decodeProfile, vision: server.visionProfile))
-        }
-    }
-
-    /// Identifiers (PID, receipt, path) are monospaced; a missing value is plain text.
-    private func detailLine(_ title: String, _ value: String?, identifier: Bool = false, accessibilityID: String? = nil) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-            Text(title)
-                .font(WorkbenchTypography.metadata)
-                .foregroundStyle(WorkbenchColor.muted)
-                .frame(width: WorkbenchSize.Run.detailLabel, alignment: .leading)
-            Group {
-                if let accessibilityID {
-                    Text(verbatim: value ?? "Not reported").accessibilityIdentifier(accessibilityID)
-                } else {
-                    Text(verbatim: value ?? "Not reported")
-                }
-            }
-            .font(identifier && value != nil ? WorkbenchTypography.compactValue : WorkbenchTypography.secondaryTabular)
-            .foregroundStyle(value == nil ? WorkbenchColor.muted : WorkbenchColor.ink)
-            .textSelection(.enabled)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-    }
-
-    // MARK: - Serve a model
-
     private func serveSection(_ presentation: RunPresentation) -> some View {
-        WorkbenchSurface(.tinted) {
+        WorkbenchSurface() {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                SectionTitle(text: "Serve a model")
+                SectionTitle(text: "Endpoint setup")
                 if let model = selectedModel { modelHeader(model) }
                 if presentation.canAddEndpoint { modePicker }
                 if mode == .saveEndpoint && presentation.canAddEndpoint {
@@ -583,7 +717,7 @@ struct ServeView: View {
 
     @ViewBuilder
     private var inferenceSettings: some View {
-        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext)
+        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest)
             .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
         if inferenceContext.isStrata {
             ServingProfileControls(profiles: appHost.servingProfiles, workflow: modelWorkflow, endpoint: endpoint,
@@ -712,128 +846,6 @@ struct ServeView: View {
         await inventory.refresh(refreshHosts: true)
     }
 
-    private func servedModelsSection(_ presentation: RunPresentation, allowAdd: Bool = true) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
-                SectionTitle(text: "Served models")
-                Spacer()
-                Text(verbatim: "\(endpoint.fleet.slots.count) of \(EndpointFleetConfig.maxSlots) endpoints")
-                    .font(WorkbenchTypography.secondaryTabular)
-                    .foregroundStyle(WorkbenchColor.muted)
-                Button {
-                    Task { await refreshServing() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .disabled(inventory.isRefreshing)
-                .help("Refresh serving status")
-                .accessibilityLabel("Refresh serving status")
-            }
-            .id("run-served-models")
-            ErrorBanner(text: modelWorkflow.serversError)
-            ServingInventoryErrors(inventory: inventory)
-            Text("Models serving now, saved endpoints that restart with Workbench, and other local services. Clients wired in Wire keep working.")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-            RunFleetVerdictLine(
-                resources: appHost.resources,
-                slots: endpoint.fleet.slots,
-                servers: modelWorkflow.servers,
-                models: models,
-                reserveGB: appHost.config.fitReserveGB
-            )
-            if let pending = pendingFleetAction {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    InlineMessage(kind: .warning, text: "Fleet memory: \(pending.summary). Enable anyway?")
-                    HStack(spacing: WorkbenchSpacing.xs) {
-                        Button("Enable anyway") {
-                            pending.confirm()
-                            pendingFleetAction = nil
-                        }
-                        Button("Cancel") { pendingFleetAction = nil }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                .id("run-fleet-pending")
-            }
-            let rows = servingRows
-            if rows.isEmpty {
-                ContentUnavailableView("Nothing is serving", systemImage: "moon.zzz",
-                    description: Text("Start a model above, or save it as an endpoint that loads on request."))
-            }
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                if case .service = row, !rows[..<index].contains(where: { if case .service = $0 { return true }; return false }) {
-                    Text("Other local services").font(WorkbenchTypography.cardTitle).padding(.top, WorkbenchSpacing.xs)
-                }
-                servingRowView(row, presentation: presentation).id(row.id)
-            }
-            if !allowAdd {
-                Text("Saved endpoints use Library models. This trained adapter uses explicit serving above.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-            if endpoint.fleet.slots.contains(where: { $0.role != nil }) {
-                HStack(spacing: WorkbenchSpacing.xs) {
-                    Button("Wire roles…") { showFleetRouter = true }
-                        .buttonStyle(.bordered)
-                    Text("Map roles onto running endpoints via mlx-agent fleet.")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-            loginItemSection
-            if endpoint.isChanging {
-                HStack { ProgressView().controlSize(.small); Text("Updating endpoints…") }
-                    .font(WorkbenchTypography.secondary)
-            }
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                ErrorBanner(text: actionError)
-                ErrorBanner(text: inventory.actionError)
-                ErrorBanner(text: endpoint.lastError)
-                ErrorBanner(text: endpoint.persistenceError)
-            }
-            .id("run-served-errors")
-            if !endpoint.pendingStops.isEmpty {
-                Button("Retry stopping servers") { Task { await endpoint.retryPendingStops() } }
-                    .disabled(endpoint.isChanging)
-            }
-            if let loginItemMessage {
-                InlineMessage(kind: loginItemMessageIsError ? .error : .success, text: loginItemMessage)
-            }
-        }
-        .sheet(isPresented: $showFleetRouter) {
-            FleetRouterSheet(appHost: appHost)
-        }
-    }
-
-    @ViewBuilder
-    private func servingRowView(_ row: ServingRow, presentation: RunPresentation) -> some View {
-        switch row {
-        case .endpoint(let slot, let server, let service): endpointRow(slot, server: server, service: service)
-        case .server(let server, _): servingRow(server, presentation: presentation)
-        case .service(let service): serviceRow(service)
-        }
-    }
-
-    private func serviceRow(_ service: ServingServiceObservation) -> some View {
-        let model = service.modelPath.flatMap { path in models.first { $0.item.path == path || $0.outputPaths.contains(path) } }
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            ServingServiceRow(service: service, inventory: inventory, compact: true) { kind in
-                Task { await inventory.prepare(kind, service: service) }
-            }
-            if let server = service.server, service.isWorkbenchManaged || model != nil {
-                HStack(spacing: WorkbenchSpacing.xs) { promptButtons(server, name: service.name) }
-            }
-            if let model {
-                Button("Show in Library") { revealModel(model.item.path) }.buttonStyle(.borderless)
-            }
-        }
-        .padding(WorkbenchSpacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
-    }
-
     @ViewBuilder
     private func useButton(_ server: ServerInfo) -> some View {
         if let model = models.first(where: { $0.readiness == .ready && UseChatClient.matches(server, modelPath: $0.item.path) }),
@@ -892,7 +904,7 @@ struct ServeView: View {
             Button("Configure clients…") {
                 guard modelWorkflow.serversError == nil else { return }
                 appHost.handoffs.send(request, as: .wireClient)
-                onRouteSelection(.clientSetup)
+                workspaceTab = .clients
             }
             .buttonStyle(.bordered).controlSize(.small)
             .disabled(modelWorkflow.serversError != nil)
@@ -900,131 +912,6 @@ struct ServeView: View {
             .accessibilityLabel("Configure clients for \(name) on port \(server.port ?? 0)")
             .help("Select this endpoint in Clients. Preview and confirm before changing client configuration.")
         }
-    }
-
-    private func endpointRow(_ slot: EndpointSlot, server: ServerInfo?, service: ServingServiceObservation?) -> some View {
-        let slotState = endpoint.slotStates[slot.id] ?? .disabled
-        let model = RunModels.model(for: slot.modelPath, in: models)
-        let name = RunModels.name(for: slot.modelPath, model: model)
-        let attempts = endpoint.slotRestartAttempts[slot.id] ?? 0
-        let isLoading = modelWorkflow.servers.contains { $0.port == slot.port && RunStateWord.isLoading($0) }
-        let rowID = "endpoint-\(slot.id.uuidString)"
-        let busy = endpoint.isChanging || !comparison.hasLoadedHistory
-        @ViewBuilder func header(_ factsInline: Bool) -> some View {
-            HStack(spacing: WorkbenchSpacing.sm) {
-                StatusPill(state: slotStateLabel(slotState, enabled: slot.enabled))
-                    .frame(minWidth: WorkbenchSize.Run.chip, alignment: .leading)
-                Text(name)
-                    .font(WorkbenchTypography.emphasis)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .layoutPriority(1)
-                    .frame(minWidth: WorkbenchSize.Run.slotModelMinimum, alignment: .leading)
-                    .help(slot.modelPath)
-                if let profile = slot.servingProfile {
-                    Text(profiles.profiles.first(where: { $0.id == profile.id })?.name ?? profile.name)
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                }
-                if factsInline { slotFacts(slot, attempts: attempts) }
-                Spacer(minLength: WorkbenchSpacing.xs)
-                Button(slot.enabled ? "Stop" : "Start…") {
-                    if slot.enabled { Task { if let refusal = await changes.stop(slot) { actionError = refusal } } }
-                    else { prepare(slot: slot, remove: false) }
-                }
-                .disabled(busy)
-                .accessibilityLabel("\(slot.enabled ? "Stop" : "Start") \(name)")
-                .help(slot.enabled ? "Stop this endpoint and disable automatic restart." : "Review fit and verification, then start this endpoint.")
-                slotMenu(slot, server: server, service: service, name: name)
-            }
-        }
-        @ViewBuilder func twoLine() -> some View {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                header(false)
-                ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.xxs) { slotFacts(slot, attempts: attempts) }
-            }
-        }
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            // Wide rows keep the facts on the header line; they fall back to a second line when they do not fit.
-            if isTwoLine { twoLine() } else { ViewThatFits(in: .horizontal) { header(true); twoLine() } }
-            HStack(spacing: WorkbenchSpacing.xs) {
-                Text(slotState.summary)
-                    .font(WorkbenchTypography.metadata)
-                    .foregroundStyle(WorkbenchColor.muted)
-                if let residency = endpoint.slotResidencies[slot.id] {
-                    Text(residency)
-                        .font(WorkbenchTypography.metadata)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .livePulse(isLoading && isRouteActive)
-                }
-                if slot.apiKeySHA256 != nil {
-                    Text("API key required").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                }
-                if case .modelMismatch = slotState {
-                    Button("Swap to configured model") {
-                        Task { await endpoint.swapSlot(id: slot.id, to: slot.modelPath, allowUnverified: true) }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-            if slot.usesJIT, let reason = endpoint.slotLoadBlockedReasons[slot.id] {
-                Label(reason, systemImage: "memorychip")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.warning)
-            }
-            if let service { serviceDetails(service, id: rowID, name: name) }
-            if server != nil || !isCompact {
-                HStack(spacing: WorkbenchSpacing.xs) {
-                    if let server { promptButtons(server, name: name) }
-                    if !isCompact {
-                        Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
-                            .buttonStyle(.bordered).controlSize(.small)
-                    }
-                }
-            }
-        }
-        .contextMenu { slotMenuItems(slot, server: server, service: service, includeCopyURL: true) }
-        .padding(WorkbenchSpacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
-        .popover(isPresented: memoryPopoverBinding(slot), arrowEdge: .bottom) {
-            memoryManagement(endpoint.fleet.slots.first(where: { $0.id == slot.id }) ?? slot, expanded: .constant(true))
-                .padding(WorkbenchSpacing.md)
-                .frame(width: WorkbenchSize.Run.memoryPopoverWidth)
-        }
-    }
-
-    @ViewBuilder
-    private func slotFacts(_ slot: EndpointSlot, attempts: Int) -> some View {
-        if let role = slot.role {
-            Text(role.title)
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-        }
-        Text(verbatim: RunFormat.port(slot.port))
-            .font(WorkbenchTypography.compactValue)
-            .foregroundStyle(WorkbenchColor.muted)
-        Text(slot.usesJIT ? "Load on request" : "Always loaded")
-            .font(WorkbenchTypography.metadata)
-            .foregroundStyle(WorkbenchColor.muted)
-        if slot.inferenceOptions.requested {
-            Text(slot.inferenceOptions.summary)
-                .font(WorkbenchTypography.metadata)
-                .foregroundStyle(WorkbenchColor.muted)
-        }
-        if attempts > 0 {
-            Text(verbatim: "\(attempts) restart(s)")
-                .font(WorkbenchTypography.metadata)
-                .foregroundStyle(WorkbenchColor.muted)
-        }
-        RunSlotFitChip(
-            resources: appHost.resources,
-            slot: slot,
-            servers: modelWorkflow.servers,
-            models: models,
-            hardware: appHost.hardwareProfile,
-            reserveGB: appHost.config.fitReserveGB
-        )
     }
 
     private func slotMenu(_ slot: EndpointSlot, server: ServerInfo?, service: ServingServiceObservation?, name: String) -> some View {
@@ -1067,7 +954,7 @@ struct ServeView: View {
                 .help("Keep the endpoint reachable without resident weights. Changing load mode restarts this endpoint.")
                 .disabled(endpoint.isUnloading)
             if slot.usesJIT {
-                Button("Memory management…") { expandedMemorySlots.insert(slot.id) }
+                Button("Memory management…") { workspaceTab = .memory }
             }
             Button("Inference settings…") { inferenceSlot = slot }
                 .disabled(endpoint.pendingStops[slot.id] != nil)
@@ -1078,7 +965,7 @@ struct ServeView: View {
             }
             if let hash = slot.apiKeySHA256 {
                 Button("Copy API key") {
-                    do { ServedModelsSelection.copy(try EndpointCredentialStore.token(for: hash)) }
+                    do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
                     catch { actionError = AppHost.render(error) }
                 }
                 Button("Reset API key…") { prepareAuthentication(slot, required: true) }
@@ -1103,21 +990,6 @@ struct ServeView: View {
         }
     }
 
-    @ViewBuilder
-    private func serviceDetails(_ service: ServingServiceObservation, id: String, name: String) -> some View {
-        if isCompact {
-            DisclosureGroup("Details", isExpanded: Binding(
-                get: { expandedDetails.contains(id) },
-                set: { if $0 { expandedDetails.insert(id) } else { expandedDetails.remove(id) } })) {
-                ServingServiceDetails(service: service, inventory: inventory).padding(.top, WorkbenchSpacing.xxs)
-            }
-            .font(WorkbenchTypography.secondary)
-            .accessibilityLabel("Details for \(name)")
-        } else {
-            ServingServiceDetails(service: service, inventory: inventory)
-        }
-    }
-
     private func memoryPopoverBinding(_ slot: EndpointSlot) -> Binding<Bool> {
         Binding(
             get: { expandedMemorySlots.contains(slot.id) },
@@ -1127,10 +999,18 @@ struct ServeView: View {
         )
     }
 
-    /// The slot's idle, keep-loaded and headroom controls; `expanded` defaults to the page's per-slot state.
-    func memoryManagement(_ slot: EndpointSlot, expanded: Binding<Bool>? = nil) -> some View {
+    @ViewBuilder
+    func memoryManagement(_ slot: EndpointSlot, expanded: Binding<Bool>? = nil, inline: Bool = false) -> some View {
+        if inline { memoryFields(slot) }
+        else {
+            DisclosureGroup("Memory management", isExpanded: expanded ?? memoryPopoverBinding(slot)) { memoryFields(slot) }
+                .font(WorkbenchTypography.secondary)
+        }
+    }
+
+    private func memoryFields(_ slot: EndpointSlot) -> some View {
         let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
-        return DisclosureGroup(isExpanded: expanded ?? memoryPopoverBinding(slot)) {
+        return
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack {
                     Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
@@ -1193,17 +1073,6 @@ struct ServeView: View {
             .padding(.top, WorkbenchSpacing.sm)
             .controlSize(.small)
             .disabled(endpoint.isUnloading)
-        } label: {
-            HStack {
-                Text("Memory management")
-                Text(policy.releaseAfterRequest == true ? "Release after each request" : policy.keepLoaded ? "Keeps loaded" : (policy.idleTimeoutSeconds == 0 ? "Manual unload" : "Idle unload · \(policy.idleTimeoutSeconds / 60) min"))
-                    .foregroundStyle(WorkbenchColor.muted)
-                if let reserve = policy.minimumHeadroomGB {
-                    Text("\(reserve, specifier: "%.1f") GB reserve").foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-        }
-        .font(WorkbenchTypography.secondary)
     }
 
     private func memoryBinding<Value>(_ slot: EndpointSlot, _ keyPath: WritableKeyPath<EndpointMemoryPolicy, Value>) -> Binding<Value> {
@@ -1218,20 +1087,6 @@ struct ServeView: View {
                     Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
                 })
     }
-
-    private func slotStateLabel(_ state: EndpointState, enabled: Bool) -> String {
-        if case .degraded = state { return "degraded" }
-        guard enabled else { return "disabled" }
-        switch state {
-        case .running: return "running"
-        case .starting, .waitingForServer: return "starting"
-        case .degraded: return "degraded"
-        case .modelMismatch: return "mismatch"
-        case .disabled: return "disabled"
-        }
-    }
-
-    // MARK: - Add endpoint
 
     @ViewBuilder
     private func addEndpointForm(_ presentation: RunPresentation) -> some View {
@@ -1621,6 +1476,7 @@ private struct EndpointInferenceEditor: View {
     @ObservedObject var endpoint: EndpointSupervisor
     let slot: EndpointSlot
     let context: ServingInferenceContext
+    var embedded = false
     var onManageProfile: ((ServingProfile) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var options: LocalInferenceOptions
@@ -1628,25 +1484,40 @@ private struct EndpointInferenceEditor: View {
     @State private var busy = false
     @State private var error: String?
 
-    init(endpoint: EndpointSupervisor, slot: EndpointSlot, context: ServingInferenceContext, onManageProfile: ((ServingProfile) -> Void)? = nil) {
+    init(endpoint: EndpointSupervisor, slot: EndpointSlot, context: ServingInferenceContext, embedded: Bool = false, onManageProfile: ((ServingProfile) -> Void)? = nil) {
         self.endpoint = endpoint
         self.slot = slot
         self.context = context
+        self.embedded = embedded
         self.onManageProfile = onManageProfile
         _options = State(initialValue: slot.inferenceOptions)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            ScrollView {
+        Group {
+            if embedded {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) { fields; actions }
+            } else {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    Text("Endpoint inference settings").font(WorkbenchTypography.cardTitle)
+                    ScrollView { fields }.frame(maxHeight: 560)
+                    actions
+                }.padding(WorkbenchSpacing.md).frame(width: 560)
+            }
+        }
+        .disabled(busy)
+        .onChange(of: options) { _, _ in preview = nil; error = nil }
+        .onChange(of: slot) { _, value in options = value.inferenceOptions; preview = nil }
+        .interactiveDismissDisabled(busy)
+    }
+    private var fields: some View {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Text("Inference settings").font(WorkbenchTypography.cardTitle)
                     Text(verbatim: "\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) · :\(slot.port)")
                         .font(WorkbenchTypography.secondary)
                     if slot.enabled {
                         InlineMessage(kind: .info, text: "Stop this endpoint to change its inference settings.")
                     }
-                    ServingInferenceControls(options: $options, context: context).disabled(slot.enabled)
+                    ServingInferenceControls(options: $options, context: context, allowRequestDefaults: slot.usesJIT).disabled(slot.enabled)
                     if let profile = slot.servingProfile {
                         Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary)
                         if let onManageProfile {
@@ -1663,16 +1534,16 @@ private struct EndpointInferenceEditor: View {
                     Text("After saving, enable the endpoint. Reinstall an existing login item to capture the changed settings.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
-            }
-            .frame(maxHeight: 560)
+    }
+    private var actions: some View {
             HStack {
-                Button("Cancel") { dismiss() }.disabled(busy)
+                Button(embedded ? "Discard changes" : "Cancel") { options = slot.inferenceOptions; preview = nil; error = nil; if !embedded { dismiss() } }.disabled(busy)
                 Spacer()
                 if let preview {
                     Button("Confirm and save") {
                         busy = true
                         Task {
-                            if await endpoint.confirmSlotInference(preview) { dismiss() }
+                            if await endpoint.confirmSlotInference(preview) { self.preview = nil; if !embedded { dismiss() } }
                             else { error = endpoint.lastError; self.preview = nil }
                             busy = false
                         }
@@ -1693,11 +1564,5 @@ private struct EndpointInferenceEditor: View {
                     }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
                 }
             }
-        }
-        .padding(WorkbenchSpacing.md)
-        .frame(width: 560)
-        .disabled(busy)
-        .onChange(of: options) { _, _ in preview = nil; error = nil }
-        .interactiveDismissDisabled(busy)
     }
 }

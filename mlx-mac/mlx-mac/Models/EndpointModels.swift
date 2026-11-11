@@ -6,21 +6,29 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var visionCache = false
     var thinkingOff = false
     var maximumTokens: Int? = nil
+    var systemPrompt = ""
+    var temperature: Double? = nil
+    var topP: Double? = nil
+    var hasRequestDefaults: Bool { !systemPrompt.isEmpty || temperature != nil || topP != nil }
     var textRequested: Bool { m5Prefill || promptLookup || thinkingOff }
     var accelerationRequested: Bool { m5Prefill || promptLookup || visionCache }
-    var requested: Bool { textRequested || visionCache || maximumTokens != nil }
+    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults }
     var validationError: String? {
+        if systemPrompt.utf8.count > 8192 || systemPrompt.contains("\0") { return "System prompt must fit in 8,192 UTF-8 bytes without null characters." }
+        if let temperature, !temperature.isFinite || !(0...2).contains(temperature) { return "Temperature must be from 0 to 2." }
+        if let topP, !topP.isFinite || !(0...1).contains(topP) { return "Top-p must be from 0 to 1." }
         if let maximumTokens, !(256...65536).contains(maximumTokens) { return "Default output length must be from 256 to 65536 tokens." }
         if visionCache && (textRequested || maximumTokens != nil) { return "Choose vision feature reuse separately from text-server settings." }
         return nil
     }
 
-    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil) {
+    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil) {
         self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
         self.thinkingOff = thinkingOff; self.maximumTokens = maximumTokens
+        self.systemPrompt = systemPrompt; self.temperature = temperature; self.topP = topP
     }
 
-    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens }
+    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         m5Prefill = try values.decodeIfPresent(Bool.self, forKey: .m5Prefill) ?? false
@@ -28,6 +36,9 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
         visionCache = try values.decodeIfPresent(Bool.self, forKey: .visionCache) ?? false
         thinkingOff = try values.decodeIfPresent(Bool.self, forKey: .thinkingOff) ?? false
         maximumTokens = try values.decodeIfPresent(Int.self, forKey: .maximumTokens)
+        systemPrompt = try values.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
+        temperature = try values.decodeIfPresent(Double.self, forKey: .temperature)
+        topP = try values.decodeIfPresent(Double.self, forKey: .topP)
     }
 }
 
@@ -184,7 +195,7 @@ extension EndpointFleetValidation: LocalizedError {
         case .invalidInference(_, let reason):
             return reason
         case .incompatibleAcceleration:
-            return "Strata profiles use their own decoding controls. Only the default output length can be set separately."
+            return "Strata profiles use their own decoding controls. Output length and request defaults can be set separately."
         case .invalidAuthentication:
             return "API key authentication requires Load on request and a valid credential reference."
         }
@@ -204,6 +215,9 @@ extension EndpointFleetConfig {
             if let digest = slot.apiKeySHA256,
                !slot.usesJIT || digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) == nil {
                 throw EndpointFleetValidation.invalidAuthentication(slot.id)
+            }
+            if slot.inferenceOptions.hasRequestDefaults && !slot.usesJIT {
+                throw EndpointFleetValidation.invalidInference(slot.id, "Request defaults require Load on request.")
             }
             if let reason = slot.inferenceOptions.validationError {
                 throw EndpointFleetValidation.invalidInference(slot.id, reason)

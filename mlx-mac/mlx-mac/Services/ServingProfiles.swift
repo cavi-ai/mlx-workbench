@@ -146,7 +146,7 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
         guard hasPassedVerification else { throw WorkflowEvidenceError.invalid("Verify the serving profile before previewing it.") }
         guard inference.validationError == nil, !inference.accelerationRequested, !inference.thinkingOff else { throw WorkflowEvidenceError.invalid("Strata profiles use their own decoding controls.") }
         let plan = try await api.servePreview(repo: modelPath, runtime: "strata", port: port,
-                                              jit: jit, memoryPolicy: policy, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256)
+                                              jit: jit, memoryPolicy: policy, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: inference)
         try validate(plan: plan)
         return plan
     }
@@ -157,7 +157,7 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
             throw WorkflowEvidenceError.invalid("The serving profile preview changed. Preview it again before confirming.")
         }
         return try await api.serveStart(repo: modelPath, runtime: "strata", port: port, previewHash: hash,
-                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256)
+                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: inference)
     }
 
     /// Receipt ownership is established by serve status; bind its exact confirmed plan as well.

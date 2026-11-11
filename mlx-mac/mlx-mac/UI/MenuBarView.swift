@@ -45,7 +45,7 @@ struct MenuBarView: View {
         }
         Divider()
         let models = appHost.librarySnapshot?.models ?? []
-        let rows = ServingRows.build(slots: endpoint.fleet.slots, servers: workflow.servers, snapshot: inventory.snapshot)
+        let rows = ServingWorkspacePresentation.rows(ServingRows.build(slots: endpoint.fleet.slots, servers: workflow.servers, snapshot: inventory.snapshot), includeAvailable: false)
         ForEach(rows) { row in
             Menu(MenuBarPresentation.rowTitle(row, models: models)) {
                 switch row {
@@ -113,6 +113,7 @@ struct MenuBarView: View {
         }
         Divider()
         Button("Open Serving") { openManager() }
+        Button("Live Monitor") { selectedRouteID = AppRoute.monitor.rawValue; openApp() }
         Button("Refresh local services") {
             Task {
                 await workflow.refreshServers()
@@ -165,7 +166,17 @@ struct ServingInventoryMenuLabel: View {
     @ObservedObject var endpoint: EndpointSupervisor
 
     var body: some View {
-        Label("MLX Workbench", systemImage: ServingInventoryPresentation.icon(inventory.snapshot, slots: endpoint.fleet.slots, states: endpoint.slotStates))
+        Label {
+            Text("MLX Workbench")
+        } icon: {
+            Image(systemName: "cpu")
+                .overlay(alignment: .bottomTrailing) {
+                    if inventory.snapshot.loadedCount > 0 { Circle().fill(WorkbenchColor.success).frame(width: 5, height: 5) }
+                }
+        }
+        .help("MLX Workbench · " + ServingInventoryPresentation.summary(inventory.snapshot))
+        .accessibilityIdentifier("workbench-menu-bar")
+        .accessibilityLabel("MLX Workbench")
     }
 }
 

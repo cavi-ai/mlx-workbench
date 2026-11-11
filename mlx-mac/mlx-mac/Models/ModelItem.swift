@@ -274,6 +274,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let lastUnloadReason: String?
     let taskKinds: [String]?
     let apiKeySHA256: String?
+    var inferenceTelemetry: LabValue? = nil
+    var requestDefaults: LabValue? = nil
     var supportsChatCompletions: Bool { runtime != "tasks" && (taskKinds?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
@@ -299,6 +301,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case lastUnloadReason = "last_unload_reason"
         case taskKinds = "task_kinds"
         case apiKeySHA256 = "api_key_sha256"
+        case inferenceTelemetry = "inference_telemetry", requestDefaults = "request_defaults"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -386,6 +389,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         return matches(prefillKernel, requested: options.m5Prefill, name: "m5-q4-prefill-v1")
             && matches(decodeProfile, requested: options.promptLookup, name: "prompt-lookup-v1")
             && matches(visionProfile, requested: options.visionCache, name: "vision-features-v1")
+            && ServingRequestDefaults.matches(requestDefaults, options: options)
     }
 
     /// Model-only workflows cannot substitute an adapter server, including

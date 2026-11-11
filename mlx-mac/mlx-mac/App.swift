@@ -78,6 +78,7 @@ struct MlxWorkbenchApp: App {
             MenuBarView(appHost: appHost)
         } label: {
             ServingInventoryMenuLabel(inventory: appHost.servingInventory, endpoint: appHost.endpoint)
+                .onAppear { appHost.startLiveServices() }
         }
         .menuBarExtraStyle(.menu)
     }
