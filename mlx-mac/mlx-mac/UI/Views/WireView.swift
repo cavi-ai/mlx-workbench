@@ -148,6 +148,9 @@ struct WireView: View {
         self.appHost = appHost
         self.fixedServer = fixedServer
         self.onRouteSelection = onRouteSelection
+        if fixedServer != nil {
+            _layout = State(initialValue: ClientsLayout(viewportWidth: 0))
+        }
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
         _endpointTest = ObservedObject(wrappedValue: appHost.endpointTest)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
@@ -211,6 +214,9 @@ struct WireView: View {
         Group {
             if fixedServer != nil { clientWiringSection }
             else { standalone }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            if fixedServer != nil { layout = ClientsLayout(viewportWidth: width, previous: layout) }
         }
         .task(id: isRouteActive) {
             hasServerStatus = false

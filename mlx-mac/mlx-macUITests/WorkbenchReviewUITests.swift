@@ -3444,6 +3444,10 @@ final class WorkbenchReviewUITests: XCTestCase {
         let setup = app.disclosureTriangles["Preview and apply client configuration"].firstMatch
         XCTAssertTrue(setup.waitForExistence(timeout: 5))
         setup.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
+        let refresh = app.buttons["Refresh clients and servers"].firstMatch
+        XCTAssertTrue(refresh.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(refresh.frame.maxX, app.windows.firstMatch.frame.maxX,
+                                 "Embedded client controls must fit the selected model workspace")
         let preview = app.buttons["Preview client wiring"]
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)
