@@ -3442,7 +3442,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         let configure = app.buttons["run-configure-clients-8767"]
         XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
         let setup = app.disclosureTriangles["Preview and apply client configuration"].firstMatch
-        if setup.waitForExistence(timeout: 5) { setup.click() }
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        setup.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
         let preview = app.buttons["Preview client wiring"]
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)

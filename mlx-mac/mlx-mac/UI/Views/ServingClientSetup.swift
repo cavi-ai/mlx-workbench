@@ -77,6 +77,11 @@ struct ServingClientSetup: View {
             }.accessibilityIdentifier("serving-client-picker")
             Text(client.instructions(protected: server.apiKeySHA256 != nil)).font(WorkbenchTypography.secondary)
             if let setup = client.setup(server: server) {
+                if client == .opencode {
+                    DisclosureGroup("Preview and apply client configuration") {
+                        WireView(appHost: appHost, fixedServer: server, onRouteSelection: onRouteSelection)
+                    }
+                }
                 if server.apiKeySHA256 != nil && client != .hermes {
                     Text("Set WORKBENCH_API_KEY in the client’s environment using Copy API key in API & security. The setup below contains no secret.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -88,11 +93,6 @@ struct ServingClientSetup: View {
                 HStack {
                     Button("Copy setup") { ServedModelsSelection.copy(setup) }.accessibilityIdentifier("serving-copy-client-setup")
                     Link("\(client.title) documentation", destination: client.documentation)
-                }
-                if client == .opencode {
-                    DisclosureGroup("Preview and apply client configuration") {
-                        WireView(appHost: appHost, fixedServer: server, onRouteSelection: onRouteSelection)
-                    }
                 }
             } else {
                 Text("\(client.title) requires a managed chat endpoint with Load weights on request enabled. Its gateway provides Responses and Messages compatibility.")

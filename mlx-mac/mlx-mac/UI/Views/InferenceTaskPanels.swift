@@ -149,9 +149,18 @@ struct InferenceTaskPanel: View {
                 TextField("Lyrics (leave blank for instrumental)", text: $coordinator.musicDraft.lyrics, axis: .vertical).lineLimit(2...5)
             }
             HStack {
-                TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number).frame(width: 145)
-                TextField("Steps", value: $coordinator.musicDraft.steps, format: .number).frame(width: 90)
-                TextField("Seed", value: $coordinator.musicDraft.seed, format: .number).frame(width: 120)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Duration · s").font(WorkbenchTypography.metadata)
+                    TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number)
+                }.frame(width: 145)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Steps").font(WorkbenchTypography.metadata)
+                    TextField("Steps", value: $coordinator.musicDraft.steps, format: .number)
+                }.frame(width: 90)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Seed").font(WorkbenchTypography.metadata)
+                    TextField("Seed", value: $coordinator.musicDraft.seed, format: .number)
+                }.frame(width: 120)
             }
             if let validationError = coordinator.musicDraft.validationError {
                 Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)

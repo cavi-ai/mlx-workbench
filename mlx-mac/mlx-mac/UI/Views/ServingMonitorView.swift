@@ -52,6 +52,7 @@ struct ServingMonitorView: View {
                 }.width(min: 100, ideal: 120)
                 TableColumn("Active") { row in Text(ServingWorkspacePresentation.server(row)?.activeRequests.map(String.init) ?? "—").monospacedDigit() }.width(55)
             }
+            .alternatingRowBackgrounds(.disabled)
             .accessibilityIdentifier("serving-monitor-table")
             .overlay {
                 if rows.isEmpty {
@@ -63,7 +64,6 @@ struct ServingMonitorView: View {
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
         }
         .padding(WorkbenchSpacing.lg)
-        .accessibilityIdentifier("serving-monitor")
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
             await workflow.refreshServers()
