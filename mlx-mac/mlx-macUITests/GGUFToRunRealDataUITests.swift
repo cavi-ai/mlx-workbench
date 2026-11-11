@@ -69,7 +69,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         libraryButton.click()
         XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 20))
 
-        let search = app.textFields["Search family, variant, path, key, or evidence"]
+        let search = app.textFields["Search or paste a Hugging Face link"]
         XCTAssertTrue(search.waitForExistence(timeout: 180), "The real local inventory did not finish scanning into Library.")
         search.click()
         search.typeText(modelQuery)
@@ -275,9 +275,12 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         XCTAssertTrue(verify.waitForExistence(timeout: 30))
         XCTAssertTrue(verify.isEnabled)
         verify.click()
+        let verification = app.disclosureTriangles["Verification"].firstMatch
+        XCTAssertTrue(verification.waitForExistence(timeout: 30))
+        verification.click()
         XCTAssertTrue(waitForVisibleTextContaining("Verified (canary suite v", timeout: 600), "The actual canary suite did not pass for the selected model.")
         capture("02-model-verified", note: "The real canary suite passed in the native app.")
-        app.buttons["Run model"].click()
+        app.buttons["Serve"].click()
         let server = try startSelectedModel(sourcePath)
 
         var request = URLRequest(url: try XCTUnwrap(URL(string: "http://127.0.0.1:\(server.port)/v1/chat/completions")))
@@ -424,7 +427,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
     }
 
     private func requestFreshLibraryScan() {
-        let search = app.textFields["Search family, variant, path, key, or evidence"]
+        let search = app.textFields["Search or paste a Hugging Face link"]
         XCTAssertTrue(search.waitForExistence(timeout: 180), "Library did not expose a completed scan.")
         XCTAssertTrue(waitForButtonEnabled("Refresh", timeout: 180), "Library refresh did not become available.")
         app.buttons["Refresh"].click()

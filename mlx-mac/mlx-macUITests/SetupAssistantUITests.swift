@@ -430,7 +430,7 @@ final class SetupAssistantUITests: XCTestCase {
         } else {
             assertLibraryNavigationVisible()
             app.buttons["Inspector"].click()
-            XCTAssertTrue(app.buttons["Run model"].waitForNonExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["Serve"].waitForNonExistence(timeout: 10))
             let window = app.windows.firstMatch
             let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
                 .withOffset(CGVector(dx: -2, dy: -2))
@@ -438,7 +438,7 @@ final class SetupAssistantUITests: XCTestCase {
                 .withOffset(CGVector(dx: 1118, dy: 718)))
             XCTAssertEqual(window.frame.width, 1120, accuracy: 2)
             modelRow.doubleClick()
-            XCTAssertTrue(app.buttons["Run model"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["Serve"].waitForExistence(timeout: 10))
             capture("08c-library-inspector-at-1120")
         }
         assertLibraryNavigationVisible()
@@ -465,7 +465,7 @@ final class SetupAssistantUITests: XCTestCase {
         corner.press(forDuration: 0.1, thenDragTo: target)
         XCTAssertEqual(window.frame.width, 740, accuracy: 2)
         XCTAssertFalse(app.sheets.firstMatch.exists)
-        XCTAssertTrue(app.buttons["Run model"].waitForNonExistence(timeout: 10),
+        XCTAssertTrue(app.buttons["Serve"].waitForNonExistence(timeout: 10),
                       "The wide inspector must close before opening compact model details.")
         capture("10b-library-compact-content")
         print("Compact Library bounds: window=\(window.frame), source=\(sourcePicker.frame)")

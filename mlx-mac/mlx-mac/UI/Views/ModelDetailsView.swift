@@ -84,6 +84,30 @@ struct ModelActions {
 /// Pure rows for the identity card: the path once, source paths only when
 /// they differ from it, and conditional rows only when they carry a fact.
 enum ModelDetailsPresentation {
+    /// Labeled rows for `key=value` evidence entries; entries without a key keep their text as the value.
+    static func evidenceRows(_ entries: [String]) -> [DetailRow] {
+        entries.map { entry in
+            let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return DetailRow("", entry, prose: true) }
+            return keyedRow(parts[0], parts[1])
+        }
+    }
+
+    /// Labeled rows for a lineage event's detail map, in key order.
+    static func lineageRows(_ detail: [String: String]) -> [DetailRow] {
+        detail.sorted { $0.key < $1.key }.map { keyedRow($0.key, $0.value) }
+    }
+
+    private static func keyedRow(_ key: String, _ value: String) -> DetailRow {
+        let key = key.trimmingCharacters(in: .whitespaces)
+        let value = value.trimmingCharacters(in: .whitespaces)
+        let words = key.replacingOccurrences(of: "_", with: " ").lowercased()
+        let label = words.prefix(1).uppercased() + words.dropFirst()
+        let shown = value.hasPrefix("/") ? (value as NSString).abbreviatingWithTildeInPath : value
+        let identifier = ["signature", "digest", "sha", "hash"].contains { words.contains($0) }
+        return DetailRow(label, shown, prose: !identifier)
+    }
+
     static func identityRows(for model: LibraryModel, prepareDestination: String?) -> [DetailRow] {
         var rows: [DetailRow] = [DetailRow("Path", model.item.path)]
         let extraSources = model.sourcePaths.filter { $0 != model.item.path }
@@ -250,43 +274,45 @@ struct LibraryInspectorFit: View {
             reserveGB: reserveGB,
             hardware: hardware
         )
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                Label(LibraryFitPresentation.title, systemImage: "memorychip")
-                    .font(WorkbenchTypography.label)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            InspectorCaption("Memory")
+            switch fit.state {
+            case .estimated:
+                CapacityBar(presentation: budget, isCompact: true)
+                Text(budget.verdictText)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(budget.tone == .fits ? WorkbenchColor.muted : budget.tone.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help("Estimated at \(budget.contextText)")
+            case .redacted:
+                CapacityBar(presentation: budget, isCompact: true)
+                Text("Reading memory")
+                    .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
-                    .symbolRenderingMode(.hierarchical)
-                switch fit.state {
-                case .estimated:
-                    CapacityBar(presentation: budget, isCompact: true)
-                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-                        Image(systemName: budget.verdictSymbol)
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(budget.tone.color)
-                        Text(budget.verdictText)
-                            .font(WorkbenchTypography.body)
-                            .foregroundStyle(WorkbenchColor.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Text("Estimated at \(budget.contextText)")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                case .redacted:
-                    CapacityBar(presentation: budget, isCompact: true)
-                    Text("Reading memory")
-                        .font(WorkbenchTypography.body)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .redacted(reason: .placeholder)
-                case .unavailable, .notEstimated:
-                    Text(fit.help)
-                        .font(WorkbenchTypography.body)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                    .redacted(reason: .placeholder)
+            case .unavailable, .notEstimated:
+                Text(fit.help)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(fit.accessibilityLabel)
+    }
+}
+
+/// A small muted heading over one inspector section.
+struct InspectorCaption: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(WorkbenchTypography.secondary)
+            .foregroundStyle(WorkbenchColor.muted)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -316,19 +342,32 @@ struct ModelDetailsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 header
-                actionRow
-                Divider()
+                actionStack
                 LibraryInspectorFit(
                     resources: appHost.resources,
                     reserveGB: appHost.config.fitReserveGB,
                     hardware: appHost.hardwareProfile,
                     model: model
                 )
+                measuredSection
+
+                if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                    InlineMessage(kind: .warning, text: error)
+                }
 
                 if model.readiness == .ready, let taskType = model.item.task?.type,
                    [.classification, .embedding, .meshGeneration, .musicGeneration, .speechToText, .textToSpeech, .imageGeneration, .visionLanguage, .videoGeneration].contains(taskType) {
-                    TaskDestinationPanel(appHost: appHost, model: model,
-                                       onEngineSetup: { onRouteSelection(.health) })
+                    // A chat model's tasks are secondary to Chat; a task model's panel is its main use.
+                    if UseMode.modes(for: model).first == .chat {
+                        DisclosureGroup("Run a task") {
+                            TaskDestinationPanel(appHost: appHost, model: model,
+                                               onEngineSetup: { onRouteSelection(.health) })
+                                .padding(.top, WorkbenchSpacing.sm)
+                        }
+                    } else {
+                        TaskDestinationPanel(appHost: appHost, model: model,
+                                           onEngineSetup: { onRouteSelection(.health) })
+                    }
                 }
 
                 Divider()
@@ -336,9 +375,9 @@ struct ModelDetailsView: View {
                     DetailGrid(rows: ModelDetailsPresentation.displayRows(for: model, prepareDestination: prepareDestination))
                         .padding(.top, WorkbenchSpacing.sm)
                 }
-
-                verificationSection
-                Divider()
+                DisclosureGroup("Verification") {
+                    verificationSection.padding(.top, WorkbenchSpacing.sm)
+                }
                 DisclosureGroup("Measured performance") {
                     performanceSection.padding(.top, WorkbenchSpacing.sm)
                 }
@@ -346,28 +385,12 @@ struct ModelDetailsView: View {
                     lineageSection.padding(.top, WorkbenchSpacing.sm)
                 }
 
-                if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
-                    WorkbenchSurface {
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                            SectionTitle(text: "Observed issue")
-                            InlineMessage(kind: .warning, text: error)
-                        }
-                    }
-                }
-
                 Group {
                     DisclosureGroup("Raw model evidence") {
                         let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
                             + ["signature=\(ModelDetailsPresentation.known(model.item.signature))"]
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                            ForEach(evidence, id: \.self) { entry in
-                                Text(entry)
-                                    .font(WorkbenchTypography.value)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        .textSelection(.enabled)
-                        .padding(.top, WorkbenchSpacing.xxs)
+                        DetailGrid(rows: ModelDetailsPresentation.evidenceRows(evidence))
+                            .padding(.top, WorkbenchSpacing.sm)
                     }
                 }
             }
@@ -376,37 +399,15 @@ struct ModelDetailsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// Every image model shows its Generate panel. Before Prepare has produced
-    /// the MLX output, the prepare action is the one prominent button and the
-    /// panel's Generate is secondary and disabled.
-    private var showsImageGeneration: Bool {
-        model.item.task?.type == .imageGeneration
-    }
-
-    /// Ready models that are neither served nor rendered have no routing
-    /// action; Verify now is their one prominent button.
-    private var verifyIsPrimary: Bool {
-        model.readiness == .ready && !actions.canServe && model.item.task?.type != .imageGeneration
-    }
-
     private var header: some View {
         let lines = ModelDetailsPresentation.headerLines(for: model)
         return HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
-            Image(systemName: (model.item.task?.type ?? .other).symbolName)
-                .font(WorkbenchTypography.section)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(WorkbenchColor.accent)
-                .frame(width: WorkbenchSize.symbolTile, height: WorkbenchSize.symbolTile)
-                .background(
-                    WorkbenchColor.accent.opacity(.fill),
-                    in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
-                )
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                Text(model.displayName)
+                Text(model.displayName.split(separator: "/").last.map(String.init) ?? model.displayName)
                     .font(WorkbenchTypography.inspectorTitle)
                     .lineLimit(2)
                     .truncationMode(.tail)
+                    .help(model.displayName)
                 ViewThatFits(in: .horizontal) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                         Text(line)
@@ -422,71 +423,158 @@ struct ModelDetailsView: View {
                 }
             }
             Spacer(minLength: 0)
+            overflowMenu
         }
     }
 
-    /// One prominent button per state; Copy Path and Reveal in Finder live in
-    /// the overflow menu. When the row does not fit, the secondary buttons and
-    /// the menu drop to a second line; labels never shorten.
-    private var actionRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                primaryAction
-                secondaryActions
-                Spacer(minLength: 0)
-                overflowMenu
-            }
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                primaryAction
+    private enum Primary { case repair, prepare, use, serve, none }
+
+    private var primary: Primary {
+        if ModelRuntimeRecoveryRequest(model: model) != nil { return .repair }
+        if actions.canPrepare { return .prepare }
+        if actions.canUse { return .use }
+        if actions.canServe { return .serve }
+        return .none
+    }
+
+    private var showsServe: Bool { actions.canServe && primary != .serve && model.readiness != .needsRuntime }
+
+    /// One full-width primary action, then Serve and Compare side by side.
+    /// Copy Path and Reveal in Finder live in the overflow menu.
+    private var actionStack: some View {
+        VStack(spacing: WorkbenchSpacing.xs) {
+            primaryAction
+            if showsServe || actions.canCompare {
                 HStack(spacing: WorkbenchSpacing.xs) {
-                    secondaryActions
-                    Spacer(minLength: 0)
-                    overflowMenu
+                    if showsServe {
+                        Button { actions.run() } label: { Text("Serve").frame(maxWidth: .infinity) }
+                            .controlSize(.large)
+                            .help("Open the server preview for this model")
+                    }
+                    if actions.canCompare {
+                        Button { actions.compare() } label: { Text("Compare").frame(maxWidth: .infinity) }
+                            .controlSize(.large)
+                    }
                 }
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
     private var primaryAction: some View {
-        if ModelRuntimeRecoveryRequest(model: model) != nil {
-            Button("Repair runtime…") { actions.repairRuntime() }
-                .buttonStyle(.workbenchPrimary)
+        switch primary {
+        case .repair:
+            Button { actions.repairRuntime() } label: { Text("Repair runtime…").frame(maxWidth: .infinity) }
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
                 .help("Review this model's missing backend in Health")
-                .fixedSize()
-        } else if actions.canPrepare {
-            Button(actions.prepareTitle) { actions.prepare() }
-                .buttonStyle(.workbenchPrimary)
-                .fixedSize()
-        } else if actions.canUse {
-            Button { actions.use() } label: { Label("Use model", systemImage: "bubble.left.and.bubble.right") }
-                .buttonStyle(.workbenchPrimary).controlSize(.large).fixedSize()
-                .accessibilityIdentifier("library-use-model")
-        } else if actions.canServe {
-            Button { actions.run() } label: {
-                Label("Run model", systemImage: "play.fill")
+        case .prepare:
+            Button { actions.prepare() } label: { Text(actions.prepareTitle).frame(maxWidth: .infinity) }
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
+        case .use:
+            let title = UseMode.modes(for: model).first == .chat ? "Chat" : "Use"
+            Button { actions.use() } label: {
+                Label(title, systemImage: title == "Chat" ? "bubble.left.and.bubble.right" : "wand.and.stars")
+                    .frame(maxWidth: .infinity)
             }
-                .buttonStyle(.workbenchPrimary)
-                .controlSize(.large)
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
+                .accessibilityIdentifier("library-use-model")
+        case .serve:
+            Button { actions.run() } label: { Label("Serve", systemImage: "play.fill").frame(maxWidth: .infinity) }
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
                 .help("Open the server preview for this model")
-                .fixedSize()
+        case .none:
+            EmptyView()
         }
     }
 
-    @ViewBuilder
-    private var secondaryActions: some View {
-        if actions.canServe {
-            if actions.canUse { Button("Run model") { actions.run() }.fixedSize() }
-            if actions.canPrepare, model.readiness != .needsRuntime {
-                Button("Select for Run") { actions.run() }
-                    .fixedSize()
+    // MARK: - Measured
+
+    private var performanceProfile: ModelPerformanceProfile? {
+        ([model.item.path] + model.outputPaths)
+            .lazy
+            .compactMap {
+                ModelPerformanceProfile.derive(modelPath: $0, signature: model.item.signature, runs: appHost.comparison.runs)
             }
+            .first
+    }
+
+    private var verificationStatus: VerificationStatus {
+        appHost.verification.status(for: model.item.path, signature: model.item.signature)
+    }
+
+    private var speedText: String {
+        if let average = performanceProfile?.averageTokensPerSecond { return String(format: "%.0f tok/s", average) }
+        switch verificationStatus {
+        case .verified(let report), .failed(let report), .keptAnyway(let report):
+            if let tps = report.tokensPerSecond { return String(format: "%.0f tok/s", tps) }
+        default: break
         }
-        if actions.canCompare {
-            Button("Compare") { actions.compare() }
-                .foregroundStyle(WorkbenchColor.ink)
-                .fixedSize()
+        return "Not measured"
+    }
+
+    private var verifiedText: String {
+        switch verificationStatus {
+        case .verified: return "Yes"
+        case .failed: return "Failed"
+        case .keptAnyway: return "Kept anyway"
+        case .stale: return "Out of date"
+        case .inProgress: return "Verifying…"
+        case .unverified: return "Not yet"
         }
+    }
+
+    private var servingText: String? {
+        let services = ServingInventoryPresentation.linkedServices(for: model, in: appHost.servingInventory.snapshot)
+        guard !services.isEmpty else { return nil }
+        return services.compactMap { $0.baseURL.flatMap(URL.init(string:))?.port.map { ":\($0)" } }.first
+            ?? (services.count == 1 ? "1 server" : "\(services.count) servers")
+    }
+
+    private var measuredSection: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            InspectorCaption("Measured")
+            measuredRow("Speed", speedText)
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Text("Verified")
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if model.readiness == .ready, !isVerified {
+                    Button("Verify now") { verifyNow() }
+                        .controlSize(.small)
+                        .disabled(appHost.verification.activeModelPath != nil)
+                }
+                Text(verifiedText).foregroundStyle(verifiedTone)
+            }
+            .font(WorkbenchTypography.secondary)
+            .foregroundStyle(WorkbenchColor.muted)
+            if let servingText { measuredRow("Serving", servingText) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var isVerified: Bool {
+        if case .verified = verificationStatus { return true }
+        if case .inProgress = verificationStatus { return true }
+        return false
+    }
+
+    private var verifiedTone: Color {
+        switch verificationStatus {
+        case .verified: return WorkbenchStatus.verified.color
+        case .failed: return WorkbenchStatus.failure.color
+        case .keptAnyway, .stale: return WorkbenchStatus.warning.color
+        default: return WorkbenchColor.muted
+        }
+    }
+
+    private func measuredRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+            Spacer(minLength: WorkbenchSpacing.xs)
+            Text(value).monospacedDigit()
+        }
+        .font(WorkbenchTypography.secondary)
+        .foregroundStyle(WorkbenchColor.muted)
     }
 
     private var overflowMenu: some View {
@@ -519,20 +607,9 @@ struct ModelDetailsView: View {
 
     private var verificationSection: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            SectionTitle(text: "Verification")
             DetailGrid(rows: verificationRows)
             if let error = appHost.verification.runError(for: model.item.path) {
                 InlineMessage(kind: .warning, text: "Verification could not finish: \(error)")
-            }
-            if model.readiness == .ready {
-                if verifyIsPrimary {
-                    Button("Verify now") { verifyNow() }
-                        .buttonStyle(.workbenchPrimary)
-                        .disabled(appHost.verification.activeModelPath != nil)
-                } else {
-                    Button("Verify now") { verifyNow() }
-                        .disabled(appHost.verification.activeModelPath != nil)
-                }
             }
         }
     }
@@ -582,22 +659,12 @@ struct ModelDetailsView: View {
     /// this exact model (path + signature). Numbers only — the charts and
     /// per-prompt detail live in Compare.
     private var performanceSection: some View {
-        let profile = ([model.item.path] + model.outputPaths)
-            .lazy
-            .compactMap {
-                ModelPerformanceProfile.derive(
-                    modelPath: $0,
-                    signature: model.item.signature,
-                    runs: appHost.comparison.runs
-                )
-            }
-            .first
+        let profile = performanceProfile
         let classification = ClassificationResultRecord.records(
             modelPaths: [model.item.path] + model.outputPaths, signature: model.item.signature,
             localRuns: appHost.comparison.runs, hostedRecords: appHost.hostedComparison.records,
             library: appHost.librarySnapshot?.models ?? [])
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            SectionTitle(text: "Performance")
             if let profile {
                 DetailGrid(rows: performanceRows(profile))
             }
@@ -644,8 +711,6 @@ struct ModelDetailsView: View {
         let lineage = appHost.lineage(for: model.item.path)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack {
-                SectionTitle(text: "Lineage")
-                Spacer()
                 Button("Copy Markdown") {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
@@ -681,11 +746,9 @@ struct ModelDetailsView: View {
                             Text(event.summary)
                                 .font(WorkbenchTypography.secondary)
                                 .foregroundStyle(WorkbenchColor.muted)
-                            ForEach(event.detail.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                                Text("\(key): \(value)")
-                                    .font(WorkbenchTypography.value)
-                                    .foregroundStyle(WorkbenchColor.muted)
-                                    .textSelection(.enabled)
+                            if !event.detail.isEmpty {
+                                DetailGrid(rows: ModelDetailsPresentation.lineageRows(event.detail))
+                                    .padding(.top, WorkbenchSpacing.xxs)
                             }
                         }
                     }

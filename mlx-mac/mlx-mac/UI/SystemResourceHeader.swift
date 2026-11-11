@@ -31,17 +31,18 @@ struct SystemResourceHeader: View {
         Group {
             if let servingInventory {
                 ObservedInventorySnapshot(inventory: servingInventory) { snapshot in
-                    toggleButton(loaded: snapshot.capturedAt == nil ? nil : snapshot.loadedCount)
+                    toggleButton(loaded: snapshot.capturedAt == nil ? nil : snapshot.loadedCount,
+                                 serving: snapshot.capturedAt == nil ? nil : snapshot.servingCount)
                 }
             } else {
-                toggleButton(loaded: nil)
+                toggleButton(loaded: nil, serving: nil)
             }
         }
         .popover(isPresented: $expanded, arrowEdge: .bottom) { panel }
         .sheet(isPresented: $inspectingProcesses) { ProcessMemorySheet(resources: resources) }
     }
 
-    private func toggleButton(loaded: Int?) -> some View {
+    private func toggleButton(loaded: Int?, serving: Int?) -> some View {
         let attention = ResourceHeaderPresentation.attentionState(slots: endpoint.fleet.slots, state: endpoint.state)
         let available = resources.memory?.availableBytes
         return Button { expanded.toggle() } label: {
@@ -49,7 +50,7 @@ struct SystemResourceHeader: View {
                 Image(systemName: attention.map(EndpointIcon.name(for:)) ?? "memorychip")
                     .foregroundStyle(attention.map { ResourceHeaderPresentation.status(for: $0).color } ?? WorkbenchColor.muted)
                 if let available {
-                    Text(ResourceHeaderPresentation.memoryText(availableBytes: available, loaded: loaded, compact: compactLabel))
+                    Text(ResourceHeaderPresentation.memoryText(availableBytes: available, loaded: loaded, serving: serving, compact: compactLabel))
                         .foregroundStyle(available < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
                         .contentTransition(.numericText())
                 } else {
@@ -63,7 +64,7 @@ struct SystemResourceHeader: View {
         }
         .buttonStyle(.plain)
         .help("Memory headroom and serving")
-        .accessibilityLabel(ResourceHeaderPresentation.accessibilityLabel(availableBytes: available, loaded: loaded, attention: attention))
+        .accessibilityLabel(ResourceHeaderPresentation.accessibilityLabel(availableBytes: available, loaded: loaded, serving: serving, attention: attention))
         .accessibilityIdentifier("system-memory-header")
     }
 
@@ -233,14 +234,18 @@ enum ResourceHeaderPresentation {
     }
 
     /// `loaded` is nil until the inventory has been read; a compact label never shows it.
-    static func memoryText(availableBytes: Int64, loaded: Int?, compact: Bool) -> String {
+    /// `serving` counts the services a Library row marks Serving; it is named when some of them are not loaded.
+    static func memoryText(availableBytes: Int64, loaded: Int?, serving: Int? = nil, compact: Bool) -> String {
         let available = "~\(gigabytes(availableBytes)) GB available"
         guard !compact, let loaded else { return available }
+        if let serving, serving > loaded {
+            return "\(serving) serving · \(loaded) loaded · \(available)"
+        }
         return "\(loaded) loaded · \(available)"
     }
 
-    static func accessibilityLabel(availableBytes: Int64?, loaded: Int?, attention: EndpointState?) -> String {
-        let memory = availableBytes.map { memoryText(availableBytes: $0, loaded: loaded, compact: false) } ?? "RAM unavailable"
+    static func accessibilityLabel(availableBytes: Int64?, loaded: Int?, serving: Int? = nil, attention: EndpointState?) -> String {
+        let memory = availableBytes.map { memoryText(availableBytes: $0, loaded: loaded, serving: serving, compact: false) } ?? "RAM unavailable"
         guard let attention else { return memory }
         return memory + ", endpoint: " + attention.summary
     }

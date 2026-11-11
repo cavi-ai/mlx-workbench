@@ -4,6 +4,19 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testInspectorEvidenceRendersLabeledRowsInsteadOfKeyValueText() {
+        let home = NSHomeDirectory()
+        let rows = ModelDetailsPresentation.evidenceRows(["path=\(home)/.models/a", "quant_bits=4", "signature=abc", "free text"])
+        XCTAssertEqual(rows, [
+            DetailRow("Path", "~/.models/a", prose: true),
+            DetailRow("Quant bits", "4", prose: true),
+            DetailRow("Signature", "abc"),
+            DetailRow("", "free text", prose: true)
+        ])
+        XCTAssertEqual(ModelDetailsPresentation.lineageRows(["size": "44.86 GB", "architecture": "qwen3_next"]),
+                       [DetailRow("Architecture", "qwen3_next", prose: true), DetailRow("Size", "44.86 GB", prose: true)])
+    }
+
     func testSourceChoicesTreatEverySavedHostEquallyAndPreserveLocalFiles() {
         let hosts = [
             ModelHost(name: "Shared", provider: .ollama, baseURL: "http://127.0.0.1:11434"),
@@ -101,6 +114,19 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(rows[1].id, "/vault/bravo-ready.gguf")
         XCTAssertEqual(rows[1].readiness, .ready)
         XCTAssertEqual(rows[1].detail, "/vault")
+    }
+
+    func testListRowsShowEveryModelOnceWithoutFamilyHeadings() {
+        let groups = LibraryPresentation.filteredGroups(in: makeMultiVariantSnapshot(), search: "", readiness: nil, quantization: nil)
+        let rows = LibraryTablePresentation.listRows(
+            groups: groups,
+            sortOrder: [KeyPathComparator(\LibraryRow.bytes, order: .reverse)]
+        )
+
+        XCTAssertEqual(rows.map(\.modelPath), ["/models/assistant-runtime.gguf", "/models/assistant-ready.gguf", "/vault/bravo-ready.gguf"])
+        XCTAssertEqual(rows.map(\.bytes), [4_096, 1_024, 1_024])
+        XCTAssertTrue(rows.allSatisfy { $0.children == nil && $0.isLeaf })
+        XCTAssertEqual(LibraryGroupMode.allCases.first, .list)
     }
 
     func testTableRowsSortAtEveryLevel() {

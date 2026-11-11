@@ -14,7 +14,9 @@ navigate or stage a preview; they never start conversion, installation or servin
 
 ## Library
 
-**Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
+**Library** lists the GGUF and MLX models under your configured roots, one row per model. The output directory is scanned as an MLX root unless another root already reaches it. **View options** in the toolbar groups the table by **Family** or **Type** and filters it by readiness and quantization.
+
+The field above the table searches name, path, key and evidence. Paste a Hugging Face link there and press Return, or choose **Add**, to open intake for that model; **Add** with no link opens intake empty. Opening intake does not download a model.
 
 The **Source** menu offers **All local models** and each saved model host, including Ollama, LM Studio and ComfyUI. Host choices use their saved identity and show their provider; connections with matching names and providers include their address to distinguish them. Adding, editing or removing a saved connection updates the menu. **Hosted models** opens host selection and connection setup. The separate **Local files** group contains **LM Studio files**.
 
@@ -24,13 +26,14 @@ Switching sources preserves the main table's filters and selected model without 
 
 | Column | Meaning |
 |---|---|
-| Quantization | Declared bits or quant type |
-| Size | Bytes on disk, with a relative size bar |
-| Memory fit | **Fits**, **Tight** or **Won't fit** at the selected context, against current available memory |
-| Status | For ready models, the canary verdict for the current files: **Verified**, **Failed checks**, **Verify again** after the files changed, **Verifying…**, or **Ready** when never verified. Otherwise the readiness, such as **Needs Conversion** or **Needs Runtime** when the backend that runs the model (mlx-audio, mlx-vlm, …) is not installed |
-| Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
+| Name | The model's folder or file name |
+| Size | Bytes on disk |
+| Fits | A bar for the share of the memory budget the model needs at the selected context; the tooltip says **Fits**, **Tight** or **Won't fit** against current available memory |
+| State | **Serving** while a local server runs the model. For other ready models, the canary verdict for the current files: **Verified**, **Failed checks**, **Verify again** after the files changed, **Verifying…**, or **Ready** when never verified. Otherwise the readiness, such as **Needs Conversion** or **Needs Runtime** when the backend that runs the model (mlx-audio, mlx-vlm, …) is not installed |
+| Quant | Declared bits or quant type; hidden until shown from the column header menu |
+| Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots; hidden until shown from the column header menu |
 
-Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
+Columns collapse as the window narrows. The footer gives the model count, storage and reclaimable space. **Refresh** rescans; a failed scan offers **Retry scan**.
 Managed downloads display their repository, checkpoint and shortened revision in Library and Served Models.
 
 Scans stay within the selected model locations and managed output folder. A missing or unreadable root is reported separately while readable roots keep their results. Empty root lists do not enable automatic searches of other model folders.
@@ -47,19 +50,26 @@ Opening intake does not download a model. If search or filters hide existing mod
 
 ### Model details
 
-Ready supported models offer **Use model** to open a persistent conversation or
-typed task workspace. **Run model** remains available for server management.
-See [Use models](use.md).
+The inspector names the model with its type, quantization and size. Ready chat
+models offer **Chat** to open a persistent conversation; ready task models offer
+**Use** for their typed task workspace. **Serve** opens the server preview and
+**Compare** selects the model for comparison. See [Use models](use.md).
+
+**Memory** shows the model against this Mac's budget and the space left at the
+selected context. **Measured** lists the recorded speed, whether the canary suite
+verified the current files, and the port of a server running the model; **Verify
+now** sits beside an unverified ready model.
 
 In wide windows, the first selected model opens the inspector beside the table.
 In compact windows, selecting a model opens its details in a sheet. Use
-**Inspector** in the toolbar or ⌥⌘I to hide or show details. Actions and the current memory fit come first;
-expand **Model details** for paths, runtime and other technical facts,
-including a speculative-decoding drafter's target. The inspector also holds:
+**Inspector** in the toolbar or ⌥⌘I to hide or show details. A vision-language
+model's image task folds under **Run a task**. Expand **Model details** for paths,
+runtime and other technical facts, including a speculative-decoding drafter's
+target. The inspector also holds:
 
 - **Repair runtime…**, for models whose declared backend is missing: review and explicitly confirm its installation in Health, then **Return to model** to refresh readiness and reveal the same model. No model download or execution starts from this navigation.
 
-- **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
+- **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Each event lists its details as labeled rows. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
 - **Measured performance**: throughput and first-token latency aggregated from past comparisons. Classification models list their completed classification comparisons, newest first: the prompt set, when it ran, the share of expected answers this model matched and every other lane's share, including System One models from Hosted & mixed runs. **Review** opens a local run in Compare.
 - **Generate image**, for ready image-generation models: enter a prompt and use the displayed defaults, or adjust dimensions, steps and seed in **Advanced options**. Completed output is retained with its task and can be inspected or exported as a verified PNG.
 - **Understand image**, for ready vision-language models: choose a local image and ask a question. The engine retains a verified input copy with the task; the result shows the full answer and input image.
@@ -67,10 +77,9 @@ including a speculative-decoding drafter's target. The inspector also holds:
 - **Generate music**, for ready music models: caption, optional lyrics, duration, steps and seed, with playback of completed audio.
 - **Transcribe audio** and **Speak text**, for ready speech models: transcription from a selected local audio file, or text-to-speech with optional voice, speed and language settings.
 
-Actions: **Run model** opens the existing server preview flow; **Compare**
-selects the model for comparison. Models needing conversion offer **Prepare
-to run**. **Verify now** runs the canary suite for a ready model; when a run
-cannot reach a verdict, the Verification section says why. For a text LLM it
+Models needing conversion offer **Prepare to run** as the main action. **Verify
+now** runs the canary suite for a ready model; when a run cannot reach a
+verdict, the **Verification** section says why. For a text LLM it
 also lists **Agent tools**: the protocols the model is agent-ready for and each
 failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder** and **Copy Path** are in the model's action menu.
 

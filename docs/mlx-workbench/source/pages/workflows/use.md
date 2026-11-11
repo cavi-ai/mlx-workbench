@@ -1,7 +1,7 @@
 # Use models
 
 **Use** keeps conversations and model tasks in the workbench. Select a ready
-model in Library and choose **Use model**, or choose **Use…** beside a running
+model in Library and choose **Chat** (or **Use** for a task model), or choose **Use…** beside a running
 server in Run. **New** starts another work session with a ready model.
 
 ## Conversations
