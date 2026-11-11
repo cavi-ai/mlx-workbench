@@ -1,45 +1,124 @@
 import SwiftUI
 
-/// The model-type filter shared by the sidebar and the Library table.
-enum LibraryTypeFilter {
-    static let storageKey = "library.typeFilter"
+/// Model types grouped the way people ask for them.
+enum ModelCategory: String, CaseIterable, Identifiable {
+    case chat, vision, speech, image, creative, other
 
-    static func type(from raw: String) -> ModelTaskType? {
-        raw.isEmpty ? nil : ModelTaskType(rawValue: raw)
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .vision: return "Vision"
+        case .speech: return "Speech"
+        case .image: return "Image and video"
+        case .creative: return "Music and 3D"
+        case .other: return "Embedding and other"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .chat: return "text.bubble"
+        case .vision: return "eye"
+        case .speech: return "waveform"
+        case .image: return "photo"
+        case .creative: return "music.note"
+        case .other: return "tag"
+        }
+    }
+
+    var types: Set<ModelTaskType> {
+        switch self {
+        case .chat: return [.textLLM, .speculativeDraft]
+        case .vision: return [.visionLanguage]
+        case .speech: return [.speechToText, .textToSpeech]
+        case .image: return [.imageGeneration, .videoGeneration]
+        case .creative: return [.musicGeneration, .meshGeneration]
+        case .other: return [.embedding, .classification, .other]
+        }
+    }
+
+    func contains(_ model: LibraryModel) -> Bool {
+        types.contains(model.item.task?.type ?? .other)
     }
 }
 
-/// One selectable sidebar row: a Library model filter or a page.
+/// The Library filter chosen in the sidebar, shared with the Library table.
+enum LibrarySidebarFilter: Hashable {
+    case all
+    case category(ModelCategory)
+    case needsConversion
+
+    static let storageKey = "library.sidebarFilter"
+    private static let needsConversionID = "needs-conversion"
+
+    init(rawValue: String) {
+        if rawValue == Self.needsConversionID {
+            self = .needsConversion
+        } else if let category = ModelCategory(rawValue: rawValue) {
+            self = .category(category)
+        } else {
+            self = .all
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .all: return ""
+        case .category(let category): return category.rawValue
+        case .needsConversion: return Self.needsConversionID
+        }
+    }
+
+    func contains(_ model: LibraryModel) -> Bool {
+        switch self {
+        case .all: return true
+        case .category(let category): return category.contains(model)
+        case .needsConversion: return model.readiness == .needsConversion
+        }
+    }
+}
+
+/// One selectable sidebar row: a Library filter or a page.
 enum SidebarItem: Hashable {
-    case models(ModelTaskType?)
+    case models(LibrarySidebarFilter)
     case route(AppRoute)
 }
 
 // MARK: - AppSidebar
 
-/// The sidebar leads with the model library, filtered by model type, and
-/// lists the remaining pages from `AppRoute` below it. The system paints
-/// selection and handles arrow keys; rows stay addressable by label.
+/// The sidebar leads with the model library: filters by kind, then sources,
+/// then what needs attention. The remaining pages follow in collapsible
+/// groups. The system paints selection and handles arrow keys.
 struct AppSidebar: View {
     @Binding var selectedRoute: AppRoute
 
     var badges: [AppRoute: String] = [:]
-    /// Local model counts per type; types without models are not listed.
-    var modelCounts: [ModelTaskType: Int] = [:]
+    /// Local models, used for the per-filter counts.
+    var models: [LibraryModel] = []
+    /// The LM Studio source shares the Library page; this keeps its own row selected.
+    var lmStudioSelected = false
 
-    @AppStorage(LibraryTypeFilter.storageKey) private var typeFilterRaw = ""
+    @AppStorage(LibrarySidebarFilter.storageKey) private var filterRaw = ""
+    @AppStorage("sidebar.workspacesExpanded") private var workspacesExpanded = true
+    @AppStorage("sidebar.systemExpanded") private var systemExpanded = false
+
+    private static let workspaceRoutes: [AppRoute] = [.use, .run, .compare, .prepare, .training, .studies]
+    private static let systemRoutes: [AppRoute] = [.overview, .activity, .clientSetup, .health]
 
     private var selection: Binding<SidebarItem> {
         Binding(
             get: {
-                selectedRoute == .library
-                    ? .models(LibraryTypeFilter.type(from: typeFilterRaw))
+                if lmStudioSelected { return .route(.lmStudio) }
+                return selectedRoute == .library
+                    ? .models(LibrarySidebarFilter(rawValue: filterRaw))
                     : .route(selectedRoute)
             },
             set: { item in
                 switch item {
-                case .models(let type):
-                    typeFilterRaw = type?.rawValue ?? ""
+                case .models(let filter):
+                    filterRaw = filter.rawValue
                     selectedRoute = .library
                 case .route(let route):
                     selectedRoute = route
@@ -48,51 +127,51 @@ struct AppSidebar: View {
         )
     }
 
-    private var listedTypes: [ModelTaskType] {
-        ModelTaskType.allCases.filter { (modelCounts[$0] ?? 0) > 0 }
+    private func count(_ filter: LibrarySidebarFilter) -> Int {
+        models.reduce(0) { $0 + (filter.contains($1) ? 1 : 0) }
     }
 
     var body: some View {
         List(selection: selection) {
             Section("Models") {
-                modelRow(nil, title: "All models", symbol: AppRoute.library.symbolName,
-                         count: modelCounts.values.reduce(0, +))
+                filterRow(.all, title: "All models", symbol: AppRoute.library.symbolName)
                     .accessibilityLabel(AppRoute.library.label)
-                ForEach(listedTypes) { type in
-                    modelRow(type, title: type.title, symbol: type.symbolName, count: modelCounts[type] ?? 0)
+                ForEach(ModelCategory.allCases.filter { count(.category($0)) > 0 }) { category in
+                    filterRow(.category(category), title: category.title, symbol: category.symbolName)
                 }
             }
-            ForEach(AppRoute.grouped, id: \.group) { projection in
-                let routes = projection.routes.filter { $0 != .library }
-                switch projection.group {
-                case .models:
-                    Section("Manage") { routeRows(routes) }
-                case .settings:
-                    Section { routeRows(routes) }
-                default:
-                    Section(projection.group.rawValue) { routeRows(routes) }
-                }
+            Section("Sources") {
+                routeRows([.lmStudio, .discover])
+            }
+            Section("Attention") {
+                filterRow(.needsConversion, title: "Needs converting", symbol: "arrow.triangle.2.circlepath")
+                routeRows([.reclaim])
+            }
+            Section("Workspaces", isExpanded: $workspacesExpanded) {
+                routeRows(Self.workspaceRoutes)
+            }
+            Section("System", isExpanded: $systemExpanded) {
+                routeRows(Self.systemRoutes)
+            }
+            Section {
+                routeRows([.settings])
             }
         }
         .listStyle(.sidebar)
         .accessibilityLabel("Workbench navigation")
     }
 
-    private func modelRow(_ type: ModelTaskType?, title: String, symbol: String, count: Int) -> some View {
-        Button {
-            selection.wrappedValue = .models(type)
+    private func filterRow(_ filter: LibrarySidebarFilter, title: String, symbol: String) -> some View {
+        let total = count(filter)
+        return Button {
+            selection.wrappedValue = .models(filter)
         } label: {
-            SidebarRowLabel(title: title, symbol: symbol)
-                .font(WorkbenchTypography.body)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            rowLabel(title: title, symbol: symbol)
         }
         .buttonStyle(.plain)
         .padding(.vertical, WorkbenchSpacing.xxs)
-        .badge(count > 0 ? Text(verbatim: "\(count)") : nil)
-        .tag(SidebarItem.models(type))
+        .badge(total > 0 ? Text(verbatim: "\(total)") : nil)
+        .tag(SidebarItem.models(filter))
     }
 
     @ViewBuilder
@@ -107,12 +186,7 @@ struct AppSidebar: View {
         Button {
             selectedRoute = route
         } label: {
-            SidebarRowLabel(title: route.label, symbol: route.symbolName)
-                .font(WorkbenchTypography.body)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            rowLabel(title: route.label, symbol: route.symbolName)
         }
         .buttonStyle(.plain)
         .padding(.vertical, WorkbenchSpacing.xxs)
@@ -120,6 +194,15 @@ struct AppSidebar: View {
         .help(route.pageDescription)
         .accessibilityLabel(route.label)
         .accessibilityValue(selectedRoute == route ? "Selected" : "")
+    }
+
+    private func rowLabel(title: String, symbol: String) -> some View {
+        SidebarRowLabel(title: title, symbol: symbol)
+            .font(WorkbenchTypography.body)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 }
 

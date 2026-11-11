@@ -380,6 +380,7 @@ struct LibraryWorkspace: View {
         .onChange(of: source) { _, selected in visitedSources.insert(selected.workspace) }
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
+            else if source == .lmStudio { source = .allModels; visitedSources.insert(.allModels) }
         }
         .onChange(of: appHost.handoffs[.revealModel], initial: true) { receiveRevealRequest() }
         .onChange(of: isRouteActive, initial: true) { receiveRevealRequest(); receiveHostedRequest() }
@@ -504,7 +505,7 @@ struct LibraryView: View {
     /// picker only; memory readings never reach the Library body.
     @State private var contextTokens = FitAdvisor.defaultContextTokens
     @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
-    @AppStorage(LibraryTypeFilter.storageKey) private var typeFilterRaw = ""
+    @AppStorage(LibrarySidebarFilter.storageKey) private var sidebarFilterRaw = ""
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workbenchViewport) private var viewport
@@ -533,9 +534,10 @@ struct LibraryView: View {
             readiness: readinessFilter,
             quantization: quantizationFilter
         )
-        guard let type = LibraryTypeFilter.type(from: typeFilterRaw) else { return filtered }
+        let sidebarFilter = LibrarySidebarFilter(rawValue: sidebarFilterRaw)
+        guard sidebarFilter != .all else { return filtered }
         return filtered.compactMap { group in
-            let variants = group.variants.filter { ($0.item.task?.type ?? .other) == type }
+            let variants = group.variants.filter(sidebarFilter.contains)
             return variants.isEmpty ? nil : LibraryGroupViewModel(sourceGroup: group.sourceGroup, variants: variants)
         }
     }
