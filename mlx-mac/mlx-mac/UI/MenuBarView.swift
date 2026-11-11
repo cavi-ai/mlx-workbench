@@ -14,7 +14,7 @@ struct MenuBarView: View {
     @ObservedObject private var servedTasks: ServedTaskSessions
     @ObservedObject private var useWorkspace: UseWorkspaceCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
-    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
+    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
 
     init(appHost: AppHost) {
         self.appHost = appHost

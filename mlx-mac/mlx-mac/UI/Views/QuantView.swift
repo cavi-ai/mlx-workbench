@@ -87,7 +87,6 @@ struct QuantView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if shownRun?.effectiveMode != .chat { WorkbenchPageHeading(route: .compare) }
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     if shownRun == nil {

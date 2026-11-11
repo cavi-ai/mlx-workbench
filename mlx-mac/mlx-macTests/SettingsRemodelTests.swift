@@ -1004,7 +1004,7 @@ final class SettingsRenderTests: XCTestCase {
     }
 
     private func attach<Content: View>(_ view: Content, name: String, viewport: CGFloat, dark: Bool, height: CGFloat = 1400) async throws {
-        let hosting = NSHostingView(rootView: view.frame(width: viewport, height: height).background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
+        let hosting = NSHostingView(rootView: view.frame(width: viewport, height: height).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(dark ? .dark : .light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: viewport, height: height), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

@@ -6,7 +6,7 @@ import Darwin
 struct MlxWorkbenchApp: App {
     @NSApplicationDelegateAdaptor(WorkbenchApplicationDelegate.self) private var appDelegate
     @State private var appHost = AppHost()
-    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
+    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
 
     init() {
         if CommandLine.arguments.contains("--check-installation") {

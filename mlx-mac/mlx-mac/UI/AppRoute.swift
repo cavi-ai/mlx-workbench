@@ -24,10 +24,9 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case settings = "settings"
 
     enum Group: String, CaseIterable, Hashable {
-        case workbench = "Workbench"
-        case lifecycle = "Lifecycle"
-        case operations = "Operations"
-        case lab = "Lab"
+        case models = "Models"
+        case workspaces = "Workspaces"
+        case system = "System"
         case settings = "Settings"
     }
 
@@ -63,20 +62,29 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         Self.allCases.firstIndex(of: self) ?? 0
     }
 
-    /// Grouped projection for sidebars and command menus. The source of truth
-    /// remains `AppRoute.allCases`; this projection cannot introduce routes.
+    /// Sidebar order within each group; independent of the enum case order,
+    /// which stays fixed for `order` and mount order.
+    private static let sidebarOrder: [Group: [AppRoute]] = [
+        .models: [.library, .discover, .prepare, .reclaim],
+        .workspaces: [.use, .compare, .run, .training, .studies],
+        .system: [.overview, .activity, .clientSetup, .health],
+        .settings: [.settings],
+    ]
+
+    /// Grouped projection for sidebars and command menus. Routes come from
+    /// `AppRoute.allCases` through an ordered list per group, so legacy
+    /// destinations never appear.
     static var grouped: [(group: Group, routes: [AppRoute])] {
         Group.allCases.map { group in
-            (group: group, routes: allCases.filter { $0.group == group && $0.navigationDestination == $0 })
+            (group: group, routes: (sidebarOrder[group] ?? []).filter { $0.group == group && $0.navigationDestination == $0 })
         }
     }
 
     var group: Group {
         switch self {
-        case .overview, .library, .use: return .workbench
-        case .prepare, .compare, .run: return .lifecycle
-        case .activity, .reclaim, .clientSetup, .health: return .operations
-        case .discover, .lmStudio, .studies, .training, .adopt: return .lab
+        case .library, .discover, .prepare, .reclaim, .lmStudio, .adopt: return .models
+        case .use, .compare, .run, .training, .studies: return .workspaces
+        case .overview, .activity, .clientSetup, .health: return .system
         case .settings: return .settings
         }
     }
@@ -155,10 +163,10 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         }
     }
 
-    /// Resolve a legacy identifier without allowing malformed persisted state
-    /// to strand navigation on an unavailable page.
+    /// Resolve a legacy identifier; a missing or unknown identifier opens
+    /// the Library instead of stranding navigation on an unavailable page.
     init(rawID: String?) {
-        self = rawID.flatMap(Self.init(rawValue:)) ?? .overview
+        self = rawID.flatMap(Self.init(rawValue:)) ?? .library
     }
 
     init(legacyID: String?) {

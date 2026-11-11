@@ -1,60 +1,184 @@
 import SwiftUI
 
+/// Model types grouped the way people ask for them.
+enum ModelCategory: String, CaseIterable, Identifiable {
+    case chat, vision, speech, image, creative, other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .vision: return "Vision"
+        case .speech: return "Speech"
+        case .image: return "Image and video"
+        case .creative: return "Music and 3D"
+        case .other: return "Embedding and other"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .chat: return "text.bubble"
+        case .vision: return "eye"
+        case .speech: return "waveform"
+        case .image: return "photo"
+        case .creative: return "music.note"
+        case .other: return "tag"
+        }
+    }
+
+    var types: Set<ModelTaskType> {
+        switch self {
+        case .chat: return [.textLLM, .speculativeDraft]
+        case .vision: return [.visionLanguage]
+        case .speech: return [.speechToText, .textToSpeech]
+        case .image: return [.imageGeneration, .videoGeneration]
+        case .creative: return [.musicGeneration, .meshGeneration]
+        case .other: return [.embedding, .classification, .other]
+        }
+    }
+
+    func contains(_ model: LibraryModel) -> Bool {
+        types.contains(model.item.task?.type ?? .other)
+    }
+}
+
+/// The Library filter chosen in the sidebar, shared with the Library table.
+enum LibrarySidebarFilter: Hashable {
+    case all
+    case category(ModelCategory)
+    case needsConversion
+
+    static let storageKey = "library.sidebarFilter"
+    private static let needsConversionID = "needs-conversion"
+
+    init(rawValue: String) {
+        if rawValue == Self.needsConversionID {
+            self = .needsConversion
+        } else if let category = ModelCategory(rawValue: rawValue) {
+            self = .category(category)
+        } else {
+            self = .all
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .all: return ""
+        case .category(let category): return category.rawValue
+        case .needsConversion: return Self.needsConversionID
+        }
+    }
+
+    func contains(_ model: LibraryModel) -> Bool {
+        switch self {
+        case .all: return true
+        case .category(let category): return category.contains(model)
+        case .needsConversion: return model.readiness == .needsConversion
+        }
+    }
+}
+
+/// One selectable sidebar row: a Library filter or a page.
+enum SidebarItem: Hashable {
+    case models(LibrarySidebarFilter)
+    case route(AppRoute)
+}
+
 // MARK: - AppSidebar
 
-/// The navigation registry is rendered from `AppRoute` rather than a second
-/// list of string identifiers, so labels, symbols, grouping, and keyboard
-/// selection share one typed contract. Rows are plain buttons inside a
-/// selectable sidebar list: the system paints selection and handles arrow
-/// keys, and the buttons keep the rows addressable by label in UI tests.
+/// The sidebar leads with the model library: filters by kind, then sources,
+/// then what needs attention. The remaining pages follow in collapsible
+/// groups. The system paints selection and handles arrow keys.
 struct AppSidebar: View {
     @Binding var selectedRoute: AppRoute
 
     var badges: [AppRoute: String] = [:]
+    /// Local models, used for the per-filter counts.
+    var models: [LibraryModel] = []
+    /// The LM Studio source shares the Library page; this keeps its own row selected.
+    var lmStudioSelected = false
+
+    @AppStorage(LibrarySidebarFilter.storageKey) private var filterRaw = ""
+    @AppStorage("sidebar.workspacesExpanded") private var workspacesExpanded = true
+    @AppStorage("sidebar.systemExpanded") private var systemExpanded = false
+
+    private static let workspaceRoutes: [AppRoute] = [.use, .run, .compare, .prepare, .training, .studies]
+    private static let systemRoutes: [AppRoute] = [.overview, .activity, .clientSetup, .health]
+
+    private var selection: Binding<SidebarItem> {
+        Binding(
+            get: {
+                if lmStudioSelected { return .route(.lmStudio) }
+                return selectedRoute == .library
+                    ? .models(LibrarySidebarFilter(rawValue: filterRaw))
+                    : .route(selectedRoute)
+            },
+            set: { item in
+                switch item {
+                case .models(let filter):
+                    filterRaw = filter.rawValue
+                    selectedRoute = .library
+                case .route(let route):
+                    selectedRoute = route
+                }
+            }
+        )
+    }
+
+    private func count(_ filter: LibrarySidebarFilter) -> Int {
+        models.reduce(0) { $0 + (filter.contains($1) ? 1 : 0) }
+    }
 
     var body: some View {
-        List(selection: $selectedRoute) {
-            ForEach(AppRoute.grouped, id: \.group) { projection in
-                if projection.group == .settings {
-                    Section { routeRows(projection.routes) }
-                } else {
-                    Section(projection.group.rawValue) {
-                        routeRows(projection.routes)
-                    }
+        List(selection: selection) {
+            Section("Models") {
+                filterRow(.all, title: "All models", symbol: AppRoute.library.symbolName)
+                    .accessibilityLabel(AppRoute.library.label)
+                ForEach(ModelCategory.allCases.filter { count(.category($0)) > 0 }) { category in
+                    filterRow(.category(category), title: category.title, symbol: category.symbolName)
                 }
+            }
+            Section("Sources") {
+                routeRows([.lmStudio, .discover])
+            }
+            Section("Attention") {
+                filterRow(.needsConversion, title: "Needs converting", symbol: "arrow.triangle.2.circlepath")
+                routeRows([.reclaim])
+            }
+            Section("Workspaces", isExpanded: $workspacesExpanded) {
+                routeRows(Self.workspaceRoutes)
+            }
+            Section("System", isExpanded: $systemExpanded) {
+                routeRows(Self.systemRoutes)
+            }
+            Section {
+                routeRows([.settings])
             }
         }
         .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(WorkbenchColor.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                Image("WorkbenchIcon")
-                    .resizable()
-                    .frame(width: WorkbenchSize.brandIcon, height: WorkbenchSize.brandIcon)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                    Text("MLX Workbench")
-                        .font(WorkbenchTypography.brand)
-                        .foregroundStyle(WorkbenchColor.ink)
-                    Text("Local models. Your Mac.")
-                        .font(WorkbenchTypography.metadata)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, WorkbenchSpacing.sm)
-            .padding(.vertical, WorkbenchSpacing.lg)
-            .background(WorkbenchColor.sidebar)
-        }
         .accessibilityLabel("Workbench navigation")
+    }
+
+    private func filterRow(_ filter: LibrarySidebarFilter, title: String, symbol: String) -> some View {
+        let total = count(filter)
+        return Button {
+            selection.wrappedValue = .models(filter)
+        } label: {
+            rowLabel(title: title, symbol: symbol)
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, WorkbenchSpacing.xxs)
+        .badge(total > 0 ? Text(verbatim: "\(total)") : nil)
+        .tag(SidebarItem.models(filter))
     }
 
     @ViewBuilder
     private func routeRows(_ routes: [AppRoute]) -> some View {
         ForEach(routes) { route in
             routeRow(route)
-                .tag(route)
+                .tag(SidebarItem.route(route))
         }
     }
 
@@ -62,35 +186,39 @@ struct AppSidebar: View {
         Button {
             selectedRoute = route
         } label: {
-            SidebarRouteLabel(route: route, isSelected: selectedRoute == route)
-                .font(WorkbenchTypography.body)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            rowLabel(title: route.label, symbol: route.symbolName)
         }
         .buttonStyle(.plain)
         .padding(.vertical, WorkbenchSpacing.xxs)
-        .listRowBackground(selectedRoute == route ? WorkbenchColor.accent.opacity(.fill) : Color.clear)
         .badge(badges[route].map { Text($0) })
         .help(route.pageDescription)
         .accessibilityLabel(route.label)
         .accessibilityValue(selectedRoute == route ? "Selected" : "")
     }
+
+    private func rowLabel(title: String, symbol: String) -> some View {
+        SidebarRowLabel(title: title, symbol: symbol)
+            .font(WorkbenchTypography.body)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+    }
 }
 
-private struct SidebarRouteLabel: View {
-    let route: AppRoute
-    let isSelected: Bool
+private struct SidebarRowLabel: View {
+    let title: String
+    let symbol: String
+
     @Environment(\.backgroundProminence) private var prominence
 
+    /// The emphasized selection fill is the accent, so the selected row takes the contrast-checked selection color.
     var body: some View {
-        Label {
-            Text(route.label)
-                .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
-        } icon: {
-            Image(systemName: route.symbolName)
-                .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : (isSelected ? WorkbenchColor.accent : WorkbenchColor.muted))
+        if prominence == .increased {
+            Label(title, systemImage: symbol)
+                .foregroundStyle(WorkbenchColor.onSelection)
+        } else {
+            Label(title, systemImage: symbol)
         }
     }
 }

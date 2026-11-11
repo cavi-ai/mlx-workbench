@@ -819,7 +819,7 @@ struct ServeView: View {
     private func serviceRow(_ service: ServingServiceObservation) -> some View {
         let model = service.modelPath.flatMap { path in models.first { $0.item.path == path || $0.outputPaths.contains(path) } }
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            ServingServiceRow(service: service, inventory: inventory, compact: isCompact) { kind in
+            ServingServiceRow(service: service, inventory: inventory, compact: true) { kind in
                 Task { await inventory.prepare(kind, service: service) }
             }
             if let server = service.server, service.isWorkbenchManaged || model != nil {
@@ -831,7 +831,7 @@ struct ServeView: View {
         }
         .padding(WorkbenchSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
     }
 
     @ViewBuilder

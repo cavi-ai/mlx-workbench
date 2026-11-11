@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import mlx_workbench
 
@@ -17,8 +19,85 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
-        XCTAssertEqual(AppRoute.grouped.map(\.group), [.workbench, .lifecycle, .operations, .lab, .settings])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [3, 3, 4, 3, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [4, 5, 4, 1])
+    }
+
+    func testSidebarGroupsFollowTheModelFirstOrder() {
+        let grouped = AppRoute.grouped
+        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
+        XCTAssertEqual(grouped[0].routes, [.library, .discover, .prepare, .reclaim])
+        XCTAssertEqual(grouped[1].routes, [.use, .compare, .run, .training, .studies])
+        XCTAssertEqual(grouped[2].routes, [.overview, .activity, .clientSetup, .health])
+        XCTAssertEqual(grouped[3].routes, [.settings])
+    }
+
+    func testUnknownOrMissingSelectionOpensLibraryAndValidIDsWin() {
+        XCTAssertEqual(AppRoute(rawID: nil), .library)
+        XCTAssertEqual(AppRoute(rawID: "not-a-route"), .library)
+        XCTAssertEqual(AppRoute(rawID: "quickstart"), .overview)
+        XCTAssertEqual(AppRoute(rawID: "models"), .library)
+    }
+
+    @MainActor
+    func testFreshInstallWindowOpensOnLibrary() async throws {
+        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured, runtimeReport: .checking)
+        app.librarySnapshot = LibrarySnapshot(models: [], groups: [], hardware: app.hardwareProfile, generatedAt: Date())
+
+        let fresh = try XCTUnwrap(UserDefaults(suiteName: "app-route-\(UUID().uuidString)"))
+        XCTAssertNil(fresh.string(forKey: AppRoute.selectionStorageKey))
+        let freshTitle = try await windowTitle(app: app, defaults: fresh)
+        XCTAssertEqual(freshTitle, "Library")
+
+        let stored = try XCTUnwrap(UserDefaults(suiteName: "app-route-\(UUID().uuidString)"))
+        stored.set(AppRoute.overview.rawValue, forKey: AppRoute.selectionStorageKey)
+        let storedTitle = try await windowTitle(app: app, defaults: stored)
+        XCTAssertEqual(storedTitle, "Overview")
+    }
+
+    @MainActor
+    private func windowTitle(app: AppHost, defaults: UserDefaults) async throws -> String {
+        let size = CGSize(width: WorkbenchSize.windowMinimumWidth, height: WorkbenchSize.windowMinimumHeight)
+        let hosting = NSHostingView(rootView: AnyView(ContentView(appHost: app).defaultAppStorage(defaults).frame(width: size.width, height: size.height)))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.close() }
+        for _ in 0..<40 where window.title.isEmpty {
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return window.title
+    }
+
+    func testCommandNumberShortcutsFollowTheSidebarOrder() {
+        XCTAssertEqual(ContentView.shortcutRoutes, [
+            .library, .discover, .prepare, .reclaim, .use, .compare, .run, .activity, .health, .settings,
+        ])
+        XCTAssertEqual(Set(ContentView.shortcutRoutes).count, ContentView.shortcutRoutes.count)
+        let sidebarOrder = AppRoute.grouped.flatMap(\.routes)
+        let positions = ContentView.shortcutRoutes.compactMap { sidebarOrder.firstIndex(of: $0) }
+        XCTAssertEqual(positions.count, ContentView.shortcutRoutes.count)
+        XCTAssertEqual(positions, positions.sorted())
+    }
+
+    func testOnlyPrepareAndRunCarryAToolbarSubtitle() {
+        let timestamp = Date(timeIntervalSince1970: 1_726_500_000)
+        let workflow = ConversionWorkflow(
+            id: UUID(), sourcePath: "/models/atlas.gguf", sourceModelKey: "atlas", sourceSignature: "signature",
+            outputPath: "/models/atlas-mlx", previewHash: nil, jobReceipt: nil, completedModelPath: nil,
+            state: .inspectingSource, serveState: .idle, message: nil, errorMessage: nil,
+            createdAt: timestamp, updatedAt: timestamp, lastKnownAgentState: nil
+        )
+        for route in AppRoute.allCases {
+            let subtitle = ContentView.subtitle(route: route, workflow: workflow, selectedModelPath: "/models/other-model")
+            if route == .prepare || route == .run {
+                XCTAssertFalse(subtitle.isEmpty, "\(route.label) names its model")
+            } else {
+                XCTAssertEqual(subtitle, "", "\(route.label) has no subtitle")
+            }
+        }
     }
 
     func testLegacyAdoptUsesTheDiscoverDestinationWithoutADuplicatePage() {
@@ -41,21 +120,21 @@ final class AppRouteTests: XCTestCase {
 
     func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {
         let expected: [(AppRoute, String, String, String)] = [
-            (.overview, "Workbench", "Overview", "house"),
-            (.library, "Workbench", "Library", "books.vertical"),
-            (.use, "Workbench", "Use", "bubble.left.and.bubble.right"),
-            (.prepare, "Lifecycle", "Prepare", "shippingbox"),
-            (.compare, "Lifecycle", "Compare", "chart.bar"),
-            (.run, "Lifecycle", "Run", "play.circle"),
-            (.activity, "Operations", "Activity", "clock.arrow.circlepath"),
-            (.reclaim, "Operations", "Reclaim", "square.3.layers.3d"),
-            (.clientSetup, "Operations", "Clients", "arrow.triangle.branch"),
-            (.health, "Operations", "Health", "stethoscope"),
-            (.discover, "Lab", "Discover", "magnifyingglass"),
-            (.lmStudio, "Lab", "LM Studio", "square.and.arrow.down"),
-            (.studies, "Lab", "Studies", "square.split.2x1"),
-            (.training, "Lab", "Training", "sparkles"),
-            (.adopt, "Lab", "Adopt", "hand.tap"),
+            (.overview, "System", "Overview", "house"),
+            (.library, "Models", "Library", "books.vertical"),
+            (.use, "Workspaces", "Use", "bubble.left.and.bubble.right"),
+            (.prepare, "Models", "Prepare", "shippingbox"),
+            (.compare, "Workspaces", "Compare", "chart.bar"),
+            (.run, "Workspaces", "Run", "play.circle"),
+            (.activity, "System", "Activity", "clock.arrow.circlepath"),
+            (.reclaim, "Models", "Reclaim", "square.3.layers.3d"),
+            (.clientSetup, "System", "Clients", "arrow.triangle.branch"),
+            (.health, "System", "Health", "stethoscope"),
+            (.discover, "Models", "Discover", "magnifyingglass"),
+            (.lmStudio, "Models", "LM Studio", "square.and.arrow.down"),
+            (.studies, "Workspaces", "Studies", "square.split.2x1"),
+            (.training, "Workspaces", "Training", "sparkles"),
+            (.adopt, "Models", "Adopt", "hand.tap"),
             (.settings, "Settings", "Settings", "gearshape")
         ]
 
@@ -67,12 +146,12 @@ final class AppRouteTests: XCTestCase {
         }
     }
 
-    func testLegacyIDInitializerFallsBackToOverviewForUnknownValues() {
+    func testLegacyIDInitializerFallsBackToLibraryForUnknownValues() {
         XCTAssertEqual(AppRoute(legacyID: "quickstart"), .overview)
         XCTAssertEqual(AppRoute(rawID: "models"), .library)
         XCTAssertEqual(AppRoute(rawID: "studies"), .studies)
-        XCTAssertEqual(AppRoute(rawID: "not-a-route"), .overview)
-        XCTAssertEqual(AppRoute(rawID: nil), .overview)
+        XCTAssertEqual(AppRoute(rawID: "not-a-route"), .library)
+        XCTAssertEqual(AppRoute(rawID: nil), .library)
     }
 }
 

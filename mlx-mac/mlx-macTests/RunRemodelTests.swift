@@ -1136,11 +1136,14 @@ enum ServingWorld {
     }
 
     /// Reads text in overlapping horizontal bands, top to bottom, so tall renders keep a legible text size
-    /// at any backing scale. Each line is kept once, by the band that owns its centre.
+    /// at any backing scale. A band keeps the lines centred in its share, with a margin for the centre each band
+    /// measures; text an earlier band already kept at the same place is not kept again.
     static func recognizedLines(in image: CGImage, band: Int = 600, overlap: Int = 100) throws -> [String] {
-        var lines: [(y: Double, x: Double, text: String)] = []
+        let margin = Double(overlap) / 4
+        var lines: [(y: Double, x: Double, text: String, box: CGRect)] = []
         var top = 0
         while top < image.height {
+            let earlier = lines.count
             let height = min(band, image.height - top)
             let last = top + height >= image.height
             let slice = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: top, width: image.width, height: height)))
@@ -1152,7 +1155,15 @@ enum ServingWorld {
             for observation in request.results ?? [] {
                 guard let text = observation.topCandidates(1).first?.string else { continue }
                 let centre = Double(top) + (1 - observation.boundingBox.midY) * Double(height)
-                if centre >= lower && centre < upper { lines.append((centre, observation.boundingBox.minX, text)) }
+                guard centre >= lower - margin && centre < upper + margin else { continue }
+                let unit = observation.boundingBox
+                let box = CGRect(x: unit.minX * Double(image.width), y: Double(top) + (1 - unit.maxY) * Double(height),
+                                 width: unit.width * Double(image.width), height: unit.height * Double(height))
+                let seen = lines[..<earlier].contains { kept in
+                    let shared = kept.box.intersection(box)
+                    return !shared.isNull && shared.width > 0 && shared.height > min(kept.box.height, box.height) / 2
+                }
+                if !seen { lines.append((centre, unit.minX, text, box)) }
             }
             if last { break }
             top += band - overlap
@@ -1242,16 +1253,13 @@ private struct RunPage: View {
     let hold: FleetOverrideHold?
 
     var body: some View {
-        VStack(spacing: 0) {
-            WorkbenchPageHeading(route: .run)
-            ServeView(appHost: app, initialReview: review, fleetHold: hold)
-        }
-        .environment(\.isRouteActive, route.active)
+        ServeView(appHost: app, initialReview: review, fleetHold: hold)
+            .environment(\.isRouteActive, route.active)
     }
 }
 
 extension RunRemodelTests {
-    /// The Run page as the window shows it: the page heading above the route.
+    /// The Run page as the window shows it: the route alone below the toolbar.
     private func hostRun(_ app: AppHost, detail: CGSize, dark: Bool, route: RouteFlag? = nil,
                          review: EndpointChangeReview? = nil, hold: FleetOverrideHold? = nil) -> (NSWindow, NSHostingView<AnyView>) {
         let content = RunPage(app: app, route: route ?? RouteFlag(), review: review, hold: hold)

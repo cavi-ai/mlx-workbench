@@ -655,29 +655,6 @@ struct SectionTitle: View {
     }
 }
 
-/// A stable title and one quiet description give every route the same
-/// reading hierarchy, while each screen keeps its task-specific controls.
-struct WorkbenchPageHeading: View {
-    let route: AppRoute
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            Text(route.label)
-                .font(WorkbenchTypography.pageTitle)
-                .foregroundStyle(WorkbenchColor.ink)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("page-heading-\(route.rawValue)")
-            Text(route.pageDescription)
-                .font(WorkbenchTypography.body)
-                .foregroundStyle(WorkbenchColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, WorkbenchSpacing.pageInset)
-        .padding(.vertical, WorkbenchSpacing.lg)
-    }
-}
-
 extension View {
     func formSection<SupplementalContent: View>(@ViewBuilder content: () -> SupplementalContent) -> some View {
         WorkbenchSurface {

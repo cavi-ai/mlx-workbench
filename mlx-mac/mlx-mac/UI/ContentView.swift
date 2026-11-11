@@ -13,8 +13,8 @@ struct ContentView: View {
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
     @ObservedObject private var reclaim: ReclaimCoordinator
     @ObservedObject private var watch: WatchCoordinator
-    /// Persisted across launches; legacy/unknown values resolve to Overview.
-    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
+    /// Persisted across launches; a missing or unknown value resolves to Library.
+    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
     /// The workflow outcome last seen on Prepare or Activity; a failure stays in the toolbar until then.
     @AppStorage(Self.acknowledgedOutcomeStorageKey) private var acknowledgedOutcome = ""
     @State private var visitedRoutes: Set<AppRoute> = []
@@ -46,7 +46,9 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges)
+            AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges,
+                       models: appHost.librarySnapshot?.models ?? [],
+                       lmStudioSelected: selectedRouteID == AppRoute.lmStudio.rawValue)
                 .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations
@@ -56,11 +58,9 @@ struct ContentView: View {
                 }) {
                     ServingInventoryReviewSheet(inventory: servingInventory, hosts: appHost.modelHosts)
                 }
-                .workbenchCanvas()
                 .workbenchScrollEdge()
                 .navigationTitle(selectedRoute.label)
                 .navigationSubtitle(subtitle)
-                .toolbarBackground(WorkbenchColor.canvas, for: .windowToolbar)
                 .toolbar {
 #if compiler(>=6.2)
                     if #available(macOS 26.0, *) {
@@ -96,10 +96,10 @@ struct ContentView: View {
         }
     }
 
-    /// ⌘1…⌘9, ⌘0 jump between the main tabs (Lab items stay click-only).
-    private static let shortcutRoutes: [AppRoute] = [
-        .overview, .library, .prepare, .compare, .run,
-        .activity, .reclaim, .clientSetup, .health, .settings,
+    /// ⌘1…⌘9, ⌘0 follow the sidebar order; routes not listed are click-only.
+    static let shortcutRoutes: [AppRoute] = [
+        .library, .discover, .prepare, .reclaim, .use,
+        .compare, .run, .activity, .health, .settings,
     ]
     private static let shortcutKeys: [KeyEquivalent] = [
         "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
@@ -128,10 +128,7 @@ struct ContentView: View {
             ZStack {
                 ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
                     let isActive = route == selectedRoute
-                    VStack(spacing: 0) {
-                        if route != .library && route != .compare && route != .use { WorkbenchPageHeading(route: route) }
-                        routeDestination(route)
-                    }
+                    routeDestination(route)
                         .environment(\.isRouteActive, isActive)
                         .opacity(isActive ? 1 : 0)
                         .allowsHitTesting(isActive)
@@ -202,7 +199,7 @@ struct ContentView: View {
 
     // MARK: - Window chrome
 
-    /// The selected model is context for the lifecycle tabs only; elsewhere
+    /// The selected model is context for Prepare and Run only; elsewhere
     /// the title stands alone.
     private var subtitle: String {
         if selectedRoute == .run, let job = trainedAdapters.selectedJob { return job.repo + " · trained adapter" }
@@ -210,9 +207,9 @@ struct ContentView: View {
     }
 
     /// Prepare names the workflow's source, which can differ from the Library
-    /// selection; the other lifecycle tabs name the selection.
+    /// selection; Run names the model it shows.
     static func subtitle(route: AppRoute, workflow: ConversionWorkflow, selectedModelPath: String?) -> String {
-        guard route.group == .lifecycle, route != .compare else { return "" }
+        guard route == .prepare || route == .run else { return "" }
         if route == .prepare { return PrepareWorkflowPresentation(workflow: workflow).displayName }
         if route == .run {
             guard let path = RunPresentation.shownModelPath(workflow: workflow, selectedModelPath: selectedModelPath) else { return "" }

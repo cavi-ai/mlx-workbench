@@ -111,13 +111,28 @@ struct ServingInventoryErrors: View {
                 Text("This engine reports Workbench endpoints only. Update the engine to discover other MLX Agent servers.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
             }
-            ForEach(inventory.snapshot.sourceErrors.keys.sorted(), id: \.self) { source in
-                Text(sourceTitle(source) + ": " + (inventory.snapshot.sourceErrors[source] ?? "Unavailable"))
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            let sources = inventory.snapshot.sourceErrors.keys.sorted()
+            if !sources.isEmpty {
+                DisclosureGroup(isExpanded: $showsSourceErrors) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        ForEach(sources, id: \.self) { source in
+                            Text(sourceTitle(source) + ": " + (inventory.snapshot.sourceErrors[source] ?? "Unavailable"))
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, WorkbenchSpacing.xxs)
+                } label: {
+                    Label(sources.count == 1 ? "1 source did not answer" : "\(sources.count) sources did not answer",
+                          systemImage: "exclamationmark.triangle")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                }
+                .accessibilityIdentifier("serving-source-errors")
             }
         }
     }
+
+    @State private var showsSourceErrors = false
 
     private func sourceTitle(_ source: String) -> String {
         if let service = inventory.snapshot.services.first(where: { $0.sourceID == source }) {

@@ -402,24 +402,20 @@ final class SetupAssistantUITests: XCTestCase {
             window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
                 dx: settings.frame.midX - window.frame.minX, dy: settings.frame.midY - window.frame.minY
             )).click()
-            XCTAssertTrue(app.staticTexts["page-heading-settings"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.windows.matching(NSPredicate(format: "title == %@", "Settings")).firstMatch.waitForExistence(timeout: 10))
             capture("08a-library-small-desktop-settings")
             sidebar.scroll(byDeltaX: 0, deltaY: 300)
             library.click()
-            XCTAssertTrue(app.staticTexts["page-heading-models"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.windows.matching(NSPredicate(format: "title == %@", "Library")).firstMatch.waitForExistence(timeout: 10))
         }
         library.click()
         XCTAssertTrue(app.buttons["Settings"].exists)
         XCTAssertTrue(app.buttons["Discover"].exists)
         let sourcePicker = app.popUpButtons["library-source"].firstMatch
-        let heading = app.staticTexts["page-heading-models"]
         XCTAssertTrue(sourcePicker.exists)
-        XCTAssertTrue(heading.exists)
         XCTAssertTrue(sourcePicker.isHittable)
         XCTAssertEqual(sourcePicker.value as? String, "All local models")
-        XCTAssertTrue(heading.isHittable)
         XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
-        XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         capture("08-library-visible-model-and-sidebar")
         modelRow.doubleClick()
         let memoryFit = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "Memory fit: ")).firstMatch
@@ -472,12 +468,10 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Run model"].waitForNonExistence(timeout: 10),
                       "The wide inspector must close before opening compact model details.")
         capture("10b-library-compact-content")
-        print("Compact Library bounds: window=\(window.frame), source=\(sourcePicker.frame), heading=\(heading.frame)")
+        print("Compact Library bounds: window=\(window.frame), source=\(sourcePicker.frame)")
         XCTAssertTrue(sourcePicker.isHittable, app.debugDescription)
         XCTAssertEqual(sourcePicker.value as? String, "All local models")
-        XCTAssertTrue(heading.isHittable)
         XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
-        XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         app.typeKey("i", modifierFlags: [.command, .option])
         let details = app.sheets.firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 10))

@@ -15,6 +15,8 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ### Changed
 
 - Run: one serving surface. Served models, API keys and other local services moved from the Served models window into Run; the toolbar and menu bar open Run.
+- Window: follows the system appearance, uses the system sidebar and opens on Library; the sidebar filters models by kind with counts, lists sources and models needing conversion, and pages drop the repeated in-content heading.
+- Run: unanswered inventory sources fold into one line and service details fold under Details.
 
 ## [0.8.0] - 2026-11-07
 ### Added

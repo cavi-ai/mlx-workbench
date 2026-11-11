@@ -380,6 +380,7 @@ struct LibraryWorkspace: View {
         .onChange(of: source) { _, selected in visitedSources.insert(selected.workspace) }
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
+            else if source == .lmStudio { source = .allModels; visitedSources.insert(.allModels) }
         }
         .onChange(of: appHost.handoffs[.revealModel], initial: true) { receiveRevealRequest() }
         .onChange(of: isRouteActive, initial: true) { receiveRevealRequest(); receiveHostedRequest() }
@@ -504,6 +505,7 @@ struct LibraryView: View {
     /// picker only; memory readings never reach the Library body.
     @State private var contextTokens = FitAdvisor.defaultContextTokens
     @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
+    @AppStorage(LibrarySidebarFilter.storageKey) private var sidebarFilterRaw = ""
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workbenchViewport) private var viewport
@@ -526,12 +528,18 @@ struct LibraryView: View {
 
     private var groups: [LibraryGroupViewModel] {
         guard let snapshot else { return [] }
-        return LibraryPresentation.filteredGroups(
+        let filtered = LibraryPresentation.filteredGroups(
             in: snapshot,
             search: search,
             readiness: readinessFilter,
             quantization: quantizationFilter
         )
+        let sidebarFilter = LibrarySidebarFilter(rawValue: sidebarFilterRaw)
+        guard sidebarFilter != .all else { return filtered }
+        return filtered.compactMap { group in
+            let variants = group.variants.filter(sidebarFilter.contains)
+            return variants.isEmpty ? nil : LibraryGroupViewModel(sourceGroup: group.sourceGroup, variants: variants)
+        }
     }
 
     private var rows: [LibraryRow] {
@@ -576,8 +584,10 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let sourceSelection { LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts) }
-            WorkbenchPageHeading(route: .library)
+            if let sourceSelection {
+                LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts)
+                    .padding(.bottom, WorkbenchSpacing.sm)
+            }
             if let errors = appHost.scanResult?.rootErrors, !errors.isEmpty {
                 DisclosureGroup(errors.count == 1 ? "1 model folder could not be scanned" : "\(errors.count) model folders could not be scanned") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -593,6 +603,7 @@ struct LibraryView: View {
                 }
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 .padding(.horizontal, WorkbenchSpacing.pageInset)
+                .padding(.top, sourceSelection == nil ? WorkbenchSpacing.pageInset : 0)
                 .padding(.bottom, WorkbenchSpacing.xs)
                 .accessibilityIdentifier("library-root-errors")
             }

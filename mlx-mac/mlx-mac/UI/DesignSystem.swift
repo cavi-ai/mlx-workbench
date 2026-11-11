@@ -6,10 +6,25 @@ import AppKit
 enum WorkbenchColor {
     static let canvas = adaptive("Canvas", dark: 0x111111, light: 0xF8F8F5)
     static let sidebar = adaptive("Sidebar", dark: 0x0C0C0C, light: 0xEFEFEB)
-    static let surface = adaptive("Surface", dark: 0x191919, light: 0xFFFFFF)
-    static let well = adaptive("Well", dark: 0x272727, light: 0xE5E5DF)
+    /// Translucent steps above whatever is behind them: white in dark appearance, black in light.
+    static let surface = overlay("Surface", darkAlpha: 0.07, lightAlpha: 0.05)
+    static let well = overlay("Well", darkAlpha: 0.13, lightAlpha: 0.10)
     /// Yellow controls always use dark text, including in dark appearance.
     static let onAccent = Color(nsColor: rgb(0x111111))
+    /// Text or symbols on an `accent` fill.
+    static let onAccentFill = adaptive("OnAccentFill", dark: 0x111111, light: 0xFFFFFF)
+    /// Text or symbols on the system selection fill; picks the higher-contrast of #111111 and white.
+    static let onSelection = Color(nsColor: NSColor(name: NSColor.Name("WorkbenchOnSelection")) { appearance in
+        var fill = NSColor.selectedContentBackgroundColor
+        appearance.performAsCurrentDrawingAppearance {
+            fill = NSColor.selectedContentBackgroundColor.usingColorSpace(.sRGB) ?? fill
+        }
+        let dark = rgb(0x111111)
+        let fillLuminance = luminance(fill), darkLuminance = luminance(dark)
+        let withDark = (max(fillLuminance, darkLuminance) + 0.05) / (min(fillLuminance, darkLuminance) + 0.05)
+        let withWhite = 1.05 / (fillLuminance + 0.05)
+        return withDark >= withWhite ? dark : rgb(0xFFFFFF)
+    })
     static let ink = Color(nsColor: .labelColor)
     static let muted = Color(nsColor: .secondaryLabelColor)
     static let hairline = adaptive("Hairline", dark: 0x343434, light: 0xD3D3CB)
@@ -25,6 +40,21 @@ enum WorkbenchColor {
         NSColor(srgbRed: Double((value >> 16) & 255) / 255,
                 green: Double((value >> 8) & 255) / 255,
                 blue: Double(value & 255) / 255, alpha: 1)
+    }
+
+    private static func luminance(_ color: NSColor) -> Double {
+        let values = [color.redComponent, color.greenComponent, color.blueComponent].map { value -> Double in
+            let channel = Double(value)
+            return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+        }
+        return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
+    }
+
+    private static func overlay(_ name: String, darkAlpha: Double, lightAlpha: Double) -> Color {
+        Color(nsColor: NSColor(name: NSColor.Name("Workbench" + name)) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return isDark ? NSColor(white: 1, alpha: darkAlpha) : NSColor(white: 0, alpha: lightAlpha)
+        })
     }
 
     private static func adaptive(_ name: String, dark: UInt32, light: UInt32) -> Color {
@@ -575,11 +605,9 @@ extension PrimitiveButtonStyle where Self == WorkbenchPrimaryButtonStyle {
 }
 
 extension View {
-    /// Apply at window roots; routes and sheets inherit one coherent theme.
+    /// Apply at window roots. The appearance and accent come from the system and the asset catalog.
     func workbenchTheme() -> some View {
-        self.tint(WorkbenchColor.accent)
-            .background(WorkbenchColor.canvas, in: Rectangle())
-            .preferredColorScheme(.dark)
+        self
     }
 
     func workbenchCanvas() -> some View {
