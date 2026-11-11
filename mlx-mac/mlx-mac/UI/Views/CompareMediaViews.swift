@@ -655,6 +655,12 @@ struct MediaRunResultsView<LaneActions: View>: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if mode == .videoGeneration || mode == .meshGeneration {
+                let entry = run.promptEntries?.first(where: { $0.id == sample.promptID })
+                let parameters = entry?.media
+                MediaReuseResultView(requested: entry.map { $0.media?.denoiserCache ?? "off" }, allowance: parameters?.cacheMemoryMiB,
+                                     raw: sample.denoiserCache)
+            }
         }
     }
 

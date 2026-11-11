@@ -156,6 +156,15 @@ struct ServedTaskAPI: InferenceTaskAPI {
                                 runSchema: capabilities.runSchema, tasks: capabilities.tasks.filter { kinds.contains($0.kind.wireValue) })
     }
 
+    func taskMediaCapabilities(modelPath: String) async throws -> TaskCapabilities {
+        guard Quarantine.resolve(modelPath) == Quarantine.resolve(origin.server.path!) else { throw ServedTaskError.foreignTask }
+        let kinds = try await advertisedKinds()
+        let capabilities = try await engine.taskMediaCapabilities(modelPath: modelPath)
+        return TaskCapabilities(schema: capabilities.schema, requestSchema: capabilities.requestSchema,
+                                runSchema: capabilities.runSchema, tasks: capabilities.tasks.filter { kinds.contains($0.kind.wireValue) },
+                                model: capabilities.model)
+    }
+
     func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
         try request.validate()
         guard Quarantine.resolve(request.modelPath) == Quarantine.resolve(origin.server.path!) else { throw ServedTaskError.foreignTask }

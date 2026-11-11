@@ -229,6 +229,28 @@ engine task artifacts, and Compare's ten-run media retention does not apply
 to these tasks. Use [Compare](compare.md) for matched model runs and listening
 ratings.
 
+#### Media performance and memory
+
+Video and 3D task forms offer **Performance & memory**. **Standard** is the
+default. The engine offers **Experimental reuse** only for single-model Wan2.1
+text-to-video and TripoSG; other architectures keep Standard available.
+
+Reuse can change frames or geometry. Its **Feature-cache allowance** accepts
+8–4,096 MiB and starts at 256 MiB. This allowance is separate from model weights
+and allocator memory; it does not cap the process's total memory. If the required
+feature cache exceeds the allowance, the engine uses full computation.
+
+Adaptive jobs use **Review job**, then **Generate**. Review preserves the exact
+request and binds it to the model config. Changing settings or the model config
+requires a new review. Cancelling review does not submit a job.
+
+Results distinguish requested settings from reported full/reused step counts,
+feature-cache usage, fallback and elapsed time. Missing telemetry remains
+unreported. Completion and step reuse do not establish equivalent quality or a
+measured speedup. **Reuse** restores the settings; **Export request…**, inside
+Result JSON, copies the verified engine request. The result export keeps reported
+reuse telemetry. Exporting a request does not copy model weights or input media.
+
 ### Delete a model
 
 **Delete…** moves a model to the Trash after a review that rechecks its identity, its folders and whether it is serving. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).

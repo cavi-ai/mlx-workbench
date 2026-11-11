@@ -131,6 +131,10 @@ enum WorkbenchSpacing {
 /// Fixed dimensions that are not spacing: instrument parts, window and
 /// layout thresholds. Views take every such number from here.
 enum WorkbenchSize {
+    enum MediaReuse {
+        static let reviewWidth: CGFloat = 440
+        static let requestDetailsMaximum: CGFloat = 160
+    }
     enum Use {
         static let historyBreakpoint: CGFloat = 900
         static let historyWidth: CGFloat = 210

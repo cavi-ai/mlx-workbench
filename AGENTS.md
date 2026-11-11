@@ -99,6 +99,10 @@ Behavior detail for each area is in the operator guide; this lists owners.
   existing typed-task panels. `AppHost.handoffs` carries model/server selection. Chat owns
   only its HTTP request; task execution and artifacts remain engine-owned. The app delegate
   waits for the work-session quit save before termination.
+- Media reuse: `MediaReuseCapabilities` reads model-bound engine descriptors;
+  `MediaReuseSettings` and `MediaReuseViews` preserve requested settings and present
+  reported telemetry. `InferenceTaskCoordinator` owns reviewed adaptive task starts;
+  eligibility and execution remain engine-owned.
 - Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
   `ComparisonMediaRunner`, histories via `ComparisonHistoryWorker`),
   `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; outputs in

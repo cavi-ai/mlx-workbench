@@ -160,6 +160,12 @@ final class WorkbenchReviewUITests: XCTestCase {
                     result = dict(schema='speak/1' if record['kind'] == 'speak' else 'music/1', model=record['model_path'], backend='mlx-audio', path=str(path),
                         output_artifact=reference(path), audio_seconds=15, sample_rate=16000, seconds=0.1,
                         duration=15, steps=30, seed=42)
+                if request['parameters'].get('denoiser_cache') == 'adaptive':
+                    fallback = (root / 'media-reuse-fallback').exists()
+                    result['seconds'] = 1.25
+                    result['denoiser_cache'] = dict(mode='adaptive', full_steps=10 if fallback else 8, reused_steps=0 if fallback else 2,
+                        peak_cache_bytes=0 if fallback else 24576, memory_limit_bytes=request['parameters'].get('cache_memory_mib',256)*1024**2)
+                    if fallback: result['denoiser_cache']['fallback_reason'] = 'memory_limit'
                 record.update(state='succeeded', completed_at='2026-01-01T00:00:01Z', result=artifact(record['id'], 'result.json', result))
             action = args[1]
             if action == 'capabilities':
@@ -187,6 +193,16 @@ final class WorkbenchReviewUITests: XCTestCase {
                     for kind, result in [('embedding','embed/1'), ('mesh_generation','mesh/1')]])
                 if (root / 'legacy-image-tasks').exists():
                     data['tasks'] = [task for task in data['tasks'] if task['kind'] != 'image_generation']
+                if '--model-path' in args:
+                    model = pathlib.Path(args[args.index('--model-path')+1]).resolve()
+                    contents = (model / 'config.json').read_bytes()
+                    config = json.loads(contents)
+                    data['model'] = dict(path=str(model), config_sha256=hashlib.sha256(contents).hexdigest())
+                    for task in data['tasks']:
+                        if task['kind'] not in ('mesh_generation','video_generation'): continue
+                        supported = config.get('model_type') == 'triposg' if task['kind'] == 'mesh_generation' else config.get('model_type') == 't2v' and config.get('model_version') == '2.1' and not config.get('dual_model',False)
+                        task['denoiser_cache'] = dict(modes=['off','adaptive'] if supported else ['off'], default='off', approximate=True,
+                            cache_memory_mib=dict(minimum=8,maximum=4096,default=256), unavailable_reason='This architecture does not support adaptive reuse.')
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
@@ -986,6 +1002,149 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(app.textFields["task-embedding-text-1"].value as? String, "Second text")
         XCTAssertEqual(try taskSubmissions().count, 1, "History and reuse must not resubmit inference")
         capture("Library-embedding-restart-and-reuse")
+    }
+
+    private func openMediaControls(in container: XCUIElement? = nil) {
+        guard let surface = container ?? app else { XCTFail("The test application is unavailable"); return }
+        let disclosure = surface.disclosureTriangles.matching(NSPredicate(format: "label CONTAINS %@", "Performance")).firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 15), app.debugDescription)
+        if !disclosure.isHittable, let scroll = surface.scrollViews.allElementsBoundByIndex.first { scroll.scroll(byDeltaX: 0, deltaY: 250) }
+        let window = app.windows.firstMatch
+        let frame = disclosure.frame.intersection(window.frame)
+        XCTAssertFalse(frame.isNull)
+        // Native disclosure hit frames include the label; toggle via the leading arrow.
+        if disclosure.value as? Int != 1 {
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
+                dy: frame.midY - window.frame.minY
+            )).click()
+        }
+        XCTAssertEqual(disclosure.value as? Int, 1, app.debugDescription)
+    }
+
+    private func openModelInUse(_ name: String) {
+        let row = app.outlines.staticTexts[name].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        let use = app.buttons["library-use-model"]
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); use.click()
+    }
+
+    private func showMediaResult(_ summary: String) {
+        let result = text(containing: summary)
+        XCTAssertTrue(result.waitForExistence(timeout: 15))
+        let scroll = app.scrollViews.containing(.button, identifier: "task-start").firstMatch
+        for _ in 0..<6 where !result.isHittable { scroll.scroll(byDeltaX: 0, deltaY: 250) }
+        XCTAssertTrue(result.isHittable)
+    }
+
+    private func chooseMeshInput() throws -> URL {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        for y in 0..<2 { for x in 0..<2 { bitmap.setColor(.systemRed, atX: x, y: y) } }
+        let source = root.appendingPathComponent("reuse-input.png")
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        return source
+    }
+
+    func testMediaReuseReviewsConfigAndReportsMemoryFallback() throws {
+        let model = try installTaskModel(kind: "mesh_generation", name: "Reuse mesh")
+        try Data(#"{"model_type":"triposg"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        let source = try chooseMeshInput()
+        try Data().write(to: root.appendingPathComponent("media-reuse-fallback"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true); openModelInUse("Reuse mesh")
+        replace(app.textFields["task-mesh-image-path"], with: source.path)
+        openMediaControls()
+        let toggle = app.checkBoxes["media-adaptive-reuse"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), app.debugDescription)
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle)
+        wait(for: [ready], timeout: 15); XCTAssertEqual(toggle.value as? Int, 0); toggle.click()
+        replace(app.textFields["media-cache-memory"], with: "7")
+        XCTAssertFalse(app.buttons["task-start"].isEnabled)
+        replace(app.textFields["media-cache-memory"], with: "64")
+        app.buttons["task-start"].click()
+        let confirm = app.buttons["media-reuse-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10)); XCTAssertTrue(try taskSubmissions().isEmpty)
+        capture("Media-reuse-review")
+        try Data(#"{"model_type":"triposg","revision":2}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        confirm.click()
+        XCTAssertTrue(text(containing: "config changed").waitForExistence(timeout: 15))
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        app.buttons["task-start"].click(); XCTAssertTrue(confirm.waitForExistence(timeout: 10)); confirm.click()
+        waitForTaskState("succeeded")
+        showMediaResult("10 full · 0 reused steps")
+        XCTAssertTrue(text(containing: "exceeded the allowance").exists)
+        let records = try taskSubmissions(); XCTAssertEqual(records.count, 1)
+        let reference = try XCTUnwrap(records[0]["request"] as? [String: Any])
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: try XCTUnwrap(reference["path"] as? String)))) as? [String: Any])
+        let parameters = try XCTUnwrap(request["parameters"] as? [String: Any])
+        XCTAssertEqual(parameters["denoiser_cache"] as? String, "adaptive"); XCTAssertEqual(parameters["cache_memory_mib"] as? Int, 64)
+        capture("Media-reuse-memory-fallback")
+    }
+
+    func testUnsupportedMediaModelsKeepStandardComputation() throws {
+        let model = try installTaskModel(kind: "mesh_generation", name: "Standard mesh")
+        try Data(#"{"model_type":"pixal3d"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        let source = try chooseMeshInput()
+        launch(appearance: "Light", route: "models", isolatedHome: true); openModelInUse("Standard mesh")
+        replace(app.textFields["task-mesh-image-path"], with: source.path); openMediaControls()
+        XCTAssertTrue(text(containing: "does not support adaptive reuse").waitForExistence(timeout: 15))
+        let toggle = app.checkBoxes["media-adaptive-reuse"]
+        XCTAssertFalse(toggle.isEnabled); XCTAssertEqual(toggle.value as? Int, 0)
+        XCTAssertTrue(app.buttons["task-start"].isEnabled)
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        resizeWindow(width: 740, height: 560)
+        capture("Media-standard-unsupported-minimum")
+    }
+
+    @MainActor
+    func testWanReuseKeepsParametersAndReportedSteps() async throws {
+        let model = try installTaskModel(kind: "video_generation", name: "Reuse video")
+        try Data(#"{"model_type":"t2v","model_version":"2.1"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        try writeStudyReviewClip(to: root.appendingPathComponent("fixture-video.mp4"), frames: 30)
+        launch(appearance: "Dark", route: "models", isolatedHome: true); openModelInUse("Reuse video")
+        replace(app.textFields["task-video-generation-prompt"], with: "Slow camera pan")
+        openMediaControls()
+        let toggle = app.checkBoxes["media-adaptive-reuse"]
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle)
+        await fulfillment(of: [ready], timeout: 15); toggle.click()
+        replace(app.textFields["media-cache-memory"], with: "64")
+        app.buttons["task-start"].click()
+        let confirm = app.buttons["media-reuse-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10)); confirm.click(); waitForTaskState("succeeded")
+        showMediaResult("8 full · 2 reused steps")
+        XCTAssertTrue(app.buttons["task-export-video"].exists)
+        XCTAssertEqual(try taskSubmissions().count, 1)
+        capture("Media-Wan-reuse-result")
+    }
+
+    func testComparisonPromptSetKeepsAdaptiveReuseSettings() throws {
+        let model = try installTaskModel(kind: "video_generation", name: "Comparison video")
+        try Data(#"{"model_type":"t2v","model_version":"2.1"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Comparison video"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick(); app.buttons["Compare"].firstMatch.click()
+        let newSet = app.buttons["New set…"]
+        XCTAssertTrue(newSet.waitForExistence(timeout: 15)); newSet.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        replace(sheet.textFields["Prompt set name"], with: "Reuse video set")
+        replace(sheet.textFields["Prompt 1 prompt"], with: "Slow camera pan")
+        openMediaControls(in: sheet)
+        let toggle = sheet.checkBoxes["media-adaptive-reuse"]
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle)
+        wait(for: [ready], timeout: 15); toggle.click()
+        replace(sheet.textFields["media-cache-memory"], with: "64")
+        capture("Media-Compare-reuse-prompt")
+        sheet.buttons["Save prompt set"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 15))
+        let file = root.appendingPathComponent("Library/Application Support/mlx-workbench/prompt-sets.json")
+        let sets = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]])
+        let set = try XCTUnwrap(sets.first { $0["name"] as? String == "Reuse video set" })
+        let prompts = try XCTUnwrap(set["prompts"] as? [[String: Any]])
+        let media = try XCTUnwrap(prompts.first?["media"] as? [String: Any])
+        XCTAssertEqual(media["denoiserCache"] as? String, "adaptive"); XCTAssertEqual(media["cacheMemoryMiB"] as? Int, 64)
+        XCTAssertTrue(try taskSubmissions().isEmpty)
     }
 
     func testLibraryMeshTaskPreviewAndRetainedInputReuse() throws {

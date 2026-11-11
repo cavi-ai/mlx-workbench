@@ -122,6 +122,10 @@ actor WorkbenchAPI {
         try Self.decodeTask(TaskCapabilities.self, envelope: await taskEnvelope(["task", "capabilities"]))
     }
 
+    func taskMediaCapabilities(modelPath: String) async throws -> TaskCapabilities {
+        try Self.decodeTask(TaskCapabilities.self, envelope: await taskEnvelope(["task", "capabilities", "--model-path", modelPath]))
+    }
+
     func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
         try request.validate()
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("mlx-task-request-\(UUID().uuidString)", isDirectory: true)
@@ -460,12 +464,15 @@ actor WorkbenchAPI {
         if let fps = parameters.fps { argv += ["--fps", String(fps)] }
         if let steps = parameters.steps { argv += ["--steps", String(steps)] }
         if let seed = parameters.seed { argv += ["--seed", String(seed)] }
+        if let mode = parameters.denoiserCache { argv += ["--denoiser-cache", mode] }
+        if let memory = parameters.cacheMemoryMiB { argv += ["--cache-memory-mib", String(memory)] }
         return argv
     }
 
     /// One prompt rendered into a new MP4 by a converted video model (`convert video`).
     func video(path: String, prompt: String, out: String, parameters: MediaParameters) async throws -> VideoResult {
-        try await runOffActor(
+        try await validateMediaReuse(path: path, kind: .videoGeneration, parameters: parameters)
+        return try await runOffActor(
             VideoResult.self,
             Self.videoArguments(path: path, prompt: prompt, out: out, parameters: parameters),
             timeout: 3700
@@ -477,11 +484,21 @@ actor WorkbenchAPI {
         if let steps = parameters.steps { argv += ["--steps", String(steps)] }
         if let seed = parameters.seed { argv += ["--seed", String(seed)] }
         if let resolution = parameters.meshResolution { argv += ["--resolution", String(resolution)] }
+        if let mode = parameters.denoiserCache { argv += ["--denoiser-cache", mode] }
+        if let memory = parameters.cacheMemoryMiB { argv += ["--cache-memory-mib", String(memory)] }
         return argv
     }
 
     func mesh(path: String, image: String, out: String, parameters: MediaParameters) async throws -> MeshResult {
-        try await runOffActor(MeshResult.self, Self.meshArguments(path: path, image: image, out: out, parameters: parameters), timeout: 3700)
+        try await validateMediaReuse(path: path, kind: .meshGeneration, parameters: parameters)
+        return try await runOffActor(MeshResult.self, Self.meshArguments(path: path, image: image, out: out, parameters: parameters), timeout: 3700)
+    }
+
+    private func validateMediaReuse(path: String, kind: TaskKind, parameters: MediaParameters) async throws {
+        let values = try parameters.reuseParameters
+        guard parameters.denoiserCache == "adaptive" else { return }
+        let capabilities = try await taskMediaCapabilities(modelPath: path)
+        try capabilities.validateReuse(TaskRequest(kind: kind, modelPath: path, parameters: values))
     }
 
     func intakeResolve(source: String, revision: String? = nil) async throws -> IntakeResolution {

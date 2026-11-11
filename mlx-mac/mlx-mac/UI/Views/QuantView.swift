@@ -12,6 +12,7 @@ struct QuantView: View {
     let appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var servingProfiles: ServingProfileCoordinator
+    @StateObject private var mediaCapabilities: MediaReuseCapabilities
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
 
@@ -82,6 +83,7 @@ struct QuantView: View {
         self.appHost = appHost
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _servingProfiles = ObservedObject(wrappedValue: appHost.servingProfiles)
+        _mediaCapabilities = StateObject(wrappedValue: MediaReuseCapabilities(api: appHost.api))
         self.onRouteSelection = onRouteSelection
     }
 
@@ -191,7 +193,7 @@ struct QuantView: View {
                     guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
                     return await comparison.createPromptSet(draft) == nil
                         ? (comparison.promptSetManagementError ?? "Prompt set could not be saved.") : nil
-                })
+                }, reuseContext: MediaReuseContext(capabilities: mediaCapabilities, modelPaths: setup.modelPaths))
         }
         .onChange(of: appHost.handoffs[.importWorkflowReport]) { _, _ in consumeImportRequest() }
         .sheet(item: $pendingPromptSetRename) { set in
@@ -201,7 +203,8 @@ struct QuantView: View {
             }
         }
         .sheet(item: $pendingPromptSetDraft) { draft in
-            ComparisonPromptSetEditor(draft: draft, onSave: savePromptSetDraft)
+            ComparisonPromptSetEditor(draft: draft, onSave: savePromptSetDraft,
+                reuseContext: MediaReuseContext(capabilities: mediaCapabilities, modelPaths: variantSlots.compactMap { $0 }))
         }
         .alert("Remove saved prompt set?", isPresented: Binding(
             get: { pendingPromptSetRemoval != nil },
@@ -564,7 +567,8 @@ struct QuantView: View {
             ErrorBanner(text: promptSetCopyError)
         }
         .sheet(isPresented: $showingSetEditor) {
-            ComparisonPromptSetEditor(draft: PromptSetDraft(mode: mode), onSave: savePromptSetDraft)
+            ComparisonPromptSetEditor(draft: PromptSetDraft(mode: mode), onSave: savePromptSetDraft,
+                reuseContext: MediaReuseContext(capabilities: mediaCapabilities, modelPaths: variantSlots.compactMap { $0 }))
         }
     }
 

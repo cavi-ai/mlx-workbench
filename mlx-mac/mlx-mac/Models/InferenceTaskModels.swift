@@ -303,12 +303,13 @@ struct TaskRequest: Codable, Equatable, Sendable {
                 throw TaskProtocolError.invalidRequest
             }
         case .videoGeneration:
-            guard Set(parameters.keys).isSubset(of: ["prompt", "width", "height", "frames", "fps", "steps", "seed"]),
+            guard Set(parameters.keys).isSubset(of: ["prompt", "width", "height", "frames", "fps", "steps", "seed", "denoiser_cache", "cache_memory_mib"]),
                   parameters["prompt"]?.stringValue != nil,
                   ["width", "height", "frames", "steps", "seed"].allSatisfy({ parameters[$0] == nil || parameters[$0]?.integerValue != nil }),
                   parameters["fps"] == nil || parameters["fps"]?.numberValue?.isFinite == true else {
                 throw TaskProtocolError.invalidRequest
             }
+            try MediaReuseSettings.validate(parameters)
         case .unsupported:
             throw TaskProtocolError.invalidRequest
         }
@@ -420,6 +421,7 @@ struct TaskCapability: Codable, Equatable, Sendable {
     let modelVerification: Bool?
     let requestSchema: String?
     let runSchema: String?
+    var denoiserCache: MediaReuseCapability? = nil
     enum CodingKeys: String, CodingKey {
         case kind, cancellation
         case resultSchema = "result_schema"
@@ -427,6 +429,7 @@ struct TaskCapability: Codable, Equatable, Sendable {
         case modelVerification = "model_verification"
         case requestSchema = "request_schema"
         case runSchema = "run_schema"
+        case denoiserCache = "denoiser_cache"
     }
 }
 
@@ -435,6 +438,7 @@ struct TaskCapabilities: Codable, Equatable, Sendable {
     let requestSchema: String
     let runSchema: String
     let tasks: [TaskCapability]
+    var model: MediaSettingsBinding? = nil
     var isSupported: Bool {
         schema == "task-capabilities/1" && requestSchema == "task-request/1" && runSchema == "task-run/1"
     }
@@ -465,7 +469,7 @@ struct TaskCapabilities: Codable, Equatable, Sendable {
     func requestSchema(for kind: TaskKind) -> String? { tasks.first(where: { $0.kind == kind })?.requestSchema ?? requestSchema }
     func runSchema(for kind: TaskKind) -> String? { tasks.first(where: { $0.kind == kind })?.runSchema ?? runSchema }
     enum CodingKeys: String, CodingKey {
-        case schema, tasks
+        case schema, tasks, model
         case requestSchema = "request_schema"
         case runSchema = "run_schema"
     }

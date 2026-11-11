@@ -2,12 +2,17 @@ import Foundation
 
 protocol InferenceTaskAPI: Sendable {
     func taskCapabilities() async throws -> TaskCapabilities
+    func taskMediaCapabilities(modelPath: String) async throws -> TaskCapabilities
     func taskStart(_ request: TaskRequest) async throws -> TaskRecord
     func taskStatus(id: String) async throws -> TaskRecord
     func taskList(limit: Int) async throws -> TaskPage
     func taskResult(id: String) async throws -> TaskResultResponse
     func taskCancel(id: String) async throws -> TaskRecord
     func taskVerifyModel(id: String) async throws -> TaskModelVerification
+}
+
+extension InferenceTaskAPI {
+    func taskMediaCapabilities(modelPath: String) async throws -> TaskCapabilities { try await taskCapabilities() }
 }
 
 enum ClassificationQuestionType: String, CaseIterable, Identifiable, Sendable {
@@ -384,6 +389,7 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
     var fps = ""
     var steps = ""
     var seed = ""
+    var reuse = MediaReuseSettings()
 
     var validationError: String? {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the video to generate." }
@@ -413,6 +419,7 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
             ?? request.parameters["fps"]?.numberValue.map { String($0) } ?? ""
         steps = request.parameters["steps"]?.integerValue.map(String.init) ?? ""
         seed = request.parameters["seed"]?.integerValue.map(String.init) ?? ""
+        reuse = try MediaReuseSettings(parameters: request.parameters)
     }
 
     /// Entered settings only; blank fields are left to the engine planner.
@@ -425,6 +432,7 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
         if let value = try Rules.fps.value(fps) { values["fps"] = .number(Double(value)) }
         if let value = try Rules.steps.value(steps) { values["steps"] = .number(Double(value)) }
         if let value = try InferenceSettings.seed.value(seed) { values["seed"] = .number(Double(value)) }
+        values.merge(try reuse.parameters) { _, value in value }
         return values
     }
 }
@@ -445,6 +453,7 @@ final class InferenceTaskCoordinator: ObservableObject {
     @Published private(set) var hasMoreRecent = false
     @Published private(set) var selectedTask: TaskRecord?
     @Published private(set) var selectedResult: TaskResultResponse?
+    @Published private(set) var selectedRequest: TaskRequest?
     @Published private(set) var verifiedResult: VerifiedTaskArtifact?
     @Published private(set) var verifiedOutput: VerifiedTaskArtifact?
     @Published private(set) var verifiedInput: VerifiedTaskArtifact?
@@ -457,6 +466,8 @@ final class InferenceTaskCoordinator: ObservableObject {
     @Published private(set) var cancellationPending = false
     @Published private(set) var lastReusedTaskKind: TaskKind?
     @Published private(set) var reuseRevision = UUID()
+    @Published var mediaReview: MediaReuseReview?
+    let mediaCapabilities: MediaReuseCapabilities
     let audio = AudioClipPlayer()
     let video = VideoComparisonPlayer()
 
@@ -472,6 +483,7 @@ final class InferenceTaskCoordinator: ObservableObject {
     init(api: any InferenceTaskAPI, artifactRoot: URL, fileManager: FileManager = .default,
          pollInterval: Duration = .seconds(2), clearsUncertainStartOnRefresh: Bool = true) {
         self.api = api
+        self.mediaCapabilities = MediaReuseCapabilities(api: api)
         self.artifactRoot = artifactRoot
         self.fileManager = fileManager
         self.pollInterval = pollInterval
@@ -497,6 +509,7 @@ final class InferenceTaskCoordinator: ObservableObject {
     }
 
     func copyDrafts(from other: InferenceTaskCoordinator) {
+        mediaReview = nil
         classificationDraft = other.classificationDraft
         embeddingDraft = other.embeddingDraft
         meshGenerationDraft = other.meshGenerationDraft
@@ -524,6 +537,7 @@ final class InferenceTaskCoordinator: ObservableObject {
         stopPlayback()
         selectedTask = record
         selectedResult = nil
+        selectedRequest = nil
         verifiedResult = nil
         verifiedOutput = nil
         verifiedInput = nil
@@ -532,7 +546,7 @@ final class InferenceTaskCoordinator: ObservableObject {
         else { await inspect(id: id) }
     }
 
-    func start(kind: TaskKind, model: LibraryModel) async {
+    func start(kind: TaskKind, model: LibraryModel, review: MediaReuseReview? = nil) async {
         guard canStart else { return }
         needsEngineSetup = false
         guard model.readiness == .ready, kind.modelTaskType != nil, model.item.task?.type == kind.modelTaskType else {
@@ -556,6 +570,11 @@ final class InferenceTaskCoordinator: ObservableObject {
             }
         }
         catch { self.error = AppHost.render(error); return }
+        if let review, review.request != request {
+            mediaReview = nil
+            error = "The generation settings changed. Review this job again."
+            return
+        }
         stopPlayback()
         busy = true
         cancellationPending = false
@@ -563,13 +582,31 @@ final class InferenceTaskCoordinator: ObservableObject {
         startOutcomeUnknown = false
         defer { busy = false }
         do {
-            let capabilities = try await api.taskCapabilities()
+            let adaptive = request.parameters["denoiser_cache"]?.stringValue == "adaptive"
+            let capabilities = adaptive ? try await api.taskMediaCapabilities(modelPath: request.modelPath) : try await api.taskCapabilities()
+            if adaptive { mediaCapabilities.record(capabilities, path: request.modelPath) }
             if let reason = capabilities.unavailabilityReason(for: request) {
                 cancellationPending = false
                 needsEngineSetup = true
                 error = "\(reason) Open Health and run the setup assistant to select a compatible engine, then try again. Your inputs are retained."
                 return
             }
+            if adaptive {
+                try capabilities.validateReuse(request)
+                guard !cancellationPending else { mediaReview = nil; cancellationPending = false; return }
+                guard let binding = capabilities.model else { throw TaskProtocolError.invalidRequest }
+                if let review {
+                    guard review.binding == binding else {
+                        mediaReview = nil
+                        error = "The model config changed. Refresh its settings and review this job again."
+                        return
+                    }
+                } else {
+                    mediaReview = MediaReuseReview(request: request, binding: binding)
+                    return
+                }
+            }
+            mediaReview = nil
             let record = try await api.taskStart(request)
             guard let taskUUID = UUID(uuidString: record.id), taskUUID.uuidString.lowercased() == record.id else {
                 startOutcomeUnknown = true
@@ -603,6 +640,7 @@ final class InferenceTaskCoordinator: ObservableObject {
             error = engine.localizedDescription
         } catch {
             cancellationPending = false
+            mediaReview = nil
             self.error = AppHost.render(error)
         }
     }
@@ -693,6 +731,13 @@ final class InferenceTaskCoordinator: ObservableObject {
             }
             selectedTask = response.task
             selectedResult = response
+            selectedRequest = nil
+            if response.task.kind == .meshGeneration || response.task.kind == .videoGeneration,
+               let artifact = try? await TaskArtifactVerifier.verify(reference: response.task.request, taskID: id, root: artifactRoot),
+               let data = artifact.json.flatMap({ try? JSONEncoder().encode($0) }),
+               let request = try? JSONDecoder().decode(TaskRequest.self, from: data),
+               (try? request.validate()) != nil, request.kind == response.task.kind,
+               request.modelPath == response.task.modelPath { selectedRequest = request }
             verifiedResult = json
             verifiedOutput = output
             verifiedInput = input
@@ -766,6 +811,16 @@ final class InferenceTaskCoordinator: ObservableObject {
         let data = try encoder.encode(JSONValue.object(safeFields))
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: destination, options: .atomic)
+    }
+
+    func exportRequest(id: String, to destination: URL) async throws {
+        let response = try await api.taskResult(id: id)
+        let artifact = try await TaskArtifactVerifier.verify(reference: response.task.request, taskID: id, root: artifactRoot)
+        guard let json = artifact.json else { throw TaskArtifactVerificationError.invalidRequest }
+        let request = try JSONDecoder().decode(TaskRequest.self, from: JSONEncoder().encode(json))
+        try request.validate()
+        guard request.kind == response.task.kind, request.modelPath == response.task.modelPath else { throw TaskArtifactVerificationError.invalidRequest }
+        try await TaskArtifactVerifier.exportFile(reference: response.task.request, taskID: id, root: artifactRoot, to: destination)
     }
 
     func exportAudio(id: String, to destination: URL) async throws {

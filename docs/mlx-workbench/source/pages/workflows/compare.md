@@ -67,6 +67,21 @@ Leave **Expected answer** at **Not scored** to record a question's answer withou
 
 A choice answer is the model's chosen label. A score answer is the most likely level; the reported expected level is shown beside it. A true-or-false answer is true when its reported probability is 0.5 or higher. The lane metric pools every scored question across prompts. Each answer shows its probability, and wrong answers show the probability given to the expected one. Probabilities are the models' reported values; Compare never recalibrates them. Each lane keeps the returned answers as JSON.
 
+### Media reuse settings
+
+Video and 3D prompt editors include **Performance & memory**. Standard is the
+default. Experimental reuse is selectable only when the engine advertises it for
+every selected model: single-model Wan2.1 text-to-video or TripoSG. The feature-cache
+allowance is separate from weights and allocator memory and accepts 8–4,096 MiB.
+
+Each prompt keeps its chosen mode and allowance through saving, duplication,
+recorded-run setup reuse and JSON export. Each lane checks current eligibility
+before generation. Unsupported models fail without generating output.
+Results show requested mode alongside reported full/reused steps and fallback;
+timing remains the model's reported measurement. A same-seed comparison still
+requires visual quality review. Approximate outputs are not labeled equivalent
+because generation succeeded, and media results do not become chat recommendations.
+
 ### 3D generation
 
 Choose **3D generation** for ready TripoSG, TRELLIS.2 and Pixal3D models converted by the engine's `mlx-3d` backend. Install that backend before conversion. Keep the converted directory under a model folder configured in Settings, then scan Library and use **Select for Compare**.

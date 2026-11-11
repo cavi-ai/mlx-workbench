@@ -33,6 +33,7 @@ struct MediaRunOutput: Sendable, Equatable {
     var frames: Int?
     var secondsPerFrame: Double?
     var pixelStd: Double?
+    var denoiserCache: JSONValue?
     /// Classification: the returned answers, graded by `ComparisonMediaScoring`.
     var decision: DecisionResult?
 
@@ -48,7 +49,8 @@ struct MediaRunOutput: Sendable, Equatable {
         steps: Int? = nil,
         frames: Int? = nil,
         secondsPerFrame: Double? = nil,
-        pixelStd: Double? = nil
+        pixelStd: Double? = nil,
+        denoiserCache: JSONValue? = nil
     ) {
         self.text = text
         self.seconds = seconds
@@ -62,6 +64,7 @@ struct MediaRunOutput: Sendable, Equatable {
         self.frames = frames
         self.secondsPerFrame = secondsPerFrame
         self.pixelStd = pixelStd
+        self.denoiserCache = denoiserCache
     }
 }
 
@@ -149,7 +152,7 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
             return MediaRunOutput(
                 seconds: result.seconds, loadSeconds: result.loadSeconds, peakMemoryGB: result.peakMemoryGB,
                 steps: result.steps, frames: result.frames, secondsPerFrame: result.secondsPerFrame,
-                pixelStd: result.pixelStd
+                pixelStd: result.pixelStd, denoiserCache: result.denoiserCache
             )
         case .meshGeneration:
             guard let input = request.inputURL else { throw ComparisonMediaError.missingInput }
@@ -161,7 +164,7 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
             else { summary = "GLB mesh" }
             return MediaRunOutput(text: summary,
                                   seconds: result.seconds, loadSeconds: result.loadSeconds,
-                                  peakMemoryGB: result.peakMemoryGB)
+                                  peakMemoryGB: result.peakMemoryGB, denoiserCache: result.denoiserCache)
         case .classification:
             guard let questions = entry.decisionQuestions else { throw ComparisonMediaError.missingQuestions }
             let result = try await api.decide(path: request.modelPath,
@@ -240,6 +243,7 @@ enum ComparisonMediaScoring {
             secondsPerFrame: secondsPerFrame,
             pixelStd: output.pixelStd
         )
+        sample.denoiserCache = output.denoiserCache
         sample.decision = decision
         return sample
     }
