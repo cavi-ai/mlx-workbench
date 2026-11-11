@@ -226,6 +226,34 @@ actor StubMediaRunner: ComparisonMediaRunner {
 }
 
 final class ComparisonMediaTests: XCTestCase {
+    func testMediaReuseSurvivesPromptEditingRequestsAndResults() throws {
+        let settings = MediaParameters(steps: 12, seed: 42, denoiserCache: "adaptive", cacheMemoryMiB: 64)
+        let entry = PromptEntry(id: "reuse", text: "Slow camera pan", media: settings)
+        var draft = PromptSetDraft.Prompt(entry, mode: .videoGeneration)
+        draft.text = "A slower camera pan"
+        let edited = try draft.entry(for: .videoGeneration)
+        XCTAssertEqual(edited.media, settings)
+        let decoded = try JSONDecoder().decode(PromptEntry.self, from: JSONEncoder().encode(edited))
+        XCTAssertEqual(decoded.media?.denoiserCache, "adaptive")
+        XCTAssertEqual(decoded.media?.cacheMemoryMiB, 64)
+        for arguments in [WorkbenchAPI.videoArguments(path: "/video", prompt: edited.text, out: "/out.mp4", parameters: settings),
+                          WorkbenchAPI.meshArguments(path: "/mesh", image: "/input.png", out: "/out.glb", parameters: settings)] {
+            XCTAssertEqual(Array(arguments.suffix(4)), ["--denoiser-cache", "adaptive", "--cache-memory-mib", "64"])
+        }
+        let raw: JSONValue = .object(["mode": .string("adaptive"), "full_steps": .number(8), "reused_steps": .number(4),
+            "peak_cache_bytes": .number(1024), "memory_limit_bytes": .number(67_108_864)])
+        let output = MediaRunOutput(seconds: 4.5, steps: 12, denoiserCache: raw)
+        let sample = ComparisonMediaScoring.sample(mode: .videoGeneration, entry: edited, output: output, artifact: "out.mp4")
+        let restored = try JSONDecoder().decode(ComparisonSample.self, from: JSONEncoder().encode(sample))
+        XCTAssertEqual(restored.denoiserCache, raw)
+        XCTAssertEqual(restored.seconds, 4.5)
+        draft.reuse.adaptive = false
+        let standard = try draft.entry(for: .videoGeneration)
+        XCTAssertNil(standard.media?.denoiserCache)
+        XCTAssertNil(standard.media?.cacheMemoryMiB)
+        XCTAssertEqual(standard.media?.seed, 42)
+    }
+
     func testMeshArgumentsAndDraftValidateRecordedSettings() throws {
         let parameters = MediaParameters(steps: 30, seed: 17, meshResolution: 64)
         XCTAssertEqual(WorkbenchAPI.meshArguments(path: "/Models/shape", image: "/Images/input.png", out: "/Outputs/shape.glb", parameters: parameters),

@@ -33,9 +33,17 @@ When the output appears, the conversion quality gate runs. Chat models are serve
 
 ## 5. Serve it
 
-Open **Run** and select the verified model. The memory runway shows what is loaded, what this model needs and whether it fits at the chosen context. **Preview serve**, then **Confirm and run**. The endpoint speaks the OpenAI chat API on `127.0.0.1`.
+Open **Serving** and choose the verified model. **Save as endpoint** keeps a
+stable port and loads weights on the first request. Review its port,
+authentication, residency and inference settings, then add the endpoint.
+**Start now** offers a temporary server with **Preview serve** and **Confirm and
+run**. Model servers bind to loopback.
 
-To keep it serving across app restarts, add it as an always-on endpoint in Run's **Endpoints** section. New endpoints load on request: the port stays open and the model loads on the first inference request. See [Run and endpoints](../workflows/run.md).
+Select the endpoint for **API & security**, **Inference**, **Memory** and
+**Connect apps**. Copy its base URL and model ID, or choose a client’s setup.
+Use **Monitor** for model status, reported token usage and response throughput.
+Closing the main window keeps serving; the CPU icon in the menu bar provides
+quick access. See [Serving and Monitor](../workflows/run.md).
 
 ## 6. Wire a client
 

@@ -64,8 +64,12 @@ enum TaskArtifactVerifier {
     /// Stream the checked artifact to a private temporary file and publish it only after
     /// the copied bytes match the receipt. Preview capacity never limits export size.
     static func exportMesh(reference: TaskArtifactReference, taskID: String, root: URL, to destination: URL) async throws {
+        try await exportFile(reference: reference, taskID: taskID, root: root, to: destination, mesh: true)
+    }
+
+    static func exportFile(reference: TaskArtifactReference, taskID: String, root: URL, to destination: URL, mesh: Bool = false) async throws {
         try await Task.detached(priority: .userInitiated) {
-            _ = try verifySynchronously(reference: reference, taskID: taskID, root: root, mesh: true)
+            _ = try verifySynchronously(reference: reference, taskID: taskID, root: root, mesh: mesh)
             let input = FileHandle(fileDescriptor: try openWithoutSymlinks(reference.path), closeOnDealloc: true)
             var info = stat()
             guard fstat(input.fileDescriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {

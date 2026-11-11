@@ -160,6 +160,12 @@ final class WorkbenchReviewUITests: XCTestCase {
                     result = dict(schema='speak/1' if record['kind'] == 'speak' else 'music/1', model=record['model_path'], backend='mlx-audio', path=str(path),
                         output_artifact=reference(path), audio_seconds=15, sample_rate=16000, seconds=0.1,
                         duration=15, steps=30, seed=42)
+                if request['parameters'].get('denoiser_cache') == 'adaptive':
+                    fallback = (root / 'media-reuse-fallback').exists()
+                    result['seconds'] = 1.25
+                    result['denoiser_cache'] = dict(mode='adaptive', full_steps=10 if fallback else 8, reused_steps=0 if fallback else 2,
+                        peak_cache_bytes=0 if fallback else 24576, memory_limit_bytes=request['parameters'].get('cache_memory_mib',256)*1024**2)
+                    if fallback: result['denoiser_cache']['fallback_reason'] = 'memory_limit'
                 record.update(state='succeeded', completed_at='2026-01-01T00:00:01Z', result=artifact(record['id'], 'result.json', result))
             action = args[1]
             if action == 'capabilities':
@@ -187,6 +193,16 @@ final class WorkbenchReviewUITests: XCTestCase {
                     for kind, result in [('embedding','embed/1'), ('mesh_generation','mesh/1')]])
                 if (root / 'legacy-image-tasks').exists():
                     data['tasks'] = [task for task in data['tasks'] if task['kind'] != 'image_generation']
+                if '--model-path' in args:
+                    model = pathlib.Path(args[args.index('--model-path')+1]).resolve()
+                    contents = (model / 'config.json').read_bytes()
+                    config = json.loads(contents)
+                    data['model'] = dict(path=str(model), config_sha256=hashlib.sha256(contents).hexdigest())
+                    for task in data['tasks']:
+                        if task['kind'] not in ('mesh_generation','video_generation'): continue
+                        supported = config.get('model_type') == 'triposg' if task['kind'] == 'mesh_generation' else config.get('model_type') == 't2v' and config.get('model_version') == '2.1' and not config.get('dual_model',False)
+                        task['denoiser_cache'] = dict(modes=['off','adaptive'] if supported else ['off'], default='off', approximate=True,
+                            cache_memory_mib=dict(minimum=8,maximum=4096,default=256), unavailable_reason='This architecture does not support adaptive reuse.')
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
@@ -988,6 +1004,154 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Library-embedding-restart-and-reuse")
     }
 
+    private func openMediaControls(in container: XCUIElement? = nil) {
+        guard let surface = container ?? app else { XCTFail("The test application is unavailable"); return }
+        let disclosure = surface.disclosureTriangles.matching(NSPredicate(format: "label CONTAINS %@", "Performance")).firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 15), app.debugDescription)
+        if !disclosure.isHittable, let scroll = surface.scrollViews.allElementsBoundByIndex.first { scroll.scroll(byDeltaX: 0, deltaY: 250) }
+        let window = app.windows.firstMatch
+        let frame = disclosure.frame.intersection(window.frame)
+        XCTAssertFalse(frame.isNull)
+        // Native disclosure hit frames include the label; toggle via the leading arrow.
+        if disclosure.value as? Int != 1 {
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
+                dy: frame.midY - window.frame.minY
+            )).click()
+        }
+        XCTAssertEqual(disclosure.value as? Int, 1, app.debugDescription)
+    }
+
+    private func openModelInUse(_ name: String) {
+        let row = app.outlines.staticTexts[name].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        let use = app.buttons["library-use-model"]
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); use.click()
+    }
+
+    private func showMediaResult(_ summary: String) {
+        let result = text(containing: summary)
+        XCTAssertTrue(result.waitForExistence(timeout: 15))
+        let scroll = app.scrollViews.containing(.button, identifier: "task-start").firstMatch
+        for _ in 0..<8 where !result.isHittable {
+            let bounds = scroll.frame.intersection(app.windows.firstMatch.frame)
+            let frame = result.frame
+            let delta: CGFloat = frame.isEmpty ? -300 : max(-300, min(300, bounds.midY - frame.midY))
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(result.isHittable, app.debugDescription)
+    }
+
+    private func chooseMeshInput() throws -> URL {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        for y in 0..<2 { for x in 0..<2 { bitmap.setColor(.systemRed, atX: x, y: y) } }
+        let source = root.appendingPathComponent("reuse-input.png")
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        return source
+    }
+
+    func testMediaReuseReviewsConfigAndReportsMemoryFallback() throws {
+        let model = try installTaskModel(kind: "mesh_generation", name: "Reuse mesh")
+        try Data(#"{"model_type":"triposg"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        let source = try chooseMeshInput()
+        try Data().write(to: root.appendingPathComponent("media-reuse-fallback"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true); openModelInUse("Reuse mesh")
+        replace(app.textFields["task-mesh-image-path"], with: source.path)
+        openMediaControls()
+        let toggle = app.checkBoxes["media-adaptive-reuse"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), app.debugDescription)
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle)
+        wait(for: [ready], timeout: 15); XCTAssertEqual(toggle.value as? Int, 0); toggle.click()
+        replace(app.textFields["media-cache-memory"], with: "7")
+        XCTAssertFalse(app.buttons["task-start"].isEnabled)
+        replace(app.textFields["media-cache-memory"], with: "64")
+        app.buttons["task-start"].click()
+        let confirm = app.buttons["media-reuse-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10)); XCTAssertTrue(try taskSubmissions().isEmpty)
+        capture("Media-reuse-review")
+        try Data(#"{"model_type":"triposg","revision":2}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        confirm.click()
+        XCTAssertTrue(text(containing: "config changed").waitForExistence(timeout: 15))
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        app.buttons["task-start"].click(); XCTAssertTrue(confirm.waitForExistence(timeout: 10)); confirm.click()
+        waitForTaskState("succeeded")
+        showMediaResult("10 full · 0 reused steps")
+        XCTAssertTrue(text(containing: "exceeded the allowance").exists)
+        let records = try taskSubmissions(); XCTAssertEqual(records.count, 1)
+        let reference = try XCTUnwrap(records[0]["request"] as? [String: Any])
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: try XCTUnwrap(reference["path"] as? String)))) as? [String: Any])
+        let parameters = try XCTUnwrap(request["parameters"] as? [String: Any])
+        XCTAssertEqual(parameters["denoiser_cache"] as? String, "adaptive"); XCTAssertEqual(parameters["cache_memory_mib"] as? Int, 64)
+        capture("Media-reuse-memory-fallback")
+    }
+
+    func testUnsupportedMediaModelsKeepStandardComputation() throws {
+        let model = try installTaskModel(kind: "mesh_generation", name: "Standard mesh")
+        try Data(#"{"model_type":"pixal3d"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        let source = try chooseMeshInput()
+        launch(appearance: "Light", route: "models", isolatedHome: true); openModelInUse("Standard mesh")
+        replace(app.textFields["task-mesh-image-path"], with: source.path); openMediaControls()
+        XCTAssertTrue(text(containing: "does not support adaptive reuse").waitForExistence(timeout: 15))
+        let toggle = app.checkBoxes["media-adaptive-reuse"]
+        XCTAssertFalse(toggle.isEnabled); XCTAssertEqual(toggle.value as? Int, 0)
+        XCTAssertTrue(app.buttons["task-start"].isEnabled)
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        resizeWindow(width: 740, height: 560)
+        capture("Media-standard-unsupported-minimum")
+    }
+
+    @MainActor
+    func testWanReuseKeepsParametersAndReportedSteps() async throws {
+        let model = try installTaskModel(kind: "video_generation", name: "Reuse video")
+        try Data(#"{"model_type":"t2v","model_version":"2.1"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        try writeStudyReviewClip(to: root.appendingPathComponent("fixture-video.mp4"), frames: 30)
+        launch(appearance: "Dark", route: "models", isolatedHome: true); openModelInUse("Reuse video")
+        replace(app.textFields["task-video-generation-prompt"], with: "Slow camera pan")
+        openMediaControls()
+        let toggle = app.checkBoxes["media-adaptive-reuse"]
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle)
+        await fulfillment(of: [ready], timeout: 15); toggle.click()
+        replace(app.textFields["media-cache-memory"], with: "64")
+        app.buttons["task-start"].click()
+        let confirm = app.buttons["media-reuse-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10)); confirm.click(); waitForTaskState("succeeded")
+        showMediaResult("8 full · 2 reused steps")
+        XCTAssertTrue(app.buttons["task-export-video"].exists)
+        XCTAssertEqual(try taskSubmissions().count, 1)
+        capture("Media-Wan-reuse-result")
+    }
+
+    func testComparisonPromptSetKeepsAdaptiveReuseSettings() throws {
+        let model = try installTaskModel(kind: "video_generation", name: "Comparison video")
+        try Data(#"{"model_type":"t2v","model_version":"2.1"}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Comparison video"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick(); app.buttons["Compare"].firstMatch.click()
+        let newSet = app.buttons["New set…"]
+        XCTAssertTrue(newSet.waitForExistence(timeout: 15)); newSet.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        replace(sheet.textFields["Prompt set name"], with: "Reuse video set")
+        replace(sheet.textFields["Prompt 1 prompt"], with: "Slow camera pan")
+        openMediaControls(in: sheet)
+        let toggle = sheet.checkBoxes["media-adaptive-reuse"]
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle)
+        wait(for: [ready], timeout: 15); toggle.click()
+        replace(sheet.textFields["media-cache-memory"], with: "64")
+        capture("Media-Compare-reuse-prompt")
+        sheet.buttons["Save prompt set"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 15))
+        let file = root.appendingPathComponent("Library/Application Support/mlx-workbench/prompt-sets.json")
+        let sets = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]])
+        let set = try XCTUnwrap(sets.first { $0["name"] as? String == "Reuse video set" })
+        let prompts = try XCTUnwrap(set["prompts"] as? [[String: Any]])
+        let media = try XCTUnwrap(prompts.first?["media"] as? [String: Any])
+        XCTAssertEqual(media["denoiserCache"] as? String, "adaptive"); XCTAssertEqual(media["cacheMemoryMiB"] as? Int, 64)
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+    }
+
     func testLibraryMeshTaskPreviewAndRetainedInputReuse() throws {
         _ = try installTaskModel(kind: "mesh_generation", name: "Fixture 3D generator")
         let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
@@ -1199,7 +1363,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let (peer, port, _) = try installUseFixture()
         defer { peer.stop() }
         launch(appearance: "Light", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-use-model-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
         let input = app.textViews["use-message"]
@@ -1292,7 +1456,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
         try Data().write(to: root.appendingPathComponent("finish-music-task"))
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-use-model-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
         let caption = app.textFields["task-music-caption"]
@@ -1323,8 +1487,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             "receipts_dir": receipts, "receipt": receipts + "/.mlx-agent-receipts/serve/\(port).json"]
         try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
         try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
-        launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        select("Serving")
         let open = app.buttons["run-model-task-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
         let caption = app.textFields["task-music-caption"]
@@ -3180,7 +3344,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let recorded = try JSONSerialization.data(withJSONObject: servers)
         try recorded.write(to: serverFile)
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let open = app.buttons["run-try-prompt-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15))
         open.click()
@@ -3238,7 +3402,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let failure = root.appendingPathComponent("fail-server-stop")
         try Data().write(to: failure)
         launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let actions = app.menuButtons["Actions for Qwen"]
         XCTAssertTrue(actions.waitForExistence(timeout: 15))
         let content = app.scrollViews.containing(.menuButton, identifier: "Actions for Qwen").firstMatch
@@ -3271,10 +3435,19 @@ final class WorkbenchReviewUITests: XCTestCase {
              "adapter_path": "/fixture/adapters/tuned", "adapter_identity": ["adapters.safetensors": ["sha256": "fixture", "bytes": 4]]]
         ]
         try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
-        launch(appearance: "Dark", isolatedHome: true)
-        select("Run")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        select("Serving")
+        let second = app.staticTexts.matching(identifier: "serving-model-server-org/Qwen-8767").firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 15)); second.click()
         let configure = app.buttons["run-configure-clients-8767"]
         XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
+        let setup = app.disclosureTriangles["Preview and apply client configuration"].firstMatch
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        setup.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
+        let refresh = app.buttons["Refresh clients and servers"].firstMatch
+        XCTAssertTrue(refresh.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(refresh.frame.maxX, app.windows.firstMatch.frame.maxX,
+                                 "Embedded client controls must fit the selected model workspace")
         let preview = app.buttons["Preview client wiring"]
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)
@@ -3392,7 +3565,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try Data("[]".utf8).write(to: root.appendingPathComponent("servers.json"))
         try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
         launch(appearance: "Light", isolatedHome: true)
-        select("Run")
+        select("Serving")
         let actions = app.menuButtons["Actions for Protected-local"]
         XCTAssertTrue(actions.waitForExistence(timeout: 10))
         actions.click(); app.menuItems["Require API key…"].click()
@@ -4355,7 +4528,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         resizeWindow(width: 1160, height: 920)
         let row = app.outlines.staticTexts[name].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
-        select("Run")
+        select("Serving")
+        app.radioButtons["Start now"].firstMatch.click()
     }
 
     private func revealInferenceControl(_ control: XCUIElement) {
@@ -4370,15 +4544,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func expandGenerationDefaults() {
-        let disclosure = app.disclosureTriangles["Generation defaults"].firstMatch
-        revealInferenceControl(disclosure)
-        if disclosure.value as? Int != 1 {
-            let window = app.windows.firstMatch, frame = disclosure.frame.intersection(app.windows.firstMatch.frame)
-            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
-                dy: frame.midY - window.frame.minY)).click()
-        }
-        XCTAssertEqual(disclosure.value as? Int, 1)
+        revealInferenceControl(app.popUpButtons["serve-output-length"])
     }
 
     func testRunTextInferenceSettingsPreviewAndInvalidate() throws {
@@ -4470,7 +4636,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let classifier = app.staticTexts["Local classifier"].firstMatch
         XCTAssertTrue(classifier.waitForExistence(timeout: 15))
         classifier.click()
-        select("Run")
+        select("Serving")
         let saveAsEndpoint = app.radioButtons["Save as endpoint"].firstMatch
         XCTAssertTrue(saveAsEndpoint.waitForExistence(timeout: 10))
         saveAsEndpoint.click()
@@ -4500,9 +4666,131 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(calls.contains("\"serve\", \"start\""))
     }
 
+    func testModelSourcesShowAllProvidersAndSharedFolders() throws {
+        let secondRoot = root.appendingPathComponent("second-provider")
+        try FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["path": "org/Alternate-text"])
+            .write(to: secondRoot.appendingPathComponent("chat-endpoint.json"))
+        let first = try HostedUIFixture(root: root), second = try HostedUIFixture(root: secondRoot)
+        let firstPort = try first.start(), secondPort = try second.start()
+        defer { first.stop(); second.stop() }
+        let providers: [[String: Any]] = [
+            ["id": UUID().uuidString, "name": "Ollama", "provider": "ollama", "baseURL": "http://127.0.0.1:\(firstPort)"],
+            ["id": UUID().uuidString, "name": "Other local server", "provider": "openAICompatible", "baseURL": "http://127.0.0.1:\(secondPort)"]]
+        let support = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let saved = try JSONSerialization.data(withJSONObject: providers)
+        try saved.write(to: support.appendingPathComponent("model-hosts.json"))
+        let configURL = root.appendingPathComponent("config.json")
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        config["gguf_roots"] = [root.appendingPathComponent("models").path]
+        config["mlx_roots"] = [root.appendingPathComponent("models").path, root.appendingPathComponent("output").path]
+        try JSONSerialization.data(withJSONObject: config).write(to: configURL)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        resizeWindow(width: 1260, height: 840)
+        select("Model sources")
+        app.buttons["sources-refresh"].click()
+        XCTAssertTrue(text(containing: "fixture-model:latest").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "Alternate-text").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.popUpButtons["sources-provider-picker"].exists)
+        XCTAssertTrue(app.buttons["sources-add-provider"].isHittable)
+        capture("Model-sources-all-providers")
+        app.buttons["sources-add-provider"].click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.textFields["model-host-url"].exists)
+        sheet.buttons["Cancel"].click()
+        XCTAssertEqual(try Data(contentsOf: support.appendingPathComponent("model-hosts.json")), saved)
+        app.radioButtons["Model folders"].click()
+        let shared = root.appendingPathComponent("models").path
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", shared, shared)).count, 1)
+        XCTAssertTrue(text(containing: "GGUF · MLX").exists)
+        XCTAssertTrue(app.buttons["Review duplicates"].isHittable)
+        capture("Model-sources-shared-folders")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["intake", "fetch"] || Array($0.prefix(2)) == ["serve", "start"] })
+    }
+
+    func testServingWorkspaceKeepsSettingsTogether() throws {
+        let model = try installTaskModel(kind: "text_llm", name: "Workspace text").path
+        let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let slot: [String: Any] = ["id": UUID().uuidString, "enabled": false, "port": 8766, "modelPath": model, "loadOnRequest": true]
+        try JSONSerialization.data(withJSONObject: [["slots": [slot], "installedAtLogin": false]])
+            .write(to: state.appendingPathComponent("endpoint-fleet.json"))
+        try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        resizeWindow(width: 1260, height: 840)
+        select("Serving")
+        XCTAssertTrue(app.textFields["serving-endpoint-port"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.textFields["serving-endpoint-port"].value as? String, "8766")
+        XCTAssertTrue(app.buttons["serving-copy-base-url"].exists)
+        let keyToggle = app.checkBoxes["serving-require-api-key"]
+        XCTAssertTrue(keyToggle.isHittable)
+        capture("Serving-API-security")
+        keyToggle.click()
+        let auth = app.sheets.firstMatch
+        XCTAssertTrue(auth.waitForExistence(timeout: 10)); auth.buttons["Cancel"].click()
+        app.radioButtons["Inference"].click()
+        let prompt = app.textViews["serve-system-prompt"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.click(); prompt.typeText("Use clear explanations.")
+        XCTAssertTrue(app.popUpButtons["serve-thinking"].exists)
+        capture("Serving-inference-defaults")
+        app.radioButtons["Memory"].click()
+        XCTAssertTrue(app.checkBoxes["endpoint-memory-release-after-request"].waitForExistence(timeout: 10))
+        capture("Serving-memory-controls")
+        resizeWindow(width: 740, height: 680)
+        app.radioButtons["API & security"].click()
+        XCTAssertTrue(app.textFields["serving-endpoint-port"].isHittable)
+        capture("Serving-API-security-minimum")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
+    func testMonitorShowsReportedUsageAndOpensExactSettings() throws {
+        let usage: [String: Any] = ["schema": 1, "scope": "gateway-process", "started_at": "2026-11-11T12:00:00Z", "captured_at": "2026-11-11T12:04:00Z", "requests": 4, "completed_requests": 3, "failed_requests": 1, "measured_requests": 2, "input_tokens": 1200, "output_tokens": 480,
+            "last_request": ["completed_at": "2026-11-11T12:04:00Z", "outcome": "completed", "input_tokens": 700, "output_tokens": 240, "response_seconds": 2.0, "output_tokens_per_second": 120.0]]
+        let servers: [[String: Any]] = [
+            ["repo": "org/Measured-text", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running", "receipt": "/fixture/measured.json", "jit": true, "model_state": "loaded", "active_requests": 0, "inference_telemetry": usage],
+            ["repo": "org/Other-text", "runtime": "mlx_lm", "port": 8767, "pid": 456, "state": "running", "receipt": "/fixture/other.json"]]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Light", route: "models", isolatedHome: true)
+        resizeWindow(width: 1380, height: 820)
+        select("Monitor")
+        XCTAssertTrue(app.staticTexts["1,200"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["480"].exists)
+        XCTAssertTrue(app.staticTexts["120.0"].exists)
+        XCTAssertTrue(text(containing: "2 with token usage").exists)
+        capture("Monitor-live-usage")
+        app.buttons["monitor-open-settings"].click()
+        XCTAssertTrue(app.staticTexts["http://127.0.0.1:8766/v1"].waitForExistence(timeout: 10))
+        app.radioButtons["Connect apps"].click()
+        let picker = app.popUpButtons["serving-client-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click(); app.menuItems["Codex"].click()
+        XCTAssertTrue(text(containing: "wire_api").waitForExistence(timeout: 10))
+        capture("Serving-client-Codex")
+        picker.click(); app.menuItems["Claude Code"].click()
+        XCTAssertTrue(text(containing: "ANTHROPIC_BASE_URL").waitForExistence(timeout: 10))
+        capture("Serving-client-Claude-Code")
+        app.windows.firstMatch.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 10))
+        XCTAssertNotEqual(app.state, .notRunning)
+        let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+        menu.click()
+        XCTAssertTrue(app.menuItems["Live Monitor"].waitForExistence(timeout: 10))
+        app.menuItems["Open MLX Workbench"].click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"serve\", \"stop\""))
+        XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
     func testProcessMemoryInspectorReadsWithoutStartingWork() throws {
         launch(appearance: "Dark")
-        select("Run")
+        select("Serving")
         let inspect = app.buttons["inspect-process-memory"].firstMatch
         XCTAssertTrue(inspect.waitForExistence(timeout: 10))
         XCTAssertTrue(inspect.isHittable)

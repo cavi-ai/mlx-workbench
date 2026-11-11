@@ -120,6 +120,7 @@ final class ManualWiringSession: ObservableObject {
 
 struct WireView: View {
     let appHost: AppHost
+    let fixedServer: ServerInfo?
     @ObservedObject private var wiring: WiringCoordinator
     @ObservedObject private var endpointTest: EndpointTestCoordinator
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
@@ -143,9 +144,13 @@ struct WireView: View {
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var credentialMessage: String?
 
-    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+    init(appHost: AppHost, fixedServer: ServerInfo? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        self.fixedServer = fixedServer
         self.onRouteSelection = onRouteSelection
+        if fixedServer != nil {
+            _layout = State(initialValue: ClientsLayout(viewportWidth: 0))
+        }
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
         _endpointTest = ObservedObject(wrappedValue: appHost.endpointTest)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
@@ -164,7 +169,10 @@ struct WireView: View {
     }
 
     private var selectedServer: ServerInfo? {
-        runningServers.first { $0.id == selectedServerID }
+        if let fixedServer {
+            return runningServers.first { $0.id == fixedServer.id && $0.pid == fixedServer.pid && $0.startedAt == fixedServer.startedAt }
+        }
+        return runningServers.first { $0.id == selectedServerID }
     }
     private var selectedEndpoint: WireEndpoint? { selectedServer.flatMap { WireEndpoint(server: $0) } }
     private var hasCurrentClientPreview: Bool { wiring.previewMatches(server: selectedServer) }
@@ -180,7 +188,7 @@ struct WireView: View {
             installations: wiring.installations,
             readings: wiring.readings,
             servers: appHost.modelWorkflow.servers,
-            selectedServerID: selectedServerID,
+            selectedServerID: selectedServer?.id ?? selectedServerID,
             pendingTargetID: hasCurrentClientPreview ? selectedServer?.id : nil,
             plannedClientIDs: Set(wiring.plans.map(\.clientID)),
             hasServerStatus: hasServerStatus
@@ -203,20 +211,12 @@ struct WireView: View {
     }
 
     var body: some View {
-        GeometryReader { viewport in
-            ScrollView {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                    clientWiringSection
-                    formSection
-                }
-                .frame(maxWidth: WorkbenchSize.Clients.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(WorkbenchSpacing.pageInset)
-            }
-            .defaultScrollAnchor(.top)
-            .onChange(of: viewport.size.width, initial: true) { _, width in
-                layout = ClientsLayout(viewportWidth: width, previous: layout)
-            }
+        Group {
+            if fixedServer != nil { clientWiringSection }
+            else { standalone }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            if fixedServer != nil { layout = ClientsLayout(viewportWidth: width, previous: layout) }
         }
         .task(id: isRouteActive) {
             hasServerStatus = false
@@ -240,6 +240,24 @@ struct WireView: View {
             WorkflowCaptureRequestView(models: [capture.model], initialModelPath: capture.model.path,
                 environment: appHost.watch.currentFingerprintDescription, endpoint: capture.endpoint,
                 initialHarness: capture.harness, onImport: { importAfterCapture = true; self.capture = nil })
+        }
+    }
+
+    private var standalone: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    clientWiringSection
+                    formSection
+                }
+                .frame(maxWidth: WorkbenchSize.Clients.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
+            }
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = ClientsLayout(viewportWidth: width, previous: layout)
+            }
         }
     }
 
@@ -329,7 +347,7 @@ struct WireView: View {
 
     @ViewBuilder
     private var endpointPicker: some View {
-        if !runningServers.isEmpty {
+        if fixedServer == nil && !runningServers.isEmpty {
             Picker("Endpoint", selection: $selectedServerID) {
                 Text("Choose a running server…").tag(String?.none)
                 ForEach(runningServers) { server in
@@ -594,6 +612,7 @@ struct WireView: View {
             else if matching.count > 1 { serverMessage = "The chosen model has multiple running endpoints. Choose the port to wire." }
             appHost.handoffs.finish(request, as: .wireClient)
         } else if !runningServers.contains(where: { $0.id == selectedServerID }) { selectedServerID = nil }
+        if let fixedServer { selectedServerID = selectedServer?.id; if selectedServer == nil { serverMessage = "This server changed or stopped. Select its current endpoint before connecting apps." } }
     }
 
     private func diffText(_ line: DiffLine) -> String {

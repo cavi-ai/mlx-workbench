@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E71200000000000000000402 /* ServingClientSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000401 /* ServingClientSetup.swift */; };
+		E71200000000000000000302 /* ServingMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000301 /* ServingMonitorView.swift */; };
+		E71200000000000000000502 /* ModelSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000501 /* ModelSourcesView.swift */; };
+		E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000201 /* ServingWorkspaceViews.swift */; };
+		E71200000000000000000102 /* ServingTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000101 /* ServingTelemetry.swift */; };
 		INVTSTB1 /* ServingInventoryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = INVTSTF1 /* ServingInventoryCoordinatorTests.swift */; };
 		MEMTSTB1 /* EndpointMemoryPolicyReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */; };
 		MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNGTSTF1 /* ManagedModelInstallStoreTests.swift */; };
@@ -364,9 +369,17 @@
 		E70600000000000000000702 /* UseWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000701 /* UseWorkspaceView.swift */; };
 		E70600000000000000000802 /* UseWorkViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000801 /* UseWorkViews.swift */; };
 		E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000901 /* UseWorkspaceCommands.swift */; };
+		E71100000000000000000102 /* MediaReuseSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000101 /* MediaReuseSettings.swift */; };
+		E71100000000000000000202 /* MediaReuseCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000201 /* MediaReuseCapabilities.swift */; };
+		E71100000000000000000302 /* MediaReuseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000301 /* MediaReuseViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		E71200000000000000000401 /* ServingClientSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingClientSetup.swift; sourceTree = "<group>"; };
+		E71200000000000000000301 /* ServingMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingMonitorView.swift; sourceTree = "<group>"; };
+		E71200000000000000000501 /* ModelSourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ModelSourcesView.swift; sourceTree = "<group>"; };
+		E71200000000000000000201 /* ServingWorkspaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingWorkspaceViews.swift; sourceTree = "<group>"; };
+		E71200000000000000000101 /* ServingTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ServingTelemetry.swift; sourceTree = "<group>"; };
 		INVTSTF1 /* ServingInventoryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryCoordinatorTests.swift; path = ServingInventoryCoordinatorTests.swift; sourceTree = "<group>"; };
 		MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointMemoryPolicyReviewTests.swift; path = EndpointMemoryPolicyReviewTests.swift; sourceTree = "<group>"; };
 		MNGTSTF1 /* ManagedModelInstallStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStoreTests.swift; path = ManagedModelInstallStoreTests.swift; sourceTree = "<group>"; };
@@ -739,6 +752,9 @@
 		E70600000000000000000701 /* UseWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkspaceView.swift; sourceTree = "<group>"; };
 		E70600000000000000000801 /* UseWorkViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkViews.swift; sourceTree = "<group>"; };
 		E70600000000000000000901 /* UseWorkspaceCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/UseWorkspaceCommands.swift; sourceTree = "<group>"; };
+		E71100000000000000000101 /* MediaReuseSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/MediaReuseSettings.swift; sourceTree = "<group>"; };
+		E71100000000000000000201 /* MediaReuseCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MediaReuseCapabilities.swift; sourceTree = "<group>"; };
+		E71100000000000000000301 /* MediaReuseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/MediaReuseViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -814,6 +830,14 @@
 				E70600000000000000000401 /* UseChatClient.swift */,
 				E70600000000000000000201 /* UseSessionStore.swift */,
 				E70600000000000000000101 /* UseSession.swift */,
+				E71100000000000000000301 /* MediaReuseViews.swift */,
+				E71100000000000000000201 /* MediaReuseCapabilities.swift */,
+				E71100000000000000000101 /* MediaReuseSettings.swift */,
+				E71200000000000000000301 /* ServingMonitorView.swift */,
+				E71200000000000000000501 /* ModelSourcesView.swift */,
+				E71200000000000000000401 /* ServingClientSetup.swift */,
+				E71200000000000000000201 /* ServingWorkspaceViews.swift */,
+				E71200000000000000000101 /* ServingTelemetry.swift */,
 				E70500000000000000000401 /* TaskDestinationPanel.swift */,
 				E70500000000000000000301 /* ServedTaskSessions.swift */,
 				E70500000000000000000201 /* ServedTaskAPI.swift */,
@@ -1351,6 +1375,14 @@
 				E70600000000000000000402 /* UseChatClient.swift in Sources */,
 				E70600000000000000000202 /* UseSessionStore.swift in Sources */,
 				E70600000000000000000102 /* UseSession.swift in Sources */,
+				E71100000000000000000302 /* MediaReuseViews.swift in Sources */,
+				E71100000000000000000202 /* MediaReuseCapabilities.swift in Sources */,
+				E71100000000000000000102 /* MediaReuseSettings.swift in Sources */,
+				E71200000000000000000302 /* ServingMonitorView.swift in Sources */,
+				E71200000000000000000502 /* ModelSourcesView.swift in Sources */,
+				E71200000000000000000402 /* ServingClientSetup.swift in Sources */,
+				E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */,
+				E71200000000000000000102 /* ServingTelemetry.swift in Sources */,
 				E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */,
 				E70500000000000000000302 /* ServedTaskSessions.swift in Sources */,
 				E70500000000000000000202 /* ServedTaskAPI.swift in Sources */,

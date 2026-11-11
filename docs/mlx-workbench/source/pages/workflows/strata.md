@@ -85,12 +85,12 @@ profiles keep their original behavior: MTP when prepared, otherwise prompt looku
 Create a profile directly in Run with **New profile…**, or save a measured lane:
 
 1. On a completed lane, **Save serving profile…**, or **Save and verify suggestion…** on a suggested lane.
-2. In Run, select the model and the profile, then **Verify profile**. Verification runs the canary prompts with up to 1,024 generated tokens each; missing or unfinished answers fail. The verdict binds the settings, canary version and model and runtime fingerprints.
+2. In Serving, select the model and the profile, then **Verify profile**. Verification runs the canary prompts with up to 1,024 generated tokens each; missing or unfinished answers fail. The verdict binds the settings, canary version and model and runtime fingerprints.
 3. **Preview serve** and **Confirm and run** carry the profile through the normal confirmation. **Save as endpoint** keeps the selected profile, generation defaults, port and residency mode together.
 
 Serving rechecks the profile's verification against a fresh plan; changed settings, files or runtime sources block serving until it passes again. Profiles are stored in `serving-profiles.json`, separately from configuration.
 
-Run's **Manage profile** menu offers **Rename…**, **Remove…** (refused while any endpoint references the profile), **Customize copy…** (a new, unverified profile) and **Compare profiles…** (two profiles of one model in lanes A and B). In Run, **Review profiles…** lists each profile's canary status and source measurements, with a **Check memory** action that previews the runtime's memory estimate against current RAM without loading anything; **Comparison evidence…** shows the recorded run behind the selected profile. A completed profile lane in Compare offers **Verify measured profile…** to attach that comparison and rerun the canaries.
+Serving's **Manage profile** menu offers **Rename…**, **Remove…** (refused while any endpoint references the profile), **Customize copy…** (a new, unverified profile) and **Compare profiles…** (two profiles of one model in lanes A and B). In Serving, **Review profiles…** lists each profile's canary status and source measurements, with a **Check memory** action that previews the runtime's memory estimate against current RAM without loading anything; **Comparison evidence…** shows the recorded run behind the selected profile. A completed profile lane in Compare offers **Verify measured profile…** to attach that comparison and rerun the canaries.
 
 Profile evidence loads in the background with a progress indicator. If the profile changes while its evidence is loading, refresh the list before selecting it.
 

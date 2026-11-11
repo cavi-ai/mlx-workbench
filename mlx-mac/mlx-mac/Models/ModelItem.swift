@@ -274,6 +274,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let lastUnloadReason: String?
     let taskKinds: [String]?
     let apiKeySHA256: String?
+    var inferenceTelemetry: LabValue? = nil
+    var requestDefaults: LabValue? = nil
     var supportsChatCompletions: Bool { runtime != "tasks" && (taskKinds?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
@@ -299,6 +301,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case lastUnloadReason = "last_unload_reason"
         case taskKinds = "task_kinds"
         case apiKeySHA256 = "api_key_sha256"
+        case inferenceTelemetry = "inference_telemetry", requestDefaults = "request_defaults"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -333,7 +336,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         requestBlockedReason: String? = nil,
         lastUnloadReason: String? = nil,
         taskKinds: [String]? = nil,
-        apiKeySHA256: String? = nil
+        apiKeySHA256: String? = nil,
+        inferenceTelemetry: LabValue? = nil,
+        requestDefaults: LabValue? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -365,6 +370,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.lastUnloadReason = lastUnloadReason
         self.taskKinds = taskKinds
         self.apiKeySHA256 = apiKeySHA256
+        self.inferenceTelemetry = inferenceTelemetry
+        self.requestDefaults = requestDefaults
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -386,6 +393,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         return matches(prefillKernel, requested: options.m5Prefill, name: "m5-q4-prefill-v1")
             && matches(decodeProfile, requested: options.promptLookup, name: "prompt-lookup-v1")
             && matches(visionProfile, requested: options.visionCache, name: "vision-features-v1")
+            && ServingRequestDefaults.matches(requestDefaults, options: options)
     }
 
     /// Model-only workflows cannot substitute an adapter server, including

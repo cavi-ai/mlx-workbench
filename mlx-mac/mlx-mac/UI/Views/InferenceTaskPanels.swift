@@ -5,11 +5,18 @@ import UniformTypeIdentifiers
 
 struct InferenceTaskPanel: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
+    @ObservedObject private var mediaCapabilities: MediaReuseCapabilities
     let model: LibraryModel
     var onEngineSetup: (() -> Void)? = nil
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var understandingMode: UnderstandingMode = .image
     @State private var videoPreviewLoadRevision = UUID()
+
+    init(coordinator: InferenceTaskCoordinator, model: LibraryModel, onEngineSetup: (() -> Void)? = nil) {
+        _coordinator = ObservedObject(wrappedValue: coordinator)
+        self.model = model; self.onEngineSetup = onEngineSetup
+        _mediaCapabilities = ObservedObject(wrappedValue: coordinator.mediaCapabilities)
+    }
 
     private enum UnderstandingMode: String, CaseIterable, Identifiable {
         case image = "Image"
@@ -56,10 +63,16 @@ struct InferenceTaskPanel: View {
             coordinator.startPolling(id: task.id, owner: "model-inspector")
         }
         .onChange(of: isRouteActive) { _, active in
-            if !active { coordinator.stopPolling(owner: "model-inspector"); coordinator.stopPlayback() }
+            if !active { coordinator.stopPolling(owner: "model-inspector"); coordinator.stopPlayback(); coordinator.mediaReview = nil }
         }
-        .onChange(of: model.item.path) { _, _ in coordinator.stopPlayback() }
+        .onChange(of: model.item.path) { _, _ in coordinator.stopPlayback(); coordinator.mediaReview = nil }
         .onDisappear { coordinator.stopPolling(owner: "model-inspector"); coordinator.stopPlayback() }
+        .sheet(item: Binding(get: { isRouteActive ? coordinator.mediaReview : nil }, set: { coordinator.mediaReview = $0 })) { review in
+            MediaReuseReviewSheet(review: review, modelName: model.item.name, busy: coordinator.busy,
+                onCancel: { coordinator.requestCancelDuringStart(); coordinator.mediaReview = nil }) {
+                Task { await coordinator.start(kind: review.request.kind, model: model, review: review) }
+            }
+        }
     }
 
     private func synchronizeUnderstandingMode(_ kind: TaskKind?) {
@@ -136,9 +149,18 @@ struct InferenceTaskPanel: View {
                 TextField("Lyrics (leave blank for instrumental)", text: $coordinator.musicDraft.lyrics, axis: .vertical).lineLimit(2...5)
             }
             HStack {
-                TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number).frame(width: 145)
-                TextField("Steps", value: $coordinator.musicDraft.steps, format: .number).frame(width: 90)
-                TextField("Seed", value: $coordinator.musicDraft.seed, format: .number).frame(width: 120)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Duration · s").font(WorkbenchTypography.metadata)
+                    TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number)
+                }.frame(width: 145)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Steps").font(WorkbenchTypography.metadata)
+                    TextField("Steps", value: $coordinator.musicDraft.steps, format: .number)
+                }.frame(width: 90)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Seed").font(WorkbenchTypography.metadata)
+                    TextField("Seed", value: $coordinator.musicDraft.seed, format: .number)
+                }.frame(width: 120)
             }
             if let validationError = coordinator.musicDraft.validationError {
                 Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
@@ -207,6 +229,8 @@ struct InferenceTaskPanel: View {
                     GridRow { Text("Maximum faces"); TextField("500000 · engine default", text: $coordinator.meshGenerationDraft.maxFaces).accessibilityIdentifier("task-mesh-max-faces") }
                 }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
             }
+            MediaReuseControls(settings: $coordinator.meshGenerationDraft.reuse, capabilities: mediaCapabilities,
+                               kind: .meshGeneration, modelPaths: [model.item.path])
             if !coordinator.meshGenerationDraft.imagePath.isEmpty, let error = coordinator.meshGenerationDraft.validationError {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
@@ -415,6 +439,8 @@ struct InferenceTaskPanel: View {
                         .accessibilityIdentifier("task-video-generation-seed")
                 }
             }
+            MediaReuseControls(settings: $coordinator.videoGenerationDraft.reuse, capabilities: mediaCapabilities,
+                               kind: .videoGeneration, modelPaths: [model.item.path])
             if let error = coordinator.videoGenerationDraft.validationError {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
@@ -423,15 +449,18 @@ struct InferenceTaskPanel: View {
     }
 
     private func taskActions(kind: TaskKind) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+        let adaptive = kind == .meshGeneration ? coordinator.meshGenerationDraft.reuse.adaptive : kind == .videoGeneration && coordinator.videoGenerationDraft.reuse.adaptive
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let error = coordinator.error { InlineMessage(kind: .warning, text: error) }
             if coordinator.needsEngineSetup, let onEngineSetup {
                 Button("Open Health…", action: onEngineSetup)
                     .accessibilityIdentifier("task-engine-setup")
             }
             HStack {
-                Button(coordinator.busy ? "Starting…" : "Start") { Task { await coordinator.start(kind: kind, model: model) } }
-                    .buttonStyle(.borderedProminent).disabled(!coordinator.canStart || !coordinator.isDraftValid(for: kind)).accessibilityIdentifier("task-start")
+                Button(coordinator.busy ? "Preparing…" : adaptive ? "Review job" : "Start") { Task { await coordinator.start(kind: kind, model: model) } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!coordinator.canStart || !coordinator.isDraftValid(for: kind) || (adaptive && !mediaCapabilities.allowsAdaptive(kind: kind, paths: [model.item.path])))
+                    .accessibilityIdentifier("task-start")
                 if let task = coordinator.selectedTask, task.state.isActive {
                     Button("Cancel") { Task { await coordinator.cancel(id: task.id) } }.accessibilityIdentifier("task-cancel")
                     Button("Refresh") { Task { await coordinator.refresh(id: task.id) } }.accessibilityIdentifier("task-refresh")
@@ -582,6 +611,10 @@ struct RecentTaskList: View {
                     }.accessibilityIdentifier("task-export-embeddings")
                 }
                 if task.kind == .meshGeneration, let output = coordinator.verifiedOutput {
+                    MediaReuseResultView(requested: coordinator.selectedRequest.map { $0.parameters["denoiser_cache"]?.stringValue ?? "off" },
+                                         allowance: coordinator.selectedRequest?.parameters["cache_memory_mib"]?.integerValue,
+                                         raw: coordinator.verifiedResult?.json?.objectValue?["denoiser_cache"],
+                                         seconds: coordinator.verifiedResult?.json?.objectValue?["seconds"]?.numberValue)
                     SectionTitle(text: "Generated 3D mesh")
                     if let input = coordinator.verifiedInput {
                         DisclosureGroup("Input image") {
@@ -674,6 +707,10 @@ struct RecentTaskList: View {
                     }
                 }
                 if task.kind == .videoGeneration, let output = coordinator.verifiedOutput {
+                    MediaReuseResultView(requested: coordinator.selectedRequest.map { $0.parameters["denoiser_cache"]?.stringValue ?? "off" },
+                                         allowance: coordinator.selectedRequest?.parameters["cache_memory_mib"]?.integerValue,
+                                         raw: coordinator.verifiedResult?.json?.objectValue?["denoiser_cache"],
+                                         seconds: coordinator.verifiedResult?.json?.objectValue?["seconds"]?.numberValue)
                     SectionTitle(text: "Generated video")
                     TaskVideoPreview(artifact: output, player: coordinator.video)
                         .accessibilityIdentifier("task-video-output")
@@ -714,6 +751,20 @@ struct RecentTaskList: View {
                     Text("Verified WAV · \(output.reference.bytes) bytes · \(output.reference.sha256)").font(WorkbenchTypography.secondary).textSelection(.enabled)
                 }
                 DisclosureGroup("Result JSON", isExpanded: $resultJSONExpanded) {
+                    if task.kind == .meshGeneration || task.kind == .videoGeneration {
+                        Button("Export request…") {
+                            let panel = NSSavePanel()
+                            panel.nameFieldStringValue = "task-\(task.id)-request.json"
+                            panel.allowedContentTypes = [.json]
+                            panel.begin { response in
+                                guard response == .OK, let url = panel.url else { return }
+                                Task {
+                                    do { try await coordinator.exportRequest(id: task.id, to: url); exportError = nil }
+                                    catch { exportError = AppHost.render(error) }
+                                }
+                            }
+                        }.accessibilityIdentifier("task-export-request")
+                    }
                     if let raw = coordinator.verifiedResult?.json {
                         Text(raw.prettyJSON).font(WorkbenchTypography.value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     } else if coordinator.selectedResult != nil {

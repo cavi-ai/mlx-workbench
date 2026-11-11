@@ -69,6 +69,7 @@ struct MeshGenerationTaskDraft: Equatable, Sendable {
     var resolution = ""
     var guidance = ""
     var maxFaces = ""
+    var reuse = MediaReuseSettings()
 
     private static let integerSettings: [(String, IntegerSetting)] = [
         ("steps", IntegerSetting(title: "Steps", range: 1...100)),
@@ -87,12 +88,13 @@ struct MeshGenerationTaskDraft: Equatable, Sendable {
             if let value = try setting.value(values[name] ?? "") { parameters[name] = .number(Double(value)) }
         }
         if let value = try Self.guidanceSetting.value(guidance) { parameters["guidance"] = .number(value) }
+        parameters.merge(try reuse.parameters) { _, value in value }
         try Self.validate(parameters)
         return parameters
     }
 
     static func validate(_ parameters: [String: JSONValue]) throws {
-        guard Set(parameters.keys).isSubset(of: ["image_path", "steps", "seed", "resolution", "guidance", "max_faces"]),
+        guard Set(parameters.keys).isSubset(of: ["image_path", "steps", "seed", "resolution", "guidance", "max_faces", "denoiser_cache", "cache_memory_mib"]),
               let path = parameters["image_path"]?.stringValue, path.hasPrefix("/"),
               !path.unicodeScalars.contains(where: { $0.value < 0x20 }),
               ["png", "jpg", "jpeg", "webp"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) else {
@@ -106,6 +108,7 @@ struct MeshGenerationTaskDraft: Equatable, Sendable {
             guard let value = guidance.numberValue else { throw TaskProtocolError.invalidRequest }
             try guidanceSetting.check(value)
         }
+        try MediaReuseSettings.validate(parameters)
     }
 
     func request(modelPath: String) throws -> TaskRequest {
@@ -123,6 +126,7 @@ struct MeshGenerationTaskDraft: Equatable, Sendable {
         draft.resolution = request.parameters["resolution"]?.integerValue.map(String.init) ?? ""
         draft.guidance = request.parameters["guidance"]?.numberValue.map { String($0) } ?? ""
         draft.maxFaces = request.parameters["max_faces"]?.integerValue.map(String.init) ?? ""
+        draft.reuse = try MediaReuseSettings(parameters: request.parameters)
         _ = try draft.parameters()
         self = draft
     }

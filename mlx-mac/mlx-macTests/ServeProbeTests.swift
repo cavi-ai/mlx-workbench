@@ -5,6 +5,99 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testStatusParserPreservesUsageAndDefaultsIndependentlyOfAdapterFields() throws {
+        let usage: [String: Any] = ["schema": 1, "scope": "gateway-process", "started_at": "2026-11-11T12:00:00Z",
+            "captured_at": "2026-11-11T12:04:00Z", "requests": 4, "completed_requests": 3,
+            "failed_requests": 1, "measured_requests": 2, "input_tokens": 1200, "output_tokens": 480]
+        let row: [String: Any] = ["repo": "org/text", "runtime": "mlx_lm", "port": 8766, "pid": 123,
+            "state": "running", "adapter_path": 42, "inference_telemetry": usage,
+            "request_defaults": ["temperature": 0.0, "top_p": 0.8]]
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        let telemetry = try XCTUnwrap(ServingTelemetry(raw: server.inferenceTelemetry))
+        XCTAssertEqual(telemetry.inputTokens, 1200)
+        XCTAssertEqual(telemetry.outputTokens, 480)
+        XCTAssertEqual(telemetry.measuredRequests, 2)
+        XCTAssertTrue(ServingRequestDefaults.matches(server.requestDefaults, options: .init(temperature: 0, topP: 0.8)))
+        XCTAssertFalse(ServingRequestDefaults.matches(server.requestDefaults, options: .init(temperature: 0.7, topP: 0.8)))
+        XCTAssertNil(server.adapterPath)
+    }
+
+    func testGatewayDefaultsPersistAndBindPreviewAndStatus() async throws {
+        let defaults = LocalInferenceOptions(systemPrompt: "Explain 'why'\n$HOME stays literal", temperature: 0, topP: 0.8)
+        let saved = try JSONDecoder().decode(LocalInferenceOptions.self, from: JSONEncoder().encode(defaults))
+        XCTAssertEqual(saved, defaults)
+        XCTAssertEqual(try JSONDecoder().decode(LocalInferenceOptions.self, from: Data("{}".utf8)), .init())
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, args, _, _ in
+            XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--system-prompt")) + 1], defaults.systemPrompt)
+            XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--default-temperature")) + 1], "0.0")
+            XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--default-top-p")) + 1], "0.8")
+            return ["plan": ["runtime": "mlx_lm", "preview_hash": "reviewed", "request_defaults": ["system_prompt": defaults.systemPrompt, "temperature": 0.0, "top_p": 0.8]]]
+        })
+        _ = try await api.servePreview(repo: "/Models/text", runtime: "auto", port: 8766, jit: true, requestDefaults: defaults)
+        let lifecycle = ServeLifecycle.live(api: api, acceleration: defaults)
+        _ = try await XCTUnwrap(lifecycle.jitPreview)("/Models/text", 8766, .automatic)
+        try await XCTUnwrap(lifecycle.jitStart)("/Models/text", 8766, "reviewed", .automatic)
+        var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/text", loadOnRequest: true)
+        slot.acceleration = defaults
+        let login = try await api.loginItemPlan(slot: slot, fleetURL: URL(fileURLWithPath: "/state/fleet.json"))
+        XCTAssertTrue(login.arguments.contains(defaults.systemPrompt))
+        let missing = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in ["plan": ["runtime": "mlx_lm", "preview_hash": "reviewed"]] })
+        do { _ = try await missing.servePreview(repo: "/Models/text", runtime: "auto", port: 8766, jit: true, requestDefaults: defaults); XCTFail("Missing defaults must not be accepted") } catch { }
+        let summary: LabValue = .object(["temperature": .number(0), "top_p": .number(0.8)])
+        XCTAssertTrue(ServingRequestDefaults.matches(summary, options: .init(temperature: 0, topP: 0.8)))
+        XCTAssertFalse(ServingRequestDefaults.matches(summary, options: defaults))
+        XCTAssertFalse(ServingRequestDefaults.matches(nil, options: defaults))
+        XCTAssertNotNil(LocalInferenceOptions(temperature: .nan).validationError)
+        XCTAssertNotNil(LocalInferenceOptions(topP: 1.1).validationError)
+        XCTAssertNotNil(LocalInferenceOptions(systemPrompt: String(repeating: "é", count: 4097)).validationError)
+        XCTAssertEqual(ServingInferenceContext(runtime: "tasks").normalized(defaults), .init())
+    }
+
+    func testServingListHidesIdleCatalogAndStoppedReceiptsButKeepsReachableGateways() {
+        func service(_ id: String, residency: ServingResidency, server: ServerInfo? = nil, stale: Bool = false) -> ServingRow {
+            .service(ServingServiceObservation(id: id, sourceID: "fixture", providerName: "Local host", modelID: id, modelPath: nil, baseURL: "http://127.0.0.1:8766/v1", runtime: nil, residency: residency, isLocal: true, isWorkbenchManaged: false, modelProcessID: nil, reportedMemoryBytes: nil, server: server, host: nil, hostedModel: nil, capturedAt: Date(), stale: stale))
+        }
+        let gateway = ServerInfo(repo: "gateway", runtime: "mlx_lm", port: 8766, pid: 1, state: "running", jit: true, modelState: "unloaded")
+        let stopped = ServerInfo(repo: "old", runtime: "mlx_lm", port: 8767, pid: 2, state: "stopped")
+        let rows = [service("loaded", residency: .loaded), service("catalog", residency: .unloaded), service("unknown", residency: .unknown), service("gateway", residency: .unloaded, server: gateway), service("old", residency: .unknown, server: stopped), service("__inventory__", residency: .unknown), service("stale", residency: .loaded, stale: true)]
+        XCTAssertEqual(ServingWorkspacePresentation.rows(rows, includeAvailable: false).map(\.id), ["service-loaded", "service-gateway"])
+        XCTAssertEqual(ServingWorkspacePresentation.rows(rows, includeAvailable: true).count, 4)
+        XCTAssertTrue(ServingWorkspacePresentation.isRunning(rows[3]))
+        XCTAssertFalse(ServingWorkspacePresentation.isRunning(rows[2]))
+        XCTAssertFalse(ServingWorkspacePresentation.isRunning(rows[4]))
+        XCTAssertFalse(ServingWorkspacePresentation.isRunning(rows[6]))
+    }
+
+    func testTelemetryKeepsUnknownSeparateFromZeroAndRejectsInvalidScope() throws {
+        var raw: [String: Any] = ["schema": 1, "scope": "gateway-process", "started_at": "2026-11-11T12:00:00Z", "captured_at": "2026-11-11T12:01:00Z", "requests": 0, "completed_requests": 0, "failed_requests": 0, "measured_requests": 0]
+        func decode() throws -> ServingTelemetry? {
+            ServingTelemetry(raw: try JSONDecoder().decode(LabValue.self, from: JSONSerialization.data(withJSONObject: raw)))
+        }
+        XCTAssertNil(try XCTUnwrap(decode()).inputTokens)
+        raw["requests"] = 2; raw["completed_requests"] = 1; raw["measured_requests"] = 1
+        raw["input_tokens"] = 0; raw["output_tokens"] = 0
+        XCTAssertEqual(try XCTUnwrap(decode()).outputTokens, 0)
+        raw["measured_requests"] = 2
+        XCTAssertNil(try decode())
+        raw["measured_requests"] = 1; raw["scope"] = "all-processes"
+        XCTAssertNil(try decode())
+    }
+
+    func testClientSetupUsesTheExactEndpointAndRequiredProtocol() throws {
+        var server = ServerInfo(repo: "org/model's-name", runtime: "mlx_lm", port: 8767, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r", jit: true)
+        for client in ServingClient.allCases {
+            let setup = try XCTUnwrap(client.setup(server: server))
+            XCTAssertTrue(setup.contains("127.0.0.1:8767"))
+            XCTAssertFalse(setup.contains("8766"))
+        }
+        XCTAssertTrue(try XCTUnwrap(ServingClient.codex.setup(server: server)).contains("responses"))
+        XCTAssertTrue(try XCTUnwrap(ServingClient.claude.setup(server: server)).contains("'\\''"))
+        server = ServerInfo(repo: "org/text", runtime: "mlx_lm", port: 8767, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r")
+        XCTAssertNil(ServingClient.codex.setup(server: server))
+        XCTAssertNil(ServingClient.claude.setup(server: server))
+        XCTAssertNotNil(ServingClient.hermes.setup(server: server))
+    }
+
     func testStrataInferenceDefaultsKeepVerifiedModeThroughAuthenticationAndLogin() async throws {
         let options = StrataComparisonOptions(contextTokens: 8192, decoding: "lookup")
         var profile = ServingProfile(id: UUID(), name: "Prompt reuse", modelPath: "/Models/strata", options: options)

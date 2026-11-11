@@ -211,9 +211,11 @@ struct MeshResult: Codable, Sendable {
     let peakMemoryGB: Double?
     let vertices: Int?
     let faces: Int?
+    var denoiserCache: JSONValue? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, seconds, vertices, faces
+        case denoiserCache = "denoiser_cache"
         case loadSeconds = "load_seconds"
         case peakMemoryGB = "peak_memory_gb"
     }
@@ -278,9 +280,11 @@ struct VideoResult: Codable, Equatable, Sendable {
     let secondsPerFrame: Double?
     let peakMemoryGB: Double?
     let pixelStd: Double?
+    var denoiserCache: JSONValue? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, width, height, frames, fps, steps, seed, seconds
+        case denoiserCache = "denoiser_cache"
         case durationSeconds = "duration_seconds"
         case loadSeconds = "load_seconds"
         case secondsPerFrame = "seconds_per_frame"

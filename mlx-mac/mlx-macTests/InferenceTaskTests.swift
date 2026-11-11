@@ -7,6 +7,116 @@ import XCTest
 @testable import mlx_workbench
 
 final class InferenceTaskTests: XCTestCase {
+    private static func reuseCapabilities(path: String, fingerprint: String = "a", supported: Bool = true) throws -> TaskCapabilities {
+        let cache: [String: Any] = ["modes": supported ? ["off", "adaptive"] : ["off"], "default": "off", "approximate": true,
+                                   "cache_memory_mib": ["minimum": 8, "maximum": 4096, "default": 256]]
+        let value: [String: Any] = ["schema": "task-capabilities/1", "request_schema": "task-request/1", "run_schema": "task-run/1",
+            "model": ["path": path, "config_sha256": String(repeating: fingerprint, count: 64)],
+            "tasks": [["kind": "video_generation", "result_schema": "video/1", "request_schema": "task-request/2", "run_schema": "task-run/2",
+                       "requires_local_model": true, "cancellation": true, "denoiser_cache": cache]]]
+        return try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: value))
+    }
+
+    func testReuseCapabilityBindsModelAndRejectsUnsupportedSettings() throws {
+        let request = TaskRequest(kind: .videoGeneration, modelPath: "/Models/video", parameters: ["prompt": .string("Pan"), "denoiser_cache": .string("adaptive"), "cache_memory_mib": .number(64)])
+        let supported = try Self.reuseCapabilities(path: request.modelPath)
+        try supported.validateReuse(request)
+        XCTAssertEqual(try JSONDecoder().decode(TaskCapabilities.self, from: JSONEncoder().encode(supported)), supported)
+        XCTAssertThrowsError(try Self.reuseCapabilities(path: "/Models/other").validateReuse(request))
+        XCTAssertThrowsError(try Self.reuseCapabilities(path: request.modelPath, supported: false).validateReuse(request))
+        for invalid: JSONValue in [.number(7), .number(4097), .bool(true), .number(12.5)] {
+            var values = request.parameters; values["cache_memory_mib"] = invalid
+            XCTAssertThrowsError(try TaskRequest(kind: request.kind, modelPath: request.modelPath, parameters: values).validate())
+        }
+        var unknown = request.parameters; unknown["denoiser_cache"] = .string("always")
+        XCTAssertThrowsError(try TaskRequest(kind: request.kind, modelPath: request.modelPath, parameters: unknown).validate())
+        XCTAssertNil(try VideoGenerationTaskDraft(prompt: "Pan").request(modelPath: request.modelPath).parameters["denoiser_cache"])
+    }
+
+    func testReuseTelemetryDoesNotImplySpeedOrQuality() throws {
+        let fallback: JSONValue = .object(["mode": .string("adaptive"), "full_steps": .number(10), "reused_steps": .number(0),
+            "peak_cache_bytes": .number(0), "memory_limit_bytes": .number(8_388_608), "fallback_reason": .string("memory_limit")])
+        let report = try XCTUnwrap(MediaReuseReport(raw: fallback))
+        XCTAssertEqual(report.summary, "10 full · 0 reused steps")
+        XCTAssertTrue(report.explanation.contains("exceeded"))
+        let payload: JSONValue = .object(["path": .string("/output.mp4"), "denoiser_cache": fallback])
+        let decoded = try JSONDecoder().decode(VideoResult.self, from: JSONEncoder().encode(payload))
+        XCTAssertEqual(decoded.denoiserCache, fallback)
+        XCTAssertNil(decoded.seconds)
+        XCTAssertNil(MediaReuseReport(raw: .object(["mode": .string("adaptive"), "full_steps": .number(-1)])))
+    }
+
+    @MainActor
+    func testRequestExportKeepsExactSettingsAndRefusesChangedSource() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let request = TaskRequest(kind: .videoGeneration, modelPath: "/Models/video", parameters: ["prompt": .string("Pan"),
+            "denoiser_cache": .string("adaptive"), "cache_memory_mib": .number(64)])
+        let bytes = try JSONEncoder().encode(request)
+        let source = try fixture.write("request.json", data: bytes)
+        let reference = fixture.reference(source, data: bytes)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "video_generation", modelPath: request.modelPath, request: reference, input: nil)
+        let resultBytes = Data("{}".utf8)
+        let result = try fixture.write("result.json", data: resultBytes)
+        let response = TaskResultResponse(task: record, artifact: fixture.reference(result, data: resultBytes), inline: true, result: .object([:]))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: try Self.reuseCapabilities(path: request.modelPath), resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        let destination = fixture.root.appendingPathComponent("exports/request.json")
+        try await coordinator.exportRequest(id: record.id, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), bytes)
+        try Data("changed".utf8).write(to: source)
+        do { try await coordinator.exportRequest(id: record.id, to: destination); XCTFail("Changed request must be refused") } catch { }
+        XCTAssertEqual(try Data(contentsOf: destination), bytes)
+    }
+
+    @MainActor
+    func testAdaptiveJobsRequireReviewAndRefuseConfigOrDraftDrift() async throws {
+        let path = "/Models/video_generation"
+        let base = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111111", kind: "video_generation", modelPath: path,
+            request: TaskArtifactReference(path: "/tasks/request.json", sha256: String(repeating: "a", count: 64), bytes: 1), input: nil)
+        var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+        fields["state"] = "running"; fields["completed_at"] = NSNull()
+        let record = try JSONDecoder().decode(TaskRecord.self, from: JSONSerialization.data(withJSONObject: fields))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: try Self.reuseCapabilities(path: path))
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        coordinator.videoGenerationDraft = VideoGenerationTaskDraft(prompt: "Pan", reuse: MediaReuseSettings(adaptive: true, memoryMiB: "64"))
+        let model = Self.libraryModel(type: .videoGeneration)
+        await coordinator.start(kind: .videoGeneration, model: model)
+        let review = try XCTUnwrap(coordinator.mediaReview)
+        let before = await api.startEvidence()
+        XCTAssertEqual(before.count, 0)
+        coordinator.videoGenerationDraft.seed = "1"
+        await coordinator.start(kind: .videoGeneration, model: model, review: review)
+        XCTAssertNil(coordinator.mediaReview)
+        XCTAssertTrue(coordinator.error?.contains("settings changed") == true)
+        await coordinator.start(kind: .videoGeneration, model: model)
+        let second = try XCTUnwrap(coordinator.mediaReview)
+        await api.setCapabilities(try Self.reuseCapabilities(path: path, fingerprint: "b"))
+        await coordinator.start(kind: .videoGeneration, model: model, review: second)
+        XCTAssertTrue(coordinator.error?.contains("config changed") == true)
+        let afterDrift = await api.startEvidence()
+        XCTAssertEqual(afterDrift.count, 0)
+        await coordinator.start(kind: .videoGeneration, model: model)
+        let current = try XCTUnwrap(coordinator.mediaReview)
+        await coordinator.start(kind: .videoGeneration, model: model, review: current)
+        let submitted = await api.startEvidence()
+        XCTAssertEqual(submitted.count, 1)
+        XCTAssertEqual(submitted.last?.parameters["cache_memory_mib"], .number(64))
+    }
+
+    func testMediaReuseSettingsSurviveTaskReuse() throws {
+        let parameters: [String: JSONValue] = ["prompt": .string("Slow camera pan"), "denoiser_cache": .string("adaptive"), "cache_memory_mib": .number(64)]
+        let request = TaskRequest(kind: .videoGeneration, modelPath: "/Models/video", parameters: parameters)
+        try request.validate()
+        var draft = VideoGenerationTaskDraft()
+        try draft.load(request)
+        XCTAssertEqual(try draft.request(modelPath: request.modelPath).parameters, parameters)
+        let mesh = TaskRequest(kind: .meshGeneration, modelPath: "/Models/mesh", parameters: ["image_path": .string("/Inputs/shape.png"), "denoiser_cache": .string("adaptive"), "cache_memory_mib": .number(64)])
+        var meshDraft = MeshGenerationTaskDraft()
+        try meshDraft.load(mesh, retainedImagePath: "/Inputs/shape.png")
+        XCTAssertEqual(try meshDraft.request(modelPath: mesh.modelPath), mesh)
+    }
+
     func testEmbeddingAndMeshUseSupportedV2Contracts() throws {
         let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: JSONSerialization.data(withJSONObject: Self.engineCapabilitiesFixture()))
         for (wireKind, modelType, parameters) in [
@@ -1689,7 +1799,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
     enum FirstCapabilityOutcome { case rejected, failed }
 
     private let record: TaskRecord
-    private let capabilities: TaskCapabilities
+    private var capabilities: TaskCapabilities
     private let startUnknown: Bool
     private let firstCapabilities: TaskCapabilities?
     private let firstCapabilityOutcome: FirstCapabilityOutcome?
@@ -1740,6 +1850,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
         }
         return capabilities
     }
+    func setCapabilities(_ value: TaskCapabilities) { capabilities = value }
     func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
         requests.append(request)
         if startUnknown { throw TaskStartOutcomeUnknown() }

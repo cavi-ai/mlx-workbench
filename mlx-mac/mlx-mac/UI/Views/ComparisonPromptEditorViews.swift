@@ -43,15 +43,17 @@ struct ComparisonPromptCancelButton: View {
 struct ComparisonPromptSetEditor: View {
     @State var draft: PromptSetDraft
     let onSave: (PromptSetDraft) async -> String?
+    let reuseContext: MediaReuseContext?
     @State private var checkpoint: ComparisonPromptDraftCheckpoint<PromptSetDraft.Prompt>
     @State private var error: String?
     @State private var saving = false
     @Environment(\.dismiss) private var dismiss
 
-    init(draft: PromptSetDraft, onSave: @escaping (PromptSetDraft) async -> String?) {
+    init(draft: PromptSetDraft, onSave: @escaping (PromptSetDraft) async -> String?, reuseContext: MediaReuseContext? = nil) {
         _draft = State(initialValue: draft)
         _checkpoint = State(initialValue: ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts))
         self.onSave = onSave
+        self.reuseContext = reuseContext
     }
 
     private var hasUnsavedChanges: Bool {
@@ -83,7 +85,7 @@ struct ComparisonPromptSetEditor: View {
             } else {
                 Text(draft.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-            if isMusic { MusicPromptFields(draft: $draft) } else { ComparisonPromptFields(draft: $draft) }
+            if isMusic { MusicPromptFields(draft: $draft) } else { ComparisonPromptFields(draft: $draft, reuseContext: reuseContext) }
             if draft.mode.inputKind != nil {
                 Text("Saving keeps input copies with this set. Unchanged saved files are reused.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -210,6 +212,7 @@ struct ComparisonPromptList<Content: View>: View {
 /// The same cards are used for new sets, saved-set edits and recorded-run reuse.
 struct ComparisonPromptFields: View {
     @Binding var draft: PromptSetDraft
+    var reuseContext: MediaReuseContext? = nil
     @StateObject private var audio = AudioClipPlayer()
 
     var body: some View {
@@ -223,6 +226,7 @@ struct ComparisonPromptFields: View {
                         canMoveUp: draft.prompts.first?.id != prompt.id,
                         canMoveDown: draft.prompts.last?.id != prompt.id,
                         audio: audio,
+                        reuseContext: reuseContext,
                         onDuplicate: { draft.duplicatePrompt(id: prompt.id) },
                         onMove: { draft.movePrompt(id: prompt.id, direction: $0) },
                         onRemove: { draft.removePrompt(id: prompt.id) })
@@ -231,6 +235,11 @@ struct ComparisonPromptFields: View {
             }
         }
         .onDisappear { audio.stop() }
+        .task(id: reuseContext?.modelPaths.sorted().joined(separator: "\n")) {
+            if let reuseContext, draft.mode == .videoGeneration || draft.mode == .meshGeneration {
+                await reuseContext.capabilities.refresh(paths: reuseContext.modelPaths)
+            }
+        }
     }
 }
 
@@ -359,6 +368,7 @@ private struct ComparisonPromptCard: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
     let audio: AudioClipPlayer
+    var reuseContext: MediaReuseContext? = nil
     let onDuplicate: () -> Void
     let onMove: (PromptSetDraft.MoveDirection) -> Void
     let onRemove: () -> Void
@@ -452,6 +462,16 @@ private struct ComparisonPromptCard: View {
                     parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
                 }
             }
+            if mode == .meshGeneration || mode == .videoGeneration {
+                if let reuseContext {
+                    MediaReuseControls(settings: $prompt.reuse, capabilities: reuseContext.capabilities,
+                                       kind: mode == .meshGeneration ? .meshGeneration : .videoGeneration,
+                                       modelPaths: reuseContext.modelPaths, refreshOnAppear: false)
+                } else {
+                    Text("Choose models in Compare to configure adaptive reuse.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
             if mode == .classification {
                 DecisionQuestionsEditor(questions: $prompt.questions, promptNumber: number)
             }
@@ -543,6 +563,7 @@ struct ComparisonRunSetupSheet: View {
     let name: (String) -> String
     let onApply: (ComparisonRunSetup, PromptSet) -> String?
     let onSave: (PromptSetDraft) async -> String?
+    let reuseContext: MediaReuseContext?
     @Environment(\.dismiss) private var dismiss
     @State private var error: String?
     @State private var showingSaveName = false
@@ -552,10 +573,11 @@ struct ComparisonRunSetupSheet: View {
 
     init(setup: ComparisonRunSetup, availablePaths: Set<String>, name: @escaping (String) -> String,
          onApply: @escaping (ComparisonRunSetup, PromptSet) -> String?,
-         onSave: @escaping (PromptSetDraft) async -> String?) {
+         onSave: @escaping (PromptSetDraft) async -> String?, reuseContext: MediaReuseContext? = nil) {
         _setup = State(initialValue: setup)
         _checkpoint = State(initialValue: ComparisonPromptDraftCheckpoint(prompts: setup.draft.prompts))
         self.availablePaths = availablePaths; self.name = name; self.onApply = onApply; self.onSave = onSave
+        self.reuseContext = reuseContext
     }
 
     private var hasUnsavedChanges: Bool {
@@ -591,7 +613,7 @@ struct ComparisonRunSetupSheet: View {
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
                 }
             }
-            if isMusic { MusicPromptFields(draft: $setup.draft) } else { ComparisonPromptFields(draft: $setup.draft) }
+            if isMusic { MusicPromptFields(draft: $setup.draft) } else { ComparisonPromptFields(draft: $setup.draft, reuseContext: reuseContext) }
             if setup.draft.mode.inputKind != nil {
                 Text("Save as prompt set keeps its own input copies. Temporary setups use the ten-run cache; older runs use original files or built-in fixtures.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)

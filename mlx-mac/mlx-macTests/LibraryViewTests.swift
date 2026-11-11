@@ -4,6 +4,16 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testModelSourceFoldersCombineFormatsAndManagedStorageAtOnePath() {
+        var config = Config.defaults(ggufRoots: ["/Models/shared", "/Models/shared/"])
+        config.mlxRoots = ["/Models/shared", "/Models/managed"]
+        config.outputDir = "/Models/managed"
+        let folders = ModelSourcesPresentation.folders(config)
+        XCTAssertEqual(folders.count, 2)
+        XCTAssertEqual(folders.first { $0.path == "/Models/shared" }?.uses, ["GGUF", "MLX"])
+        XCTAssertEqual(folders.first { $0.path == "/Models/managed" }?.uses, ["MLX", "Managed downloads & conversions"])
+    }
+
     func testInspectorEvidenceRendersLabeledRowsInsteadOfKeyValueText() {
         let home = NSHomeDirectory()
         let rows = ModelDetailsPresentation.evidenceRows(["path=\(home)/.models/a", "quant_bits=4", "signature=abc", "free text"])

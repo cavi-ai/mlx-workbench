@@ -296,7 +296,7 @@ private struct ServingInventoryResourceSection: View {
     let onReview: (ServingActionKind, ServingServiceObservation) -> Void
 
     var body: some View {
-        let rows = ServingRows.build(slots: endpoint.fleet.slots, servers: servers, snapshot: inventory.snapshot)
+        let rows = ServingWorkspacePresentation.rows(ServingRows.build(slots: endpoint.fleet.slots, servers: servers, snapshot: inventory.snapshot), includeAvailable: false)
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             HStack {
                 Text("Local serving models").font(WorkbenchTypography.label)

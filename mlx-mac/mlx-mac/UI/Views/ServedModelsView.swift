@@ -32,6 +32,20 @@ enum ServedModelsSelection {
         return WireEndpoint(server: server)
     }
 
+    static func copyCredential(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(value, forType: .string)
+        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        guard pasteboard.writeObjects([item]) else { return }
+        let revision = pasteboard.changeCount
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(60))
+            if pasteboard.changeCount == revision { pasteboard.clearContents() }
+        }
+    }
+
     static func copy(_ value: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)

@@ -22,6 +22,8 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case training = "training-studio"
     case adopt = "adopt"
     case settings = "settings"
+    case monitor = "monitor"
+    case sources = "sources"
 
     enum Group: String, CaseIterable, Hashable {
         case models = "Models"
@@ -65,8 +67,8 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     /// Sidebar order within each group; independent of the enum case order,
     /// which stays fixed for `order` and mount order.
     private static let sidebarOrder: [Group: [AppRoute]] = [
-        .models: [.library, .discover, .prepare, .reclaim],
-        .workspaces: [.use, .compare, .run, .training, .studies],
+        .models: [.library, .sources, .discover, .prepare, .reclaim],
+        .workspaces: [.use, .compare, .run, .monitor, .training, .studies],
         .system: [.overview, .activity, .clientSetup, .health],
         .settings: [.settings],
     ]
@@ -82,8 +84,8 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
 
     var group: Group {
         switch self {
-        case .library, .discover, .prepare, .reclaim, .lmStudio, .adopt: return .models
-        case .use, .compare, .run, .training, .studies: return .workspaces
+        case .library, .sources, .discover, .prepare, .reclaim, .lmStudio, .adopt: return .models
+        case .use, .compare, .run, .monitor, .training, .studies: return .workspaces
         case .overview, .activity, .clientSetup, .health: return .system
         case .settings: return .settings
         }
@@ -96,7 +98,9 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .library: return "Library"
         case .prepare: return "Prepare"
         case .compare: return "Compare"
-        case .run: return "Run"
+        case .run: return "Serving"
+        case .monitor: return "Monitor"
+        case .sources: return "Model sources"
         case .activity: return "Activity"
         case .reclaim: return "Reclaim"
         case .clientSetup: return "Clients"
@@ -117,7 +121,9 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .library: return "books.vertical"
         case .prepare: return "shippingbox"
         case .compare: return "chart.bar"
-        case .run: return "play.circle"
+        case .run: return "server.rack"
+        case .monitor: return "waveform.path.ecg"
+        case .sources: return "externaldrive.connected.to.line.below"
         case .activity: return "clock.arrow.circlepath"
         case .reclaim: return "square.3.layers.3d"
         case .clientSetup: return "arrow.triangle.branch"
@@ -138,7 +144,9 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .library: return "Browse discovered models and their readiness evidence."
         case .prepare: return "Preview and confirm model conversion jobs."
         case .compare: return "Measure ready model variants against the same prompts."
-        case .run: return "Serve a verified model on the loopback endpoint."
+        case .run: return "Manage model APIs, inference settings, memory and connected apps."
+        case .monitor: return "See live model status, token usage and response throughput."
+        case .sources: return "See models across local providers and registered cache folders."
         case .activity: return "Inspect conversion jobs and endpoint activity."
         case .reclaim: return "Review evidence-backed disk reclaim opportunities."
         case .clientSetup: return "Preview and apply configuration wiring for local clients."

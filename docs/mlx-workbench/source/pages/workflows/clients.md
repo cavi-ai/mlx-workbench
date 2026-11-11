@@ -61,3 +61,25 @@ A partial rollback keeps the action available for retry. Clients already restore
 ## Handoffs
 
 **Wire into clients** in Compare's model guidance opens Clients with that model and port preselected, when a matching endpoint is running. After a successful wiring, **Review report in Compare…** opens Compare's workflow-evidence import with the endpoint and wired clients prefilled. Wiring records configuration context only; it never proves a task used the endpoint. See [Compare](compare.md).
+
+## Connect from the serving model
+
+In **Serving**, select a running chat endpoint and open **Connect apps**. Choose
+**OpenCode**, **OpenClaw**, **Hermes**, **Codex** or **Claude Code** for setup bound
+to that endpoint's address and model ID. Copying setup does not edit files or
+launch another app. Protected setup refers to `WORKBENCH_API_KEY`; copy the key
+from **API & security** and supply it through the client's environment. Recipes
+contain no inference key.
+
+- OpenCode offers its provider configuration and the existing reviewed client
+  writer under **Preview and apply client configuration**.
+- OpenClaw offers a provider/model fragment to merge into its user config.
+- Hermes uses `hermes model` → Custom endpoint → Chat Completions; enter the
+  displayed base URL, model and key. Hermes saves the connection itself.
+- Codex uses session-scoped `-c` overrides with the Responses protocol.
+- Claude Code uses shell-scoped gateway variables with the Messages protocol.
+
+Codex and Claude Code setup requires a managed load-on-request chat gateway.
+A model's tool support still determines its usefulness in coding agents. Setup
+links to each client's current documentation. Other Clients workflows continue
+to use the existing preview, backup, confirmation and rollback controls.

@@ -1,6 +1,6 @@
-# Run and endpoints
+# Serving and Monitor
 
-**Run** serves supported local models on loopback ports. Text and vision-language endpoints use the OpenAI chat API. Classification, text embeddings, speech, music, image generation, video generation and 3D generation use typed model jobs. The installed backend must implement the selected architecture.
+**Serving** serves supported local models on loopback ports. Text and vision-language endpoints use the OpenAI chat API. Classification, text embeddings, speech, music, image generation, video generation and 3D generation use typed model jobs. The installed backend must implement the selected architecture.
 
 Typed model servers offer **Run a task…** when their ready model is in Library.
 The task form opens with that server selected and uses its existing worker,
@@ -30,21 +30,28 @@ to `local-audio-routing.json` under Workbench's Application Support directory.
 The shared option follows the profile's music route; the specific option records
 the selected model, loopback port and receipts directory. The plugin verifies
 the live service and its task capability before submitting. Unloading a shared
-FX route also unloads its music worker. In Run, the purpose picker always uses
+FX route also unloads its music worker. In Serving, the purpose picker always uses
 the model being inspected.
 
 ## Serve a model
 
-1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Supported standalone model types offer serving; speculative drafters remain paired with their target model. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.
-2. Read the memory runway: what is already loaded, what this model needs (weights, KV cache and runtime overhead) and whether it **fits**, is **tight** or **won't fit** at the chosen context. A won't-fit verdict suggests a maximum context. Unavailable memory readings show as unknown.
-3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
+1. Select a ready model in Library, then open **Serving**, or use **+** in the endpoint list. Choose the model in the setup form. Supported standalone model types can serve without a conversion record; speculative drafters remain paired with their target.
+2. **Save as endpoint** keeps a stable loopback port. Review the port, authentication, residency and inference settings, then confirm. **Start now** offers a temporary server with a runtime preview before confirmation.
+3. Select an endpoint to work in **API & security**, **Inference**, **Memory** or **Connect apps**. Its start/stop and prompt actions stay above these sections.
 
-Run is the one place that shows what is serving. **Served models** lists saved endpoints, servers started from Run and other local services from the shared inventory, each once, with its own controls. **Open Serving** in the toolbar popover, the menu bar and the Library inspector selects Run and scrolls to the list. Refreshing reads status without loading models.
+The endpoint list combines saved endpoints, temporary Workbench servers and other detected local services. It shows model, provider, port and status. **Include available models** adds external models that are not loaded; these are hidden by default. Filtering changes only this list. Connection failures are behind **Connection issues** and do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
+
+**API & security** contains the base URL, model ID, port and API-key controls. Copy the URL or model ID directly. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
+
+## Live Monitor
+
+**Monitor** is a separate workspace for active model servers from the shared inventory. It shows provider, status, input/output tokens, active requests and the most recent response throughput. Select a row for its API address, measurement interval, completed/failed/measured request counts and source/memory details. **Open model settings** selects that exact endpoint in Serving.
+
+Managed chat gateways report process-lifetime counters, reset when the gateway restarts. Token totals include only completed responses whose workers reported usage. Missing measurements display a dash; a reported zero stays zero. Response tokens per second includes queueing, loading and response generation, so it differs from a decoder-only benchmark. External providers without these metrics retain status and source visibility. Monitor uses the existing inventory refresh and never starts inference.
 
 ## Inference settings
 
-Run shows controls for the selected model's runtime. The same settings are
-available in **Start now** and **Save as endpoint**. Changing a launch setting
+Serving shows controls for the selected model's runtime. Acceleration and output settings are available in **Start now** and **Save as endpoint**. Changing a launch setting
 clears its preview; review the new plan before confirming.
 
 - **Text · MLX-LM:** choose **Standard** for native decoding and batching, or
@@ -60,7 +67,7 @@ clears its preview; review the new plan before confirming.
 - **Task endpoints:** generation controls belong to the typed request. Server
   residency and memory controls remain available.
 
-**Generation defaults** offers **Skip reasoning** for MLX-LM models whose chat
+The **Inference** section offers **Skip reasoning** for MLX-LM models whose chat
 template supports it, and a default output length for MLX-LM and Strata. Output
 length ranges from 256 to 65,536 tokens; the engine default is 8,192. Client
 requests can supply their own token limits. Temperature and sampling belong to
@@ -80,9 +87,16 @@ speedup. These options are off by default and download no draft weights.
 The status timeout includes engine startup and time spent waiting behind another
 status check; replacing the status process does not reset that timeout.
 
-Choose **Configure clients…** on a running endpoint to open Clients with that
-server selected. Clients rechecks its process and adapter identity; a changed or
-stopped server requires a fresh selection from Run. Opening Clients does not
+Saved load-on-request chat endpoints also offer a default system prompt,
+temperature and top-p. The gateway applies sampling defaults only when omitted
+by the client, and adds the system prompt only when the client has supplied no
+system or developer prompt. Typed task endpoints retain their per-request
+settings. A saved endpoint must be stopped to edit launch defaults; preview and
+confirm the new configuration before starting it again.
+
+Choose **Configure clients…** on a running endpoint to open its **Connect apps**
+section. Clients rechecks its process and adapter identity; a changed or
+stopped server requires a fresh selection from Serving. Opening Clients does not
 write configuration. Preview and confirm client wiring before applying it.
 
 Model-only Run and endpoint setup do not reuse a server reported with an adapter
@@ -101,7 +115,7 @@ Opening the window and editing the prompt never send a request.
 
 Workbench checks the selected server's process and adapter identity before and
 after the request. A changed or unavailable endpoint requires reopening the test
-from Run. Verification and comparisons keep priority; Stop and Unload are refused
+from Serving. Verification and comparisons keep priority; Stop and Unload are refused
 while this test holds the model.
 
 The window distinguishes a returned answer, a token limit, missing answer text
@@ -220,9 +234,9 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 ## The memory header
 
-The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes, plus the serving count when some served models are not in memory (for example `3 serving · 1 loaded`), and flags an endpoint that is starting or degraded. Open it for the same rows as Run's **Served models**, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
+The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes, plus the serving count when some served models are not in memory (for example `3 serving · 1 loaded`), and flags an endpoint that is starting or degraded. Open it for the same rows as Serving’s endpoint list, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
 
-Choose **What’s using memory…** from Run’s memory runway or the toolbar popover
+Choose **What’s using memory…** from the toolbar popover
 for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.
 The table shows process names, PIDs and a capture time; **Refresh** reads again.
 It never stops a process. **Open Activity Monitor** opens macOS’s process inspector.
@@ -336,3 +350,12 @@ Any client holding the key is authorized. Keep it private and reset it if it
 has been shared unintentionally. Loopback limits access to this machine; API
 keys do not create an executable allowlist. Authentication is optional, and
 existing endpoints keep their current access mode.
+
+## Menu-bar access
+
+The **CPU** icon identifies MLX Workbench in the macOS menu bar; a green dot
+indicates loaded models. Open it for model status, start/stop, reviewed unload,
+API copy actions, Monitor, Settings and Quit. Available-but-unloaded external
+models are omitted from this quick menu. Closing the main window keeps
+Workbench and its model servers running. Use **Open MLX Workbench** to return
+to the window. Login-item controls remain under Memory for startup persistence.

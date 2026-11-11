@@ -20,6 +20,7 @@ struct ServingInferenceContext: Equatable {
     var isVision: Bool { runtime == "mlx-vlm" }
     var isStrata: Bool { runtime == "strata" }
     var hasGenerationDefaults: Bool { isText || isStrata }
+    var supportsRequestDefaults: Bool { isText || isStrata || isVision }
     var supportsM5: Bool { chip?.range(of: #"\bM5\b"#, options: [.regularExpression, .caseInsensitive]) != nil }
 
     func normalized(_ options: LocalInferenceOptions) -> LocalInferenceOptions {
@@ -27,6 +28,7 @@ struct ServingInferenceContext: Equatable {
         if !isText { result.m5Prefill = false; result.promptLookup = false; result.thinkingOff = false }
         if !isVision { result.visionCache = false }
         if !hasGenerationDefaults { result.maximumTokens = nil }
+        if !supportsRequestDefaults { result.systemPrompt = ""; result.temperature = nil; result.topP = nil }
         return result
     }
 }
@@ -77,6 +79,9 @@ extension LocalInferenceOptions {
         if visionCache { parts.append("Image feature reuse") }
         if thinkingOff { parts.append("Skip reasoning") }
         if let maximumTokens { parts.append("\(maximumTokens.formatted()) output tokens") }
+        if !systemPrompt.isEmpty { parts.append("System prompt") }
+        if let temperature { parts.append("Temperature \(temperature.formatted())") }
+        if let topP { parts.append("Top-p \(topP.formatted())") }
         return parts.isEmpty ? "Runtime defaults" : parts.joined(separator: " · ")
     }
 }
@@ -85,6 +90,7 @@ extension LocalInferenceOptions {
 struct ServingInferenceControls: View {
     @Binding var options: LocalInferenceOptions
     let context: ServingInferenceContext
+    var allowRequestDefaults = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -132,7 +138,7 @@ struct ServingInferenceControls: View {
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             if context.hasGenerationDefaults {
-                DisclosureGroup("Generation defaults") {
+                Group {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         if context.isText {
                             Picker("Reasoning", selection: $options.thinkingOff) {
@@ -148,9 +154,29 @@ struct ServingInferenceControls: View {
                                 Text("\(value.formatted()) tokens").tag(Optional(value))
                             }
                         }.accessibilityIdentifier("serve-output-length")
-                        Text("Used when a client omits its output length. Temperature, sampling and per-request token limits stay in the client.")
+                        Text("Used when a client omits its output length. Explicit client settings take precedence.")
                             .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     }.padding(.top, WorkbenchSpacing.xs)
+                }
+            }
+            if allowRequestDefaults && context.supportsRequestDefaults {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    Text("Default system prompt").font(WorkbenchTypography.label)
+                    TextEditor(text: $options.systemPrompt)
+                        .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
+                        .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
+                    Text("Used when a client supplies no system or developer prompt.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    LabeledContent("Temperature") {
+                        TextField("Model default", value: $options.temperature, format: .number)
+                            .accessibilityIdentifier("serve-default-temperature")
+                    }
+                    LabeledContent("Top-p") {
+                        TextField("Model default", value: $options.topP, format: .number)
+                            .accessibilityIdentifier("serve-default-top-p")
+                    }
+                    Text("Sampling defaults apply only when the client omits the setting.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
             }
             if let error = options.validationError { InlineMessage(kind: .warning, text: error) }

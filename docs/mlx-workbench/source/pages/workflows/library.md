@@ -2,7 +2,7 @@
 
 ## Overview
 
-The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** opens LM Studio files and Discover. **Attention** lists **Needs converting**, which filters the table to sources awaiting conversion, and Reclaim. Workspaces and System pages follow in collapsible groups. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
+The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** contains **Model sources** and Discover. **Attention** lists **Needs converting**, which filters the table to sources awaiting conversion, and Reclaim. Workspaces and System pages follow in collapsible groups. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
 The **Next step** follows the model selected in Library: ready supported models open
 Run for a serve preview, sources needing conversion open Prepare, and other task
@@ -229,6 +229,28 @@ engine task artifacts, and Compare's ten-run media retention does not apply
 to these tasks. Use [Compare](compare.md) for matched model runs and listening
 ratings.
 
+#### Media performance and memory
+
+Video and 3D task forms offer **Performance & memory**. **Standard** is the
+default. The engine offers **Experimental reuse** only for single-model Wan2.1
+text-to-video and TripoSG; other architectures keep Standard available.
+
+Reuse can change frames or geometry. Its **Feature-cache allowance** accepts
+8–4,096 MiB and starts at 256 MiB. This allowance is separate from model weights
+and allocator memory; it does not cap the process's total memory. If the required
+feature cache exceeds the allowance, the engine uses full computation.
+
+Adaptive jobs use **Review job**, then **Generate**. Review preserves the exact
+request and binds it to the model config. Changing settings or the model config
+requires a new review. Cancelling review does not submit a job.
+
+Results distinguish requested settings from reported full/reused step counts,
+feature-cache usage, fallback and elapsed time. Missing telemetry remains
+unreported. Completion and step reuse do not establish equivalent quality or a
+measured speedup. **Reuse** restores the settings; **Export request…**, inside
+Result JSON, copies the verified engine request. The result export keeps reported
+reuse telemetry. Exporting a request does not copy model weights or input media.
+
 ### Delete a model
 
 **Delete…** moves a model to the Trash after a review that rechecks its identity, its folders and whether it is serving. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).
@@ -237,7 +259,7 @@ ratings.
 
 The engine labels each model with a task type. The type decides what the app offers.
 
-| Task type | Run and endpoints | Quality gate canary | Compare modes |
+| Task type | Serving and Monitor | Quality gate canary | Compare modes |
 |---|---|---|---|
 | Text LLM | Yes | Served canary prompts | Chat |
 | Vision-language | Yes | Served canary prompts | Chat, Vision, Video understanding |
@@ -251,6 +273,12 @@ The engine labels each model with a task type. The type decides what the app off
 | Speculative drafter | Never | None | None |
 
 Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own. Vision projector files and drafters that no port converts offer no conversion action.
+
+## Model sources
+
+**Model sources → Server models** lists model inventories across saved and detected local providers. Filter by provider or model, inspect the API address and state, and use **Add provider…** to connect another server. **Connections** edits existing connections. Refresh reads inventory without loading or downloading weights. Connection issues stay in a disclosure; stale observations are labeled as last seen.
+
+**Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Reclaim, and **Manage model folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
 
 ## LM Studio files
 

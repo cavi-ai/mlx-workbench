@@ -122,6 +122,10 @@ actor WorkbenchAPI {
         try Self.decodeTask(TaskCapabilities.self, envelope: await taskEnvelope(["task", "capabilities"]))
     }
 
+    func taskMediaCapabilities(modelPath: String) async throws -> TaskCapabilities {
+        try Self.decodeTask(TaskCapabilities.self, envelope: await taskEnvelope(["task", "capabilities", "--model-path", modelPath]))
+    }
+
     func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
         try request.validate()
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("mlx-task-request-\(UUID().uuidString)", isDirectory: true)
@@ -460,12 +464,15 @@ actor WorkbenchAPI {
         if let fps = parameters.fps { argv += ["--fps", String(fps)] }
         if let steps = parameters.steps { argv += ["--steps", String(steps)] }
         if let seed = parameters.seed { argv += ["--seed", String(seed)] }
+        if let mode = parameters.denoiserCache { argv += ["--denoiser-cache", mode] }
+        if let memory = parameters.cacheMemoryMiB { argv += ["--cache-memory-mib", String(memory)] }
         return argv
     }
 
     /// One prompt rendered into a new MP4 by a converted video model (`convert video`).
     func video(path: String, prompt: String, out: String, parameters: MediaParameters) async throws -> VideoResult {
-        try await runOffActor(
+        try await validateMediaReuse(path: path, kind: .videoGeneration, parameters: parameters)
+        return try await runOffActor(
             VideoResult.self,
             Self.videoArguments(path: path, prompt: prompt, out: out, parameters: parameters),
             timeout: 3700
@@ -477,11 +484,21 @@ actor WorkbenchAPI {
         if let steps = parameters.steps { argv += ["--steps", String(steps)] }
         if let seed = parameters.seed { argv += ["--seed", String(seed)] }
         if let resolution = parameters.meshResolution { argv += ["--resolution", String(resolution)] }
+        if let mode = parameters.denoiserCache { argv += ["--denoiser-cache", mode] }
+        if let memory = parameters.cacheMemoryMiB { argv += ["--cache-memory-mib", String(memory)] }
         return argv
     }
 
     func mesh(path: String, image: String, out: String, parameters: MediaParameters) async throws -> MeshResult {
-        try await runOffActor(MeshResult.self, Self.meshArguments(path: path, image: image, out: out, parameters: parameters), timeout: 3700)
+        try await validateMediaReuse(path: path, kind: .meshGeneration, parameters: parameters)
+        return try await runOffActor(MeshResult.self, Self.meshArguments(path: path, image: image, out: out, parameters: parameters), timeout: 3700)
+    }
+
+    private func validateMediaReuse(path: String, kind: TaskKind, parameters: MediaParameters) async throws {
+        let values = try parameters.reuseParameters
+        guard parameters.denoiserCache == "adaptive" else { return }
+        let capabilities = try await taskMediaCapabilities(modelPath: path)
+        try capabilities.validateReuse(TaskRequest(kind: kind, modelPath: path, parameters: values))
     }
 
     func intakeResolve(source: String, revision: String? = nil) async throws -> IntakeResolution {
@@ -910,7 +927,7 @@ actor WorkbenchAPI {
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                                previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil) -> [String] {
+                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
@@ -919,6 +936,11 @@ actor WorkbenchAPI {
         if promptLookup { args += ["--prompt-lookup"] }
         if visionCache { args += ["--vision-cache"] }
         if let maximumTokens { args += ["--max-tokens", String(maximumTokens)] }
+        if let defaults = requestDefaults {
+            if !defaults.systemPrompt.isEmpty { args += ["--system-prompt", defaults.systemPrompt] }
+            if let value = defaults.temperature { args += ["--default-temperature", String(value)] }
+            if let value = defaults.topP { args += ["--default-top-p", String(value)] }
+        }
         if let apiKeySHA256 { args += ["--api-key-sha256", apiKeySHA256] }
         if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
         return args
@@ -939,14 +961,14 @@ actor WorkbenchAPI {
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
                 jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, thinkingOff: slot.inferenceOptions.thinkingOff, maximumTokens: slot.inferenceOptions.maximumTokens,
-                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256)
+                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256)
+            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions)
         if let options { args += options.arguments }
         if slot.inferenceOptions.thinkingOff { args += ["--thinking", "off"] }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
@@ -955,9 +977,9 @@ actor WorkbenchAPI {
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
                       thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                      apiKeySHA256: String? = nil) async throws -> [String: Any] {
+                      apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -970,6 +992,15 @@ actor WorkbenchAPI {
                 throw WorkflowEvidenceError.invalid("Default output length is supported by MLX-LM and Strata. Set output length in the client for other runtimes.")
             }
         }
+        if let defaults = requestDefaults, defaults.hasRequestDefaults {
+            let configured = plan["request_defaults"] as? [String: Any] ?? [:]
+            guard defaults.validationError == nil, jit, plan.string("runtime") != "tasks",
+                  configured["system_prompt"] as? String == (defaults.systemPrompt.isEmpty ? nil : defaults.systemPrompt),
+                  (configured["temperature"] as? NSNumber)?.doubleValue == defaults.temperature,
+                  (configured["top_p"] as? NSNumber)?.doubleValue == defaults.topP else {
+                throw WorkflowEvidenceError.invalid("The engine did not confirm these request defaults. Review the endpoint settings.")
+            }
+        }
         return plan
     }
 
@@ -977,9 +1008,9 @@ actor WorkbenchAPI {
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
                     thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                    apiKeySHA256: String? = nil) async throws -> [String: Any] {
+                    apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -1167,7 +1198,9 @@ actor WorkbenchAPI {
                 requestBlockedReason: r.string("request_blocked_reason"),
                 lastUnloadReason: r.string("last_unload_reason"),
                 taskKinds: r["task_kinds"] as? [String],
-                apiKeySHA256: r.string("api_key_sha256")
+                apiKeySHA256: r.string("api_key_sha256"),
+                inferenceTelemetry: (r["inference_telemetry"] as? [String: Any]).flatMap { try? Self.decode(LabValue.self, from: $0) },
+                requestDefaults: (r["request_defaults"] as? [String: Any]).flatMap { try? Self.decode(LabValue.self, from: $0) }
             )
         }
     }

@@ -53,8 +53,10 @@ struct MediaParameters: Codable, Equatable, Sendable {
     /// Maximum requested music duration; the output reports its measured duration.
     var durationSeconds: Double?
     var lyrics: String?
+    var denoiserCache: String?
+    var cacheMemoryMiB: Int?
 
-    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil, meshResolution: Int? = nil, durationSeconds: Double? = nil, lyrics: String? = nil) {
+    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil, meshResolution: Int? = nil, durationSeconds: Double? = nil, lyrics: String? = nil, denoiserCache: String? = nil, cacheMemoryMiB: Int? = nil) {
         self.size = size
         self.width = width
         self.height = height
@@ -65,6 +67,7 @@ struct MediaParameters: Codable, Equatable, Sendable {
         self.meshResolution = meshResolution
         self.durationSeconds = durationSeconds
         self.lyrics = lyrics
+        self.denoiserCache = denoiserCache; self.cacheMemoryMiB = cacheMemoryMiB
     }
 }
 
@@ -227,6 +230,7 @@ struct PromptSetDraft: Identifiable {
         var meshResolution: String
         var lyrics: String
         var duration: String
+        var reuse: MediaReuseSettings
         /// Classification: the typed questions and expected answers; `text` is the state.
         var questions: [DecisionQuestion]
         var toolName: String? { original.tool?.name }
@@ -270,6 +274,7 @@ struct PromptSetDraft: Identifiable {
             meshResolution = initialMedia?.meshResolution.map(String.init) ?? ""
             lyrics = initialMedia?.lyrics ?? ""
             duration = initialMedia?.durationSeconds.map { String($0) } ?? ""
+            reuse = MediaReuseSettings(adaptive: initialMedia?.denoiserCache == "adaptive", memoryMiB: initialMedia?.cacheMemoryMiB.map(String.init) ?? "256")
             questions = entry.decisionQuestions ?? []
         }
 
@@ -406,6 +411,20 @@ struct PromptSetDraft: Identifiable {
             if mode == .classification {
                 if let error = DecisionQuestion.validationError(questions) { throw InvalidDraft(message: error) }
                 copy.decisionQuestions = questions
+            }
+            if mode == .videoGeneration || mode == .meshGeneration {
+                let originalReuse = MediaReuseSettings(adaptive: initialMedia?.denoiserCache == "adaptive", memoryMiB: initialMedia?.cacheMemoryMiB.map(String.init) ?? "256")
+                if let mode = initialMedia?.denoiserCache, !["off", "adaptive"].contains(mode), reuse == originalReuse {
+                    throw InvalidDraft(message: "The recorded reuse mode is unsupported. Replace this prompt before using the setup.")
+                }
+                if reuse != originalReuse {
+                    var parameters = copy.media ?? initialMedia ?? MediaParameters()
+                    let values = try reuse.parameters
+                    parameters.denoiserCache = values["denoiser_cache"]?.stringValue
+                    parameters.cacheMemoryMiB = values["cache_memory_mib"]?.integerValue
+                    copy.media = parameters
+                } else if reuse.adaptive { _ = try reuse.parameters }
+                if let parameters = copy.media { _ = try parameters.reuseParameters }
             }
             return copy
         }
@@ -828,6 +847,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let draftTokens: DraftTokenEvidence?
     let promptProcessing: PromptProcessingEvidence?
     var historyCompletedAnswer: Bool? = nil
+    var denoiserCache: JSONValue? = nil
     var historyAnswerPresent: Bool? = nil
     var historyOutputIsEmpty: Bool? = nil
     /// Classification: each question's returned answer graded against the expected one.
