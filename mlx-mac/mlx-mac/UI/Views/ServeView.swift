@@ -273,7 +273,7 @@ struct ServeView: View {
                 }.padding(WorkbenchSpacing.md).accessibilityIdentifier("serving-memory-override")
             }
             if let error = visibleActionError {
-                InlineMessage(kind: .error, text: error).padding(WorkbenchSpacing.md)
+                InlineMessage(kind: .error, text: error).lineLimit(nil).fixedSize(horizontal: false, vertical: true).padding(WorkbenchSpacing.md)
             }
             workspaceScroll
         }
