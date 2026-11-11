@@ -130,6 +130,10 @@ struct ServingModelList: View {
                         .accessibilityIdentifier("serving-model-\(row.id)")
                 }
             }.listStyle(.sidebar).accessibilityIdentifier("serving-model-list")
+            .overlay {
+                if rows.isEmpty { ContentUnavailableView("No endpoints", systemImage: "server.rack", description: Text("Serve a model to get started.")) }
+                else if visibleRows.isEmpty { ContentUnavailableView.search(text: query) }
+            }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 Toggle("Include available models", isOn: $includesAvailable).toggleStyle(.checkbox)
                     .font(WorkbenchTypography.secondary).accessibilityIdentifier("serving-include-available")

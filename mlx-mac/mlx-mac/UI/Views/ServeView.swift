@@ -176,6 +176,7 @@ struct ServeView: View {
             if new != nil { showsServerSetup = false; workspaceTab = .connection; synchronizeConnectionPort() }
         }
         .onChange(of: workspaceRows.map(\.id), initial: true) { _, ids in
+            if isRouteActive, shownPath != revealedModelPath { focusShownModel() }
             if let selection = workspaceSelection, !ids.contains(selection) { workspaceSelection = ids.first }
             else if workspaceSelection == nil && !showsServerSetup { workspaceSelection = ids.first }
         }
@@ -259,6 +260,28 @@ struct ServeView: View {
     }
 
     private var workspaceDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let pending = pendingFleetAction {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    InlineMessage(kind: .warning, text: "Fleet memory: \(pending.summary). Enable anyway?")
+                    HStack {
+                        Button("Cancel") { pendingFleetAction = nil }
+                        Spacer()
+                        Button("Enable anyway") { pending.confirm(); pendingFleetAction = nil }
+                            .buttonStyle(.workbenchPrimary)
+                    }
+                }.padding(WorkbenchSpacing.md).accessibilityIdentifier("serving-memory-override")
+            }
+            if let error = visibleActionError {
+                InlineMessage(kind: .error, text: error).padding(WorkbenchSpacing.md)
+            }
+            workspaceScroll
+        }
+        .accessibilityIdentifier("serving-model-workspace")
+        .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
+    }
+
+    private var workspaceScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 if let request = appHost.handoffs[.returnToUse] {
@@ -275,7 +298,6 @@ struct ServeView: View {
                 } else {
                     newServerWorkspace
                 }
-                if let error = visibleActionError { InlineMessage(kind: .error, text: error) }
                 if !endpoint.pendingStops.isEmpty {
                     Button("Retry stopping servers") { Task { await endpoint.retryPendingStops() } }.disabled(endpoint.isChanging)
                 }
@@ -285,8 +307,6 @@ struct ServeView: View {
         }
         .accessibilityIdentifier("run-content-scroll")
         .id(selectedWorkspaceRow?.id ?? "serving-new-model")
-        .accessibilityIdentifier("serving-model-workspace")
-        .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
     }
 
     private var newServerWorkspace: some View {
@@ -464,7 +484,7 @@ struct ServeView: View {
         revealedModelPath = path
         if let row = workspaceRows.first(where: { HFRepoID.matches(ServingWorkspacePresentation.modelID($0), path) }) {
             workspaceSelection = row.id; showsServerSetup = false
-        } else { showsServerSetup = true }
+        } else { workspaceSelection = nil; showsServerSetup = true }
     }
 
     private func focusRequestedServer() {
@@ -1463,7 +1483,7 @@ struct EndpointChanges {
     private func run(adding path: String, holdForOverride: (String, @escaping () -> Void) -> Void,
                      _ work: @escaping @MainActor () async -> Void) async {
         if let verdict = appHost.runFleetVerdict(adding: path), case .wontFit = verdict {
-            holdForOverride(verdict.summary) { _ = Task { await work() } }
+            holdForOverride(URL(fileURLWithPath: path).lastPathComponent + ": " + verdict.summary) { _ = Task { await work() } }
             return
         }
         await work()

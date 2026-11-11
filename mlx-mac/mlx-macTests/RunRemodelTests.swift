@@ -1182,7 +1182,7 @@ enum ServingWorld {
     }
 
     static func server(_ name: String, port: Int, pid: Int, managedByWorkbench: Bool) -> ServerInfo {
-        ServerInfo(path: "/models/\(name)", runtime: "mlx", port: port, pid: pid, state: "running", jit: false, modelState: "loaded",
+        ServerInfo(path: "/models/\(name)", runtime: "mlx_lm", port: port, pid: pid, state: "running", jit: false, modelState: "loaded",
                    receiptsDirectory: managedByWorkbench ? managed : other, processStartedAt: "2026-01-01T00:00:00Z")
     }
 
@@ -1314,7 +1314,7 @@ extension RunRemodelTests {
             let (window, hosting) = hostRun(app, detail: size, dark: false)
             defer { window.close() }
             try await Task.sleep(for: .milliseconds(400))
-            try await scrollToServedModels(app, hosting: hosting, size: size)
+            await showServingEndpoints(app, hosting: hosting)
             try saveCapture(try pngData(hosting), name: "run-\(label)-rows-light")
         }
         // Save as endpoint, with the model unverified.
@@ -1332,7 +1332,7 @@ extension RunRemodelTests {
             let (window, hosting) = hostRun(empty, detail: CGSize(width: 1220, height: 848), dark: false)
             defer { window.close() }
             try await Task.sleep(for: .milliseconds(400))
-            try await scrollToServedModels(empty, hosting: hosting, size: CGSize(width: 1220, height: 848))
+            await showServingEndpoints(empty, hosting: hosting)
             try saveCapture(try pngData(hosting), name: "run-1220x848-empty-light")
         }
         // A failing status read together with a refused action.
@@ -1372,25 +1372,9 @@ extension RunRemodelTests {
     }
 
     /// Scrolls the hosted page so the Served models header is at the top of the viewport.
-    private func scrollToServedModels(_ app: AppHost, hosting: NSView, size: CGSize) async throws {
-        let (tall, tallHosting) = hostRun(app, detail: CGSize(width: size.width, height: 2600), dark: false)
-        defer { tall.close() }
-        try await Task.sleep(for: .milliseconds(300))
-        let image = try XCTUnwrap(NSBitmapImageRep(data: try pngData(tallHosting))?.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        let anchor = try XCTUnwrap((request.results ?? []).first { $0.topCandidates(1).first?.string.lowercased().hasPrefix("served models") == true })
-        let fromTop = (1 - anchor.boundingBox.maxY) * tallHosting.bounds.height
-        let tallScroll = try scrollView(in: tallHosting)
-        let scrollTop = tallHosting.bounds.height - tallScroll.convert(tallScroll.bounds, to: tallHosting).maxY
-        let target = max(0, fromTop - scrollTop - 56)
-        let scroll = try scrollView(in: hosting)
-        let flipped = scroll.documentView?.isFlipped ?? true
-        let documentHeight = scroll.documentView?.bounds.height ?? 0
-        let y = flipped ? target : max(0, documentHeight - target - scroll.contentView.bounds.height)
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
-        scroll.reflectScrolledClipView(scroll.contentView)
+    private func showServingEndpoints(_ app: AppHost, hosting: NSView) async {
+        app.handoffs.send(ServingFocusRequest(), as: .openServing)
+        await settle(400)
         hosting.layoutSubtreeIfNeeded()
     }
 
@@ -1405,18 +1389,17 @@ extension RunRemodelTests {
         }
     }
 
-    /// Open Serving brings the served models into view and finishes the request.
-    func testOpenServingScrollsToServedModelsAndFinishesTheRequest() async throws {
+    /// Open Serving selects an endpoint and completes the handoff.
+    func testOpenServingSelectsAnEndpointAndFinishesTheRequest() async throws {
         let app = try await ServingWorld.host()
         let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
         defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        let scroll = try scrollView(in: hosting)
-        XCTAssertEqual(scroll.contentView.bounds.origin.y, 0, accuracy: 1)
+        await settle(400)
         app.handoffs.send(ServingFocusRequest(), as: .openServing)
-        try await Task.sleep(for: .milliseconds(500))
-        XCTAssertNil(app.handoffs[.openServing], "The request is finished once applied")
-        XCTAssertGreaterThan(abs(scroll.contentView.bounds.origin.y), 100, "The served models are brought into view")
+        await settle()
+        XCTAssertNil(app.handoffs[.openServing])
+        let text = try renderedLines(try pngData(hosting)).joined(separator: " ")
+        XCTAssertTrue(text.contains("8766"), text)
     }
 
     func testRunListsEachServedThingExactlyOnce() async throws {
@@ -1429,6 +1412,7 @@ extension RunRemodelTests {
         func rows(named name: String) -> Int {
             lines.filter { $0.lowercased().range(of: "^\\W*(running\\s+)?\(name)\\W*$", options: .regularExpression) != nil }.count
         }
+        XCTAssertTrue(lines.contains { $0.lowercased().contains("serve a model") }, "The newly selected Library model keeps its setup workspace")
         XCTAssertEqual(rows(named: "alder"), 1, "The endpoint and its running server are one row")
         XCTAssertEqual(rows(named: "birch"), 1, "The third-party local service has a row")
         XCTAssertEqual(rows(named: "cedar"), 1, "A launched server without an endpoint has one row")
@@ -1440,7 +1424,7 @@ extension RunRemodelTests {
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(400))
         let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("nothing is serving") })
+        XCTAssertTrue(lines.contains { $0.contains("no endpoints") })
     }
 
     // MARK: Endpoint changes
@@ -1671,87 +1655,83 @@ extension RunRemodelTests {
         try XCTUnwrap(rowIDs(app).first { $0.hasPrefix("server-") })
     }
 
-    /// Open Serving names a row: a page that kept its scroll position moves to that row, further rows land further down.
-    func testOpenServingMovesAPageThatKeptItsScrollPositionToTheNamedRow() async throws {
+    /// An explicit handoff selects its endpoint and displays that endpoint’s API address.
+    func testOpenServingSelectsEachNamedEndpoint() async throws {
         let app = try await ServingWorld.host()
         let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
         defer { window.close() }
         await settle(400)
-        try scroll(hosting, to: 40)
-        XCTAssertEqual(try offset(hosting), 40, accuracy: 1)
-
         app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
         await settle()
-        let first = try offset(hosting)
         XCTAssertNil(app.handoffs[.openServing])
-        XCTAssertGreaterThan(first, 100, "The endpoint row is brought to the top")
-
+        XCTAssertTrue(try renderedLines(try pngData(hosting)).joined(separator: " ").contains("8766"))
         app.handoffs.send(ServingFocusRequest(rowID: try serverRowID(app)), as: .openServing)
         await settle()
         XCTAssertNil(app.handoffs[.openServing])
-        XCTAssertGreaterThan(try offset(hosting), first, "The launched server's row lies below the endpoint row")
+        let text = try renderedLines(try pngData(hosting)).joined(separator: " ")
+        XCTAssertTrue(text.contains("9001"), text)
+        XCTAssertTrue(text.lowercased().contains("cedar"), text)
     }
 
-    /// A request that arrives while the page is hidden stays pending and is applied when the page is shown.
-    func testOpenServingWaitsForAHiddenRunPageAndThenScrolls() async throws {
+    /// A hidden page preserves its pending handoff until it becomes active.
+    func testOpenServingWaitsForTheRouteBeforeSelectingAnEndpoint() async throws {
         let app = try await ServingWorld.host()
-        let route = RouteFlag()
-        route.active = false
+        let route = RouteFlag(); route.active = false
         let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false, route: route)
         defer { window.close() }
         await settle(400)
         app.handoffs.send(ServingFocusRequest(), as: .openServing)
         await settle()
-        XCTAssertNotNil(app.handoffs[.openServing], "A hidden page does not consume the request")
-        XCTAssertEqual(try offset(hosting), 0, accuracy: 1)
+        XCTAssertNotNil(app.handoffs[.openServing])
         route.active = true
         await settle()
         XCTAssertNil(app.handoffs[.openServing])
-        XCTAssertGreaterThan(try offset(hosting), 100)
+        XCTAssertTrue(try renderedLines(try pngData(hosting)).joined(separator: " ").contains("8766"))
     }
 
-    /// A fleet override that appears while the page is open is scrolled into view with its question.
-    func testRaisedFleetOverrideIsScrolledIntoView() async throws {
+    /// Memory overrides remain visible alongside the model workspace.
+    func testRaisedFleetOverrideStaysVisibleAboveTheWorkspace() async throws {
         let app = try await ServingWorld.host()
         let hold = FleetOverrideHold()
         let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false, hold: hold)
         defer { window.close() }
         await settle(400)
-        XCTAssertEqual(try offset(hosting), 0, accuracy: 1)
         hold.hold("needs 40.0 GB, 12.0 GB short") {}
         await settle()
-        XCTAssertGreaterThan(try offset(hosting), 50)
-        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("enable anyway") }, "The override question is on screen")
+        let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
+        XCTAssertTrue(text.contains("enable anyway"), text)
+        XCTAssertTrue(text.contains("40.0"), text)
+        XCTAssertNotNil(hold.pending)
     }
 
-    /// A refused action shows its error in view when it first appears, not on every refresh.
-    func testNewActionErrorIsScrolledIntoViewWhenItAppears() async throws {
+    /// Action failures remain visible without moving the model settings.
+    func testActionErrorsStayVisibleAboveTheWorkspace() async throws {
         let app = try await ServingWorld.host()
         let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
         defer { window.close() }
         await settle(400)
-        XCTAssertEqual(try offset(hosting), 0, accuracy: 1)
         app.servingInventory.mayChange = { _ in false }
         await app.servingInventory.prepare(.stop, service: try cedarService(app))
         await settle()
         XCTAssertNotNil(app.servingInventory.actionError)
-        XCTAssertGreaterThan(try offset(hosting), 100)
-        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("in use") }, "The error text is on screen")
+        let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
+        XCTAssertTrue(text.contains("in use"), text)
     }
 
     // MARK: Wide rows
 
-    /// At the narrowest one-line width, an endpoint whose facts cannot fit beside its name shows them whole on a second line.
-    func testWideEndpointRowWithLongFactsFallsBackToTwoLines() async throws {
+    /// The connection remains readable while inference settings retain their saved values.
+    func testEndpointWorkspaceKeepsConnectionAndSettingsReadable() async throws {
         let app = try await ServingWorld.host(accelerated: true)
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 2600), dark: false)
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 900), dark: false)
         defer { window.close() }
-        await settle(500)
-        XCTAssertFalse(RunLayout(viewportWidth: 800).isTwoLine)
-        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("prompt text reuse") }, "The inference setting reads in full")
-        XCTAssertFalse(lines.contains { $0.contains("…") && $0.contains("reuse") }, "No fact is truncated")
+        await settle(400)
+        app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
+        await settle()
+        let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
+        XCTAssertTrue(text.contains("8766"), text)
+        XCTAssertTrue(text.contains("inference"), text)
+        XCTAssertTrue(text.contains("security"), text)
+        XCTAssertTrue(try XCTUnwrap(app.endpoint.fleet.slots.first).inferenceOptions.promptLookup)
     }
 }
