@@ -204,6 +204,7 @@
 		STGPRBB1 /* SettingsDirectoryProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGPRBF1 /* SettingsDirectoryProbe.swift */; };
 		STGDET01 /* SettingsEngineDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGDET02 /* SettingsEngineDetection.swift */; };
 		STGRMDB1 /* SettingsRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGRMDF1 /* SettingsRemodelTests.swift */; };
+		SHLRNDB1 /* ShellRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHLRNDF1 /* ShellRenderTests.swift */; };
 		DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCRMDF1 /* DiscoverRemodelTests.swift */; };
 		LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSRMDF1 /* LMStudioRemodelTests.swift */; };
 		RCLVWSB1 /* ReclaimViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLVWSF1 /* ReclaimViews.swift */; };
@@ -530,6 +531,7 @@
 		STGPRBF1 /* SettingsDirectoryProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsDirectoryProbe.swift; path = UI/Views/SettingsDirectoryProbe.swift; sourceTree = "<group>"; };
 		STGDET02 /* SettingsEngineDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsEngineDetection.swift; path = Services/SettingsEngineDetection.swift; sourceTree = "<group>"; };
 		STGRMDF1 /* SettingsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsRemodelTests.swift; path = SettingsRemodelTests.swift; sourceTree = "<group>"; };
+		SHLRNDF1 /* ShellRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ShellRenderTests.swift; path = ShellRenderTests.swift; sourceTree = "<group>"; };
 		DSCRMDF1 /* DiscoverRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverRemodelTests.swift; path = DiscoverRemodelTests.swift; sourceTree = "<group>"; };
 		LMSRMDF1 /* LMStudioRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioRemodelTests.swift; path = LMStudioRemodelTests.swift; sourceTree = "<group>"; };
 		LABPRSF1 /* LabPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabPresentation.swift; path = UI/Views/LabPresentation.swift; sourceTree = "<group>"; };
@@ -1048,6 +1050,7 @@
 				HLTRMDF1 /* HealthRemodelTests.swift */,
 				CLNRMDF1 /* ClientsRemodelTests.swift */,
 				STGRMDF1 /* SettingsRemodelTests.swift */,
+				SHLRNDF1 /* ShellRenderTests.swift */,
 				DSCRMDF1 /* DiscoverRemodelTests.swift */,
 				LMSRMDF1 /* LMStudioRemodelTests.swift */,
 				TRNRMDF1 /* TrainingRemodelTests.swift */,
@@ -1573,6 +1576,7 @@
 				HLTRMDB1 /* HealthRemodelTests.swift in Sources */,
 				CLNRMDB1 /* ClientsRemodelTests.swift in Sources */,
 				STGRMDB1 /* SettingsRemodelTests.swift in Sources */,
+				SHLRNDB1 /* ShellRenderTests.swift in Sources */,
 				DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */,
 				LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */,
 				TRNRMDB1 /* TrainingRemodelTests.swift in Sources */,

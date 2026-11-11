@@ -409,7 +409,7 @@ struct LibraryNameCell: View {
     @Environment(\.backgroundProminence) private var prominence
 
     private var symbolStyle: Color {
-        if prominence == .increased { return WorkbenchColor.onAccent }
+        if prominence == .increased { return WorkbenchColor.onSelection }
         return isSelected ? WorkbenchColor.accent : WorkbenchColor.muted
     }
 
@@ -424,7 +424,7 @@ struct LibraryNameCell: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.hairline) {
                 Text(row.name)
                     .font(row.isFamily ? WorkbenchTypography.emphasis : WorkbenchTypography.body)
-                    .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
+                    .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 subline
@@ -441,7 +441,7 @@ struct LibraryNameCell: View {
         } else if !row.subline.isEmpty {
             Text(row.subline)
                 .font(WorkbenchTypography.secondary)
-                .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.muted)
+                .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -455,7 +455,7 @@ struct LibraryStatusLabel: View {
     @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
-        let color = prominence == .increased ? WorkbenchColor.onAccent : WorkbenchStatus(rawValue: readiness.rawValue).color
+        let color = prominence == .increased ? WorkbenchColor.onSelection : WorkbenchStatus(rawValue: readiness.rawValue).color
         HStack(spacing: WorkbenchSpacing.xxs) {
             Image(systemName: readiness.statusSymbol)
                 .symbolRenderingMode(.hierarchical)
@@ -519,7 +519,7 @@ struct LibraryReadinessCell: View {
                     .lineLimit(1)
             }
             .font(WorkbenchTypography.body)
-            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : status.color)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : status.color)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(status.title)
         }
@@ -532,7 +532,7 @@ struct LibraryQuantCell: View {
 
     var body: some View {
         Text(row.quantization)
-            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
             .font(WorkbenchTypography.tabular)
             .lineLimit(1)
     }
@@ -546,7 +546,7 @@ struct LibrarySizeCell: View {
 
     private var number: some View {
         Text(LibraryTablePresentation.byteCount(row.bytes))
-            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
             .font(WorkbenchTypography.tabular)
             .lineLimit(1)
     }
@@ -572,11 +572,11 @@ struct LibrarySizeCell: View {
         let fraction = min(1, max(0, Double(row.bytes) / Double(largestLeafBytes)))
         let increased = prominence == .increased
         return Capsule()
-            .fill(increased ? WorkbenchColor.onAccent.opacity(.stroke) : WorkbenchColor.well)
+            .fill(increased ? WorkbenchColor.onSelection.opacity(.stroke) : WorkbenchColor.well)
             .frame(width: WorkbenchSize.Library.sizeBarWidth, height: WorkbenchSize.Library.sizeBarHeight)
             .overlay(alignment: .leading) {
                 Capsule()
-                    .fill(increased ? WorkbenchColor.onAccent : WorkbenchColor.muted)
+                    .fill(increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                     .frame(width: WorkbenchSize.Library.sizeBarWidth * fraction)
             }
             .accessibilityHidden(true)
@@ -590,7 +590,7 @@ struct LibraryModifiedCell: View {
     var body: some View {
         Text(LibraryTablePresentation.modifiedText(row.modifiedAt))
             .font(WorkbenchTypography.secondaryTabular)
-            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.muted)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
             .lineLimit(1)
     }
 }
@@ -626,7 +626,7 @@ struct LibraryFitContent: View {
     let isProminent: Bool
 
     private var wordStyle: Color {
-        if isProminent { return WorkbenchColor.onAccent }
+        if isProminent { return WorkbenchColor.onSelection }
         switch fit.tone {
         case .tight, .wontFit: return fit.tone.color
         case .fits: return WorkbenchColor.ink
@@ -664,9 +664,9 @@ struct LibraryFitContent: View {
     }
 
     private var gauge: some View {
-        let fillColor = isProminent ? WorkbenchColor.onAccent : fit.tone.color
+        let fillColor = isProminent ? WorkbenchColor.onSelection : fit.tone.color
         return Capsule()
-            .fill(isProminent ? WorkbenchColor.onAccent.opacity(.stroke) : WorkbenchColor.well)
+            .fill(isProminent ? WorkbenchColor.onSelection.opacity(.stroke) : WorkbenchColor.well)
             .frame(minWidth: WorkbenchSize.Library.fitGaugeMinimum, maxWidth: WorkbenchSize.Library.fitGaugeMaximum)
             .frame(height: WorkbenchSize.Library.fitGaugeHeight)
             .overlay(alignment: .leading) {

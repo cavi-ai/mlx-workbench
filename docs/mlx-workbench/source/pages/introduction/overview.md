@@ -8,9 +8,10 @@ These pages describe release {{RELEASE_TAG}} from commit `{{RELEASE_COMMIT}}`.
 
 ## Choose a path
 
-The workspace uses dark surfaces, yellow primary actions and a grouped
-sidebar. Warnings, failures and verification states keep their own labels
-and symbols. Each screen opens with its title and a short description.
+The workspace follows the system appearance, uses yellow primary actions and
+a grouped sidebar, and opens on the Library. Warnings, failures and
+verification states keep their own labels and symbols. The toolbar shows each
+screen's title.
 
 | You want to | Start with |
 |---|---|
@@ -30,19 +31,19 @@ The sidebar groups thirteen screens.
 
 | Group | Screen | Purpose |
 |---|---|---|
-| Workbench | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
-| | **Library** | Local weights, fit, details, task workspaces, lineage, deletion and LM Studio source |
-| | **Use** | Persistent conversations, selected model servers and typed task results |
-| Lifecycle | **Prepare** | Preview and confirm conversions; follow verification |
+| Models | **Library** | Local weights, fit, details, task workspaces, lineage, deletion and LM Studio source |
+| | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
+| | **Prepare** | Preview and confirm conversions; follow verification |
+| | **Reclaim** | Quarantine, Trash, source cleanup and restore |
+| Workspaces | **Use** | Persistent conversations, selected model servers and typed task results |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
-| Operations | **Activity** | Conversion, server, experiment and training jobs on one timeline |
-| | **Reclaim** | Quarantine, Trash, source cleanup and restore |
+| | **Training** | Text LoRA training and base-versus-adapter evaluation |
+| | **Studies** | Controlled experiments, generation jobs and blind review |
+| System | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
+| | **Activity** | Conversion, server, experiment and training jobs on one timeline |
 | | **Clients** | Config wiring for local clients, with rollback |
 | | **Health** | Runtime readiness, model health and the Setup Assistant |
-| Lab | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
-| | **Studies** | Controlled experiments, generation jobs and blind review |
-| | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
 
 Overview's flight path includes only stages supported by the selected model: verification requires an available canary, measurement requires a compatible comparison mode, and serving applies to chat and vision models. **Measured** requires a usable metric from a completed compatible comparison with the same path and a known matching model signature. Missing signatures remain unmeasured.

@@ -731,7 +731,7 @@ final class DiscoverRenderTests: XCTestCase {
     private let library = ["/render/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-30B-A3B-Instruct-4bit/snapshots/abc123"]
 
     private func attach<Content: View>(_ view: Content, name: String, viewport: CGFloat, dark: Bool, height: CGFloat = 1500) async throws {
-        let hosting = NSHostingView(rootView: view.frame(width: viewport, height: height).background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
+        let hosting = NSHostingView(rootView: view.frame(width: viewport, height: height).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(dark ? .dark : .light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: viewport, height: height), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

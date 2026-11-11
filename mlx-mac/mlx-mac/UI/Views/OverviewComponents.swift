@@ -814,7 +814,7 @@ struct FlightTrackView: View {
         switch item.state {
         case .complete:
             symbol
-                .foregroundStyle(WorkbenchColor.onAccent)
+                .foregroundStyle(WorkbenchColor.onAccentFill)
                 .frame(width: WorkbenchSize.stageNode, height: WorkbenchSize.stageNode)
                 .background(WorkbenchColor.accent, in: Circle())
         case .active:

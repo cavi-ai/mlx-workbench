@@ -1082,7 +1082,7 @@ final class ClientsRenderTests: XCTestCase {
 
     static func root(host: AppHost, active: Bool, viewport: CGFloat, dark: Bool) -> some View {
         WireView(appHost: host).environment(\.isRouteActive, active)
-            .frame(width: viewport, height: 1000).background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light)
+            .frame(width: viewport, height: 1000).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(dark ? .dark : .light)
     }
 
     static func show(host: AppHost, active: Bool, viewport: CGFloat, dark: Bool) -> NSWindow {
@@ -1197,7 +1197,7 @@ final class ClientsRenderTests: XCTestCase {
             showsMeasurement: true, isPreparing: false, isMeasureDisabled: false, onMeasure: {}, onReview: {}
         ) { EmptyView() }
         let view = NSHostingView(rootView: outcome.padding(WorkbenchSpacing.pageInset).frame(width: 700, alignment: .leading)
-            .background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
+            .background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(dark ? .dark : .light))
         let window = Self.window(for: view, viewport: 700, dark: dark)
         defer { window.close() }
         view.layoutSubtreeIfNeeded()

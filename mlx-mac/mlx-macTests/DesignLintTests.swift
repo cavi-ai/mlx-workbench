@@ -14,30 +14,103 @@ final class DesignLintTests: XCTestCase {
     func testBrandPaletteKeepsReadableTextInBothAppearances() throws {
         for name in [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua] {
             let appearance = try XCTUnwrap(NSAppearance(named: name))
-            appearance.performAsCurrentDrawingAppearance {
-                for background in [WorkbenchColor.canvas, WorkbenchColor.sidebar, WorkbenchColor.surface] {
-                    XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.ink, background), 4.5, name.rawValue)
-                    XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.accent, background), 4.5, name.rawValue)
-                }
-                XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.onAccent, WorkbenchColor.action), 7)
-                XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.onAccent, WorkbenchColor.actionPressed), 7)
+            let window = resolved(NSColor.windowBackgroundColor, in: appearance)
+            for background in [WorkbenchColor.surface, WorkbenchColor.well] {
+                let base = resolved(background, in: appearance).composited(over: window)
+                XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.ink, in: appearance), base), 4.5, name.rawValue)
+                XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.accent, in: appearance), base), 4.5, name.rawValue)
+            }
+            XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.ink, in: appearance), window), 4.5, name.rawValue)
+            XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.accent, in: appearance), window), 4.5, name.rawValue)
+            let action = resolved(WorkbenchColor.action, in: appearance)
+            let pressed = resolved(WorkbenchColor.actionPressed, in: appearance)
+            let onAccent = resolved(WorkbenchColor.onAccent, in: appearance)
+            XCTAssertGreaterThanOrEqual(ratio(onAccent, action), 7, name.rawValue)
+            XCTAssertGreaterThanOrEqual(ratio(onAccent, pressed), 7, name.rawValue)
+        }
+    }
+
+    @MainActor
+    func testSurfaceAndWellStepAboveTheSystemWindowBackground() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            let window = resolved(NSColor.windowBackgroundColor, in: appearance)
+            let surface = resolved(WorkbenchColor.surface, in: appearance).composited(over: window)
+            let well = resolved(WorkbenchColor.well, in: appearance).composited(over: window)
+            let surfaceRatio = ratio(surface, window), wellRatio = ratio(well, window)
+            print("DESIGN-LINT \(name.rawValue) surface=\(surfaceRatio) well=\(wellRatio)")
+            XCTAssertGreaterThanOrEqual(surfaceRatio, 1.1, name.rawValue)
+            XCTAssertGreaterThan(wellRatio, surfaceRatio, name.rawValue)
+        }
+    }
+
+    @MainActor
+    func testAccentAssetMatchesTheBrandAccentInBothAppearances() throws {
+        let expected: [(NSAppearance.Name, UInt32)] = [(.aqua, 0x785900), (.darkAqua, 0xFFD43B)]
+        for (name, hex) in expected {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            let asset = try XCTUnwrap(NSColor(named: "AccentColor"), "AccentColor asset missing")
+            let fromAsset = resolved(asset, in: appearance)
+            let brand = resolved(WorkbenchColor.accent, in: appearance)
+            let target = NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255,
+                                 blue: CGFloat(hex & 255) / 255, alpha: 1)
+            for (lhs, rhs) in [(fromAsset, brand), (fromAsset, target)] {
+                XCTAssertEqual(lhs.redComponent, rhs.redComponent, accuracy: 1.0 / 255, name.rawValue)
+                XCTAssertEqual(lhs.greenComponent, rhs.greenComponent, accuracy: 1.0 / 255, name.rawValue)
+                XCTAssertEqual(lhs.blueComponent, rhs.blueComponent, accuracy: 1.0 / 255, name.rawValue)
             }
         }
     }
 
     @MainActor
-    private func contrast(_ foreground: Color, _ background: Color) -> Double {
-        func components(_ color: Color) -> NSColor { NSColor(color).usingColorSpace(.sRGB)! }
-        let fg = components(foreground), bg = components(background)
-        func luminance(_ color: NSColor, over base: NSColor) -> Double {
-            let values = zip([color.redComponent, color.greenComponent, color.blueComponent],
-                             [base.redComponent, base.greenComponent, base.blueComponent]).map { value, base in
-                let channel = Double(value * color.alphaComponent + base * (1 - color.alphaComponent))
-                return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
-            }
-            return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
+    func testWindowRootFollowsTheSystemAppearance() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.appearance = try XCTUnwrap(NSAppearance(named: name))
+            let hosting = NSHostingView(rootView: Text("Root").workbenchTheme())
+            window.contentView = hosting
+            hosting.layoutSubtreeIfNeeded()
+            window.layoutIfNeeded()
+            XCTAssertEqual(hosting.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), name, name.rawValue)
         }
-        let a = luminance(fg, over: bg), b = luminance(bg, over: bg)
+    }
+
+    @MainActor
+    func testSelectionForegroundIsReadableOnTheSelectionFill() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            let fill = resolved(NSColor.selectedContentBackgroundColor, in: appearance)
+            let selection = ratio(resolved(WorkbenchColor.onSelection, in: appearance), fill)
+            let accentFill = ratio(resolved(WorkbenchColor.onAccentFill, in: appearance),
+                                   resolved(WorkbenchColor.accent, in: appearance))
+            print("DESIGN-LINT \(name.rawValue) onSelection=\(selection) onAccentFill=\(accentFill)")
+            XCTAssertGreaterThanOrEqual(selection, 4.5, name.rawValue)
+            XCTAssertGreaterThanOrEqual(accentFill, 4.5, name.rawValue)
+        }
+    }
+
+    @MainActor
+    private func resolved(_ color: Color, in appearance: NSAppearance) -> NSColor {
+        var result = NSColor.clear
+        appearance.performAsCurrentDrawingAppearance {
+            let value = NSColor(color)
+            result = value.usingColorSpace(.sRGB) ?? value
+        }
+        return result
+    }
+
+    @MainActor
+    private func resolved(_ color: NSColor, in appearance: NSAppearance) -> NSColor {
+        var result = color
+        appearance.performAsCurrentDrawingAppearance {
+            result = color.usingColorSpace(.sRGB) ?? color
+        }
+        return result
+    }
+
+    private func ratio(_ foreground: NSColor, _ background: NSColor) -> Double {
+        let a = foreground.composited(over: background).luminance, b = background.luminance
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
     }
 
@@ -70,6 +143,7 @@ final class DesignLintTests: XCTestCase {
              reason: "painted canvas; the window and sheets draw their own background", isRegex: true),
         Rule(pattern: #"\.background\s*\{\s*WorkbenchColor\.canvas"#,
              reason: "painted canvas; the window and sheets draw their own background", isRegex: true),
+        Rule(pattern: "preferredColorScheme", reason: "forced appearance; the app follows the system appearance"),
     ]
 
     private static func violations(in line: String, file: String) -> [String] {
@@ -138,6 +212,7 @@ final class DesignLintTests: XCTestCase {
             ".background(WorkbenchColor.canvas)",
             ".background(WorkbenchColor.canvas, ignoresSafeAreaEdges: .all)",
             ".background { WorkbenchColor.canvas }",
+            ".preferredColorScheme(.dark)",
         ]
         for line in flagged {
             XCTAssertFalse(Self.violations(in: line, file: "Sample.swift").isEmpty, "expected a violation: \(line)")
@@ -163,6 +238,27 @@ final class DesignLintTests: XCTestCase {
         for line in clean {
             XCTAssertEqual(Self.violations(in: line, file: "Sample.swift"), [], "unexpected violation: \(line)")
         }
+    }
+}
+
+private extension NSColor {
+    /// This color over an opaque base, in sRGB.
+    func composited(over base: NSColor) -> NSColor {
+        let fg = usingColorSpace(.sRGB)!, bg = base.usingColorSpace(.sRGB)!
+        let alpha = fg.alphaComponent
+        return NSColor(srgbRed: fg.redComponent * alpha + bg.redComponent * (1 - alpha),
+                       green: fg.greenComponent * alpha + bg.greenComponent * (1 - alpha),
+                       blue: fg.blueComponent * alpha + bg.blueComponent * (1 - alpha), alpha: 1)
+    }
+
+    /// WCAG relative luminance of an opaque sRGB color.
+    var luminance: Double {
+        let color = usingColorSpace(.sRGB)!
+        let values = [color.redComponent, color.greenComponent, color.blueComponent].map { value -> Double in
+            let channel = Double(value)
+            return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+        }
+        return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
     }
 }
 

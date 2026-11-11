@@ -576,8 +576,10 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let sourceSelection { LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts) }
-            WorkbenchPageHeading(route: .library)
+            if let sourceSelection {
+                LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts)
+                    .padding(.bottom, WorkbenchSpacing.sm)
+            }
             if let errors = appHost.scanResult?.rootErrors, !errors.isEmpty {
                 DisclosureGroup(errors.count == 1 ? "1 model folder could not be scanned" : "\(errors.count) model folders could not be scanned") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -593,6 +595,7 @@ struct LibraryView: View {
                 }
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 .padding(.horizontal, WorkbenchSpacing.pageInset)
+                .padding(.top, sourceSelection == nil ? WorkbenchSpacing.pageInset : 0)
                 .padding(.bottom, WorkbenchSpacing.xs)
                 .accessibilityIdentifier("library-root-errors")
             }

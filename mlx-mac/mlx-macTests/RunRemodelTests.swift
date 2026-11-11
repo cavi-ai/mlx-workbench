@@ -1242,16 +1242,13 @@ private struct RunPage: View {
     let hold: FleetOverrideHold?
 
     var body: some View {
-        VStack(spacing: 0) {
-            WorkbenchPageHeading(route: .run)
-            ServeView(appHost: app, initialReview: review, fleetHold: hold)
-        }
-        .environment(\.isRouteActive, route.active)
+        ServeView(appHost: app, initialReview: review, fleetHold: hold)
+            .environment(\.isRouteActive, route.active)
     }
 }
 
 extension RunRemodelTests {
-    /// The Run page as the window shows it: the page heading above the route.
+    /// The Run page as the window shows it: the route alone below the toolbar.
     private func hostRun(_ app: AppHost, detail: CGSize, dark: Bool, route: RouteFlag? = nil,
                          review: EndpointChangeReview? = nil, hold: FleetOverrideHold? = nil) -> (NSWindow, NSHostingView<AnyView>) {
         let content = RunPage(app: app, route: route ?? RouteFlag(), review: review, hold: hold)

@@ -25,28 +25,6 @@ struct AppSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(WorkbenchColor.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                Image("WorkbenchIcon")
-                    .resizable()
-                    .frame(width: WorkbenchSize.brandIcon, height: WorkbenchSize.brandIcon)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                    Text("MLX Workbench")
-                        .font(WorkbenchTypography.brand)
-                        .foregroundStyle(WorkbenchColor.ink)
-                    Text("Local models. Your Mac.")
-                        .font(WorkbenchTypography.metadata)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, WorkbenchSpacing.sm)
-            .padding(.vertical, WorkbenchSpacing.lg)
-            .background(WorkbenchColor.sidebar)
-        }
         .accessibilityLabel("Workbench navigation")
     }
 
@@ -62,7 +40,7 @@ struct AppSidebar: View {
         Button {
             selectedRoute = route
         } label: {
-            SidebarRouteLabel(route: route, isSelected: selectedRoute == route)
+            SidebarRouteLabel(route: route)
                 .font(WorkbenchTypography.body)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -71,7 +49,6 @@ struct AppSidebar: View {
         }
         .buttonStyle(.plain)
         .padding(.vertical, WorkbenchSpacing.xxs)
-        .listRowBackground(selectedRoute == route ? WorkbenchColor.accent.opacity(.fill) : Color.clear)
         .badge(badges[route].map { Text($0) })
         .help(route.pageDescription)
         .accessibilityLabel(route.label)
@@ -81,16 +58,16 @@ struct AppSidebar: View {
 
 private struct SidebarRouteLabel: View {
     let route: AppRoute
-    let isSelected: Bool
+
     @Environment(\.backgroundProminence) private var prominence
 
+    /// The emphasized selection fill is the accent, so the selected row takes the contrast-checked selection color.
     var body: some View {
-        Label {
-            Text(route.label)
-                .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
-        } icon: {
-            Image(systemName: route.symbolName)
-                .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : (isSelected ? WorkbenchColor.accent : WorkbenchColor.muted))
+        if prominence == .increased {
+            Label(route.label, systemImage: route.symbolName)
+                .foregroundStyle(WorkbenchColor.onSelection)
+        } else {
+            Label(route.label, systemImage: route.symbolName)
         }
     }
 }
