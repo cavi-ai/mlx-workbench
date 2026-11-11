@@ -8,6 +8,7 @@ import Foundation
 enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case overview = "quickstart"
     case library = "models"
+    case use = "use"
     case prepare = "convert"
     case compare = "quant"
     case run = "serve"
@@ -72,7 +73,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
 
     var group: Group {
         switch self {
-        case .overview, .library: return .workbench
+        case .overview, .library, .use: return .workbench
         case .prepare, .compare, .run: return .lifecycle
         case .activity, .reclaim, .clientSetup, .health: return .operations
         case .discover, .lmStudio, .studies, .training, .adopt: return .lab
@@ -83,6 +84,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     var label: String {
         switch self {
         case .overview: return "Overview"
+        case .use: return "Use"
         case .library: return "Library"
         case .prepare: return "Prepare"
         case .compare: return "Compare"
@@ -103,6 +105,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     var symbolName: String {
         switch self {
         case .overview: return "house"
+        case .use: return "bubble.left.and.bubble.right"
         case .library: return "books.vertical"
         case .prepare: return "shippingbox"
         case .compare: return "chart.bar"
@@ -123,6 +126,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     var pageDescription: String {
         switch self {
         case .overview: return "See the current model workspace and next safe action."
+        case .use: return "Work with model servers and keep conversations and results."
         case .library: return "Browse discovered models and their readiness evidence."
         case .prepare: return "Preview and confirm model conversion jobs."
         case .compare: return "Measure ready model variants against the same prompts."

@@ -7,6 +7,10 @@ The task form opens with that server selected and uses its existing worker,
 inference authentication and memory policy. Recent jobs and verified artifacts
 remain attached to their original server session. See [Local inference tasks](library.md#local-inference-tasks).
 
+**Use…** opens a work session with that server selected. Chat history and typed
+task results remain accessible in [Use](use.md). **Try a prompt…** remains a
+separate transient diagnostic.
+
 ## Music, sound effects and ambience
 
 Music task forms offer a **Purpose** picker: **Music**, **Sound effects** or

@@ -28,12 +28,14 @@ struct MlxWorkbenchApp: App {
             ContentView(appHost: appHost)
                 .workbenchTheme()
                 .onAppear {
+                    appDelegate.prepareToQuit = { await appHost.useWorkspace.prepareForQuit() }
                     appHost.startLiveServices()
                 }
         }
         .windowToolbarStyle(.unified)
         .defaultSize(width: WorkbenchSize.windowDefaultWidth, height: WorkbenchSize.windowDefaultHeight)
         .commands {
+            UseWorkspaceCommands(appHost: appHost, selectedRouteID: $selectedRouteID)
             CommandGroup(replacing: .appInfo) {
                 Button("About MLX Workbench") {
                     NSApp.activate(ignoringOtherApps: true)
@@ -85,6 +87,24 @@ struct MlxWorkbenchApp: App {
     }
 }
 
+@MainActor
 final class WorkbenchApplicationDelegate: NSObject, NSApplicationDelegate {
+    var prepareToQuit: (() async -> Bool)?
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let prepareToQuit else { return .terminateNow }
+        Task {
+            if await prepareToQuit() { sender.reply(toApplicationShouldTerminate: true) }
+            else { confirmQuitWithoutSaving(sender) }
+        }
+        return .terminateLater
+    }
+    private func confirmQuitWithoutSaving(_ sender: NSApplication) {
+        let alert = NSAlert()
+        alert.messageText = "Conversation could not be saved"
+        alert.informativeText = "Keep Workbench open to save again or export the conversation."
+        alert.addButton(withTitle: "Keep open")
+        alert.addButton(withTitle: "Quit without saving")
+        sender.reply(toApplicationShouldTerminate: alert.runModal() == .alertSecondButtonReturn)
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

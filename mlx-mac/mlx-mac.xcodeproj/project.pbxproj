@@ -354,6 +354,15 @@
 		E70500000000000000000202 /* ServedTaskAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000201 /* ServedTaskAPI.swift */; };
 		E70500000000000000000302 /* ServedTaskSessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000301 /* ServedTaskSessions.swift */; };
 		E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70500000000000000000401 /* TaskDestinationPanel.swift */; };
+		E70600000000000000000102 /* UseSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000101 /* UseSession.swift */; };
+		E70600000000000000000202 /* UseSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000201 /* UseSessionStore.swift */; };
+		E70600000000000000000302 /* UseWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000301 /* UseWorkspaceTests.swift */; };
+		E70600000000000000000402 /* UseChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000401 /* UseChatClient.swift */; };
+		E70600000000000000000502 /* UseImageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000501 /* UseImageStore.swift */; };
+		E70600000000000000000602 /* UseWorkspaceCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000601 /* UseWorkspaceCoordinator.swift */; };
+		E70600000000000000000702 /* UseWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000701 /* UseWorkspaceView.swift */; };
+		E70600000000000000000802 /* UseWorkViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000801 /* UseWorkViews.swift */; };
+		E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000901 /* UseWorkspaceCommands.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -719,6 +728,15 @@
 		E70500000000000000000201 /* ServedTaskAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ServedTaskAPI.swift; sourceTree = "<group>"; };
 		E70500000000000000000301 /* ServedTaskSessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ServedTaskSessions.swift; sourceTree = "<group>"; };
 		E70500000000000000000401 /* TaskDestinationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TaskDestinationPanel.swift; sourceTree = "<group>"; };
+		E70600000000000000000101 /* UseSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/UseSession.swift; sourceTree = "<group>"; };
+		E70600000000000000000201 /* UseSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/UseSessionStore.swift; sourceTree = "<group>"; };
+		E70600000000000000000301 /* UseWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UseWorkspaceTests.swift; sourceTree = "<group>"; };
+		E70600000000000000000401 /* UseChatClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/UseChatClient.swift; sourceTree = "<group>"; };
+		E70600000000000000000501 /* UseImageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/UseImageStore.swift; sourceTree = "<group>"; };
+		E70600000000000000000601 /* UseWorkspaceCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/UseWorkspaceCoordinator.swift; sourceTree = "<group>"; };
+		E70600000000000000000701 /* UseWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkspaceView.swift; sourceTree = "<group>"; };
+		E70600000000000000000801 /* UseWorkViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkViews.swift; sourceTree = "<group>"; };
+		E70600000000000000000901 /* UseWorkspaceCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/UseWorkspaceCommands.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -786,6 +804,14 @@
 				29A710000000000000000002 /* TaskArtifactVerifier.swift */,
 				A0D100000000000000000001 /* LocalAudioRouting.swift */,
 				C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */,
+				E70600000000000000000901 /* UseWorkspaceCommands.swift */,
+				E70600000000000000000801 /* UseWorkViews.swift */,
+				E70600000000000000000701 /* UseWorkspaceView.swift */,
+				E70600000000000000000601 /* UseWorkspaceCoordinator.swift */,
+				E70600000000000000000501 /* UseImageStore.swift */,
+				E70600000000000000000401 /* UseChatClient.swift */,
+				E70600000000000000000201 /* UseSessionStore.swift */,
+				E70600000000000000000101 /* UseSession.swift */,
 				E70500000000000000000401 /* TaskDestinationPanel.swift */,
 				E70500000000000000000301 /* ServedTaskSessions.swift */,
 				E70500000000000000000201 /* ServedTaskAPI.swift */,
@@ -1065,6 +1091,7 @@
 				MIDTSTF1 /* ModelUpdateCoordinatorTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 				29A710000000000000000003 /* InferenceTaskTests.swift */,
+				E70600000000000000000301 /* UseWorkspaceTests.swift */,
 				E70500000000000000000101 /* ServedTaskTests.swift */,
 				26CFREF001 /* ContractFixtureTests.swift */,
 				26WQREF002 /* WebConvertQueueTests.swift */,
@@ -1313,6 +1340,14 @@
 				29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */,
 				A0D100000000000000000011 /* LocalAudioRouting.swift in Sources */,
 				C0DE00000000000000000011 /* InferenceTaskCoordinator.swift in Sources */,
+				E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */,
+				E70600000000000000000802 /* UseWorkViews.swift in Sources */,
+				E70600000000000000000702 /* UseWorkspaceView.swift in Sources */,
+				E70600000000000000000602 /* UseWorkspaceCoordinator.swift in Sources */,
+				E70600000000000000000502 /* UseImageStore.swift in Sources */,
+				E70600000000000000000402 /* UseChatClient.swift in Sources */,
+				E70600000000000000000202 /* UseSessionStore.swift in Sources */,
+				E70600000000000000000102 /* UseSession.swift in Sources */,
 				E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */,
 				E70500000000000000000302 /* ServedTaskSessions.swift in Sources */,
 				E70500000000000000000202 /* ServedTaskAPI.swift in Sources */,
@@ -1581,6 +1616,7 @@
 				MIDTSTB1 /* ModelUpdateCoordinatorTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 				29A710000000000000000013 /* InferenceTaskTests.swift in Sources */,
+				E70600000000000000000302 /* UseWorkspaceTests.swift in Sources */,
 				E70500000000000000000102 /* ServedTaskTests.swift in Sources */,
 				26CFBL001 /* ContractFixtureTests.swift in Sources */,
 				26WQBL002 /* WebConvertQueueTests.swift in Sources */,

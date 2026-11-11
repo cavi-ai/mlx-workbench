@@ -12,12 +12,14 @@ struct MenuBarView: View {
     @ObservedObject private var workflow: ModelWorkflowCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var servedTasks: ServedTaskSessions
+    @ObservedObject private var useWorkspace: UseWorkspaceCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
 
     init(appHost: AppHost) {
         self.appHost = appHost
         _servedTasks = ObservedObject(wrappedValue: appHost.servedTasks)
+        _useWorkspace = ObservedObject(wrappedValue: appHost.useWorkspace)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)

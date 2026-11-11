@@ -12,6 +12,7 @@ struct TaskDestinationPanel: View {
     let model: LibraryModel
     var initialOrigin: ServedTaskOrigin? = nil
     var onEngineSetup: (() -> Void)? = nil
+    var onDestinationChange: ((ServedTaskOrigin?) async throws -> Void)? = nil
     @ObservedObject private var sessions: ServedTaskSessions
     @ObservedObject private var workflow: ModelWorkflowCoordinator
     @ObservedObject private var oneOff: InferenceTaskCoordinator
@@ -20,8 +21,10 @@ struct TaskDestinationPanel: View {
     @State private var error: String?
     @State private var reviewUncertainty = false
 
-    init(appHost: AppHost, model: LibraryModel, initialOrigin: ServedTaskOrigin? = nil, onEngineSetup: (() -> Void)? = nil) {
+    init(appHost: AppHost, model: LibraryModel, initialOrigin: ServedTaskOrigin? = nil, onEngineSetup: (() -> Void)? = nil,
+         onDestinationChange: ((ServedTaskOrigin?) async throws -> Void)? = nil) {
         self.appHost = appHost; self.model = model; self.initialOrigin = initialOrigin; self.onEngineSetup = onEngineSetup
+        self.onDestinationChange = onDestinationChange
         _selectedID = State(initialValue: initialOrigin?.id ?? "local")
         _sessions = ObservedObject(wrappedValue: appHost.servedTasks)
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
@@ -110,6 +113,7 @@ struct TaskDestinationPanel: View {
                 guard let selected = choices.first(where: { $0.id == id }) else { throw ServedTaskError.changed }
                 next = try await sessions.select(selected)
             }
+            try await onDestinationChange?(choices.first(where: { $0.id == id }))
             previous?.stopPolling(owner: "model-inspector")
             previous?.stopPlayback()
             if let previous { next.copyDrafts(from: previous) }

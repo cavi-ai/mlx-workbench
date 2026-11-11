@@ -354,6 +354,15 @@ final class HostedUIFixture: @unchecked Sendable {
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
                 return
             }
+            if request.hasPrefix("GET /v1/models "),
+               let data = try? Data(contentsOf: root.appendingPathComponent("chat-endpoint.json")),
+               let server = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let body = try! JSONSerialization.data(withJSONObject: ["object": "list", "data": [["id": server["path"]!, "object": "model"]]])
+                var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                response.append(body)
+                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
             if let serverData = try? Data(contentsOf: root.appendingPathComponent("typed-endpoint.json")),
                let server = try? JSONSerialization.jsonObject(with: serverData) as? [String: Any],
                let path = header.components(separatedBy: " ").dropFirst().first,
@@ -408,9 +417,17 @@ final class HostedUIFixture: @unchecked Sendable {
             }
             if request.hasPrefix("POST /v1/chat/completions "),
                let body = try? String(contentsOf: root.appendingPathComponent("prompt-response"), encoding: .utf8) {
-                try? Data(request[end.upperBound...].utf8).write(to: root.appendingPathComponent("prompt-request.json"))
+                let sent = Data(request[end.upperBound...].utf8)
+                try? sent.write(to: root.appendingPathComponent("prompt-request.json"))
+                if FileManager.default.fileExists(atPath: root.appendingPathComponent("chat-endpoint.json").path) {
+                    let log = root.appendingPathComponent("chat-requests.jsonl")
+                    var records = (try? Data(contentsOf: log)) ?? Data()
+                    records.append(sent); records.append(Data("\n".utf8))
+                    try? records.write(to: log, options: .atomic)
+                }
                 let held = FileManager.default.fileExists(atPath: root.appendingPathComponent("hold-prompt").path)
-                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + (held ? "" : body)
+                let prefix = (try? String(contentsOf: root.appendingPathComponent("chat-stream-prefix"), encoding: .utf8)) ?? ""
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + (held ? prefix : body)
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
                     if !held { connection.cancel() }
                 })

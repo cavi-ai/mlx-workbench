@@ -25,6 +25,7 @@ struct ModelActions {
 
     /// Run serves chat models. Compare also supports ready media models.
     var canServe: Bool { ModelTaskPresentation.supportsEndpoint(model) }
+    var canUse: Bool { !UseMode.modes(for: model).isEmpty }
     var canCompare: Bool { ComparisonModelRequest(model: model) != nil }
 
     func repairRuntime() {
@@ -56,6 +57,11 @@ struct ModelActions {
         appHost.handoffs.send(request, as: .compareModel)
         appHost.selectedModelPath = model.item.path
         onRouteSelection(.compare)
+    }
+
+    func use() {
+        appHost.handoffs.send(UseModelRequest(modelPath: model.item.path), as: .useModel)
+        onRouteSelection(.use)
     }
 
     func run() {
@@ -452,6 +458,10 @@ struct ModelDetailsView: View {
             Button(actions.prepareTitle) { actions.prepare() }
                 .buttonStyle(.workbenchPrimary)
                 .fixedSize()
+        } else if actions.canUse {
+            Button { actions.use() } label: { Label("Use model", systemImage: "bubble.left.and.bubble.right") }
+                .buttonStyle(.workbenchPrimary).controlSize(.large).fixedSize()
+                .accessibilityIdentifier("library-use-model")
         } else if actions.canServe {
             Button { actions.run() } label: {
                 Label("Run model", systemImage: "play.fill")
@@ -466,6 +476,7 @@ struct ModelDetailsView: View {
     @ViewBuilder
     private var secondaryActions: some View {
         if actions.canServe {
+            if actions.canUse { Button("Run model") { actions.run() }.fixedSize() }
             if actions.canPrepare, model.readiness != .needsRuntime {
                 Button("Select for Run") { actions.run() }
                     .fixedSize()

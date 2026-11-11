@@ -32,6 +32,7 @@ The sidebar groups thirteen screens.
 |---|---|---|
 | Workbench | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
 | | **Library** | Local weights, fit, details, task workspaces, lineage, deletion and LM Studio source |
+| | **Use** | Persistent conversations, selected model servers and typed task results |
 | Lifecycle | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
