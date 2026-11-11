@@ -397,7 +397,7 @@ struct SettingsView: View {
                         if agentBudgetBusy { ProgressView().controlSize(.small) }
                     }
                     if !agentBudgetMessage.isEmpty {
-                        Text(agentBudgetMessage).font(.caption).foregroundStyle(.secondary)
+                        Text(agentBudgetMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             .textSelection(.enabled)
                     }
                 }
@@ -469,7 +469,7 @@ struct SettingsView: View {
                         if localAudioBusy { ProgressView().controlSize(.small) }
                     }
                     if !localAudioMessage.isEmpty {
-                        Text(localAudioMessage).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        Text(localAudioMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
                     }
                 }
             }
