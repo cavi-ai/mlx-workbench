@@ -806,7 +806,7 @@ struct LibraryView: View {
         .background {
             Button("") { searchFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
+                .hidden()
                 .accessibilityHidden(true)
         }
     }

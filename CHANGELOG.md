@@ -17,7 +17,8 @@ and is versioned independently; its pin follows mlx-agent `main`.
 - Run: one serving surface. Served models, API keys and other local services moved from the Served models window into Run; the toolbar and menu bar open Run.
 - Window: follows the system appearance, uses the system sidebar and opens on Library; the sidebar filters models by kind with counts, lists sources and models needing conversion, and pages drop the repeated in-content heading.
 - Run: unanswered inventory sources fold into one line and service details fold under Details.
-- Library: one row per model with Name, Size, Fits and State (including Serving), a search field that takes a Hugging Face link with **Add**, grouping and filters under **View options**, and an inspector led by **Chat**, **Serve** and **Compare** with Memory and Measured summaries.
+- Library: one row per model with Name, Size, Fits and State (including Serving), a search field that takes a Hugging Face link with **Add**, grouping and filters under **View options**, and an inspector led by **Chat**, **Serve** and **Compare** with Memory and Measured summaries; lineage details and raw model evidence show as labeled rows.
+- Toolbar: names serving models alongside loaded ones when some served models are not in memory.
 
 ## [0.8.0] - 2026-11-07
 ### Added

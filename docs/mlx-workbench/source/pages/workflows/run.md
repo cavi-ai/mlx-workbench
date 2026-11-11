@@ -220,7 +220,7 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 ## The memory header
 
-The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes and flags an endpoint that is starting or degraded. Open it for the same rows as Run's **Served models**, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
+The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes, plus the serving count when some served models are not in memory (for example `3 serving · 1 loaded`), and flags an endpoint that is starting or degraded. Open it for the same rows as Run's **Served models**, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
 
 Choose **What’s using memory…** from Run’s memory runway or the toolbar popover
 for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.

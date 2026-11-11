@@ -4,6 +4,19 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testInspectorEvidenceRendersLabeledRowsInsteadOfKeyValueText() {
+        let home = NSHomeDirectory()
+        let rows = ModelDetailsPresentation.evidenceRows(["path=\(home)/.models/a", "quant_bits=4", "signature=abc", "free text"])
+        XCTAssertEqual(rows, [
+            DetailRow("Path", "~/.models/a", prose: true),
+            DetailRow("Quant bits", "4", prose: true),
+            DetailRow("Signature", "abc"),
+            DetailRow("", "free text", prose: true)
+        ])
+        XCTAssertEqual(ModelDetailsPresentation.lineageRows(["size": "44.86 GB", "architecture": "qwen3_next"]),
+                       [DetailRow("Architecture", "qwen3_next", prose: true), DetailRow("Size", "44.86 GB", prose: true)])
+    }
+
     func testSourceChoicesTreatEverySavedHostEquallyAndPreserveLocalFiles() {
         let hosts = [
             ModelHost(name: "Shared", provider: .ollama, baseURL: "http://127.0.0.1:11434"),

@@ -84,6 +84,30 @@ struct ModelActions {
 /// Pure rows for the identity card: the path once, source paths only when
 /// they differ from it, and conditional rows only when they carry a fact.
 enum ModelDetailsPresentation {
+    /// Labeled rows for `key=value` evidence entries; entries without a key keep their text as the value.
+    static func evidenceRows(_ entries: [String]) -> [DetailRow] {
+        entries.map { entry in
+            let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return DetailRow("", entry, prose: true) }
+            return keyedRow(parts[0], parts[1])
+        }
+    }
+
+    /// Labeled rows for a lineage event's detail map, in key order.
+    static func lineageRows(_ detail: [String: String]) -> [DetailRow] {
+        detail.sorted { $0.key < $1.key }.map { keyedRow($0.key, $0.value) }
+    }
+
+    private static func keyedRow(_ key: String, _ value: String) -> DetailRow {
+        let key = key.trimmingCharacters(in: .whitespaces)
+        let value = value.trimmingCharacters(in: .whitespaces)
+        let words = key.replacingOccurrences(of: "_", with: " ").lowercased()
+        let label = words.prefix(1).uppercased() + words.dropFirst()
+        let shown = value.hasPrefix("/") ? (value as NSString).abbreviatingWithTildeInPath : value
+        let identifier = ["signature", "digest", "sha", "hash"].contains { words.contains($0) }
+        return DetailRow(label, shown, prose: !identifier)
+    }
+
     static func identityRows(for model: LibraryModel, prepareDestination: String?) -> [DetailRow] {
         var rows: [DetailRow] = [DetailRow("Path", model.item.path)]
         let extraSources = model.sourcePaths.filter { $0 != model.item.path }
@@ -365,15 +389,8 @@ struct ModelDetailsView: View {
                     DisclosureGroup("Raw model evidence") {
                         let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
                             + ["signature=\(ModelDetailsPresentation.known(model.item.signature))"]
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                            ForEach(evidence, id: \.self) { entry in
-                                Text(entry)
-                                    .font(WorkbenchTypography.value)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        .textSelection(.enabled)
-                        .padding(.top, WorkbenchSpacing.xxs)
+                        DetailGrid(rows: ModelDetailsPresentation.evidenceRows(evidence))
+                            .padding(.top, WorkbenchSpacing.sm)
                     }
                 }
             }
@@ -729,11 +746,9 @@ struct ModelDetailsView: View {
                             Text(event.summary)
                                 .font(WorkbenchTypography.secondary)
                                 .foregroundStyle(WorkbenchColor.muted)
-                            ForEach(event.detail.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                                Text("\(key): \(value)")
-                                    .font(WorkbenchTypography.value)
-                                    .foregroundStyle(WorkbenchColor.muted)
-                                    .textSelection(.enabled)
+                            if !event.detail.isEmpty {
+                                DetailGrid(rows: ModelDetailsPresentation.lineageRows(event.detail))
+                                    .padding(.top, WorkbenchSpacing.xxs)
                             }
                         }
                     }

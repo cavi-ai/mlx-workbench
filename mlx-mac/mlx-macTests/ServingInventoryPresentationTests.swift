@@ -33,6 +33,18 @@ final class ServingInventoryPresentationTests: XCTestCase {
         XCTAssertEqual(ServingInventoryPresentation.summary(.empty), "Reading local serving models…")
     }
 
+    func testToolbarNamesServingModelsThatAreNotLoaded() {
+        let servers = [
+            ServerInfo(path: "/models/loaded", port: 1, pid: 10, state: "running", modelState: "loaded"),
+            ServerInfo(path: "/models/idle", port: 2, pid: 20, state: "running", modelState: "unloaded"),
+            ServerInfo(path: "/models/unknown", port: 3, pid: 30, state: "running")
+        ]
+        let snapshot = ServingInventorySnapshot.make(engine: servers, hosts: [], managedReceipts: "/receipts", capturedAt: capturedAt)
+        let text = ResourceHeaderPresentation.memoryText(availableBytes: 12_000_000_000, loaded: snapshot.loadedCount,
+                                                         serving: snapshot.servingCount, compact: false)
+        XCTAssertEqual(text, "3 serving · 1 loaded · ~12.0 GB available")
+    }
+
     func testLibraryLinksRequireKnownPathsAndDoNotGuessByName() {
         let item = ModelItem(path: "/models/Qwen", name: "Qwen", bytes: 1, modifiedAt: nil,
             shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil,

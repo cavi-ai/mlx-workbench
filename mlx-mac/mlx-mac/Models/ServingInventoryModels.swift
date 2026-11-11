@@ -97,6 +97,8 @@ struct ServingInventorySnapshot: Equatable {
 
     static let empty = ServingInventorySnapshot(services: [])
     var loadedCount: Int { services.filter { $0.isLocal && !$0.stale && $0.residency == .loaded }.count }
+    /// Local services bound to a model path: the ones a Library row marks Serving, loaded or not.
+    var servingCount: Int { services.filter { $0.isLocal && $0.modelPath != nil }.count }
     var unknownCount: Int { services.filter { $0.isLocal && $0.modelID != "__inventory__" && ($0.stale || $0.residency == .unknown) }.count }
 
     static func make(engine: [ServerInfo], hosts: [HostInventory], managedReceipts: String, capturedAt: Date,
