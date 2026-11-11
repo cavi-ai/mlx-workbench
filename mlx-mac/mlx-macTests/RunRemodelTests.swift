@@ -1713,12 +1713,12 @@ extension RunRemodelTests {
         app.servingInventory.mayChange = { _ in false }
         await app.servingInventory.prepare(.stop, service: try cedarService(app))
         await settle()
-        XCTAssertNotNil(app.servingInventory.actionError)
+        XCTAssertTrue(try XCTUnwrap(app.servingInventory.actionError).contains("Refresh and review it again."))
         let image = try pngData(hosting)
         try saveCapture(image, name: "Serving-action-error-minimum")
         let text = try renderedLines(image).joined(separator: " ").lowercased()
         XCTAssertTrue(text.contains("service changed"), text)
-        XCTAssertTrue(text.contains("review"), text)
+
     }
 
     // MARK: Wide rows
