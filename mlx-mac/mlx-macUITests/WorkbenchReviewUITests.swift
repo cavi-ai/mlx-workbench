@@ -1033,8 +1033,13 @@ final class WorkbenchReviewUITests: XCTestCase {
         let result = text(containing: summary)
         XCTAssertTrue(result.waitForExistence(timeout: 15))
         let scroll = app.scrollViews.containing(.button, identifier: "task-start").firstMatch
-        for _ in 0..<6 where !result.isHittable { scroll.scroll(byDeltaX: 0, deltaY: 250) }
-        XCTAssertTrue(result.isHittable)
+        for _ in 0..<8 where !result.isHittable {
+            let bounds = scroll.frame.intersection(app.windows.firstMatch.frame)
+            let frame = result.frame
+            let delta: CGFloat = frame.isEmpty ? -300 : max(-300, min(300, bounds.midY - frame.midY))
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(result.isHittable, app.debugDescription)
     }
 
     private func chooseMeshInput() throws -> URL {
@@ -1482,7 +1487,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             "receipts_dir": receipts, "receipt": receipts + "/.mlx-agent-receipts/serve/\(port).json"]
         try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
         try JSONSerialization.data(withJSONObject: server).write(to: root.appendingPathComponent("typed-endpoint.json"))
-        launch(appearance: "Dark", isolatedHome: true)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
         select("Serving")
         let open = app.buttons["run-model-task-\(port)"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
@@ -3430,7 +3435,7 @@ final class WorkbenchReviewUITests: XCTestCase {
              "adapter_path": "/fixture/adapters/tuned", "adapter_identity": ["adapters.safetensors": ["sha256": "fixture", "bytes": 4]]]
         ]
         try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
-        launch(appearance: "Dark", isolatedHome: true)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
         select("Serving")
         let second = app.staticTexts[":8767"].firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 15)); second.click()
@@ -4664,7 +4669,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: [["slots": [slot], "installedAtLogin": false]])
             .write(to: state.appendingPathComponent("endpoint-fleet.json"))
         try Data().write(to: root.appendingPathComponent("inference-serving-fixture"))
-        launch(appearance: "Dark", isolatedHome: true)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
         resizeWindow(width: 1260, height: 840)
         select("Serving")
         XCTAssertTrue(app.textFields["serving-endpoint-port"].waitForExistence(timeout: 15))
@@ -4700,7 +4705,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             ["repo": "org/Measured-text", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running", "receipt": "/fixture/measured.json", "jit": true, "model_state": "loaded", "active_requests": 0, "inference_telemetry": usage],
             ["repo": "org/Other-text", "runtime": "mlx_lm", "port": 8767, "pid": 456, "state": "running", "receipt": "/fixture/other.json"]]
         try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
-        launch(appearance: "Light", isolatedHome: true)
+        launch(appearance: "Light", route: "models", isolatedHome: true)
         resizeWindow(width: 1380, height: 820)
         select("Monitor")
         XCTAssertTrue(app.staticTexts["1,200"].waitForExistence(timeout: 15))
@@ -4721,7 +4726,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.windows.firstMatch.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 10))
         XCTAssertNotEqual(app.state, .notRunning)
-        let menu = app.menuBarItems.matching(NSPredicate(format: "identifier == %@ OR label == %@", "workbench-menu-bar", "MLX Workbench")).firstMatch
+        let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
         menu.click()
         XCTAssertTrue(app.menuItems["Live Monitor"].waitForExistence(timeout: 10))
