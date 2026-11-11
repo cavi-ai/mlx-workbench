@@ -4666,6 +4666,52 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(calls.contains("\"serve\", \"start\""))
     }
 
+    func testModelSourcesShowAllProvidersAndSharedFolders() throws {
+        let secondRoot = root.appendingPathComponent("second-provider")
+        try FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["path": "org/Alternate-text"])
+            .write(to: secondRoot.appendingPathComponent("chat-endpoint.json"))
+        let first = try HostedUIFixture(root: root), second = try HostedUIFixture(root: secondRoot)
+        let firstPort = try first.start(), secondPort = try second.start()
+        defer { first.stop(); second.stop() }
+        let providers: [[String: Any]] = [
+            ["id": UUID().uuidString, "name": "Ollama", "provider": "ollama", "baseURL": "http://127.0.0.1:\(firstPort)"],
+            ["id": UUID().uuidString, "name": "Other local server", "provider": "openAICompatible", "baseURL": "http://127.0.0.1:\(secondPort)"]]
+        let support = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let saved = try JSONSerialization.data(withJSONObject: providers)
+        try saved.write(to: support.appendingPathComponent("model-hosts.json"))
+        let configURL = root.appendingPathComponent("config.json")
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        config["gguf_roots"] = [root.appendingPathComponent("models").path]
+        config["mlx_roots"] = [root.appendingPathComponent("models").path, root.appendingPathComponent("output").path]
+        try JSONSerialization.data(withJSONObject: config).write(to: configURL)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        resizeWindow(width: 1260, height: 840)
+        select("Model sources")
+        app.buttons["sources-refresh"].click()
+        XCTAssertTrue(text(containing: "fixture-model:latest").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "Alternate-text").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.popUpButtons["sources-provider-picker"].exists)
+        XCTAssertTrue(app.buttons["sources-add-provider"].isHittable)
+        capture("Model-sources-all-providers")
+        app.buttons["sources-add-provider"].click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.textFields["model-host-url"].exists)
+        sheet.buttons["Cancel"].click()
+        XCTAssertEqual(try Data(contentsOf: support.appendingPathComponent("model-hosts.json")), saved)
+        app.radioButtons["Model folders"].click()
+        let shared = root.appendingPathComponent("models").path
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", shared, shared)).count, 1)
+        XCTAssertTrue(text(containing: "GGUF · MLX").exists)
+        XCTAssertTrue(app.buttons["Review duplicates"].isHittable)
+        capture("Model-sources-shared-folders")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["intake", "fetch"] || Array($0.prefix(2)) == ["serve", "start"] })
+    }
+
     func testServingWorkspaceKeepsSettingsTogether() throws {
         let model = try installTaskModel(kind: "text_llm", name: "Workspace text").path
         let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")

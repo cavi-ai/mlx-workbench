@@ -37,11 +37,11 @@ To build from source instead, run `make start` in the checkout after `make insta
 
 ## First model
 
-1. **Library** lists the GGUF and MLX weights already on disk, with whether each fits in memory now.
+1. **Model sources** shows local providers and registered cache folders. **Library** lists the GGUF and MLX weights already on disk, with whether each fits in memory now.
 2. Paste a Hugging Face link anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
 3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
 4. **Serving** previews and starts a loopback server for the verified model.
-5. **Clients** points opencode, Continue, Zed or Aider at that server, with backups and rollback.
+5. **Serving → Connect apps** offers endpoint-specific setup and reviewed client configuration, with backups and rollback.
 
 See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
 

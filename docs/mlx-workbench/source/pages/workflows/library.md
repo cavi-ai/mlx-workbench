@@ -2,7 +2,7 @@
 
 ## Overview
 
-The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** opens LM Studio files and Discover. **Attention** lists **Needs converting**, which filters the table to sources awaiting conversion, and Reclaim. Workspaces and System pages follow in collapsible groups. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
+The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** contains **Model sources** and Discover. **Attention** lists **Needs converting**, which filters the table to sources awaiting conversion, and Reclaim. Workspaces and System pages follow in collapsible groups. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
 The **Next step** follows the model selected in Library: ready supported models open
 Run for a serve preview, sources needing conversion open Prepare, and other task
@@ -273,6 +273,12 @@ The engine labels each model with a task type. The type decides what the app off
 | Speculative drafter | Never | None | None |
 
 Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own. Vision projector files and drafters that no port converts offer no conversion action.
+
+## Model sources
+
+**Model sources → Server models** lists model inventories across saved and detected local providers. Filter by provider or model, inspect the API address and state, and use **Add provider…** to connect another server. **Connections** edits existing connections. Refresh reads inventory without loading or downloading weights. Connection issues stay in a disclosure; stale observations are labeled as last seen.
+
+**Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Reclaim, and **Manage model folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
 
 ## LM Studio files
 

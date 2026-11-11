@@ -11,22 +11,22 @@ final class AppRouteTests: XCTestCase {
             "convert", "quant", "serve",
             "jobs", "duplicates", "wire", "doctor",
             "scout", "lmstudio", "studies", "training-studio", "adopt",
-            "settings", "monitor"
+            "settings", "monitor", "sources"
         ]
 
-        XCTAssertEqual(routes.count, 17)
+        XCTAssertEqual(routes.count, 18)
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [4, 6, 4, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [5, 6, 4, 1])
     }
 
     func testSidebarGroupsFollowTheModelFirstOrder() {
         let grouped = AppRoute.grouped
         XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(grouped[0].routes, [.library, .discover, .prepare, .reclaim])
+        XCTAssertEqual(grouped[0].routes, [.library, .sources, .discover, .prepare, .reclaim])
         XCTAssertEqual(grouped[1].routes, [.use, .compare, .run, .monitor, .training, .studies])
         XCTAssertEqual(grouped[2].routes, [.overview, .activity, .clientSetup, .health])
         XCTAssertEqual(grouped[3].routes, [.settings])
@@ -136,7 +136,8 @@ final class AppRouteTests: XCTestCase {
             (.training, "Workspaces", "Training", "sparkles"),
             (.adopt, "Models", "Adopt", "hand.tap"),
             (.settings, "Settings", "Settings", "gearshape"),
-            (.monitor, "Workspaces", "Monitor", "waveform.path.ecg")
+            (.monitor, "Workspaces", "Monitor", "waveform.path.ecg"),
+            (.sources, "Models", "Model sources", "externaldrive.connected.to.line.below")
         ]
 
         for (route, group, label, symbol) in expected {

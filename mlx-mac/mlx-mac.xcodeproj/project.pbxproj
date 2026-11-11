@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		E71200000000000000000402 /* ServingClientSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000401 /* ServingClientSetup.swift */; };
 		E71200000000000000000302 /* ServingMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000301 /* ServingMonitorView.swift */; };
+		E71200000000000000000502 /* ModelSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000501 /* ModelSourcesView.swift */; };
 		E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000201 /* ServingWorkspaceViews.swift */; };
 		E71200000000000000000102 /* ServingTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000101 /* ServingTelemetry.swift */; };
 		INVTSTB1 /* ServingInventoryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = INVTSTF1 /* ServingInventoryCoordinatorTests.swift */; };
@@ -376,6 +377,7 @@
 /* Begin PBXFileReference section */
 		E71200000000000000000401 /* ServingClientSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingClientSetup.swift; sourceTree = "<group>"; };
 		E71200000000000000000301 /* ServingMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingMonitorView.swift; sourceTree = "<group>"; };
+		E71200000000000000000501 /* ModelSourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ModelSourcesView.swift; sourceTree = "<group>"; };
 		E71200000000000000000201 /* ServingWorkspaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingWorkspaceViews.swift; sourceTree = "<group>"; };
 		E71200000000000000000101 /* ServingTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ServingTelemetry.swift; sourceTree = "<group>"; };
 		INVTSTF1 /* ServingInventoryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryCoordinatorTests.swift; path = ServingInventoryCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -832,6 +834,7 @@
 				E71100000000000000000201 /* MediaReuseCapabilities.swift */,
 				E71100000000000000000101 /* MediaReuseSettings.swift */,
 				E71200000000000000000301 /* ServingMonitorView.swift */,
+				E71200000000000000000501 /* ModelSourcesView.swift */,
 				E71200000000000000000401 /* ServingClientSetup.swift */,
 				E71200000000000000000201 /* ServingWorkspaceViews.swift */,
 				E71200000000000000000101 /* ServingTelemetry.swift */,
@@ -1376,6 +1379,7 @@
 				E71100000000000000000202 /* MediaReuseCapabilities.swift in Sources */,
 				E71100000000000000000102 /* MediaReuseSettings.swift in Sources */,
 				E71200000000000000000302 /* ServingMonitorView.swift in Sources */,
+				E71200000000000000000502 /* ModelSourcesView.swift in Sources */,
 				E71200000000000000000402 /* ServingClientSetup.swift in Sources */,
 				E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */,
 				E71200000000000000000102 /* ServingTelemetry.swift in Sources */,

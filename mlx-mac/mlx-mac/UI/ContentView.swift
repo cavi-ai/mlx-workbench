@@ -47,8 +47,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges,
-                       models: appHost.librarySnapshot?.models ?? [],
-                       lmStudioSelected: selectedRouteID == AppRoute.lmStudio.rawValue)
+                       models: appHost.librarySnapshot?.models ?? [])
                 .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations
@@ -159,6 +158,8 @@ struct ContentView: View {
             ServeView(appHost: appHost, onRouteSelection: navigate)
         case .monitor:
             ServingMonitorView(appHost: appHost, onRouteSelection: navigate)
+        case .sources:
+            ModelSourcesView(appHost: appHost, onRouteSelection: navigate)
         case .activity:
             JobsView(appHost: appHost, onRouteSelection: navigate)
         case .reclaim:

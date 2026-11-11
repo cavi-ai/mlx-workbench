@@ -32,6 +32,7 @@ The sidebar groups thirteen screens.
 | Group | Screen | Purpose |
 |---|---|---|
 | Models | **Library** | Local weights, fit, details, task workspaces, lineage, deletion and LM Studio source |
+| | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
 | | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
 | | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Reclaim** | Quarantine, Trash, source cleanup and restore |

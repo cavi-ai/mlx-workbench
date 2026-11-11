@@ -97,9 +97,6 @@ struct AppSidebar: View {
     var badges: [AppRoute: String] = [:]
     /// Local models, used for the per-filter counts.
     var models: [LibraryModel] = []
-    /// The LM Studio source shares the Library page; this keeps its own row selected.
-    var lmStudioSelected = false
-
     @AppStorage(LibrarySidebarFilter.storageKey) private var filterRaw = ""
     @AppStorage("sidebar.workspacesExpanded") private var workspacesExpanded = true
     @AppStorage("sidebar.systemExpanded") private var systemExpanded = false
@@ -110,7 +107,6 @@ struct AppSidebar: View {
     private var selection: Binding<SidebarItem> {
         Binding(
             get: {
-                if lmStudioSelected { return .route(.lmStudio) }
                 return selectedRoute == .library
                     ? .models(LibrarySidebarFilter(rawValue: filterRaw))
                     : .route(selectedRoute)
@@ -141,7 +137,7 @@ struct AppSidebar: View {
                 }
             }
             Section("Sources") {
-                routeRows([.lmStudio, .discover])
+                routeRows([.sources, .discover])
             }
             Section("Attention") {
                 filterRow(.needsConversion, title: "Needs converting", symbol: "arrow.triangle.2.circlepath")
