@@ -67,7 +67,8 @@ clears its preview; review the new plan before confirming.
 - **Text · Splash:** in **Start now**, serves quantized MLX, GGUF and Strata
   profile weights in place with the model family's DFlash2 draft. Install Splash
   and the draft first; the preview checks both and reports the Splash version and
-  served model ID. Startup waits up to 15 minutes for the model to load.
+  served model ID. Startup waits up to 15 minutes for the model to load; see
+  [Splash](splash.md).
 - **Task endpoints:** generation controls belong to the typed request. Server
   residency and memory controls remain available.
 

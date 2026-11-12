@@ -50,7 +50,7 @@ The sidebar groups sixteen screens. **Models** rows open the Library table, filt
 
 Overview's flight path includes only stages supported by the selected model: verification requires an available canary, measurement requires a compatible comparison mode, and serving applies to chat and vision models. **Measured** requires a usable metric from a completed compatible comparison with the same path and a known matching model signature. Missing signatures remain unmeasured.
 
-For a completed model, the next-step action uses its declared backend's installation status. Strata and declared backends have their own execution environments; the base-runtime warning does not establish their readiness. Run still previews the selected runtime and requires confirmation before serving.
+For a completed model, the next-step action uses its declared backend's installation status. Strata, Splash and declared backends have their own execution environments; the base-runtime warning does not establish their readiness. Run still previews the selected runtime and requires confirmation before serving.
 
 The menu bar item shows endpoint status and starts or stops each endpoint. The toolbar's memory header shows estimated RAM use and headroom on every screen.
 

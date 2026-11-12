@@ -6,7 +6,7 @@
 
 **Health** leads with checks of the engine checkout, base Python environment, conversion tools and mlx-lm server (**Base runtime checks passed**, **Base conversion needs setup**, **Base serving needs setup**). It names missing components, with a command to copy or a link to the right setting. **Install Runtime…** runs `make install` in the engine checkout to install the base dependencies.
 
-These checks do not establish readiness of isolated optional backends or Strata. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.
+These checks do not establish readiness of isolated optional backends, Strata or Splash. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.
 
 Base checks use the selected Python interpreter and the same PATH order as model operations. A missing or stalled interpreter, malformed response or excessive output leaves the checks unavailable with a reason. Checks stop their processes after a five-second probe deadline; they do not load a model.
 

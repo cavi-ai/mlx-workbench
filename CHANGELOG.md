@@ -14,7 +14,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ### Added
 
-- Serving and Compare: Splash runs from **Start now** and per chat lane, so one model compares across MLX-LM or Strata and Splash side by side.
+- Serving and Compare: Splash runs from **Start now** and per chat lane, so one model compares across MLX-LM or Strata and Splash side by side; the guide adds a Splash page.
 - Clients: guided setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code with endpoint-bound credentials, backups, **Test connection** over Chat Completions, Responses or Messages, and **Undo setup**.
 - Monitor: live serving status, reported token usage and response throughput for active endpoints.
 - Serving: **Model sources** for provider inventories, connections and registered folders, and reviewed opt-in video and mesh reuse with cache budgets.

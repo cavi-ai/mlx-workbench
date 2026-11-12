@@ -68,6 +68,7 @@ make start
 | Study tools | **Studies → Runtime setup → Install study tools** | Controlled experiments |
 | Video runtime | **Studies → Runtime setup → Install video runtime** | Video generation in studies (adds Torch) |
 | Strata | `make install-strata` | Qwen3.8-Flash-Next GGUF serving; see [Strata](../workflows/strata.md) |
+| Splash | `brew install incoai/tap/splash` and the family's DFlash2 draft | MLX, GGUF and Strata profile serving with a DFlash2 draft; see [Splash](../workflows/splash.md) |
 
 Optional backends install into their own environments from hash-locked requirement files and leave the main `.venv` unchanged.
 
