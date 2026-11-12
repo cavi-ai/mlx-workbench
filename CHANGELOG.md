@@ -12,6 +12,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-12
 ### Added
 
 - Serving and Compare: Splash runs from **Start now** and per chat lane, so one model compares across MLX-LM or Strata and Splash side by side; the guide adds a Splash page.
@@ -540,7 +541,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.9.0
 [0.8.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.8.0
 [0.7.1]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.1
 [0.7.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.0
