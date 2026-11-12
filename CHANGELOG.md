@@ -12,6 +12,13 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
 
+### Added
+
+- Clients: guided setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code with endpoint-bound credentials, backups, **Test connection** over Chat Completions, Responses or Messages, and **Undo setup**.
+- Monitor: live serving status, reported token usage and response throughput for active endpoints.
+- Serving: **Model sources** for provider inventories, connections and registered folders, and reviewed opt-in video and mesh reuse with cache budgets.
+- Serving: music models generate sound effects and ambience; **Settings → Serving** applies a shared agent memory limit, and local audio can route to a served music endpoint.
+
 ### Changed
 
 - Run: one serving surface. Served models, API keys and other local services moved from the Served models window into Run; the toolbar and menu bar open Run.

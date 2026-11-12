@@ -37,11 +37,11 @@ To build from source instead, run `make start` in the checkout after `make insta
 
 ## First model
 
-1. **Model sources** shows local providers and registered cache folders. **Library** lists the GGUF and MLX weights already on disk, with whether each fits in memory now.
-2. Paste a Hugging Face link anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
+1. The app opens on **Library**: one row per GGUF or MLX model on disk with its size, whether it fits in memory now and its state. The sidebar filters by kind of model or to **Needs converting**; **Model sources** shows local providers and registered cache folders.
+2. Paste a Hugging Face link into the Library search field and press **Add**, or anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
 3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
-4. **Serving** previews and starts a loopback server for the verified model.
-5. **Serving → Connect apps** offers endpoint-specific setup and reviewed client configuration, with backups and rollback.
+4. Select the model and choose **Chat** to try it, or **Serve** to preview and start a loopback server. **Monitor** shows live status, token usage and response throughput.
+5. **Serving → Connect apps** sets up OpenCode, OpenClaw, Hermes, Codex or Claude Code against that endpoint, tests the connection over Chat Completions, Responses or Messages, and keeps backups with **Undo setup**.
 
 See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
 
@@ -49,9 +49,11 @@ See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.m
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Models | Library, Discover, Prepare, Reclaim | Fit per model, model details and lineage, LM Studio folders and local host inventories, Hub candidates and task recommendations, previewed conversion with quality gate canaries, quarantine and Trash with restore |
-| Workspaces | Use, Compare, Run, Training, Studies | Persistent conversations, measured comparisons in ten modes, always-on endpoints with load on request, text LoRA training with evaluation, controlled studies |
-| System | Overview, Activity, Clients, Health | Model budget, job timeline, client config wiring with rollback, runtime readiness |
+| Models | Library, Model sources, Discover, Reclaim | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, quarantine and Trash with restore |
+| Workspaces | Use, Serving, Monitor, Compare, Prepare, Training, Studies | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token and throughput monitoring, measured comparisons in ten modes, previewed conversion with quality gate canaries, text LoRA training with evaluation, controlled studies |
+| System | Overview, Activity, Clients, Health | Model budget, job timeline, guided client setup with connection tests and undo, runtime readiness |
+
+Served music models also generate sound effects and ambience.
 
 Qwen3.8-Flash-Next can also run on the optional [Strata runtime](docs/mlx-workbench/source/pages/workflows/strata.md) from a prepared GGUF pair.
 
