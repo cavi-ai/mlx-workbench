@@ -117,6 +117,7 @@ final class ComparisonCoordinator: ObservableObject {
 
     private let probe: ServeProbe
     private let strataProbe: (@Sendable (StrataComparisonOptions) -> ServeProbe)?
+    private let runtimeProbe: (@Sendable (String) -> ServeProbe)?
     private let historyWorker: ComparisonHistoryWorker
     private let promptSetStore: JSONStore<PromptSet>
     private let promptInputStore: ComparisonPromptInputStore
@@ -160,12 +161,14 @@ final class ComparisonCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("Comparison cleanup requires its configured runtime. Reopen with the original runtime available.")
         },
         strataProbe: (@Sendable (StrataComparisonOptions) -> ServeProbe)? = nil,
+        runtimeProbe: (@Sendable (String) -> ServeProbe)? = nil,
         generateInput: @escaping @Sendable (PromptEntry, URL) async throws -> URL = { entry, directory in
             try await ComparisonMediaFixtures.generateInput(for: entry, into: directory)
         }
     ) {
         self.probe = probe
         self.strataProbe = strataProbe
+        self.runtimeProbe = runtimeProbe
         self.historyWorker = ComparisonHistoryWorker(store: runStore, indexed: indexedHistory)
         self.promptSetStore = promptSetStore
         self.promptInputStore = ComparisonPromptInputStore(root: promptSetStore.url.deletingLastPathComponent()
@@ -558,13 +561,13 @@ final class ComparisonCoordinator: ObservableObject {
             guard mode == .chat, lanes.count <= 4, lanes.count == variants.count,
                   lanes.map(\.modelPath) == variants.map(\.path), lanes.allSatisfy(\.isValid),
                   Set(lanes.map(\.id)).count == lanes.count, strataOptions.isEmpty,
-                  lanes.allSatisfy({ $0.strataOptions == nil || strataProbe != nil }) else {
+                  lanes.allSatisfy({ $0.strataOptions == nil || strataProbe != nil }),
+                  lanes.allSatisfy({ $0.runtime == nil || runtimeProbe != nil }) else {
                 lastError = "Each chat lane needs a unique identity and valid serving settings."
                 return
             }
-            let repeatedPaths = Set(lanes.filter { lane in lanes.filter { $0.modelPath == lane.modelPath }.count > 1 }.map(\.modelPath))
-            guard lanes.filter({ repeatedPaths.contains($0.modelPath) }).allSatisfy({ $0.strataOptions != nil }) else {
-                lastError = "Repeated model selections require independent Strata settings."
+            guard ComparisonLaneConfiguration.repeatedLanesAreDistinct(lanes) else {
+                lastError = "Repeated model selections need a different runtime or independent Strata settings."
                 return
             }
         } else if Set(variants.map(\.path)).count != variants.count {
@@ -791,8 +794,9 @@ final class ComparisonCoordinator: ObservableObject {
             guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
             guard !Task.isCancelled else { await finishRun(runID, state: .cancelled); return }
             progressMessage = "Measuring \(URL(fileURLWithPath: variant.path).lastPathComponent)…"
-            let options = laneConfigurations?[variantIndex].strataOptions ?? strataOptions[variant.path]
-            var selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
+            let lane = laneConfigurations?[variantIndex]
+            let options = lane?.strataOptions ?? strataOptions[variant.path]
+            var selectedProbe = options.flatMap { self.strataProbe?($0) } ?? lane?.runtime.flatMap { self.runtimeProbe?($0) } ?? probe
             selectedProbe.memoryProbe = memoryProbe
             var outcome: ProbeRunResult?
             var failure: String?

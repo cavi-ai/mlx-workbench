@@ -1371,6 +1371,66 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.runs.isEmpty)
     }
 
+    func testSplashLaneServesTheSameModelBesideItsDefaultRuntime() async throws {
+        let calls = EngineCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, timeout in
+            if argv.contains("stop") { return [:] }
+            let runtime = argv[try XCTUnwrap(argv.firstIndex(of: "--runtime")) + 1]
+            if argv.contains("--confirm") {
+                calls.record("start:\(runtime):\(timeout.map { String(Int($0)) } ?? "default")")
+                return ["receipt": ["pid": 131071, "port": 9997, "path": "/Models/flash", "preview_hash": runtime, "started_at": "original"]]
+            }
+            calls.record("preview:\(runtime)")
+            return ["plan": ["preview_hash": runtime, "runtime": runtime, "weight_format": "gguf"]]
+        })
+        let probe: @Sendable (ServeLifecycle) -> ServeProbe = { ServeProbe(lifecycle: $0, prober: StubComparisonProber(gate: nil), pickPort: { 9997 }) }
+        let lanes = [
+            ComparisonLaneConfiguration(id: "lane-a", modelPath: "/Models/flash", modelSignature: "sig", strataOptions: StrataComparisonOptions()),
+            ComparisonLaneConfiguration(id: "lane-b", modelPath: "/Models/flash", modelSignature: "sig", runtime: "splash")]
+        let coordinator = ComparisonCoordinator(probe: probe(.live(api: api)),
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL), promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL),
+            strataProbe: { probe(.live(api: api, runtime: "strata", strataOptions: $0)) },
+            runtimeProbe: { probe(.live(api: api, runtime: $0)) })
+        coordinator.start(lanes: lanes, promptSet: BuiltinPromptSets.coding)
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let run = try XCTUnwrap(JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load().first)
+        XCTAssertEqual(run.results.map(\.id), ["lane-a", "lane-b"])
+        XCTAssertEqual(run.results.map(\.error), [nil, nil])
+        XCTAssertEqual(run.results.map { $0.servingEvidence?.runtime }, ["strata", "splash"])
+        XCTAssertEqual(run.results.last?.servingEvidence?.summary, "Splash · Metal · GGUF")
+        XCTAssertEqual(calls.values.filter { $0.hasPrefix("start") }, ["start:strata:960", "start:splash:960"])
+        XCTAssertEqual(ComparePresentation.lanes(for: run).map(\.runtimeName), ["Strata", "Splash"])
+        XCTAssertEqual(try ComparisonRunSetup(run: run).laneConfigurations, lanes)
+        let single = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "P", useCase: nil, variants: ["/Models/flash"], results: [],
+            startedAt: Date(), finishedAt: Date(), state: .completed, laneConfigurations: [lanes[1]])
+        XCTAssertTrue(single.hasCustomServingConfiguration, "A Splash lane never feeds the model's default-runtime recommendations")
+        XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
+    }
+
+    func testRepeatedLanesNeedADistinctConfiguredRuntime() {
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in }, stop: { _ in }),
+            prober: StubComparisonProber(gate: nil), pickPort: { 9997 })
+        let unwired = ComparisonCoordinator(probe: probe, runStore: JSONStore(fileURL: coordinatorRunStoreURL),
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        let splash = [ComparisonLaneConfiguration(id: "a", modelPath: "/Models/a", modelSignature: nil),
+                      ComparisonLaneConfiguration(id: "b", modelPath: "/Models/a", modelSignature: nil, runtime: "splash")]
+        unwired.start(lanes: splash, promptSet: BuiltinPromptSets.coding)
+        XCTAssertNil(unwired.activeRunID)
+        XCTAssertEqual(unwired.lastError, "Each chat lane needs a unique identity and valid serving settings.")
+        let wired = ComparisonCoordinator(probe: probe, runStore: JSONStore(fileURL: coordinatorRunStoreURL),
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL), runtimeProbe: { _ in probe })
+        let twice = [ComparisonLaneConfiguration(id: "a", modelPath: "/Models/a", modelSignature: nil, runtime: "splash"),
+                     ComparisonLaneConfiguration(id: "b", modelPath: "/Models/a", modelSignature: nil, runtime: "splash")]
+        wired.start(lanes: twice, promptSet: BuiltinPromptSets.coding)
+        XCTAssertNil(wired.activeRunID)
+        XCTAssertEqual(wired.lastError, "Repeated model selections need a different runtime or independent Strata settings.")
+        let unknown = [ComparisonLaneConfiguration(id: "a", modelPath: "/Models/a", modelSignature: nil, runtime: "ollama")]
+        wired.start(lanes: unknown, promptSet: BuiltinPromptSets.coding)
+        XCTAssertNil(wired.activeRunID)
+        XCTAssertTrue(wired.runs.isEmpty)
+    }
+
     func testLegacyRunDecodingPreservesPathsAndDoesNotInventCompletionOrLanes() throws {
         let original = makeRun(results: [VariantResult(modelPath: "/Models/a", modelSignature: "sig", samples: [
             ComparisonSample(promptID: "p", outputExcerpt: "historical", tokensPerSecond: 10,
@@ -1807,6 +1867,21 @@ private final class BenchmarkRecorder: @unchecked Sendable {
         return recorded
     }
     func record(_ value: [RecommendationBenchmarkResult]) {
+        lock.lock()
+        recorded.append(value)
+        lock.unlock()
+    }
+}
+
+private final class EngineCallRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+    func record(_ value: String) {
         lock.lock()
         recorded.append(value)
         lock.unlock()

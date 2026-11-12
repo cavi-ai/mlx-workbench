@@ -240,6 +240,7 @@ struct CompareLane: Equatable, Identifiable {
     let isLeader: Bool
     var resultID: String? = nil
     var profileName: String? = nil
+    var runtimeName: String? = nil
     var resultKey: String { resultID ?? path }
 
     var letter: String { ComparePresentation.letter(index) }
@@ -282,9 +283,10 @@ extension ComparePresentation {
             if ranked, let value, let best {
                 fraction = run.effectiveMode.primaryMetric.higherIsBetter ? value / best : best / value
             }
+            let lane = run.hasValidLaneIdentities ? run.laneConfigurations?.first(where: { $0.id == key }) : nil
             return CompareLane(index: index, path: path, state: state, value: value, fraction: fraction,
                 isLeader: ranked && leaders.contains(key), resultID: key,
-                profileName: run.hasValidLaneIdentities ? run.laneConfigurations?.first(where: { $0.id == key })?.servingProfileName : nil)
+                profileName: lane?.servingProfileName, runtimeName: lane?.runtimeTitle)
         }
     }
 

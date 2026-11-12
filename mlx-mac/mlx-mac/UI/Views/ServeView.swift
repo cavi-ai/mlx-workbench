@@ -768,6 +768,7 @@ struct ServeView: View {
                 Text("Automatic").tag("auto")
                 Text("Text · MLX-LM").tag("mlx_lm")
                 Text("Vision · MLX-VLM").tag("mlx-vlm")
+                Text("Text · Splash").tag("splash")
             }
             .frame(width: WorkbenchSize.Run.runtimeWidth)
             .disabled(modelWorkflow.servingProfile != nil)

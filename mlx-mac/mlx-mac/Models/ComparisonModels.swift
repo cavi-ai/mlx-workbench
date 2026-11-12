@@ -791,6 +791,10 @@ struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
     var strataOptions: StrataComparisonOptions? = nil
     var servingProfileID: UUID? = nil
     var servingProfileName: String? = nil
+    /// An explicitly selected chat runtime; nil serves with the model's own runtime.
+    var runtime: String? = nil
+
+    static let selectableRuntimes = ["mlx_lm", "splash"]
 
     var isValid: Bool {
         !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -800,6 +804,22 @@ struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
             && strataOptions?.validationError == nil
             && ((servingProfileID == nil && servingProfileName == nil)
                 || (servingProfileID != nil && strataOptions != nil && servingProfileName.map { ServingProfile.nameValidationError($0) == nil } == true))
+            && runtime.map { Self.selectableRuntimes.contains($0) && strataOptions == nil } ?? true
+    }
+
+    var runtimeTitle: String? {
+        switch runtime {
+        case "splash": "Splash"
+        case "mlx_lm": "MLX-LM"
+        default: strataOptions == nil ? nil : "Strata"
+        }
+    }
+
+    /// Lanes that repeat a model each need Strata settings or a runtime no other lane of that model uses.
+    static func repeatedLanesAreDistinct(_ lanes: [Self]) -> Bool {
+        let repeated = Set(lanes.filter { lane in lanes.filter { $0.modelPath == lane.modelPath }.count > 1 }.map(\.modelPath))
+        let runtimes = lanes.filter { repeated.contains($0.modelPath) && $0.strataOptions == nil }.map { [$0.modelPath, $0.runtime ?? "auto"] }
+        return Set(runtimes).count == runtimes.count
     }
 }
 
@@ -1171,7 +1191,7 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
 
     var hasCustomServingConfiguration: Bool {
         Set(variants).count != variants.count
-            || laneConfigurations?.contains { $0.strataOptions.map { !$0.isDefault } == true } == true
+            || laneConfigurations?.contains { $0.strataOptions.map { !$0.isDefault } == true || $0.runtime != nil } == true
             || strataOptions?.values.contains(where: { !$0.isDefault }) == true
             || results.contains { $0.servingEvidence?.hasCustomOptions == true }
     }

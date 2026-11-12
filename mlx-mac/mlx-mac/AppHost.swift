@@ -195,7 +195,9 @@ class AppHost {
             outputStore: ComparisonOutputStore(),
             recoverCleanup: { try await api.recoverComparisonServer($0) },
             strataProbe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
-                prober: OpenAIEndpointProber(requestTimeout: 900)) }
+                prober: OpenAIEndpointProber(requestTimeout: 900)) },
+            runtimeProbe: { runtime in ServeProbe(lifecycle: .live(api: api, runtime: runtime),
+                prober: runtime == "splash" ? OpenAIEndpointProber(requestTimeout: 900) : OpenAIEndpointProber()) }
         )
         let hosts = modelHosts ?? ModelHostsCoordinator()
         self.modelHosts = hosts

@@ -208,6 +208,32 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertEqual(LocalInferenceOptions(visionCache: true).summary, "Image feature reuse")
     }
 
+    func testSplashKeepsOnlyReasoningAndWaitsForItsReadinessDeadline() async throws {
+        let splash = ServingInferenceContext(runtime: "splash", chip: "Apple M5 Max")
+        let all = LocalInferenceOptions(m5Prefill: true, promptLookup: true, visionCache: true, thinkingOff: true, maximumTokens: 2048)
+        XCTAssertEqual(splash.normalized(all), LocalInferenceOptions(thinkingOff: true))
+        XCTAssertFalse(splash.hasGenerationDefaults)
+        let plan: [String: Any] = ["runtime": "splash", "preview_hash": "h", "weight_format": "mlx", "max_tokens": 8192, "thinking": "off",
+            "splash_version": "1.6.1", "splash_served_model": "local/Qwen3.8-Flash", "splash_model_fingerprint": "m", "splash_runtime_fingerprint": "r"]
+        let rows = InferenceOptionEvidence.rows(plan: plan)
+        XCTAssertEqual(rows.map(\.title), ["Splash", "Reasoning"])
+        XCTAssertEqual(rows.first?.detail, "1.6.1 · local/Qwen3.8-Flash")
+        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: plan))
+        XCTAssertEqual(evidence.summary, "Splash · Metal · MLX")
+        XCTAssertEqual([evidence.modelFingerprint, evidence.runtimeFingerprint], ["m", "r"])
+        let deadlines = StartDeadlineRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, timeout in
+            if argv.contains("--confirm") { deadlines.record(argv[argv.firstIndex(of: "--runtime")! + 1], timeout) }
+            return ["receipt": ["pid": 131071, "port": 8086]]
+        })
+        let run = ModelWorkflowAPI.live(api: api)
+        _ = try await run.serveStart("/Models/flash", "splash", nil, "h")
+        _ = try await run.accelerationStart("/Models/flash", "splash", nil, "h", LocalInferenceOptions(thinkingOff: true))
+        _ = try await run.serveStart("/Models/text", "mlx_lm", nil, "h")
+        XCTAssertEqual(deadlines.values.map(\.runtime), ["splash", "splash", "mlx_lm"])
+        XCTAssertEqual(deadlines.values.map(\.timeout), [960, 960, nil])
+    }
+
     func testM5PrefillIsExplicitInPreviewAndConfirmationArguments() {
         let stock = WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: "/state")
         XCTAssertFalse(stock.contains("--m5-prefill"))
@@ -1154,6 +1180,21 @@ private actor WarmupRecordingProber: EndpointProbing {
         return ProbeSample(text: maxTokens == 1 ? "warm" : "measured \(prompt)", completionTokens: maxTokens == 1 ? 1 : 10,
             timeToFirstTokenSeconds: 0.1, durationSeconds: 1, metricsEstimated: false,
             finishReason: maxTokens == 1 ? "length" : "stop", timeToFirstAnswerSeconds: 0.1)
+    }
+}
+
+private final class StartDeadlineRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(runtime: String, timeout: TimeInterval?)] = []
+    var values: [(runtime: String, timeout: TimeInterval?)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+    func record(_ runtime: String, _ timeout: TimeInterval?) {
+        lock.lock()
+        recorded.append((runtime, timeout))
+        lock.unlock()
     }
 }
 

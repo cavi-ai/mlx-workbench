@@ -138,7 +138,8 @@ struct ChatComparisonResultsView<Actions: View>: View {
                     Button { inspect(lane, prompt: promptID) } label: {
                         Text(name(lane.path)).fontWeight(.semibold).lineLimit(2).multilineTextAlignment(.leading)
                     }.buttonStyle(.plain).help(lane.path)
-                    if let profile = lane.profileName { Text(profile).lineLimit(1).foregroundStyle(WorkbenchColor.muted) }
+                    let detail = [lane.profileName, lane.runtimeName].compactMap { $0 }
+                    if !detail.isEmpty { Text(detail.joined(separator: " · ")).lineLimit(1).foregroundStyle(WorkbenchColor.muted) }
                     ChatModelDetailsButton(lane: lane, result: result, run: run, name: name(lane.path)) { laneActions(lane) }
                 }
             }

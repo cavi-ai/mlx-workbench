@@ -250,8 +250,8 @@ struct ProbeServingEvidence: Codable, Equatable, Sendable {
         weightFormat = plan["weight_format"] as? String
         weightQuantization = plan["weight_quantization"] as? String
         weightsPreserved = plan["weights_preserved"] as? Bool
-        modelFingerprint = (plan["strata_model_fingerprint"] ?? plan["model_config_fingerprint"]) as? String
-        runtimeFingerprint = plan["strata_runtime_fingerprint"] as? String
+        modelFingerprint = (plan["strata_model_fingerprint"] ?? plan["splash_model_fingerprint"] ?? plan["model_config_fingerprint"]) as? String
+        runtimeFingerprint = (plan["strata_runtime_fingerprint"] ?? plan["splash_runtime_fingerprint"]) as? String
         speculation = plan["strata_speculation"] as? Bool
         expertMemoryGB = plan["strata_expert_memory_gb"] as? Double
         contextTokens = plan["strata_context_tokens"] as? Int
@@ -261,6 +261,7 @@ struct ProbeServingEvidence: Codable, Equatable, Sendable {
     var summary: String {
         let title: String = switch runtime {
         case "strata": "Strata · Metal"
+        case "splash": "Splash · Metal"
         case "mlx_lm": "MLX-LM"
         case "mlx-vlm": "MLX-VLM"
         default: runtime
@@ -364,7 +365,7 @@ extension ServeLifecycle {
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
-                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
+                    timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime), strataOptions: strataOptions,
                     thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
             },
             stop: { port in
@@ -393,7 +394,7 @@ extension ServeLifecycle {
             },
             startWithReceipt: { path, port, hash in
                 let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
-                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
+                    timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime), strataOptions: strataOptions,
                     thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
                 return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             },

@@ -61,6 +61,7 @@ enum ServingWorkspacePresentation {
         if let service = service(row), !service.isWorkbenchManaged { return service.providerName }
         switch server(row)?.runtime {
         case "strata": return "Strata"
+        case "splash": return "Splash"
         case "mlx_lm": return "MLX-LM"
         case "mlx-vlm": return "MLX-VLM"
         case "tasks": return "Task server"
