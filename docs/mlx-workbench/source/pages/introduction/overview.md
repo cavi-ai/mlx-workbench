@@ -27,24 +27,24 @@ screen's title.
 
 ## Screens
 
-The sidebar groups thirteen screens.
+The sidebar groups sixteen screens. **Models** rows open the Library table, filtered to all models, one kind of model or **Needs converting**.
 
 | Group | Screen | Purpose |
 |---|---|---|
-| Models | **Library** | Local weights, fit, details, task workspaces, lineage, deletion and LM Studio source |
-| | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
+| Models | **Library** | One row per local model with size, fit and state; search or paste a Hugging Face link; an inspector led by Chat, Serve and Compare |
+| Sources | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
 | | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
-| | **Prepare** | Preview and confirm conversions; follow verification |
-| | **Reclaim** | Quarantine, Trash, source cleanup and restore |
+| Attention | **Reclaim** | Quarantine, Trash, source cleanup and restore |
 | Workspaces | **Use** | Persistent conversations, selected model servers and typed task results |
-| | **Compare** | Measured model comparisons with recorded prompts and outputs |
-| | **Serving** | Model APIs, authentication, inference settings, memory and client connections |
+| | **Serving** | Model APIs, authentication, inference settings, memory, media reuse and client connections |
 | | **Monitor** | Live serving status, reported token usage and response throughput |
+| | **Compare** | Measured model comparisons with recorded prompts and outputs |
+| | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | | **Studies** | Controlled experiments, generation jobs and blind review |
 | System | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
 | | **Activity** | Conversion, server, experiment and training jobs on one timeline |
-| | **Clients** | Config wiring for local clients, with rollback |
+| | **Clients** | Guided setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code, connection tests, config wiring and rollback |
 | | **Health** | Runtime readiness, model health and the Setup Assistant |
 | Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
 
