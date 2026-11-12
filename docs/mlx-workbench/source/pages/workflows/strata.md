@@ -25,7 +25,7 @@ Prepare the profile with Strata's isolated Python:
 
 Omit `--mtp` without a draft head. Preparation exports the tokenizer from the same GGUF, writes a bounded `strata-model.json` profile and a runtime marker in `config.json`, and leaves the weights unchanged. It refuses existing configs and symbolic links, and removes its new metadata if final validation fails.
 
-Add the directory to your MLX roots and refresh Library. Details labels the runtime **Strata (text only)**. Run and chat Compare use the normal serving flow; vision requests and LoRA adapters are unsupported.
+Add the directory to your MLX roots and refresh Library. Details labels the runtime **Strata (text only)**. Run and chat Compare use the normal serving flow; vision requests and LoRA adapters are unsupported. The same prepared profile can also run on [Splash](splash.md); choose **Splash** in a Compare lane to measure both runtimes side by side.
 
 ## Serve
 
