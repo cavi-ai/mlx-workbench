@@ -150,8 +150,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   chat-only; recommendations require matching model signatures and
   environment fingerprints.
 - Workflow evidence is imported explicitly and never relabeled as current.
-- Native serving, verification and chat comparisons use `--runtime auto`;
-  intake never executes repository code or passes `--trust-remote-code`.
+- Native serving, verification and chat comparisons default to `--runtime auto`;
+  **Start now** and chat comparison lanes select another runtime only explicitly.
+  Intake never executes repository code or passes `--trust-remote-code`.
 - `make accept-native-gguf RUNTIME_MANIFEST=…` is the only real-data
   acceptance run; never invoke it with an arbitrary local model.
 

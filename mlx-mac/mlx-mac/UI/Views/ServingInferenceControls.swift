@@ -19,13 +19,16 @@ struct ServingInferenceContext: Equatable {
     var isText: Bool { runtime == "mlx_lm" }
     var isVision: Bool { runtime == "mlx-vlm" }
     var isStrata: Bool { runtime == "strata" }
+    var isSplash: Bool { runtime == "splash" }
     var hasGenerationDefaults: Bool { isText || isStrata }
+    var supportsReasoningOverride: Bool { isText || isSplash }
     var supportsRequestDefaults: Bool { isText || isStrata || isVision }
     var supportsM5: Bool { chip?.range(of: #"\bM5\b"#, options: [.regularExpression, .caseInsensitive]) != nil }
 
     func normalized(_ options: LocalInferenceOptions) -> LocalInferenceOptions {
         var result = options
-        if !isText { result.m5Prefill = false; result.promptLookup = false; result.thinkingOff = false }
+        if !isText { result.m5Prefill = false; result.promptLookup = false }
+        if !supportsReasoningOverride { result.thinkingOff = false }
         if !isVision { result.visionCache = false }
         if !hasGenerationDefaults { result.maximumTokens = nil }
         if !supportsRequestDefaults { result.systemPrompt = ""; result.temperature = nil; result.topP = nil }
@@ -58,6 +61,9 @@ struct InferenceOptionEvidence: Equatable, Identifiable {
             return result
         }
         var result = rows(prefill: value("prefill_kernel"), lookup: value("decode_profile"), vision: value("vision_profile"))
+        if let version = plan["splash_version"] as? String {
+            result.append(Self(id: "splash", title: "Splash", detail: [version, plan["splash_served_model"] as? String].compactMap { $0 }.joined(separator: " · ")))
+        }
         if let mode = plan["strata_decoding"] as? String {
             result.append(Self(id: "strata", title: "Strata decoding", detail: StrataComparisonOptions(decoding: mode).decodingTitle))
         }
@@ -131,16 +137,19 @@ struct ServingInferenceControls: View {
             } else if context.isStrata {
                 Text("A serving profile controls decoding, expert memory and context. Verify the profile before use.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            } else if context.isSplash {
+                Text("Splash serves quantized MLX, GGUF and Strata profile weights in place with a DFlash2 draft. Install Splash and the family draft first; the preview checks both.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else {
                 Text(context.runtime == "tasks"
                      ? "Generation settings belong to each task request. Use model residency and memory controls to manage the server's footprint."
                      : "The engine identifies this model's runtime during preview. Select a known runtime to review its inference controls.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-            if context.hasGenerationDefaults {
+            if context.hasGenerationDefaults || context.supportsReasoningOverride {
                 Group {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        if context.isText {
+                        if context.supportsReasoningOverride {
                             Picker("Reasoning", selection: $options.thinkingOff) {
                                 Text("Model default").tag(false)
                                 Text("Skip reasoning").tag(true)
@@ -148,14 +157,16 @@ struct ServingInferenceControls: View {
                             Text("Skipping reasoning can shorten responses at the cost of deliberation. Support depends on the model's chat template.")
                                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         }
-                        Picker("Default output length", selection: $options.maximumTokens) {
-                            Text("Engine default · 8,192 tokens").tag(Int?.none)
-                            ForEach(Array(Set([256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] + (options.maximumTokens.map { [$0] } ?? []))).sorted(), id: \.self) { value in
-                                Text("\(value.formatted()) tokens").tag(Optional(value))
-                            }
-                        }.accessibilityIdentifier("serve-output-length")
-                        Text("Used when a client omits its output length. Explicit client settings take precedence.")
-                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        if context.hasGenerationDefaults {
+                            Picker("Default output length", selection: $options.maximumTokens) {
+                                Text("Engine default · 8,192 tokens").tag(Int?.none)
+                                ForEach(Array(Set([256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] + (options.maximumTokens.map { [$0] } ?? []))).sorted(), id: \.self) { value in
+                                    Text("\(value.formatted()) tokens").tag(Optional(value))
+                                }
+                            }.accessibilityIdentifier("serve-output-length")
+                            Text("Used when a client omits its output length. Explicit client settings take precedence.")
+                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        }
                     }.padding(.top, WorkbenchSpacing.xs)
                 }
             }

@@ -64,11 +64,15 @@ clears its preview; review the new plan before confirming.
 - **Strata:** choose decoding, expert memory and context in a serving profile.
   **New profile…** saves configuration without loading weights. Verify it before
   serving; see [Strata](strata.md).
+- **Text · Splash:** in **Start now**, serves quantized MLX, GGUF and Strata
+  profile weights in place with the model family's DFlash2 draft. Install Splash
+  and the draft first; the preview checks both and reports the Splash version and
+  served model ID. Startup waits up to 15 minutes for the model to load.
 - **Task endpoints:** generation controls belong to the typed request. Server
   residency and memory controls remain available.
 
-The **Inference** section offers **Skip reasoning** for MLX-LM models whose chat
-template supports it, and a default output length for MLX-LM and Strata. Output
+The **Inference** section offers **Skip reasoning** for MLX-LM and Splash models
+whose chat template supports it, and a default output length for MLX-LM and Strata. Output
 length ranges from 256 to 65,536 tokens; the engine default is 8,192. Client
 requests can supply their own token limits. Temperature and sampling belong to
 the client. Reasoning overrides can trade deliberation for shorter responses.

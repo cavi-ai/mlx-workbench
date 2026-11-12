@@ -29,6 +29,8 @@ struct QuantView: View {
     @State private var reuseError: String?
     @State private var slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
     @State private var strataSettings: [String: StrataComparisonOptions] = [:]
+    /// Explicit chat runtime per slot; absent keeps the model's own runtime.
+    @State private var laneRuntimes: [String: String] = [:]
     @State private var laneSources: [String: ComparisonLaneConfiguration] = [:]
     @State private var settingsSearchGoal: StrataSettingsSearchGoal?
     @State private var showingSettingsSearch = false
@@ -161,7 +163,7 @@ struct QuantView: View {
                     variantSlots = lanes.map { Optional($0.modelPath) }
                     slotIDs = lanes.map(\.id)
                     strataSettings = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0.strataOptions!) })
-                    laneSources = [:]
+                    laneSources = [:]; laneRuntimes = [:]
                     settingsSearchGoal = setup.goal
                     initializedSuggestions = true; manuallySelectedModels = true
                     selectionReason = "Four Strata configurations at one fixed context."
@@ -274,7 +276,7 @@ struct QuantView: View {
         }
         variantSlots = [model.item.path, nil]
         slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
-        strataSettings = [:]; laneSources = [:]; settingsSearchGoal = nil
+        strataSettings = [:]; laneSources = [:]; laneRuntimes = [:]; settingsSearchGoal = nil
         familyFilter = nil; sizeFilter = .all; modelSearch = ""
         initializedSuggestions = true; manuallySelectedModels = true
         selectedRunID = nil; reuseError = nil
@@ -310,7 +312,7 @@ struct QuantView: View {
         if !modePromptSets.contains(where: { $0.id == selectedPromptSetID }) { selectedPromptSetID = modePromptSets.first?.id ?? "" }
         variantSlots = models.map { Optional($0.item.path) }
         slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
-        strataSettings = [:]; laneSources = [:]; settingsSearchGoal = nil
+        strataSettings = [:]; laneSources = [:]; laneRuntimes = [:]; settingsSearchGoal = nil
         familyFilter = nil; sizeFilter = .all; modelSearch = ""
         initializedSuggestions = true; manuallySelectedModels = true
         selectedRunID = nil; reuseError = nil
@@ -335,7 +337,7 @@ struct QuantView: View {
             variantSlots = lanes.map { Optional($0.modelPath) }; slotIDs = lanes.map(\.id)
             while slotIDs.count < ComparePresentation.maxSlots { slotIDs.append(UUID().uuidString) }
             strataSettings = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0.strataOptions!) })
-            laneSources = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0) })
+            laneSources = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0) }); laneRuntimes = [:]
             familyFilter = nil; sizeFilter = .all; modelSearch = ""
             initializedSuggestions = true; manuallySelectedModels = true
             selectionReason = "Recorded profile settings: A · \(request.baseline.name); B · \(request.candidate.name). Choose one prompt set, then Run comparison."
@@ -447,14 +449,19 @@ struct QuantView: View {
         if let goal = settingsSearchGoal, mode == .chat, !goal.matches(selectedChatLanes) {
             return "Settings search needs its four matching lanes. Prepare it again or switch to manual comparison."
         }
+        if mode == .chat, !ComparisonLaneConfiguration.repeatedLanesAreDistinct(selectedChatLanes) {
+            return "Choose a different runtime for each lane that repeats a model."
+        }
         return selectedStrataSlots.compactMap { strataSettings[slotIDs[$0]]?.validationError }.first
     }
 
     private var selectedChatLanes: [ComparisonLaneConfiguration] {
         variantSlots.indices.compactMap { index in
             guard let path = variantSlots[index], let model = readyModels.first(where: { $0.item.path == path }) else { return nil }
+            let runtime = laneRuntime(index, model: model)
             var lane = ComparisonLaneConfiguration(id: slotIDs[index], modelPath: path, modelSignature: model.item.signature,
-                strataOptions: repeatedStrataPaths.contains(path) ? strataSettings[slotIDs[index]] ?? StrataComparisonOptions() : nil)
+                strataOptions: runtime == nil && repeatedStrataPaths.contains(path) ? strataSettings[slotIDs[index]] ?? StrataComparisonOptions() : nil,
+                runtime: runtime)
             if let source = laneSources[lane.id], source.modelPath == lane.modelPath, source.strataOptions == lane.strataOptions {
                 lane.servingProfileID = source.servingProfileID; lane.servingProfileName = source.servingProfileName
             }
@@ -466,9 +473,27 @@ struct QuantView: View {
         mode == .chat ? Set(readyModels.filter { $0.item.servingRuntime == "strata" }.map { $0.item.path }) : []
     }
 
+    /// Chat models a second lane may repeat: Strata settings or an explicit runtime keep each lane distinct.
+    private var repeatablePaths: Set<String> {
+        mode == .chat ? Set(readyModels.filter { !runtimeChoices(for: $0).isEmpty }.map { $0.item.path }) : []
+    }
+
+    /// Runtimes a chat lane can select; nil keeps the model's own runtime.
+    private func runtimeChoices(for model: LibraryModel) -> [(tag: String?, title: String)] {
+        guard mode == .chat else { return [] }
+        if model.item.servingRuntime == "strata" { return [(nil, "Strata"), ("splash", "Splash")] }
+        guard model.item.servingRuntime == nil, model.item.task?.type == .textLLM else { return [] }
+        return [(nil, "Automatic"), ("mlx_lm", "MLX-LM"), ("splash", "Splash")]
+    }
+
+    private func laneRuntime(_ index: Int, model: LibraryModel) -> String? {
+        guard let runtime = laneRuntimes[slotIDs[index]], settingsSearchGoal == nil else { return nil }
+        return runtimeChoices(for: model).contains { $0.tag == runtime } ? runtime : nil
+    }
+
     private var selectedStrataSlots: [Int] {
         variantSlots.indices.filter { index in
-            variantSlots[index].map { repeatedStrataPaths.contains($0) } == true
+            variantSlots[index].map { repeatedStrataPaths.contains($0) } == true && laneRuntimes[slotIDs[index]] == nil
         }
     }
 
@@ -530,6 +555,10 @@ struct QuantView: View {
             }
             if !selectedStrataSlots.isEmpty {
                 Text("Select the same Strata model in another lane to compare settings. Each lane runs separately.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+            if settingsSearchGoal == nil, variantSlots.contains(where: { $0.map(repeatablePaths.contains) == true }) {
+                Text("To compare runtimes, select the same model in another lane and choose Splash for one of them.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if comparison.activeRunID != nil {
@@ -643,7 +672,7 @@ struct QuantView: View {
                             Button(modelOptionLabel(selected)) { slotBinding(index).wrappedValue = selected.item.path }
                         }
                     }
-                    ForEach(ComparePresentation.groups(ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: filteredModels, repeatedPaths: repeatedStrataPaths), by: modelGrouping)) { group in
+                    ForEach(ComparePresentation.groups(ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: filteredModels, repeatedPaths: repeatablePaths), by: modelGrouping)) { group in
                         Section(group.title) {
                             ForEach(group.models, id: \.item.path) { model in
                                 Button {
@@ -680,7 +709,16 @@ struct QuantView: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .lineLimit(1)
             }
-            if model?.item.servingRuntime == "strata" {
+            if let model, !runtimeChoices(for: model).isEmpty, settingsSearchGoal == nil {
+                Picker("Runtime", selection: Binding(get: { laneRuntime(index, model: model) },
+                                                     set: { laneRuntimes[slotIDs[index]] = $0 })) {
+                    ForEach(runtimeChoices(for: model), id: \.title) { Text($0.title).tag($0.tag) }
+                }
+                .accessibilityLabel("Runtime \(ComparePresentation.letter(index))")
+                .help("Splash serves this model's weights in place with a DFlash2 draft.")
+                .disabled(comparison.activeRunID != nil)
+            }
+            if model?.item.servingRuntime == "strata", laneRuntimes[slotIDs[index]] == nil {
                 Text("Strata · Metal · GGUF")
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
@@ -1046,7 +1084,7 @@ struct QuantView: View {
     private func slotBinding(_ index: Int) -> Binding<String?> {
         Binding(
             get: { index < variantSlots.count ? variantSlots[index] : nil },
-            set: { if index < variantSlots.count { initializedSuggestions = true; manuallySelectedModels = true; selectionReason = "Your model selection."; if variantSlots[index] != $0 { strataSettings[slotIDs[index]] = nil }; variantSlots[index] = $0 } }
+            set: { if index < variantSlots.count { initializedSuggestions = true; manuallySelectedModels = true; selectionReason = "Your model selection."; if variantSlots[index] != $0 { strataSettings[slotIDs[index]] = nil; laneRuntimes[slotIDs[index]] = nil }; variantSlots[index] = $0 } }
         )
     }
 
@@ -1058,6 +1096,7 @@ struct QuantView: View {
             promptEntries: selectedPromptSet?.prompts)
         strataSettings = [:]
         laneSources = [:]
+        laneRuntimes = [:]
         variantSlots = suggestion.paths
         selectionReason = suggestion.reason
         initializedSuggestions = true
@@ -1077,6 +1116,7 @@ struct QuantView: View {
         if let slots = selection.slots {
             strataSettings = [:]
             laneSources = [:]
+            laneRuntimes = [:]
             variantSlots = slots
             initializedSuggestions = true
             manuallySelectedModels = true
@@ -1088,6 +1128,7 @@ struct QuantView: View {
     private func removeSlot(_ index: Int) {
         guard index >= 2, index < variantSlots.count else { return }
         strataSettings[slotIDs[index]] = nil
+        laneRuntimes[slotIDs[index]] = nil
         slotIDs.remove(at: index)
         slotIDs.append(UUID().uuidString)
         variantSlots.remove(at: index)
@@ -1144,11 +1185,15 @@ struct QuantView: View {
         guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
         strataSettings = [:]
         laneSources = [:]
+        laneRuntimes = [:]
         for (index, path) in setup.modelPaths.enumerated() {
             if let options = setup.laneConfigurations?[index].strataOptions ?? setup.strataOptions?[path] {
                 strataSettings[slotIDs[index]] = options
             }
-            if let lane = setup.laneConfigurations?[index] { laneSources[slotIDs[index]] = lane }
+            if let lane = setup.laneConfigurations?[index] {
+                laneSources[slotIDs[index]] = lane
+                laneRuntimes[slotIDs[index]] = lane.runtime
+            }
         }
         useRecordedSetup(mode: setup.draft.mode, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
         pendingReuseSetup = nil

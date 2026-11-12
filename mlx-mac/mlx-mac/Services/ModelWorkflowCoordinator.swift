@@ -40,7 +40,9 @@ struct ModelWorkflowAPI {
             convertStart: { path, qBits, output, hash in try await api.convertStart(ggufPath: path, qBits: qBits, out: output, previewHash: hash) },
             convertStatus: { try await api.allJobs() },
             servePreview: { repo, runtime, port in try await api.servePreview(repo: repo, runtime: runtime, port: port) },
-            serveStart: { repo, runtime, port, hash in try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash) },
+            serveStart: { repo, runtime, port, hash in
+                try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime))
+            },
             serveStatus: { try await api.serveStatus() },
             serveStop: { port in try await api.serveStop(port: port) }
         )
@@ -52,7 +54,7 @@ struct ModelWorkflowAPI {
             try await api.servePreview(repo: repo, runtime: runtime, port: port, thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
         }
         workflowAPI.accelerationStart = { repo, runtime, port, hash, options in
-            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
+            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime), thinkingOff: options.thinkingOff, maximumTokens: options.maximumTokens, m5Prefill: options.m5Prefill, promptLookup: options.promptLookup, visionCache: options.visionCache)
         }
         workflowAPI.convertRepoPreview = { request in
             try await api.convertRepoPreview(

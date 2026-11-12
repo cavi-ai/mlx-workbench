@@ -924,6 +924,11 @@ actor WorkbenchAPI {
         return ["--repo", model]
     }
 
+    /// Client deadline for `serve start`, past the engine's 900 s readiness wait for Strata and Splash.
+    static func serveStartTimeout(runtime: String) -> TimeInterval? {
+        ["auto", "strata", "splash"].contains(runtime) ? 960 : nil
+    }
+
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                                previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
