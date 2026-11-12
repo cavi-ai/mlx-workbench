@@ -24,7 +24,8 @@
         { "title": "Discover", "path": "workflows/discover.md" },
         { "title": "Health and alerts", "path": "workflows/health.md" },
         { "title": "Training and studies", "path": "workflows/training.md" },
-        { "title": "Strata", "path": "workflows/strata.md" }
+        { "title": "Strata", "path": "workflows/strata.md" },
+        { "title": "Splash", "path": "workflows/splash.md" }
       ]
     },
     {
