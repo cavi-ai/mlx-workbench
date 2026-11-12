@@ -354,6 +354,26 @@ final class HostedUIFixture: @unchecked Sendable {
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
                 return
             }
+            if FileManager.default.fileExists(atPath: root.appendingPathComponent("client-connection-fixture").path),
+               request.hasPrefix("POST /v1/") {
+                let payload = (try? JSONSerialization.jsonObject(with: Data(request[end.upperBound...].utf8))) as? [String: Any]
+                let path = header.components(separatedBy: " ").dropFirst().first ?? ""
+                let log = root.appendingPathComponent("client-connection-models")
+                var models = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+                models += "\(path) \(payload?["model"] as? String ?? "missing")\n"
+                try? models.write(to: log, atomically: true, encoding: .utf8)
+                let value: [String: Any]
+                switch path {
+                case "/v1/responses": value = ["status": "completed", "output": [["content": [["text": "CONNECTED"]]]]]
+                case "/v1/messages": value = ["type": "message", "content": [["type": "text", "text": "CONNECTED"]]]
+                default: value = ["choices": [["message": ["content": "CONNECTED"]]]]
+                }
+                let body = try! JSONSerialization.data(withJSONObject: value)
+                var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                response.append(body)
+                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
             if request.hasPrefix("GET /v1/models "),
                let data = try? Data(contentsOf: root.appendingPathComponent("chat-endpoint.json")),
                let server = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {

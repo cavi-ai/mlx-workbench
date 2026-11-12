@@ -4,6 +4,7 @@ import SwiftUI
 enum ServingClient: String, CaseIterable, Identifiable {
     case opencode, openclaw, hermes, codex, claude
     var id: String { rawValue }
+    var requiresGateway: Bool { self == .codex || self == .claude }
     var title: String {
         switch self {
         case .opencode: "OpenCode"
@@ -70,18 +71,19 @@ struct ServingClientSetup: View {
     let server: ServerInfo
     let onRouteSelection: (AppRoute) -> Void
     @State private var client: ServingClient = .opencode
+    @State private var showsWizard = false
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Picker("App", selection: $client) {
                 ForEach(ServingClient.allCases) { Text($0.title).tag($0) }
             }.accessibilityIdentifier("serving-client-picker")
-            Text(client.instructions(protected: server.apiKeySHA256 != nil)).font(WorkbenchTypography.secondary)
-            if let setup = client.setup(server: server) {
-                if client == .opencode {
-                    DisclosureGroup("Preview and apply client configuration") {
-                        WireView(appHost: appHost, fixedServer: server, onRouteSelection: onRouteSelection)
-                    }
-                }
+            Text("Connect this app to the selected model. Review the configuration, apply it with a backup, then test the connection.")
+                .font(WorkbenchTypography.secondary)
+            Button("Connect \(client.title)…") { showsWizard = true }
+                .buttonStyle(.workbenchPrimary).accessibilityIdentifier("serving-connect-app")
+            DisclosureGroup("Manual setup") {
+                Text(client.instructions(protected: server.apiKeySHA256 != nil)).font(WorkbenchTypography.secondary)
+                if let setup = client.setup(server: server) {
                 if server.apiKeySHA256 != nil && client != .hermes {
                     Text("Set WORKBENCH_API_KEY in the client’s environment using Copy API key in API & security. The setup below contains no secret.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -94,10 +96,14 @@ struct ServingClientSetup: View {
                     Button("Copy setup") { ServedModelsSelection.copy(setup) }.accessibilityIdentifier("serving-copy-client-setup")
                     Link("\(client.title) documentation", destination: client.documentation)
                 }
-            } else {
+                } else {
                 Text("\(client.title) requires a managed chat endpoint with Load weights on request enabled. Its gateway provides Responses and Messages compatibility.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
+                }
+            }.font(WorkbenchTypography.secondary)
+        }
+        .sheet(isPresented: $showsWizard) {
+            ClientSetupWizard(appHost: appHost, client: client, server: server, onRouteSelection: onRouteSelection)
         }
     }
 }

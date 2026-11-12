@@ -182,8 +182,10 @@ final class WiringCoordinator: ObservableObject {
         for installation in targets where !installation.advisoryOnly {
             guard let adapter = adapters.first(where: { $0.clientID == installation.clientID }),
                   let path = installation.configPath else { continue }
-            let before = try? String(contentsOfFile: path, encoding: .utf8)
             do {
+                if let bytes = (try? fileManager.attributesOfItem(atPath: path))?[.size] as? NSNumber,
+                   bytes.intValue > ClientConfigFile.sizeLimit { throw WorkflowEvidenceError.invalid("Config is larger than 1 MB.") }
+                let before = try? String(contentsOfFile: path, encoding: .utf8)
                 if clientIDs != nil {
                     let diagnosis = ClientSetupDiagnosis.make(clientID: installation.clientID,
                         status: ClientConfigFile.load(path: path, adapter: adapter), servers: [])
@@ -192,7 +194,7 @@ final class WiringCoordinator: ObservableObject {
                     }
                 }
                 let after = try adapter.authenticatedPlan(before, endpoint, key: key)
-                let rewrites = before != nil && JSONCTolerant.strip(before ?? "") != before
+                let rewrites = before != nil && (adapter.normalizesFormatting || JSONCTolerant.strip(before ?? "") != before)
                 built.append(ClientEditPlan(
                     clientID: installation.clientID,
                     displayName: installation.displayName,
@@ -353,8 +355,12 @@ final class WiringCoordinator: ObservableObject {
 
     /// Restore the latest transaction's backups and move the files it created
     /// to the Trash, newest write first.
-    func rollback() {
-        guard let transaction = transactions.first, transaction.rolledBackAt == nil else {
+    func rollback(transactionID: UUID? = nil) {
+        guard !isApplying, !isCheckingServer else { return }
+        let requested: WiringTransaction?
+        if let transactionID { requested = transactions.first { $0.id == transactionID } }
+        else { requested = transactions.first }
+        guard let transaction = requested, transaction.rolledBackAt == nil else {
             lastError = WiringError.noTransactionToRollback.errorDescription
             return
         }
@@ -392,6 +398,29 @@ final class WiringCoordinator: ObservableObject {
         transactions.first.map { !$0.receipts.isEmpty && $0.rolledBackAt == nil } ?? false
     }
 
+    /// Bind the connection test to the exact file this transaction wrote, including its credential.
+    func matchesAppliedConfig(_ receipt: ClientEditReceipt, endpoint: WireEndpoint) async -> Bool {
+        guard let expected = receipt.writtenFileSHA256,
+              let adapter = adapters.first(where: { $0.clientID == receipt.clientID }),
+              adapter.configurationInstallation(home: home)?.configPath == receipt.configPath else { return false }
+        let boundary = home.path
+        return await WorkbenchIO.perform {
+            let url = URL(fileURLWithPath: receipt.configPath)
+            var ancestor = url
+            while ancestor.path != boundary && ancestor.path != "/" {
+                guard (try? FileManager.default.destinationOfSymbolicLink(atPath: ancestor.path)) == nil else { return false }
+                ancestor.deleteLastPathComponent()
+            }
+            guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
+                  let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
+                  bytes.intValue <= ClientConfigFile.sizeLimit,
+                  let data = FileManager.default.contents(atPath: url.path), Self.sha256Hex(data) == expected,
+                  let text = String(data: data, encoding: .utf8),
+                  case .entries(let entries) = adapter.read(text) else { return false }
+            return entries.contains { ClientEndpointURL.port(of: $0.baseURL) == ClientEndpointURL.port(of: endpoint.baseURL) && $0.models.contains(endpoint.modelName) }
+        }
+    }
+
     // MARK: - Apply internals
 
     private func apply(_ plan: ClientEditPlan) throws -> ClientEditReceipt {
@@ -427,8 +456,14 @@ final class WiringCoordinator: ObservableObject {
             // Post-write validation: what landed must parse (JSON targets)
             // and must equal the plan. A failure restores the backup.
             let landed = try String(contentsOf: fileURL, encoding: .utf8)
-            if plan.configPath.hasSuffix(".json") || plan.configPath.hasSuffix(".jsonc") {
-                _ = try JSONCTolerant.parse(landed)
+            do {
+                if let validate = adapters.first(where: { $0.clientID == plan.clientID })?.validate {
+                    try validate(landed)
+                } else if plan.configPath.hasSuffix(".json") || plan.configPath.hasSuffix(".jsonc") {
+                    _ = try JSONCTolerant.parse(landed)
+                }
+            } catch {
+                throw WiringError.postWriteValidationFailed(client: plan.displayName)
             }
             guard landed == plan.after else {
                 throw WiringError.postWriteValidationFailed(client: plan.displayName)
@@ -538,7 +573,7 @@ final class WiringCoordinator: ObservableObject {
         return sha256Hex(Data(canonical.utf8))
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
+    nonisolated private static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 

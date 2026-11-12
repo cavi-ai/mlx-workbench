@@ -617,7 +617,8 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false, configURL: URL? = nil,
-                        forcedRoute: String? = nil, agentHome: String? = nil, isolatedHomeURL: URL? = nil) {
+                        forcedRoute: String? = nil, agentHome: String? = nil, isolatedHomeURL: URL? = nil,
+                        expandedSystem: Bool = false) {
         if appearance == "Light" || appearance == "Dark" {
             let requested: XCUIDevice.Appearance = appearance == "Dark" ? .dark : .light
             XCUIDevice.shared.appearance = requested
@@ -632,6 +633,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         // NSArgumentDomain overrides writes to AppStorage. A mutable route
         // must be selected through the UI rather than forced as a launch default.
         app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
+        if expandedSystem { app.launchArguments += ["-sidebar.systemExpanded", "YES"] }
         if let forcedRoute { app.launchArguments += ["-mlx-workbench.selectedRoute", forcedRoute] }
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
@@ -3441,27 +3443,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(second.waitForExistence(timeout: 15)); second.click()
         let configure = app.buttons["run-configure-clients-8767"]
         XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
-        let setup = app.disclosureTriangles["Preview and apply client configuration"].firstMatch
-        XCTAssertTrue(setup.waitForExistence(timeout: 5))
-        setup.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
-        let refresh = app.buttons["Refresh clients and servers"].firstMatch
-        XCTAssertTrue(refresh.waitForExistence(timeout: 10))
-        XCTAssertLessThanOrEqual(refresh.frame.maxX, app.windows.firstMatch.frame.maxX,
-                                 "Embedded client controls must fit the selected model workspace")
-        let preview = app.buttons["Preview client wiring"]
-        XCTAssertTrue(preview.waitForExistence(timeout: 15))
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        let connect = app.buttons["serving-connect-app"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5)); connect.click()
+        let preview = app.buttons["connect-app-review"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
         XCTAssertEqual(try Data(contentsOf: config), original, "Navigation must not write configuration")
         preview.click()
-        let confirm = app.buttons["Confirm client wiring"]
+        let confirm = app.buttons["connect-app-apply"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["client-wiring-reviewed-model"].value as? String, "org/Qwen")
-        XCTAssertEqual(app.staticTexts["client-wiring-reviewed-endpoint"].value as? String, "http://127.0.0.1:8767/v1")
+        XCTAssertEqual(app.staticTexts["connect-app-reviewed-model"].value as? String, "org/Qwen")
+        XCTAssertEqual(app.staticTexts["connect-app-reviewed-url"].value as? String, "http://127.0.0.1:8767/v1")
         XCTAssertEqual(try Data(contentsOf: config), original, "Preview must not write configuration")
         capture("Run-to-Clients-reviewed-endpoint")
         confirm.click()
-        XCTAssertTrue(text(containing: "Wired 1 client").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["connect-app-test"].waitForExistence(timeout: 10))
         let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
         let providers = try XCTUnwrap(written["provider"] as? [String: Any])
         let provider = try XCTUnwrap(providers["mlx-local"] as? [String: Any])
@@ -4769,6 +4764,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.radioButtons["Connect apps"].click()
         let picker = app.popUpButtons["serving-client-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click(); app.menuItems["Codex"].click()
+        app.disclosureTriangles["Manual setup"].coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 26, dy: 8)).click()
         XCTAssertTrue(text(containing: "wire_api").waitForExistence(timeout: 10))
         capture("Serving-client-Codex")
         picker.click(); app.menuItems["Claude Code"].click()
@@ -4785,6 +4782,54 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"serve\", \"stop\""))
+        XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
+    func testConnectAppReviewsSavesAndTestsAllFiveClients() throws {
+        let fixture = try HostedUIFixture(root: root)
+        let port = try fixture.start()
+        defer { fixture.stop() }
+        try Data().write(to: root.appendingPathComponent("client-connection-fixture"))
+        let server: [String: Any] = ["repo": "org/Connected-model", "runtime": "mlx_lm", "port": Int(port),
+            "pid": 123, "state": "running", "jit": true, "receipt": "/fixture/connection.json"]
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true, expandedSystem: true)
+        resizeWindow(width: 1380, height: 820)
+        select("Clients")
+        let connect = app.buttons["open-connect-app-wizard"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 15)); connect.click()
+        let clients = [("OpenCode", ".config/opencode/opencode.jsonc"), ("OpenClaw", ".openclaw/openclaw.json"),
+                       ("Hermes", ".hermes/config.yaml"), ("Codex", ".codex/config.toml"), ("Claude Code", ".claude/settings.json")]
+        for (index, entry) in clients.enumerated() {
+            let picker = app.popUpButtons["connect-app-client"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            if index > 0 { picker.click(); app.menuItems[entry.0].click() }
+            XCTAssertTrue(app.staticTexts["connect-app-reviewed-url"].waitForExistence(timeout: 10))
+            if index == 0 { capture("Connect-app-choose") }
+            app.buttons["connect-app-review"].click()
+            XCTAssertTrue(app.buttons["connect-app-apply"].waitForExistence(timeout: 10))
+            if index == 2 { capture("Connect-app-Hermes-review") }
+            app.buttons["connect-app-apply"].click()
+            XCTAssertTrue(app.buttons["connect-app-test"].waitForExistence(timeout: 10))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(entry.1).path))
+            if index == 0 {
+                try Data().write(to: root.appendingPathComponent("unauthorized"))
+                app.buttons["connect-app-test"].click()
+                XCTAssertTrue(text(containing: "HTTP 401").waitForExistence(timeout: 15))
+                try FileManager.default.removeItem(at: root.appendingPathComponent("unauthorized"))
+            }
+            app.buttons["connect-app-test"].click()
+            XCTAssertTrue(app.staticTexts["connect-app-tested"].waitForExistence(timeout: 15), app.debugDescription)
+            XCTAssertTrue(app.staticTexts["CONNECTED"].exists)
+            if index == 4 { capture("Connect-app-Claude-tested") }
+            if index < 4 { app.buttons["Connect another app"].click() }
+        }
+        app.buttons["Done"].click()
+        let tested = try String(contentsOf: root.appendingPathComponent("client-connection-models"), encoding: .utf8)
+        XCTAssertEqual(tested.components(separatedBy: "/v1/chat/completions org/Connected-model").count - 1, 3)
+        XCTAssertTrue(tested.contains("/v1/responses org/Connected-model"))
+        XCTAssertTrue(tested.contains("/v1/messages org/Connected-model"))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"--confirm\""))
     }
 

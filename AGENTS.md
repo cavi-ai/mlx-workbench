@@ -112,6 +112,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
   `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
   `ComparisonPickerViews.swift`, `CompareSheets.swift`.
+- Client setup: `ClientSetupWizard`, `ClientSetupSession` and `AgentClientAdapters` use the existing wiring transaction for reviewed per-app setup. `CaviConnectionClient` embeds the published CAVI HTTP client in JavaScriptCore and uses `HostHTTPClient` for bounded loopback transport. Regenerate its pinned resource with `python3 scripts/vendor_api_client.py`; Node is needed only for regeneration.
 - Wire: `WiringCoordinator` (allowlisted client configs, endpoint-bound inference-key handoffs,
   owner-only writes and backups, content-digest rollback fences and persisted progress for partial rollback retries).
   Client adapters own credential fields; Zed keys stay in its own credential store.

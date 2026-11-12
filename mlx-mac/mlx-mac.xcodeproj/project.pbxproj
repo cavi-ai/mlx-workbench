@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
+        E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
 		E71200000000000000000402 /* ServingClientSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000401 /* ServingClientSetup.swift */; };
 		E71200000000000000000302 /* ServingMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000301 /* ServingMonitorView.swift */; };
 		E71200000000000000000502 /* ModelSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000501 /* ModelSourcesView.swift */; };
@@ -372,6 +374,15 @@
 		E71100000000000000000102 /* MediaReuseSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000101 /* MediaReuseSettings.swift */; };
 		E71100000000000000000202 /* MediaReuseCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000201 /* MediaReuseCapabilities.swift */; };
 		E71100000000000000000302 /* MediaReuseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000301 /* MediaReuseViews.swift */; };
+		1F24F07AD72BCC1A65E1D227 /* AgentClientAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C8442EC04625C7E02ED9E6C /* AgentClientAdapters.swift */; };
+		9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */; };
+		A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */; };
+		5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */; };
+		0BDC1FD23F1A80856D6C2CCE /* ClientSetupSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52A6F668CE64C0383A9D6AE7 /* ClientSetupSessionTests.swift */; };
+		F4B787F702F5D8670A00FA1B /* cavi-api-client.js in Resources */ = {isa = PBXBuildFile; fileRef = 3BD11D10A4AFB3D6AEE197F8 /* cavi-api-client.js */; };
+		BD616981E49046D21CD0B86E /* cavi-api-client-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6CA59F570734FDAA723E3E8 /* cavi-api-client-LICENSE.txt */; };
+		E71300000000000000000013 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
+		E71300000000000000000014 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -755,6 +766,13 @@
 		E71100000000000000000101 /* MediaReuseSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/MediaReuseSettings.swift; sourceTree = "<group>"; };
 		E71100000000000000000201 /* MediaReuseCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MediaReuseCapabilities.swift; sourceTree = "<group>"; };
 		E71100000000000000000301 /* MediaReuseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/MediaReuseViews.swift; sourceTree = "<group>"; };
+		3C8442EC04625C7E02ED9E6C /* AgentClientAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/AgentClientAdapters.swift; sourceTree = "<group>"; };
+		563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ClientSetupSession.swift; sourceTree = "<group>"; };
+		9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/CaviConnectionClient.swift; sourceTree = "<group>"; };
+		B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ClientSetupWizard.swift; sourceTree = "<group>"; };
+		52A6F668CE64C0383A9D6AE7 /* ClientSetupSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientSetupSessionTests.swift; sourceTree = "<group>"; };
+		3BD11D10A4AFB3D6AEE197F8 /* cavi-api-client.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Resources/cavi-api-client.js; sourceTree = "<group>"; };
+		D6CA59F570734FDAA723E3E8 /* cavi-api-client-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Resources/cavi-api-client-LICENSE.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -770,6 +788,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                E71300000000000000000011,
+                E71300000000000000000012,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -777,6 +797,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E71300000000000000000014,
+				E71300000000000000000013,
 				24BBLD021 /* XCTest.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -797,6 +819,13 @@
 		24GSRC01 /* mlx-mac */ = {
 			isa = PBXGroup;
 			children = (
+				D6CA59F570734FDAA723E3E8 /* cavi-api-client-LICENSE.txt */,
+				3BD11D10A4AFB3D6AEE197F8 /* cavi-api-client.js */,
+
+				B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */,
+				9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */,
+				563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */,
+				3C8442EC04625C7E02ED9E6C /* AgentClientAdapters.swift */,
 				B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */,
 				005CE28BCD11F9309E165034 /* HostedModelsView.swift */,
 				D3DD74CC95E96FA3509B47F2 /* HostedComparisonCoordinator.swift */,
@@ -1058,6 +1087,7 @@
 		24GTEST01 /* mlx-macTests */ = {
 			isa = PBXGroup;
 			children = (
+				52A6F668CE64C0383A9D6AE7 /* ClientSetupSessionTests.swift */,
 				B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */,
 				8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */,
 				66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */,
@@ -1186,6 +1216,7 @@
 			dependencies = (
 			);
 			name = mlx-workbench;
+            packageProductDependencies = (E71300000000000000000021, E71300000000000000000022);
 			productName = mlx-workbench;
 			productReference = 24PROD01 /* mlx-workbench.app */;
 			productType = "com.apple.product-type.application";
@@ -1203,6 +1234,7 @@
 				24TDEP001 /* PBXTargetDependency */,
 			);
 			name = mlx-workbenchTests;
+			packageProductDependencies = (E71300000000000000000021, E71300000000000000000022);
 			productName = mlx-workbenchTests;
 			productReference = 24PROD02 /* mlx-workbenchTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1256,6 +1288,7 @@
 			);
 			mainGroup = 24GMAIN01;
 			productRefGroup = 24GIV01 /* Products */;
+			packageReferences = (E71300000000000000000031, E71300000000000000000032);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -1301,6 +1334,13 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BD616981E49046D21CD0B86E /* cavi-api-client-LICENSE.txt in Resources */,
+				F4B787F702F5D8670A00FA1B /* cavi-api-client.js in Resources */,
+
+
+
+
+
 				24ABLD001 /* Assets.xcassets in Resources */,
 				5A1E5E770000000000000042 /* agent-worker.py in Resources */,
 
@@ -1342,6 +1382,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
+				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
+				9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */,
+				1F24F07AD72BCC1A65E1D227 /* AgentClientAdapters.swift in Sources */,
 				BE10FB560CF5CCF42E69AB69 /* HostedComparisonView.swift in Sources */,
 				DA220300AF9616739E5D2445 /* HostedModelsView.swift in Sources */,
 				39BF931D8504CBB8F934D203 /* HostedComparisonCoordinator.swift in Sources */,
@@ -1592,6 +1636,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0BDC1FD23F1A80856D6C2CCE /* ClientSetupSessionTests.swift in Sources */,
 				1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */,
 				33CB1B0DE6A5B26995477A5A /* ModelHostClientTests.swift in Sources */,
 				07DC542B16E33D64215AB114 /* ComfyWorkflowTests.swift in Sources */,
@@ -1691,6 +1736,15 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+        E71300000000000000000031 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/LebJe/TOMLKit.git"; requirement = {kind = exactVersion; version = 0.6.0; }; };
+        E71300000000000000000032 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/jpsim/Yams.git"; requirement = {kind = exactVersion; version = 6.2.2; }; };
+/* End XCRemoteSwiftPackageReference section */
+/* Begin XCSwiftPackageProductDependency section */
+        E71300000000000000000021 = {isa = XCSwiftPackageProductDependency; package = E71300000000000000000031; productName = TOMLKit; };
+        E71300000000000000000022 = {isa = XCSwiftPackageProductDependency; package = E71300000000000000000032; productName = Yams; };
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		26UITCLD1 /* Debug */ = {

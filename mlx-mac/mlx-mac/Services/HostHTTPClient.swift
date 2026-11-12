@@ -40,14 +40,15 @@ struct HostHTTPClient: Sendable {
     func request(
         host: ModelHost, path: String, method: String = "GET", body: Data? = nil,
         query: [URLQueryItem] = [], token: String? = nil, maximumBytes: Int = 8_388_608,
-        timeout: TimeInterval = 30
+        timeout: TimeInterval = 30, headers: [String: String] = [:]
     ) async throws -> Data {
         let baseURL = try host.validatedURL()
         guard maximumBytes > 0, (1...120).contains(timeout), !path.hasPrefix("//"), !path.contains(":"),
               !path.contains("?"), !path.contains("#"),
               !path.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }),
               ["GET", "POST", "DELETE"].contains(method),
-              token?.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) != true else {
+              token?.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) != true,
+              headers.allSatisfy({ $0.key.lowercased() == "anthropic-version" && !$0.value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }) else {
             throw HostHTTPError.invalidPath
         }
         try ModelHost.validatePath(path)
@@ -62,6 +63,7 @@ struct HostHTTPClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token, !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         let receiver = HostResponseReceiver(maximumBytes: maximumBytes)
         do {
             return try await withTaskCancellationHandler {

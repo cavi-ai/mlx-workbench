@@ -288,20 +288,35 @@ enum LineDiff {
 /// Display-side redaction for diffs: any line assigning a key/token/secret
 /// value shows `•••` instead of the value.
 enum SecretRedaction {
-    private static let sensitiveMarkers = ["api_key", "apikey", "api-key", "token", "secret"]
+    private static let sensitiveMarkers = ["api_key", "apikey", "api-key", "token", "secret", "authorization"]
 
     static func redact(_ text: String) -> String {
-        text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-            .map(redactLine)
-            .joined(separator: "\n")
+        var tripleQuote: String?
+        var blockIndent: Int?
+        return text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).map { line in
+            if let quote = tripleQuote {
+                if line.contains(quote) { tripleQuote = nil }
+                return "•••"
+            }
+            let indent = line.prefix { $0 == " " || $0 == "\t" }.count
+            if let depth = blockIndent {
+                if line.trimmingCharacters(in: .whitespaces).isEmpty || indent > depth { return "•••" }
+                blockIndent = nil
+            }
+            let redacted = redactLine(line)
+            if redacted != line, let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "=" }) {
+                let value = line[line.index(after: delimiter)...].trimmingCharacters(in: .whitespaces)
+                for quote in ["\"\"\"", "'''"] where value.hasPrefix(quote) && !value.dropFirst(3).contains(quote) { tripleQuote = quote }
+                if value.hasPrefix("|") || value.hasPrefix(">") { blockIndent = indent }
+            }
+            return redacted
+        }.joined(separator: "\n")
     }
 
     private static func redactLine(_ line: String) -> String {
-        let lowered = line.lowercased()
-        guard sensitiveMarkers.contains(where: { lowered.contains($0) }),
-              let colon = line.firstIndex(of: ":") else { return line }
-        let valueStart = line.index(after: colon)
+        guard let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "=" }),
+              sensitiveMarkers.contains(where: { line.lowercased().contains($0) }) else { return line }
+        let valueStart = line.index(after: delimiter)
         return String(line[..<valueStart]) + " \"•••\""
     }
 }
