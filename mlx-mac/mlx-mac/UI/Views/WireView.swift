@@ -141,6 +141,7 @@ struct WireView: View {
     @State private var captureError: String?
     @State private var layout = ClientsLayout()
     @State private var showsSetupDoctor = false
+    @State private var showsConnectWizard = false
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var credentialMessage: String?
 
@@ -230,6 +231,9 @@ struct WireView: View {
                 selectedServerID: $selectedServerID, refreshClientsAndServers: { await refreshServers(); return serverMessage == nil },
                 previewClient: { await previewClients(clientIDs: [$0]) },
                 onOpenRun: { onRouteSelection(.run) }, onOpenHealth: { onRouteSelection(.health) })
+        }
+        .sheet(isPresented: $showsConnectWizard) {
+            ClientSetupWizard(appHost: appHost, server: selectedServer, onRouteSelection: onRouteSelection)
         }
         .sheet(item: $promptPresentation) { presentation in
             EndpointTestSheet(presentation: presentation, coordinator: endpointTest, configureClients: {})
@@ -372,10 +376,14 @@ struct WireView: View {
             Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
-            Button { showsSetupDoctor = true } label: {
-                Label("Add clients / Setup doctor…", systemImage: "stethoscope")
+            HStack {
+                Button { showsConnectWizard = true } label: {
+                    Label("Connect app…", systemImage: "plus")
+                }.buttonStyle(.workbenchPrimary).accessibilityIdentifier("open-connect-app-wizard")
+                Button { showsSetupDoctor = true } label: {
+                    Label("Check existing setup…", systemImage: "stethoscope")
+                }.accessibilityIdentifier("open-client-setup-doctor")
             }
-            .accessibilityIdentifier("open-client-setup-doctor")
             .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
             noticeViews(.header)
         }

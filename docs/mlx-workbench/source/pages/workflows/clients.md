@@ -7,6 +7,10 @@
 | Client | Config file | Mode |
 |---|---|---|
 | opencode | `~/.config/opencode/opencode.jsonc` | Writable |
+| OpenClaw | `~/.openclaw/openclaw.json` | Writable JSON5 |
+| Hermes | `~/.hermes/config.yaml` | Writable YAML |
+| Codex | `~/.codex/config.toml` | Writable TOML |
+| Claude Code | `~/.claude/settings.json` | Writable |
 | Continue | `~/.continue/config.json` | Writable legacy JSON configs |
 | Zed | `~/.config/zed/settings.json` | Writable |
 | Aider | `~/.aider.conf.yml` | Writable |
@@ -16,7 +20,13 @@ Write targets are a fixed allowlist of these paths. Symbolic links at the config
 
 ## Add clients and check setup
 
-**Add clients / Setup doctor…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable or linked files, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
+**Connect app…** opens setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code. Choose the app and a running model endpoint, **Review setup**, then **Apply setup**. Workbench creates missing config files, retains unrelated setting values and backs up existing files. JSON5, YAML and TOML files are reformatted; the review warns when comments may be removed. API keys are supplied automatically for protected endpoints.
+
+**Test connection** sends one short prompt through the bundled CAVI API client using Chat Completions, Responses or Messages, according to the selected app. It checks the exact written configuration and server identity before and after the request. Testing may load the selected model. Success means the server responded using that protocol; open a new client session to use the configuration. App detection is separate from connection testing. Missing apps have an official installation link and can be configured before installation. OpenClaw gateways need a restart to reload configuration. Project settings and launch options can override user settings.
+
+**Undo setup** reverses that setup transaction while its files still match the applied contents. **Connect another app** reuses the same flow for another client.
+
+**Check existing setup…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable or linked files, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
 
 Choose a running endpoint, then **Review config…** beside one client. OpenCode, Zed and Aider can create a config even when its folder does not exist. The wiring preview lists only that client; **Confirm client wiring** performs the existing server and file checks before writing. Rollback restores a backup or moves an unchanged newly created config to Trash. Unreadable and linked configs require manual review. Continue’s adapter supports existing legacy JSON files; its guide covers current YAML setup, and the doctor does not create a legacy file for a new installation.
 
@@ -40,7 +50,7 @@ The result reports zero, partial or full outcomes per client. The opencode adapt
 
 Protected endpoints appear in the same server picker and **Wire into clients** handoff. Preview checks that Workbench can read the matching inference key from Keychain. Confirmation rechecks the running process, model and key identity before writing. Key lookups run off the UI thread and refuse permission prompts. A missing, locked or reset key requires a new preview; authentication is never disabled to complete setup.
 
-OpenCode, Continue’s legacy JSON adapter and Aider receive the inference key in their supported configuration fields. Configs, temporary writes and backups are readable and writable only by your macOS user. The review names the credential destination and masks key values. Wiring history records paths and content digests, never keys. Keep these config files and backups out of shared folders and source control.
+OpenCode, OpenClaw, Hermes, Codex, Claude Code, Continue’s legacy JSON adapter and Aider receive the inference key in their supported configuration fields. Configs, temporary writes and backups are readable and writable only by your macOS user. The review names the credential destination and masks key values. Wiring history records paths and content digests, never keys. Keep these config files and backups out of shared folders and source control.
 
 Zed stores API keys in its own system-keychain entry. Workbench writes its endpoint settings and shows **Finish API-key setup in Zed**. Use **Copy inference key**, then paste it into Zed’s OpenAI provider in Agent Settings. Workbench never puts the key in Zed’s settings file. Continue’s current YAML format remains a guided setup; use its official secret configuration instructions.
 
@@ -64,22 +74,8 @@ A partial rollback keeps the action available for retry. Clients already restore
 
 ## Connect from the serving model
 
-In **Serving**, select a running chat endpoint and open **Connect apps**. Choose
-**OpenCode**, **OpenClaw**, **Hermes**, **Codex** or **Claude Code** for setup bound
-to that endpoint's address and model ID. Copying setup does not edit files or
-launch another app. Protected setup refers to `WORKBENCH_API_KEY`; copy the key
-from **API & security** and supply it through the client's environment. Recipes
-contain no inference key.
+In **Serving**, select a running chat endpoint and open **Connect apps**. Choose the app, then **Connect…** to open the same reviewed setup with that endpoint preselected. Address, port, model and authentication stay bound to the selected process.
 
-- OpenCode offers its provider configuration and the existing reviewed client
-  writer under **Preview and apply client configuration**.
-- OpenClaw offers a provider/model fragment to merge into its user config.
-- Hermes uses `hermes model` → Custom endpoint → Chat Completions; enter the
-  displayed base URL, model and key. Hermes saves the connection itself.
-- Codex uses session-scoped `-c` overrides with the Responses protocol.
-- Claude Code uses shell-scoped gateway variables with the Messages protocol.
+**Manual setup** offers copyable provider fragments or launch commands for temporary overrides. Protected recipes refer to `WORKBENCH_API_KEY`; copy the key from **API & security** and supply it through the client’s environment. Recipes contain no inference key.
 
-Codex and Claude Code setup requires a managed load-on-request chat gateway.
-A model's tool support still determines its usefulness in coding agents. Setup
-links to each client's current documentation. Other Clients workflows continue
-to use the existing preview, backup, confirmation and rollback controls.
+Codex and Claude Code require a managed load-on-request chat gateway, which supports Responses and Messages respectively. A model’s tool support determines its usefulness in coding agents. Setup links to each client’s documentation.

@@ -47,7 +47,7 @@ quick access. See [Serving and Monitor](../workflows/run.md).
 
 ## 6. Wire a client
 
-Open **Clients**, choose the running server, pick opencode, Continue, Zed or Aider, and **Preview client wiring**. The preview shows the exact config change. **Confirm client wiring** writes it with a backup; **Roll back last wiring** restores the previous file. See [Clients](../workflows/clients.md).
+Open **Clients** → **Connect app…**, choose your app and running model, then **Review setup** → **Apply setup** → **Test connection**. The review shows the config destination and authentication; **Undo setup** restores the previous settings. See [Clients](../workflows/clients.md).
 
 ## Next
 

@@ -18,6 +18,8 @@ struct ClientAdapter: Sendable {
     /// Native credential destination. nil means keys belong in the client's own credential store.
     var apiKeyPlan: (@Sendable (_ config: String, _ key: String) throws -> String)? = nil
     var credentialInstruction: String? = nil
+    var normalizesFormatting = false
+    var validate: (@Sendable (String) throws -> Void)? = nil
     /// The inverse of `plan`: the local endpoints a config's contents point at.
     let read: @Sendable (_ contents: String) -> ClientConfigReading
     let plan: @Sendable (_ before: String?, _ endpoint: WireEndpoint) throws -> String
@@ -81,7 +83,8 @@ struct ClientAdapter: Sendable {
 enum ClientAdapters {
     static let providerID = "mlx-local"
 
-    static let all: [ClientAdapter] = [opencode, continue_, zed, aider, lmStudio, ollama]
+    static let all: [ClientAdapter] = [opencode, continue_, zed, aider, AgentClientAdapters.openclaw,
+        AgentClientAdapters.hermes, AgentClientAdapters.codex, AgentClientAdapters.claude, lmStudio, ollama]
 
     static let opencode = ClientAdapter(
         clientID: "opencode",
@@ -124,7 +127,7 @@ enum ClientAdapters {
         var provider = (config["provider"] as? [String: Any]) ?? [:]
         provider[providerID] = [
             "npm": "@ai-sdk/openai-compatible",
-            "options": ["baseURL": endpoint.baseURL],
+            "options": ["baseURL": endpoint.baseURL, "apiKey": "workbench"],
             "models": [endpoint.modelName: [String: Any]()],
         ]
         config["provider"] = provider
