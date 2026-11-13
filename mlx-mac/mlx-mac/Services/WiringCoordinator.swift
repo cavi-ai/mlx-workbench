@@ -31,7 +31,7 @@ enum WiringError: LocalizedError {
         case .fileChangedSincePreview(let client): return "\(client): the config file changed after the preview; preview again."
         case .postWriteValidationFailed(let client): return "\(client): the written config did not validate; the previous file was restored."
         case .noTransactionToRollback: return "There is no wiring transaction to roll back."
-        case .symlinkRefused(let client): return "\(client): the config path or its backup target is a symbolic link; refusing to write through it."
+        case .symlinkRefused(let client): return "\(client): a symbolic link replaced the reviewed config path or its backup, or its links loop; review setup again."
         case .credentialUnavailable: return "The endpoint inference key is unavailable or changed. Check its API-key setup in Run, then preview again."
         case .credentialUnsupported(let client): return "\(client): authenticated setup is not supported by this adapter."
         case .serverChanged: return "The selected server stopped or changed. Refresh and preview client wiring again."
@@ -57,6 +57,7 @@ final class WiringCoordinator: ObservableObject {
 
     private let adapters: [ClientAdapter]
     private let home: URL
+    private let locations: ClientConfigLocations
     private let fileManager: FileManager
     private let configSource: ClientConfigSource
     private let credential: @MainActor (String) async throws -> String
@@ -76,7 +77,20 @@ final class WiringCoordinator: ObservableObject {
     /// The endpoint captured with the server-backed preview, independent of current selection.
     var reviewedEndpoint: WireEndpoint? { previewedServer.flatMap { WireEndpoint(server: $0) } }
 
-    var setupClients: [ClientInstallation] { adapters.compactMap { $0.configurationInstallation(home: home) } }
+    var setupClients: [ClientInstallation] {
+        adapters.compactMap { $0.configurationInstallation(home: home, directory: locations.directory(for: $0.clientID)) }
+    }
+
+    /// The config folder chosen for a client; nil uses its standard location.
+    func configDirectory(for clientID: String) -> String? { locations.directory(for: clientID) }
+
+    /// Choose a client's config folder, or nil for its standard location; a pending review is discarded.
+    func setConfigDirectory(_ path: String?, for clientID: String) {
+        guard !isApplying, !isCheckingServer else { return }
+        locations.setDirectory(path.map { URL(fileURLWithPath: $0, isDirectory: true).path }, for: clientID)
+        invalidateServerPreview()
+        scheduleReadings()
+    }
 
     func previewMatches(server: ServerInfo?) -> Bool {
         guard let server, let reviewed = previewedServer,
@@ -87,6 +101,7 @@ final class WiringCoordinator: ObservableObject {
     init(
         adapters: [ClientAdapter] = ClientAdapters.all,
         home: URL = URL(fileURLWithPath: NSHomeDirectory()),
+        locations: ClientConfigLocations = .standardFolders,
         fileManager: FileManager = .default,
         configSource: @escaping ClientConfigSource = ClientConfigFile.live,
         store: JSONStore<WiringTransaction>,
@@ -98,6 +113,7 @@ final class WiringCoordinator: ObservableObject {
     ) {
         self.adapters = adapters
         self.home = home
+        self.locations = locations
         self.fileManager = fileManager
         self.configSource = configSource
         self.credential = credential
@@ -152,7 +168,9 @@ final class WiringCoordinator: ObservableObject {
     /// Detect installed clients. Advisory rows appear only when the client
     /// looks installed; writable rows when the config or its directory exists.
     func detect() {
-        installations = adapters.compactMap { $0.installation(home: home, fileManager: fileManager) }
+        installations = adapters.compactMap {
+            $0.installation(home: home, directory: locations.directory(for: $0.clientID), fileManager: fileManager)
+        }
     }
 
     /// Compute edit plans for every detected writable client and freeze them
@@ -402,7 +420,7 @@ final class WiringCoordinator: ObservableObject {
     func matchesAppliedConfig(_ receipt: ClientEditReceipt, endpoint: WireEndpoint) async -> Bool {
         guard let expected = receipt.writtenFileSHA256,
               let adapter = adapters.first(where: { $0.clientID == receipt.clientID }),
-              adapter.configurationInstallation(home: home)?.configPath == receipt.configPath else { return false }
+              adapter.configPath(home: home, directory: locations.directory(for: receipt.clientID)) == receipt.configPath else { return false }
         let boundary = home.path
         return await WorkbenchIO.perform {
             let url = URL(fileURLWithPath: receipt.configPath)

@@ -213,6 +213,7 @@ class AppHost {
             loadHistoryInBackground: true, indexedHistory: true)
         self.wiring = wiring ?? WiringCoordinator(
             home: WorkbenchStatePaths.userHome(),
+            locations: .live,
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
         )
         self.endpoint = endpoint ?? EndpointSupervisor(

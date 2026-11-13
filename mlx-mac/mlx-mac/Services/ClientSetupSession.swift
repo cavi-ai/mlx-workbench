@@ -87,6 +87,16 @@ final class ClientSetupSession: ObservableObject {
     var selected: ServerInfo? { servers.first { $0.id == selectedID } }
     var supported: Bool { selected.map { !client.requiresGateway || $0.jit == true } ?? false }
     var plan: ClientEditPlan? { wiring.plans.first { $0.clientID == client.rawValue } }
+    /// Where setup writes this client's config, at its real location.
+    var configPath: String? { wiring.setupClients.first { $0.clientID == client.rawValue }?.configPath }
+    var choseConfigFolder: Bool { wiring.configDirectory(for: client.rawValue) != nil }
+
+    /// Use `path` as this client's config folder, or its standard location for nil.
+    func chooseConfigFolder(_ path: String?) {
+        guard !busy else { return }
+        wiring.setConfigDirectory(path, for: client.rawValue)
+        reset()
+    }
 
     func load() async {
         guard !busy else { return }

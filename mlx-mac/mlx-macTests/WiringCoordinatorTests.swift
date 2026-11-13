@@ -1015,25 +1015,120 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.lastError, WiringError.noPlansPreviewed.errorDescription)
     }
 
-    func testSymlinkedConfigIsRefusedNotWrittenThrough() throws {
+    func testSymlinkedConfigFileIsFollowedAndALinkSwappedInAfterReviewIsRefused() throws {
         let home = try makeHome()
-        let opencodeConfig = home.appendingPathComponent(".config/opencode/opencode.jsonc")
-        try FileManager.default.createDirectory(at: opencodeConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let victim = home.appendingPathComponent("victim.json")
-        try "{\"theme\": \"dark\"}".write(to: victim, atomically: true, encoding: .utf8)
-        try FileManager.default.createSymbolicLink(
-            at: opencodeConfig, withDestinationURL: victim
-        )
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let shared = home.appendingPathComponent("Dotfiles/opencode.jsonc")
+        try FileManager.default.createDirectory(at: shared.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{\"theme\": \"dark\"}".write(to: shared, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: config, withDestinationURL: shared)
         let coordinator = makeCoordinator(home: home)
 
         coordinator.preview(endpoint: endpoint)
-        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: coordinator.previewHash!)
+        XCTAssertEqual(coordinator.plans.map(\.configPath), [shared.path])
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
 
-        // The plan reads through the link, so `before` matches the victim's
-        // content; the write itself must refuse and never touch the victim.
-        XCTAssertEqual(transaction?.receipts.count, 0)
-        XCTAssertTrue(transaction?.failures.contains { $0.contains("symbolic link") } == true)
-        XCTAssertEqual(try String(contentsOf: victim), "{\"theme\": \"dark\"}")
+        XCTAssertEqual(transaction?.failures, [])
+        XCTAssertTrue(try String(contentsOf: shared).contains(endpoint.baseURL))
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: config.path), shared.path)
+
+        // The reviewed path is the link's target; a link put there after review is never written through.
+        coordinator.preview(endpoint: endpoint)
+        let other = home.appendingPathComponent("other.json")
+        try "{}".write(to: other, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: shared)
+        try FileManager.default.createSymbolicLink(at: shared, withDestinationURL: other)
+        let swapped = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+
+        XCTAssertEqual(swapped?.receipts.count, 0)
+        XCTAssertEqual(swapped?.failures, [try XCTUnwrap(WiringError.symlinkRefused(client: "opencode").errorDescription)])
+        XCTAssertEqual(try String(contentsOf: other), "{}")
+    }
+
+    func testDanglingConfigLinkCreatesItsTargetAndALoopingLinkIsRefused() throws {
+        let home = try makeHome()
+        let folder = home.appendingPathComponent(".config/opencode", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let target = home.appendingPathComponent("Volume/opencode.jsonc")
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let config = folder.appendingPathComponent("opencode.jsonc")
+        try FileManager.default.createSymbolicLink(atPath: config.path, withDestinationPath: "../../Volume/opencode.jsonc")
+        let coordinator = makeCoordinator(home: home)
+
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertEqual(coordinator.plans.map(\.configPath), [target.path])
+        let created = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+
+        XCTAssertEqual(created?.failures, [])
+        XCTAssertTrue(try String(contentsOf: config).contains(endpoint.baseURL))
+        coordinator.rollback()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trash(home).appendingPathComponent("opencode.jsonc").path))
+
+        try FileManager.default.removeItem(at: config)
+        try FileManager.default.createSymbolicLink(atPath: config.path, withDestinationPath: "loop.jsonc")
+        try FileManager.default.createSymbolicLink(atPath: folder.appendingPathComponent("loop.jsonc").path, withDestinationPath: "opencode.jsonc")
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertEqual(coordinator.plans.map(\.configPath), [config.path])
+        let looped = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+
+        XCTAssertEqual(looped?.receipts.count, 0)
+        XCTAssertEqual(looped?.failures.count, 1)
+        XCTAssertTrue(looped?.failures.first?.contains("links loop") == true)
+    }
+
+    func testChosenConfigFolderReceivesTheConfigUntilTheStandardFolderIsRestored() throws {
+        let home = try makeHome()
+        let standard = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: standard.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let chosen = home.appendingPathComponent("Dotfiles/opencode", isDirectory: true)
+        try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
+        let locations = makeLocations()
+        let coordinator = makeCoordinator(home: home, locations: locations)
+
+        coordinator.setConfigDirectory(chosen.path, for: "opencode")
+        XCTAssertEqual(coordinator.configDirectory(for: "opencode"), chosen.path)
+        XCTAssertEqual(coordinator.setupClients.first { $0.clientID == "opencode" }?.configPath,
+                       chosen.appendingPathComponent("opencode.jsonc").path)
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertEqual(coordinator.plans.map(\.configPath), [chosen.appendingPathComponent("opencode.jsonc").path])
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+
+        XCTAssertEqual(transaction?.failures, [])
+        XCTAssertTrue(try String(contentsOf: chosen.appendingPathComponent("opencode.jsonc")).contains(endpoint.baseURL))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: standard.path))
+        XCTAssertEqual(makeCoordinator(home: home, locations: locations).configDirectory(for: "opencode"), chosen.path)
+
+        coordinator.setConfigDirectory(nil, for: "opencode")
+        XCTAssertNil(coordinator.configDirectory(for: "opencode"))
+        XCTAssertEqual(coordinator.setupClients.first { $0.clientID == "opencode" }?.configPath, standard.path)
+    }
+
+    func testSymlinkedConfigFolderIsWrittenAtItsRealLocation() throws {
+        let home = try makeHome()
+        // The standard folder links outside home, as onto another volume.
+        let real = try makeHome().appendingPathComponent(".config/opencode", isDirectory: true)
+        let config = real.appendingPathComponent("opencode.jsonc")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try "{\"theme\": \"dark\"}\n".write(to: config, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".config"), withIntermediateDirectories: true)
+        let link = home.appendingPathComponent(".config/opencode")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        let coordinator = makeCoordinator(home: home)
+
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertEqual(coordinator.plans.map(\.configPath), [config.path])
+        let transaction = try XCTUnwrap(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+
+        XCTAssertEqual(transaction.failures, [])
+        let written = try String(contentsOf: config)
+        XCTAssertTrue(written.contains(endpoint.baseURL) && written.contains("\"theme\""))
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), real.path)
+        XCTAssertEqual(transaction.receipts.first.flatMap(\.backupPath).map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }, real.path)
+        coordinator.rollback()
+        XCTAssertEqual(try String(contentsOf: config), "{\"theme\": \"dark\"}\n")
+        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
     }
 
     // MARK: - Hashing, diff, redaction
@@ -1081,16 +1176,30 @@ final class WiringCoordinatorTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-wiring-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        homeURL = url
-        return url
+        // The temporary folder sits behind /var -> /private/var; config paths are reported at their real location.
+        let real = try XCTUnwrap(realpath(url.path, nil))
+        defer { free(real) }
+        let resolved = URL(fileURLWithPath: String(cString: real), isDirectory: true)
+        homeURL = resolved
+        return resolved
+    }
+
+    /// Chosen folders kept in a preferences suite of their own, removed after the test.
+    private func makeLocations() -> ClientConfigLocations {
+        let suite = "mlx-workbench-wiring-tests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)
+        addTeardownBlock { defaults?.removePersistentDomain(forName: suite) }
+        return ClientConfigLocations(defaults: defaults)
     }
 
     private func makeCoordinator(
-        home: URL, store: JSONStore<WiringTransaction>? = nil, moveToTrash: ((URL) throws -> Void)? = nil
+        home: URL, store: JSONStore<WiringTransaction>? = nil, moveToTrash: ((URL) throws -> Void)? = nil,
+        locations: ClientConfigLocations = .standardFolders
     ) -> WiringCoordinator {
         let trashDirectory = trash(home)
         return WiringCoordinator(
             home: home,
+            locations: locations,
             store: store ?? JSONStore<WiringTransaction>(fileURL: temporaryURL("transactions.json")),
             moveToTrash: moveToTrash ?? { url in
                 try FileManager.default.createDirectory(at: trashDirectory, withIntermediateDirectories: true)
