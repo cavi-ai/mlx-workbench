@@ -1375,7 +1375,8 @@ actor WorkbenchAPI {
                 provenance: raw.string("provenance"),
                 task: ModelTask(dictionary: raw["task"] as? [String: Any]),
                 runtime: raw.string("runtime"),
-                backend: backend
+                backend: backend,
+                splashFamily: (raw["splash"] as? [String: Any])?.string("family")
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {

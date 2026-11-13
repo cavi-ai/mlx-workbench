@@ -137,6 +137,17 @@ final class ScanContractTests: XCTestCase {
         XCTAssertEqual(result.outputs[0].task?.type, .speechToText)
     }
 
+    func testDecodeScanCarriesTheSplashFamilyOfEachOutput() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        var outputs = try XCTUnwrap(payload["outputs"] as? [[String: Any]])
+        outputs[0]["splash"] = ["family": "Qwen3.8-27B"]
+        payload["outputs"] = outputs + [outputs[0].merging(["path": "/Models/other", "splash": ["family": NSNull(), "reason": "refused"]]) { $1 }]
+
+        let result = try WorkbenchAPI.decodeScan(payload)
+
+        XCTAssertEqual(result.outputs.map(\.splashFamily), ["Qwen3.8-27B", nil])
+    }
+
     func testDecodeScanCarriesDrafterFacts() throws {
         var payload = fixture(named: "convert-scan-valid")
         var models = try XCTUnwrap(payload["models"] as? [[String: Any]])

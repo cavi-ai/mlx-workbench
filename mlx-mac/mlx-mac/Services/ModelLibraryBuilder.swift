@@ -74,7 +74,8 @@ enum ModelLibraryBuilder {
                 task: output.task,
                 draft: configDraft(config),
                 servingRuntime: output.runtime,
-                backend: output.backend
+                backend: output.backend,
+                splashFamily: output.splashFamily
             )
             return LibraryModel(
                 item: item,

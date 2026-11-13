@@ -801,13 +801,14 @@ struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
         let title: String
     }
 
-    /// Runtimes a chat lane can select; a nil tag keeps the model's own runtime.
-    static func runtimeChoices(task: ModelTaskType?, servingRuntime: String?) -> [RuntimeChoice] {
+    /// Runtimes a chat lane can select; a nil tag keeps the model's own runtime. Splash needs the family the scan reports.
+    static func runtimeChoices(task: ModelTaskType?, servingRuntime: String?, splashFamily: String?) -> [RuntimeChoice] {
+        let splash: [RuntimeChoice] = splashFamily == nil ? [] : [.init(tag: "splash", title: "Splash")]
         if servingRuntime == "strata" { return [.init(tag: nil, title: "Strata"), .init(tag: "splash", title: "Splash")] }
         guard servingRuntime == nil else { return [] }
         switch task {
-        case .textLLM: return [.init(tag: nil, title: "Automatic"), .init(tag: "mlx_lm", title: "MLX-LM"), .init(tag: "splash", title: "Splash")]
-        case .visionLanguage: return [.init(tag: nil, title: "Automatic"), .init(tag: "splash", title: "Splash")]
+        case .textLLM: return [.init(tag: nil, title: "Automatic"), .init(tag: "mlx_lm", title: "MLX-LM")] + splash
+        case .visionLanguage: return splash.isEmpty ? [] : [.init(tag: nil, title: "Automatic")] + splash
         default: return []
         }
     }
