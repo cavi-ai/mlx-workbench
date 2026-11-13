@@ -1,6 +1,25 @@
 # Reclaim
 
-**Reclaim** frees disk space without guessing. It leads with a ledger of space to review, space in quarantine and space in the Trash, with unknown sizes labeled. Every move is previewed, rechecked at confirmation and reversible until you empty the Trash.
+**Reclaim** frees disk space without guessing. **Models** shows where the disk under your scan folders goes and which copies of one model you can remove. **Quarantine & cleanup** holds suggestions, the quarantine, the Trash and cleanup history. Every move is previewed, rechecked at confirmation and reversible until you empty the Trash.
+
+## Models
+
+The header counts every file under the scanned folders once: the total on disk, the part held by recognized models, and that part by store (folders, the Hugging Face cache and Ollama). Hard links and blobs shared between Ollama tags or cache revisions are counted once. The remainder is listed by the folders and files that hold it, largest first, with **Reveal** to open each in Finder. Those bytes belong to no model the scan recognizes; they can be unsupported model formats as well as leftovers.
+
+The table has one row per model, grouping its copies across MLX folders, GGUF files, Hugging Face cache snapshots and Ollama tags by architecture, layer count, hidden width and attention heads. Embedding and classification models are never grouped with generators of the same architecture. Every column sorts. **Show** narrows the table to models stored more than once (the default), models with no copy used within **Stale after**, models with identical weights in two places, or every model.
+
+Expand a row to see its copies. One copy is marked **Keep**: the one used most recently, else one that is serving or preferred, else the largest. **Keep** on another copy changes it. **Could free** is the space released by removing every other copy: a file still used by a copy that stays, such as an Ollama blob shared with another tag, is not counted. Serving, preferred and in-use copies show a lock and cannot be selected.
+
+Select copies, or **Select every extra copy**, then **Review removal…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
+
+| Copy | Removal |
+|---|---|
+| GGUF file | Its GGUF files, including split shards and projectors, move to quarantine; notes beside them stay |
+| MLX folder | The folder moves to quarantine under the folder rules below |
+| Hugging Face cache snapshot | The whole cache repository moves to the macOS Trash, with every revision in it |
+| Ollama tag | The manifest and the blobs no other tag references move to quarantine together; **Put back** restores both |
+
+Quarantined copies still occupy disk until you move them to the Trash and empty it. The bar under the table shows what quarantine holds and opens **Quarantine & cleanup**.
 
 ## What it suggests
 
@@ -16,7 +35,7 @@ Folder copies that need a separate review remain visible in the headline as an i
 | Superseded | A replacement with comparable reviewed task quality and no worse speed, latency, estimated memory or disk use |
 | Duplicate | The same GGUF file, or an MLX model folder with identical weights, in more than one place |
 
-**Duplicate groups** at the end of the page list every group from the latest scan, including one model kept at several quantizations (GGUF quantizations or MLX bit widths). Those groups are informational: choosing which copy to keep is yours. When one identical MLX copy is in the Hugging Face cache, that copy is kept and the other is reviewed with **Review model folder…**. Models in an Ollama store under your scan roots are included; an Ollama copy is always the one kept, since only Ollama removes its files.
+**Duplicate groups** at the end of the page list every group from the latest scan, including one model kept at several quantizations (GGUF quantizations or MLX bit widths). Those groups are informational: choosing which copy to keep is yours. When one identical MLX copy is in the Hugging Face cache, that copy is kept and the other is reviewed with **Review model folder…**. Models in an Ollama store under your scan roots are included; these suggestions always keep the Ollama copy, and **Models** removes Ollama tags.
 
 Quantization bits alone never establish that one model supersedes another. Replacement chains pick a keeper within one reviewed comparison or matched conversion cohort; suggestions stay advisory and keepers are protected from stale-file advice. Intentional serving counts as use; verification and benchmark runs do not.
 
