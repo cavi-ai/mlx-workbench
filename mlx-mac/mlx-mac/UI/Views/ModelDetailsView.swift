@@ -64,10 +64,14 @@ struct ModelActions {
         onRouteSelection(.use)
     }
 
-    func run() {
+    /// A runtime opens Run's Start now setup with that runtime selected.
+    func run(runtime: String? = nil) {
         appHost.selectedModelPath = model.item.path
         if model.readiness == .ready {
             appHost.modelWorkflow.prepareServe(model: model)
+        }
+        if let runtime {
+            appHost.handoffs.send(ServeRuntimeRequest(modelPath: model.item.path, runtime: runtime), as: .serveWithRuntime)
         }
         onRouteSelection(.run)
     }
@@ -351,6 +355,11 @@ struct ModelDetailsView: View {
                 )
                 measuredSection
 
+                let inference = ModelInferencePresentation.options(for: model, chip: appHost.hardwareProfile.chip)
+                if !inference.isEmpty {
+                    inferenceSection(inference)
+                }
+
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
                     InlineMessage(kind: .warning, text: error)
                 }
@@ -529,6 +538,44 @@ struct ModelDetailsView: View {
         guard !services.isEmpty else { return nil }
         return services.compactMap { $0.baseURL.flatMap(URL.init(string:))?.port.map { ":\($0)" } }.first
             ?? (services.count == 1 ? "1 server" : "\(services.count) servers")
+    }
+
+    /// Runtimes and options beyond the default, experimental ones marked, each with where to choose it.
+    private func inferenceSection(_ options: [ModelInferenceOption]) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Inference").font(WorkbenchTypography.cardTitle)
+            ForEach(options) { option in
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+                        Text(option.title).font(WorkbenchTypography.emphasis)
+                        if option.experimental {
+                            Label("Experimental", systemImage: "flask")
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                        Spacer(minLength: WorkbenchSpacing.xs)
+                        switch option.place {
+                        case .run(let runtime?) where actions.canServe:
+                            Button(runtime == "splash" ? "Serve with Splash" : "Serve") { actions.run(runtime: runtime) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(model.readiness != .ready)
+                                .accessibilityIdentifier("inspector-serve-\(option.id)")
+                        case .settings:
+                            Button("Open Settings") { onRouteSelection(.settings) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        default:
+                            EmptyView()
+                        }
+                    }
+                    Text(option.detail)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     private var measuredSection: some View {

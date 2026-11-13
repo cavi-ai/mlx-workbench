@@ -36,6 +36,13 @@ struct LibraryRow: Identifiable, Hashable {
         readiness.flatMap { ModelReadiness.allCases.firstIndex(of: $0) } ?? ModelReadiness.allCases.count
     }
     var modifiedSortKey: TimeInterval { modifiedAt?.timeIntervalSince1970 ?? 0 }
+    /// The Type column: the model's kind; a family of mixed kinds reads Mixed; headings read nothing.
+    var kindTitle: String {
+        if isBucket { return "" }
+        guard let children else { return taskType.kindTitle }
+        let kinds = Set(children.map(\.kindTitle))
+        return kinds.count == 1 ? kinds.first! : "Mixed"
+    }
 
     /// The models this row stands for: itself, or every variant below it.
     var fitModels: [LibraryModel] {
@@ -465,6 +472,33 @@ struct LibraryNameCell: View {
                 .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                 .lineLimit(1)
                 .truncationMode(.tail)
+        }
+    }
+}
+
+/// The model's kind, plus a flask when experimental inference applies.
+struct LibraryTypeCell: View {
+    let row: LibraryRow
+    var experimental: [ModelInferenceOption] = []
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        let kind = row.kindTitle
+        if !kind.isEmpty {
+            HStack(spacing: WorkbenchSpacing.xxs) {
+                Image(systemName: kind == "Mixed" ? "square.stack" : row.taskType.symbolName)
+                    .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
+                Text(kind).lineLimit(1)
+                if !experimental.isEmpty {
+                    let names = experimental.map(\.title).joined(separator: ", ")
+                    Image(systemName: "flask")
+                        .help("Experimental inference: \(names)")
+                        .accessibilityLabel("Experimental inference: \(names)")
+                }
+            }
+            .font(WorkbenchTypography.secondary)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
         }
     }
 }

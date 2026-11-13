@@ -190,6 +190,7 @@ struct ServeView: View {
             }
         }
         .onChange(of: appHost.handoffs[.openServing], initial: true) { _, _ in focusRequestedServer() }
+        .onChange(of: appHost.handoffs[.serveWithRuntime], initial: true) { _, _ in applyRequestedRuntime() }
         .sheet(isPresented: $showsSourceIssues) { sourceIssuesSheet }
         .sheet(item: $portReview) { review in portReviewSheet(review) }
         .sheet(item: gated($action)) { pending in confirmation(pending) }
@@ -221,7 +222,7 @@ struct ServeView: View {
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
         .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
         .onChange(of: isRouteActive) { _, active in
-            if active { focusShownModel(); focusRequestedServer(); Task { await modelWorkflow.refreshServers() } }
+            if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime(); Task { await modelWorkflow.refreshServers() } }
             else { closePrompt() }
         }
         .onDisappear(perform: closePrompt)
@@ -485,6 +486,15 @@ struct ServeView: View {
         if let row = workspaceRows.first(where: { HFRepoID.matches(ServingWorkspacePresentation.modelID($0), path) }) {
             workspaceSelection = row.id; showsServerSetup = false
         } else { workspaceSelection = nil; showsServerSetup = true }
+    }
+
+    private func applyRequestedRuntime() {
+        guard isRouteActive, let request = appHost.handoffs[.serveWithRuntime] else { return }
+        revealedModelPath = request.modelPath
+        openServerSetup()
+        mode = .startNow
+        runtime = request.runtime
+        appHost.handoffs.finish(request, as: .serveWithRuntime)
     }
 
     private func focusRequestedServer() {

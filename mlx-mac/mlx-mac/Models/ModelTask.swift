@@ -44,6 +44,24 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// The Library's Type column: one word per kind of output.
+    var kindTitle: String {
+        switch self {
+        case .textLLM: return "Text"
+        case .visionLanguage: return "Vision"
+        case .speechToText: return "Transcription"
+        case .textToSpeech: return "Voice"
+        case .musicGeneration: return "Music"
+        case .embedding: return "Embedding"
+        case .classification: return "Classifier"
+        case .imageGeneration: return "Image"
+        case .videoGeneration: return "Video"
+        case .meshGeneration: return "3D"
+        case .speculativeDraft: return "Draft"
+        case .other: return "Other"
+        }
+    }
+
     /// The one SF Symbol for this model type, rendered hierarchically in the
     /// Library rows and the inspector header.
     var symbolName: String {

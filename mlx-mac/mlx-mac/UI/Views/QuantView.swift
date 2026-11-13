@@ -478,12 +478,9 @@ struct QuantView: View {
         mode == .chat ? Set(readyModels.filter { !runtimeChoices(for: $0).isEmpty }.map { $0.item.path }) : []
     }
 
-    /// Runtimes a chat lane can select; nil keeps the model's own runtime.
-    private func runtimeChoices(for model: LibraryModel) -> [(tag: String?, title: String)] {
+    private func runtimeChoices(for model: LibraryModel) -> [ComparisonLaneConfiguration.RuntimeChoice] {
         guard mode == .chat else { return [] }
-        if model.item.servingRuntime == "strata" { return [(nil, "Strata"), ("splash", "Splash")] }
-        guard model.item.servingRuntime == nil, model.item.task?.type == .textLLM else { return [] }
-        return [(nil, "Automatic"), ("mlx_lm", "MLX-LM"), ("splash", "Splash")]
+        return ComparisonLaneConfiguration.runtimeChoices(task: model.item.task?.type, servingRuntime: model.item.servingRuntime)
     }
 
     private func laneRuntime(_ index: Int, model: LibraryModel) -> String? {

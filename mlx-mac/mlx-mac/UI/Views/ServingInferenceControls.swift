@@ -77,6 +77,63 @@ struct InferenceOptionEvidence: Equatable, Identifiable {
     }
 }
 
+/// Inference a model can use beyond its default runtime, for the Library and its inspector.
+/// The engine still checks eligibility when Run or a task previews the work.
+struct ModelInferenceOption: Equatable, Identifiable {
+    enum Place: Equatable {
+        /// Run's Start now setup; a runtime is selected there when given.
+        case run(runtime: String?)
+        /// The inspector's task panel.
+        case task
+        /// Settings → Serving.
+        case settings
+    }
+
+    let id: String
+    let title: String
+    let detail: String
+    let experimental: Bool
+    let place: Place
+}
+
+enum ModelInferencePresentation {
+    static func options(for model: LibraryModel, chip: String?) -> [ModelInferenceOption] {
+        let task = model.item.task?.type
+        let runtime = model.item.servingRuntime
+        let quantizedMLX = model.item.quantization?.range(of: #"^q\d+$"#, options: .regularExpression) != nil
+        var result: [ModelInferenceOption] = []
+        if runtime == "strata" {
+            result.append(.init(id: "strata", title: "Strata", detail: "Prepared profile with its own decoding, expert memory and context. Verify the profile before use.",
+                                experimental: false, place: .run(runtime: nil)))
+        }
+        if task == .textLLM || task == .visionLanguage, runtime == "strata" || (runtime == nil && quantizedMLX) {
+            result.append(.init(id: "splash", title: "Splash", detail: "DFlash2 speculative decoding with this family's cached draft. Needs Splash 1.4 or later, Apple M3 or newer and macOS 26.4.",
+                                experimental: true, place: .run(runtime: "splash")))
+        }
+        if task == .textLLM, runtime == nil {
+            result.append(.init(id: "lookup", title: "Prompt text reuse", detail: "Copies text from the prompt while decoding, for code edits. Choose it in Run's inference settings.",
+                                experimental: false, place: .run(runtime: nil)))
+            if model.item.quantization == "q4", ServingInferenceContext(runtime: "mlx_lm", chip: chip).supportsM5 {
+                result.append(.init(id: "m5", title: "M5 prompt processing", detail: "Experimental prefill kernel for Q4 models on the M5 GPU. Choose it under Run's hardware acceleration.",
+                                    experimental: true, place: .run(runtime: nil)))
+            }
+        }
+        if task == .visionLanguage, runtime == nil {
+            result.append(.init(id: "vision", title: "Image feature reuse", detail: "Keeps image features for repeated questions on supported Qwen2.5-VL and Qwen3-VL models. Choose it in Run's inference settings.",
+                                experimental: false, place: .run(runtime: nil)))
+        }
+        if task == .videoGeneration || task == .meshGeneration {
+            result.append(.init(id: "reuse", title: "Experimental reuse", detail: "Reuses computation between generation steps within a cache budget. Choose it in this model's task panel.",
+                                experimental: true, place: .task))
+        }
+        if task == .musicGeneration {
+            result.append(.init(id: "fx", title: "Sound effects from music", detail: "FX and ambience from this music model may still contain music. Choose it in Settings → Serving.",
+                                experimental: true, place: .settings))
+        }
+        return result
+    }
+}
+
 extension LocalInferenceOptions {
     var summary: String {
         var parts: [String] = []

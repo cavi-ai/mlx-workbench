@@ -796,6 +796,22 @@ struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
 
     static let selectableRuntimes = ["mlx_lm", "splash"]
 
+    struct RuntimeChoice: Equatable {
+        let tag: String?
+        let title: String
+    }
+
+    /// Runtimes a chat lane can select; a nil tag keeps the model's own runtime.
+    static func runtimeChoices(task: ModelTaskType?, servingRuntime: String?) -> [RuntimeChoice] {
+        if servingRuntime == "strata" { return [.init(tag: nil, title: "Strata"), .init(tag: "splash", title: "Splash")] }
+        guard servingRuntime == nil else { return [] }
+        switch task {
+        case .textLLM: return [.init(tag: nil, title: "Automatic"), .init(tag: "mlx_lm", title: "MLX-LM"), .init(tag: "splash", title: "Splash")]
+        case .visionLanguage: return [.init(tag: nil, title: "Automatic"), .init(tag: "splash", title: "Splash")]
+        default: return []
+        }
+    }
+
     var isValid: Bool {
         !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

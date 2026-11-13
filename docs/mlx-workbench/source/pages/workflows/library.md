@@ -27,6 +27,7 @@ Switching sources preserves the main table's filters and selected model without 
 | Column | Meaning |
 |---|---|
 | Name | The model's folder or file name |
+| Type | What the model produces: **Text**, **Vision**, **Image**, **Video**, **Music**, **Voice**, **Transcription**, **3D**, **Embedding** or **Classifier**; a family of several kinds reads **Mixed**. A flask marks a model with experimental inference, named in its tooltip |
 | Size | Bytes on disk |
 | Fits | A bar for the share of the memory budget the model needs at the selected context; the tooltip says **Fits**, **Tight** or **Won't fit** against current available memory |
 | State | **Serving** while a local server runs the model. For other ready models, the canary verdict for the current files: **Verified**, **Failed checks**, **Verify again** after the files changed, **Verifying…**, or **Ready** when never verified. Otherwise the readiness, such as **Needs Conversion** or **Needs Runtime** when the backend that runs the model (mlx-audio, mlx-vlm, …) is not installed |
@@ -59,6 +60,22 @@ models offer **Chat** to open a persistent conversation; ready task models offer
 selected context. **Measured** lists the recorded speed, whether the canary suite
 verified the current files, and the port of a server running the model; **Verify
 now** sits beside an unverified ready model.
+
+**Inference** lists the runtimes and options the model can use beyond its default,
+each with where to choose it. Experimental ones carry a flask:
+
+| Option | Models | Where |
+|---|---|---|
+| Splash (experimental) | Quantized MLX text and vision models, prepared Strata profiles | **Serve with Splash** opens **Start now** with **Text · Splash** selected |
+| Strata | Prepared Strata profiles | **Serve** |
+| Prompt text reuse | Text models | Run's inference settings |
+| M5 prompt processing (experimental) | Q4 text models on an M5 Mac | Run's hardware acceleration |
+| Image feature reuse | Vision models | Run's inference settings |
+| Experimental reuse | Video and 3D models | The task panel |
+| Sound effects from music (experimental) | Music models | **Open Settings** → Serving |
+
+The list names what applies to the model's type and format. The engine still checks
+eligibility when Run or a task previews the work.
 
 In wide windows, the first selected model opens the inspector beside the table.
 In compact windows, selecting a model opens its details in a sheet. Use
