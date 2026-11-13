@@ -2,8 +2,20 @@ import SwiftUI
 import AppKit
 
 // MARK: - DuplicatesView
-// The Reclaim route: where the bytes are, what can be reclaimed, the quarantine
+// The Reclaim route. Models: disk per model family and its copies across
+// formats and stores. Quarantine & cleanup: suggestions, the quarantine
 // shelf, cleanup history and duplicate groups from the convert scan.
+
+enum ReclaimTab: String, CaseIterable, Identifiable {
+    case models, cleanup
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .models: "Models"
+        case .cleanup: "Quarantine & cleanup"
+        }
+    }
+}
 
 struct DuplicatesView: View {
     let appHost: AppHost
@@ -12,6 +24,7 @@ struct DuplicatesView: View {
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
 
+    @State private var tab: ReclaimTab = .models
     @State private var selectedOpportunities: Set<String> = []
     @State private var showAllQuarantined = false
     @State private var showsDuplicates = false
@@ -57,6 +70,29 @@ struct DuplicatesView: View {
     }
 
     var body: some View {
+        chrome(VStack(spacing: 0) {
+            Picker("Reclaim view", selection: $tab) {
+                ForEach(ReclaimTab.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .padding(.top, WorkbenchSpacing.sm)
+            .accessibilityIdentifier("reclaim-tab")
+            switch tab {
+            case .models:
+                ReclaimDiskPanel(appHost: appHost, reclaim: reclaim, usage: usage, onOpenQuarantine: { tab = .cleanup })
+            case .cleanup:
+                cleanup
+            }
+        })
+        .sheet(isPresented: Binding(get: { isRouteActive && reclaim.copyPlan != nil }, set: { if !$0 { reclaim.cancelCopies() } })) {
+            if let plan = reclaim.copyPlan {
+                CopyRemovalSheet(plan: plan, reclaim: reclaim, onDone: { appHost.requestRescan() })
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cleanup: some View {
         let models = appHost.librarySnapshot?.models ?? []
         let ledger = ReclaimLedger(
             opportunities: reclaim.opportunities,
@@ -104,6 +140,11 @@ struct DuplicatesView: View {
                 layout = ReclaimLayout(viewportWidth: width, previous: layout)
             }
         }
+    }
+
+    /// Route chrome shared by both tabs: rescan, analysis triggers and review sheets.
+    private func chrome(_ content: some View) -> some View {
+        content
         .toolbar {
             if isRouteActive {
                 ToolbarItem(placement: .primaryAction) {

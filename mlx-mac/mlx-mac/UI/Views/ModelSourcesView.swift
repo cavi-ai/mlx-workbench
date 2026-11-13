@@ -1,5 +1,26 @@
 import SwiftUI
 
+/// A server model row with the text each column shows, so every column sorts.
+struct ModelSourceRow: Identifiable {
+    let row: ServingRow
+    let model: String
+    let provider: String
+    let state: String
+    let address: String
+    var id: String { row.id }
+
+    static let defaultSortOrder = [KeyPathComparator(\ModelSourceRow.model)]
+
+    static func rows(_ rows: [ServingRow], models: [LibraryModel], sortOrder: [KeyPathComparator<ModelSourceRow>]) -> [ModelSourceRow] {
+        rows.map { row in
+            let service = ServingWorkspacePresentation.service(row)
+            return ModelSourceRow(row: row, model: ServingWorkspacePresentation.name(row, models: models),
+                                  provider: service?.providerName ?? "MLX Workbench", state: service?.statusText ?? "",
+                                  address: ServingWorkspacePresentation.baseURL(row) ?? "Not reported")
+        }.sorted(using: sortOrder.isEmpty ? defaultSortOrder : sortOrder)
+    }
+}
+
 struct ModelSourceFolder: Identifiable, Equatable {
     let path: String
     let uses: [String]
@@ -41,6 +62,7 @@ struct ModelSourcesView: View {
     @State private var sourceID: String?
     @State private var selectedID: String?
     @State private var query = ""
+    @State private var sortOrder = ModelSourceRow.defaultSortOrder
     @State private var editor: ModelHost?
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
@@ -121,19 +143,19 @@ struct ModelSourcesView: View {
                 HStack { filters; Spacer(); refresh }
                 VStack(alignment: .leading) { filters; refresh }
             }
-            Table(rows, selection: $selectedID) {
-                TableColumn("Model") { row in
-                    Text(ServingWorkspacePresentation.name(row, models: appHost.librarySnapshot?.models ?? []))
-                        .lineLimit(1).truncationMode(.middle)
+            Table(ModelSourceRow.rows(rows, models: appHost.librarySnapshot?.models ?? [], sortOrder: sortOrder),
+                  selection: $selectedID, sortOrder: $sortOrder) {
+                TableColumn("Model", value: \.model) { source in
+                    Text(source.model).lineLimit(1).truncationMode(.middle)
                 }.width(min: 150, ideal: 240)
-                TableColumn("Provider") { row in
-                    Text(ServingWorkspacePresentation.service(row)?.providerName ?? "MLX Workbench")
+                TableColumn("Provider", value: \.provider) { source in
+                    Text(source.provider)
                 }.width(min: 100, ideal: 145)
-                TableColumn("State") { row in
-                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(row)?.statusText)
+                TableColumn("State", value: \.state) { source in
+                    ServingStatusLabel(row: source.row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(source.row)?.statusText)
                 }.width(min: 110, ideal: 160)
-                TableColumn("API address") { row in
-                    Text(ServingWorkspacePresentation.baseURL(row) ?? "Not reported").lineLimit(1).truncationMode(.middle)
+                TableColumn("API address", value: \.address) { source in
+                    Text(source.address).lineLimit(1).truncationMode(.middle)
                 }.width(min: 150, ideal: 240)
             }.alternatingRowBackgrounds(.disabled).accessibilityIdentifier("sources-model-table")
                 .overlay {

@@ -1423,8 +1423,54 @@ actor WorkbenchAPI {
             rootErrors: (data["root_errors"] as? [[String: Any]])?.compactMap { raw in
                 guard let path = raw.string("path"), let message = raw.string("message") else { return nil }
                 return ScanRootError(path: path, message: message)
+            },
+            storage: try (data["storage"] as? [String: Any]).map(decodeStorage),
+            families: (data["families"] as? [[String: Any]])?.compactMap { raw in
+                guard let id = raw.string("family_id"), let name = raw.string("name"),
+                      let members = raw["members"] as? [String], !members.isEmpty,
+                      let bytes = try? raw.requiredInt64("bytes", at: "families.bytes") else { return nil }
+                return ModelFamily(familyID: id, name: name, members: members, bytes: bytes)
             }
         )
+    }
+
+    /// Storage is optional: an engine without it leaves Reclaim on its file-level view.
+    static func decodeStorage(_ raw: [String: Any]) throws -> ScanStorage {
+        let items = try ((raw["items"] as? [[String: Any]]) ?? []).enumerated().map { index, item in
+            StoredModel(
+                path: try item.requiredString("path", at: "storage.items[\(index)].path"),
+                kind: try item.requiredString("kind", at: "storage.items[\(index)].kind"),
+                format: item.string("format"),
+                name: item.string("name") ?? URL(fileURLWithPath: item.string("path") ?? "").lastPathComponent,
+                modelKey: item.string("model_key"),
+                root: item.string("root"),
+                store: try item.requiredString("store", at: "storage.items[\(index)].store"),
+                bytes: try item.requiredInt64("bytes", at: "storage.items[\(index)].bytes"),
+                files: try ((item["files"] as? [[String: Any]]) ?? []).enumerated().map { fileIndex, file in
+                    let at = "storage.items[\(index)].files[\(fileIndex)]"
+                    return StoredFile(id: try file.requiredString("id", at: at + ".id"),
+                                      path: try file.requiredString("path", at: at + ".path"),
+                                      bytes: try file.requiredInt64("bytes", at: at + ".bytes"))
+                }
+            )
+        }
+        let roots = try ((raw["roots"] as? [[String: Any]]) ?? []).enumerated().map { index, root in
+            RootUsage(
+                root: try root.requiredString("root", at: "storage.roots[\(index)].root"),
+                bytes: try root.requiredInt64("bytes", at: "storage.roots[\(index)].bytes"),
+                totalBytes: try root.requiredInt64("total_bytes", at: "storage.roots[\(index)].total_bytes"),
+                other: try ((root["other"] as? [[String: Any]]) ?? []).map { place in
+                    OtherPlace(path: try place.requiredString("path", at: "storage.roots[\(index)].other.path"),
+                               bytes: try place.requiredInt64("bytes", at: "storage.roots[\(index)].other.bytes"))
+                }
+            )
+        }
+        let stores = try ((raw["stores"] as? [[String: Any]]) ?? []).map { store in
+            StoreUsage(store: try store.requiredString("store", at: "storage.stores.store"),
+                       bytes: try store.requiredInt64("bytes", at: "storage.stores.bytes"))
+        }
+        return ScanStorage(diskBytes: try raw.requiredInt64("disk_bytes", at: "storage.disk_bytes"),
+                           roots: roots, stores: stores, items: items)
     }
 }
 

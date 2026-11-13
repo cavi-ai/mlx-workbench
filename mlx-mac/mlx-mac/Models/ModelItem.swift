@@ -114,10 +114,93 @@ struct ScanResult: Codable, Equatable {
     let duplicates: [DuplicateGroup]
     let totals: ScanTotals
     var rootErrors: [ScanRootError]? = nil
+    /// Disk each model occupies with every file counted once, as the scan reports it.
+    var storage: ScanStorage? = nil
+    /// Copies of one model across formats and stores, as the scan groups them.
+    var families: [ModelFamily]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case roots, models, outputs, pending, duplicates, totals
+        case roots, models, outputs, pending, duplicates, totals, storage, families
         case rootErrors = "root_errors"
+    }
+}
+
+struct ScanStorage: Codable, Equatable {
+    let diskBytes: Int64
+    let roots: [RootUsage]
+    let stores: [StoreUsage]
+    let items: [StoredModel]
+
+    enum CodingKeys: String, CodingKey {
+        case roots, stores, items
+        case diskBytes = "disk_bytes"
+    }
+}
+
+struct RootUsage: Codable, Equatable {
+    let root: String
+    /// Bytes of recognized models under this root, each file once.
+    let bytes: Int64
+    /// Every regular file under this root, each file once.
+    let totalBytes: Int64
+    /// Places under this root holding bytes no recognized model owns.
+    let other: [OtherPlace]
+
+    enum CodingKeys: String, CodingKey {
+        case root, bytes, other
+        case totalBytes = "total_bytes"
+    }
+}
+
+struct OtherPlace: Codable, Equatable, Hashable {
+    let path: String
+    let bytes: Int64
+}
+
+struct StoreUsage: Codable, Equatable {
+    let store: String
+    let bytes: Int64
+}
+
+struct StoredFile: Codable, Equatable, Hashable {
+    /// Device and inode: equal ids are one file on disk.
+    let id: String
+    let path: String
+    let bytes: Int64
+}
+
+struct StoredModel: Codable, Equatable, Hashable, Identifiable {
+    let path: String
+    /// `gguf`, `folder` or `ollama`.
+    let kind: String
+    let format: String?
+    let name: String
+    let modelKey: String?
+    let root: String?
+    /// `folder`, `huggingface` or `ollama`.
+    let store: String
+    let bytes: Int64
+    let files: [StoredFile]
+
+    var id: String { path }
+
+    enum CodingKeys: String, CodingKey {
+        case path, kind, format, name, root, store, bytes, files
+        case modelKey = "model_key"
+    }
+}
+
+struct ModelFamily: Codable, Equatable, Hashable, Identifiable {
+    let familyID: String
+    let name: String
+    let members: [String]
+    let bytes: Int64
+
+    var id: String { familyID }
+
+    enum CodingKeys: String, CodingKey {
+        case name, members, bytes
+        case familyID = "family_id"
     }
 }
 

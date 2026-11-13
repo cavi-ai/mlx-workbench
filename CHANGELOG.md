@@ -17,6 +17,8 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 - Terminal: a Workspaces page launches OpenCode or a shell in a chosen folder through your login shell, inside the app, and links to OpenCode's installation guide when the shell cannot find it.
 
+- Reclaim: **Models** counts disk under the scan folders once per file, lists unrecognized space by folder, and groups copies of one model across MLX, GGUF, the Hugging Face cache and Ollama in a sortable table with a kept copy, exact space freed and removal of any other copy, Ollama tags included; Model sources columns sort.
+
 ### Fixed
 
 - Connect app: setup follows symbolic links in a client's config path and writes the real file, and **Choose Folder…** sets the folder that holds the config.

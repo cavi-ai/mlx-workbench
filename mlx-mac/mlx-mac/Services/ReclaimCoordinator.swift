@@ -38,6 +38,39 @@ struct ModelFolderReclaimPlan: Equatable, Sendable {
     let quarantineDir: String
 }
 
+/// How one model copy leaves the disk, frozen at preview and rechecked at confirm.
+enum CopyRemovalStep: Equatable, Sendable {
+    case quarantineFiles([ReclaimPlanItem])
+    case quarantineFolder(QuarantineFileSnapshot)
+    case trashRepository(LibraryTrashPlan)
+    case quarantineOllama(OllamaRemovalPlan)
+
+    var summary: String {
+        switch self {
+        case .quarantineFiles(let files): files.count == 1 ? "GGUF file to quarantine" : "\(files.count) GGUF files to quarantine"
+        case .quarantineFolder: "Folder to quarantine"
+        case .trashRepository: "Hugging Face cache repository to Trash"
+        case .quarantineOllama(let plan): plan.blobs.isEmpty ? "Ollama tag to quarantine; its weights stay for other tags" : "Ollama tag and unshared weights to quarantine"
+        }
+    }
+}
+
+struct CopyRemoval: Identifiable, Equatable, Sendable {
+    let path: String
+    let name: String
+    let step: CopyRemovalStep?
+    let refusal: String?
+    var id: String { path }
+}
+
+struct CopyRemovalPlan: Equatable, Sendable {
+    let removals: [CopyRemoval]
+    let freedBytes: Int64
+    let roots: [String]
+    let quarantineDir: String
+    var actionable: [CopyRemoval] { removals.filter { $0.step != nil } }
+}
+
 struct SourceCleanupCandidate: Identifiable {
     let workflow: ConversionWorkflow
     let bytes: Int64?
@@ -73,6 +106,7 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var trashPlan: QuarantineTrashPlan?
     @Published private(set) var trashNote: String?
     @Published private(set) var folderPlan: ModelFolderReclaimPlan?
+    @Published private(set) var copyPlan: CopyRemovalPlan?
     @Published private(set) var libraryTrashPlan: LibraryTrashPlan?
     @Published private(set) var libraryTrashNote: String?
     var servingModelPaths: (() async throws -> [String])?
@@ -296,6 +330,104 @@ final class ReclaimCoordinator: ObservableObject {
         } catch { lastError = AppHost.render(error) }
         folderPlan = nil
         isApplying = false
+        await refreshQuarantined()
+    }
+
+    /// Freeze how each selected copy leaves the disk. Copies a guard refuses
+    /// stay in the plan with the reason and are skipped at confirm.
+    func previewCopies(_ selected: Set<String>, items: [StoredModel]) async {
+        guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+        copyPlan = nil; lastError = nil
+        do {
+            guard let servingModelPaths else { throw QuarantineError.unsafeFolder("serving status is unavailable; refresh Health before retrying.") }
+            let serving = try await servingModelPaths()
+            let roots = sourceRoots, protected = protectedFolderPaths + serving, dir = quarantineDir(), manager = fileManager
+            let paths = DiskLedger.expanded(selected, items: items)
+            let chosen = items.filter { paths.contains($0.path) }
+            let freed = DiskLedger.freedBytes(removing: paths, items: items)
+            let removals = await Task.detached(priority: .userInitiated) {
+                Self.removals(chosen, roots: roots, protected: protected, fileManager: manager)
+            }.value
+            guard roots == sourceRoots, dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
+            copyPlan = CopyRemovalPlan(removals: removals, freedBytes: freed, roots: roots, quarantineDir: dir)
+        } catch { lastError = AppHost.render(error) }
+    }
+
+    nonisolated static func removals(_ items: [StoredModel], roots: [String], protected: [String], fileManager: FileManager) -> [CopyRemoval] {
+        var repositories = Set<String>()
+        return items.compactMap { item in
+            if let repository = DiskLedger.cacheRepository(item), !repositories.insert(repository).inserted { return nil }
+            do {
+                let step: CopyRemovalStep
+                switch (item.kind, item.store) {
+                case ("ollama", _):
+                    step = .quarantineOllama(try Quarantine.ollamaSnapshot(manifest: item.path, roots: roots, protected: protected, fileManager: fileManager))
+                case (_, "huggingface"):
+                    step = .trashRepository(try Quarantine.previewModelTrash(item.path, roots: roots, protected: protected, fileManager: fileManager))
+                case ("gguf", _):
+                    let files = try DiskLedger.removedFiles(of: item).map { file in
+                        let path = try Quarantine.guardPath(file.path, roots: roots, fileManager: fileManager)
+                        guard !DiskLedger.isProtected(path, by: Set(protected)) else { throw QuarantineError.unsafeFolder("the model is serving, preferred, or in use.") }
+                        return ReclaimPlanItem(path: path, bytes: (try fileManager.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0)
+                    }
+                    step = .quarantineFiles(files)
+                default:
+                    step = .quarantineFolder(try Quarantine.folderSnapshot(target: item.path, roots: roots, protected: protected, fileManager: fileManager))
+                }
+                return CopyRemoval(path: item.path, name: item.name, step: step, refusal: nil)
+            } catch {
+                return CopyRemoval(path: item.path, name: item.name, step: nil, refusal: error.localizedDescription)
+            }
+        }
+    }
+
+    func cancelCopies() { if !isApplying { copyPlan = nil } }
+
+    /// Apply the frozen plan copy by copy; each step rechecks its own preview.
+    func confirmCopies() async {
+        guard !isApplying, let plan = copyPlan else { return }
+        guard plan.roots == sourceRoots, plan.quarantineDir == quarantineDir() else {
+            copyPlan = nil
+            lastError = QuarantineError.changedSincePreview.errorDescription
+            return
+        }
+        isApplying = true
+        defer { isApplying = false; progressMessage = nil; copyPlan = nil }
+        var results: [ReclaimMoveResult] = []
+        let manager = fileManager
+        for (index, removal) in plan.actionable.enumerated() {
+            guard let step = removal.step else { continue }
+            progressMessage = "Removing \(index + 1) of \(plan.actionable.count)…"
+            do {
+                let serving = try await servingModelPaths?() ?? []
+                let protected = protectedFolderPaths + serving, roots = plan.roots, dir = plan.quarantineDir, timestamp = now()
+                let destination = try await Task.detached(priority: .userInitiated) { () throws -> String in
+                    switch step {
+                    case .quarantineFiles(let files):
+                        var last = ""
+                        for file in files {
+                            guard (try manager.attributesOfItem(atPath: file.path)[.size] as? Int64) == file.bytes,
+                                  !DiskLedger.isProtected(file.path, by: Set(protected)) else { throw QuarantineError.changedSincePreview }
+                            last = try Quarantine.move(target: file.path, roots: roots, quarantineDir: dir, now: timestamp, fileManager: manager).to
+                        }
+                        return last
+                    case .quarantineFolder(let snapshot):
+                        return try Quarantine.moveFolder(expected: snapshot, roots: roots, protected: protected, quarantineDir: dir, now: timestamp, fileManager: manager).to
+                    case .trashRepository(let trash):
+                        return try Quarantine.trashModel(trash, roots: roots, protected: protected, fileManager: manager).path
+                    case .quarantineOllama(let ollama):
+                        return try Quarantine.moveOllamaModel(expected: ollama, roots: roots, protected: protected, quarantineDir: dir, now: timestamp, fileManager: manager).to
+                    }
+                }.value
+                results.append(ReclaimMoveResult(path: removal.path, destination: destination, error: nil))
+            } catch {
+                results.append(ReclaimMoveResult(path: removal.path, destination: nil, error: AppHost.render(error)))
+            }
+        }
+        lastMoves = results
+        lastError = results.contains(where: { $0.error != nil }) ? "Some copies could not be removed; see per-item results." : nil
         await refreshQuarantined()
     }
 

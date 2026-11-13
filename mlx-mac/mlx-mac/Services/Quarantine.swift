@@ -49,10 +49,20 @@ enum QuarantineError: LocalizedError {
 }
 
 enum QuarantineKind: String, Codable, Sendable {
-    case mlxDirectory, ggufBundle, updateStaging
+    case mlxDirectory, ggufBundle, updateStaging, ollamaModel
     var isDirectory: Bool {
-        switch self { case .mlxDirectory, .ggufBundle, .updateStaging: true }
+        switch self { case .mlxDirectory, .ggufBundle, .updateStaging, .ollamaModel: true }
     }
+}
+
+/// One Ollama tag: its manifest and the blobs no other manifest references.
+struct OllamaRemovalPlan: Equatable, Sendable {
+    let manifest: String
+    let modelsRoot: String
+    let blobs: [String]
+    let bytes: Int64
+    let device: UInt64
+    let fingerprint: String
 }
 
 struct QuarantineRecord: Codable, Equatable, Sendable {
@@ -382,6 +392,168 @@ enum Quarantine {
         return record
     }
 
+    static let ollamaManifestDirectories = ["manifests", "manifests-v2"]
+
+    /// An Ollama tag inside a configured root. Blobs another manifest still
+    /// references stay in place, so every remaining tag keeps working.
+    static func ollamaSnapshot(manifest: String, roots: [String], protected: [String],
+                               fileManager: FileManager = .default) throws -> OllamaRemovalPlan {
+        let expanded = NSString(string: manifest).expandingTildeInPath
+        try refuseLinks(in: expanded, fileManager: fileManager)
+        let path = resolve(expanded)
+        let allowed = roots.filter { !$0.isEmpty }.map(resolve)
+        guard allowed.contains(where: { path != $0 && isWithin(path, parent: $0) }) else { throw QuarantineError.outsideRoots(path) }
+        guard !protected.filter({ $0.hasPrefix("/") }).map(resolve).contains(where: { isWithin(path, parent: $0) || isWithin($0, parent: path) }) else {
+            throw QuarantineError.unsafeFolder("the model is serving, preferred, or in use.")
+        }
+        var url = URL(fileURLWithPath: path)
+        while url.path != "/", !ollamaManifestDirectories.contains(url.lastPathComponent) { url.deleteLastPathComponent() }
+        guard url.path != "/" else { throw QuarantineError.unsafeFolder("not an Ollama manifest.") }
+        let modelsRoot = url.deletingLastPathComponent().path
+        let blobDirectory = modelsRoot + "/blobs"
+        guard (try? fileManager.attributesOfItem(atPath: blobDirectory)[.type] as? FileAttributeType) == .typeDirectory else {
+            throw QuarantineError.unsafeFolder("the Ollama blob folder is missing.")
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular, let device = attributes[.systemNumber] as? UInt64 else {
+            throw QuarantineError.notFound(path)
+        }
+        let own = try ollamaDigests(path, fileManager: fileManager)
+        var shared = Set<String>(), inspected = 0
+        for directory in ollamaManifestDirectories.map({ modelsRoot + "/" + $0 }) where fileManager.fileExists(atPath: directory) {
+            var pending = [directory]
+            while let current = pending.popLast() {
+                for name in try fileManager.contentsOfDirectory(atPath: current) {
+                    inspected += 1
+                    guard inspected <= 10000 else { throw QuarantineError.unsafeFolder("more than 10,000 Ollama manifests; review them in Finder.") }
+                    let child = current + "/" + name
+                    let type = try fileManager.attributesOfItem(atPath: child)[.type] as? FileAttributeType
+                    if type == .typeDirectory { pending.append(child); continue }
+                    guard type == .typeRegular, child != path, !name.hasPrefix(".") else { continue }
+                    shared.formUnion(try ollamaDigests(child, fileManager: fileManager))
+                }
+            }
+        }
+        var bytes = attributes[.size] as? Int64 ?? 0, blobs: [String] = []
+        var entries = ["\(path)|\(attributes[.systemFileNumber] ?? 0)|\(bytes)|\((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"]
+        for blob in own.subtracting(shared).sorted() {
+            let blobPath = blobDirectory + "/" + blob
+            guard let blobAttributes = try? fileManager.attributesOfItem(atPath: blobPath) else { continue }
+            guard blobAttributes[.type] as? FileAttributeType == .typeRegular, blobAttributes[.systemNumber] as? UInt64 == device,
+                  (blobAttributes[.referenceCount] as? UInt64 ?? 1) == 1 else {
+                throw QuarantineError.unsafeFolder("an Ollama blob is linked or on another volume: \(blob)")
+            }
+            let size = blobAttributes[.size] as? Int64 ?? 0
+            bytes += size
+            blobs.append(blob)
+            entries.append("\(blob)|\(blobAttributes[.systemFileNumber] ?? 0)|\(size)|\((blobAttributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)")
+        }
+        let fingerprint = SHA256.hash(data: Data(entries.joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined()
+        return OllamaRemovalPlan(manifest: path, modelsRoot: modelsRoot, blobs: blobs, bytes: bytes, device: device, fingerprint: fingerprint)
+    }
+
+    /// Blob file names (`sha256-…`) a manifest references.
+    private static func ollamaDigests(_ manifest: String, fileManager: FileManager) throws -> Set<String> {
+        guard let size = try fileManager.attributesOfItem(atPath: manifest)[.size] as? Int64, size <= 1024 * 1024,
+              let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: manifest))) as? [String: Any] else {
+            throw QuarantineError.unsafeFolder("unreadable Ollama manifest: \(manifest)")
+        }
+        let layers = (object["layers"] as? [[String: Any]]) ?? []
+        let digests = ([object["config"] as? [String: Any]].compactMap { $0 } + layers).compactMap { $0["digest"] as? String }
+        return Set(try digests.map { digest in
+            let parts = digest.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2, parts[0].allSatisfy({ $0.isLetter || $0.isNumber }),
+                  !parts[1].isEmpty, parts[1].allSatisfy({ $0.isHexDigit }) else {
+                throw QuarantineError.unsafeFolder("unrecognized Ollama digest in \(manifest)")
+            }
+            return "\(parts[0])-\(parts[1])"
+        })
+    }
+
+    /// Moves the manifest and its unshared blobs into one quarantine folder.
+    static func moveOllamaModel(expected: OllamaRemovalPlan, roots: [String], protected: [String], quarantineDir: String,
+                                now: Date = Date(), fileManager: FileManager = .default) throws -> QuarantineRecord {
+        guard !quarantineDir.isEmpty else { throw QuarantineError.unsafeFolder("configure a quarantine directory first.") }
+        try refuseLinks(in: NSString(string: quarantineDir).expandingTildeInPath, fileManager: fileManager)
+        let destinationRoot = resolve(quarantineDir)
+        guard !isWithin(destinationRoot, parent: expected.modelsRoot), !isWithin(expected.modelsRoot, parent: destinationRoot) else {
+            throw QuarantineError.alreadyQuarantined(expected.manifest)
+        }
+        try fileManager.createDirectory(atPath: destinationRoot, withIntermediateDirectories: true)
+        guard try fileManager.attributesOfItem(atPath: destinationRoot)[.systemNumber] as? UInt64 == expected.device else {
+            throw QuarantineError.unsafeFolder("quarantine must be on the same volume for an atomic move.")
+        }
+        let ledgerURL = URL(fileURLWithPath: destinationRoot).appendingPathComponent(ledgerName)
+        try JSONStore<QuarantineRecord>.refuseSymlink(ledgerURL, fileManager: fileManager)
+        if fileManager.fileExists(atPath: ledgerURL.path) {
+            guard fileManager.isWritableFile(atPath: ledgerURL.path),
+                  let size = try fileManager.attributesOfItem(atPath: ledgerURL.path)[.size] as? Int64,
+                  size < maxLedgerBytes - 4096 else { throw QuarantineError.unsafeFolder("quarantine history is full or unwritable.") }
+        }
+        guard try ollamaSnapshot(manifest: expected.manifest, roots: roots, protected: protected, fileManager: fileManager) == expected else {
+            throw QuarantineError.changedSincePreview
+        }
+        try refuseLinks(in: destinationRoot, fileManager: fileManager)
+        let tag = expected.manifest.split(separator: "/").suffix(2).joined(separator: "-")
+        let bundle = destinationRoot + "/" + UUID().uuidString + "-ollama-" + tag
+        try fileManager.createDirectory(atPath: bundle + "/blobs", withIntermediateDirectories: true)
+        var moved: [(from: String, to: String)] = []
+        func rollBack() -> String? {
+            for move in moved.reversed() {
+                do { try fileManager.moveItem(atPath: move.to, toPath: move.from) } catch { return move.to }
+            }
+            removeIfEmpty(bundle + "/blobs", fileManager: fileManager)
+            removeIfEmpty(bundle, fileManager: fileManager)
+            return nil
+        }
+        do {
+            try fileManager.moveItem(atPath: expected.manifest, toPath: bundle + "/manifest")
+            moved.append((expected.manifest, bundle + "/manifest"))
+            for blob in expected.blobs {
+                try fileManager.moveItem(atPath: expected.modelsRoot + "/blobs/" + blob, toPath: bundle + "/blobs/" + blob)
+                moved.append((expected.modelsRoot + "/blobs/" + blob, bundle + "/blobs/" + blob))
+            }
+            let record = QuarantineRecord(movedAt: isoFormatter.string(from: now), from: expected.manifest, to: bundle,
+                bytes: expected.bytes, kind: .ollamaModel)
+            try appendLedger(record, quarantineDir: destinationRoot, fileManager: fileManager)
+            return record
+        } catch {
+            if let stranded = rollBack() { throw QuarantineError.moveFailed("the move and its rollback failed; recover the model at \(stranded). \(error.localizedDescription)") }
+            throw QuarantineError.moveFailed("the model was put back. \(error.localizedDescription)")
+        }
+    }
+
+    /// Puts an Ollama manifest and its blobs back. Refuses rather than overwrite.
+    private static func restoreOllamaModel(_ record: QuarantineRecord, fileManager: FileManager) throws {
+        let bundle = resolve(record.to), manifest = NSString(string: record.from).expandingTildeInPath
+        try refuseLinks(in: bundle, fileManager: fileManager)
+        try refuseLinks(in: manifest, fileManager: fileManager)
+        var url = URL(fileURLWithPath: manifest)
+        while url.path != "/", !ollamaManifestDirectories.contains(url.lastPathComponent) { url.deleteLastPathComponent() }
+        guard url.path != "/" else { throw QuarantineError.notFound(manifest) }
+        let blobDirectory = url.deletingLastPathComponent().path + "/blobs"
+        let blobs = (try? fileManager.contentsOfDirectory(atPath: bundle + "/blobs")) ?? []
+        guard fileManager.fileExists(atPath: bundle + "/manifest") else { throw QuarantineError.notFound(bundle + "/manifest") }
+        if fileManager.fileExists(atPath: manifest) { throw QuarantineError.restoreBlocked(manifest) }
+        if let present = blobs.first(where: { fileManager.fileExists(atPath: blobDirectory + "/" + $0) }) {
+            throw QuarantineError.restoreBlocked(blobDirectory + "/" + present)
+        }
+        try fileManager.createDirectory(atPath: blobDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(atPath: URL(fileURLWithPath: manifest).deletingLastPathComponent().path, withIntermediateDirectories: true)
+        do {
+            for blob in blobs { try fileManager.moveItem(atPath: bundle + "/blobs/" + blob, toPath: blobDirectory + "/" + blob) }
+            try fileManager.moveItem(atPath: bundle + "/manifest", toPath: manifest)
+        } catch { throw QuarantineError.moveFailed(error.localizedDescription) }
+        removeIfEmpty(bundle + "/blobs", fileManager: fileManager)
+        removeIfEmpty(bundle, fileManager: fileManager)
+    }
+
+    /// Only an empty folder is removed; anything with contents stays.
+    private static func removeIfEmpty(_ directory: String, fileManager: FileManager) {
+        guard (try? fileManager.contentsOfDirectory(atPath: directory))?.isEmpty == true else { return }
+        try? fileManager.removeItem(atPath: directory)
+    }
+
     private static func refuseLinks(in path: String, fileManager: FileManager) throws {
         var component = URL(fileURLWithPath: path).standardizedFileURL
         while component.path != "/" {
@@ -641,6 +813,7 @@ enum Quarantine {
     /// must be free; the quarantined copy must still exist. The ledger is
     /// left untouched: the record's file simply leaves the quarantine dir.
     static func restore(_ record: QuarantineRecord, fileManager: FileManager = .default) throws {
+        if record.kind == .ollamaModel { return try restoreOllamaModel(record, fileManager: fileManager) }
         let quarantined = resolve(record.to)
         var isDirectory = ObjCBool(false)
         if record.kind?.isDirectory == true { try refuseLinks(in: record.to, fileManager: fileManager) }

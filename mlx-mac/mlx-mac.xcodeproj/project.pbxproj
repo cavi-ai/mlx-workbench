@@ -219,6 +219,9 @@
 		DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCRMDF1 /* DiscoverRemodelTests.swift */; };
 		LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSRMDF1 /* LMStudioRemodelTests.swift */; };
 		RCLVWSB1 /* ReclaimViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLVWSF1 /* ReclaimViews.swift */; };
+		DSKVWSB1 /* ReclaimDiskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSKVWSF1 /* ReclaimDiskViews.swift */; };
+		DSKLDGB1 /* DiskLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSKLDGF1 /* DiskLedger.swift */; };
+		DSKLDTB1 /* DiskLedgerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSKLDTF1 /* DiskLedgerTests.swift */; };
 		24BBLD0LR /* LibraryRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF0LR /* LibraryRemodelTests.swift */; };
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
 		24BBLD032 /* CatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF026 /* CatalogStore.swift */; };
@@ -578,6 +581,9 @@
 		TRNRMDF1 /* TrainingRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingRemodelTests.swift; path = TrainingRemodelTests.swift; sourceTree = "<group>"; };
 		HLTRMDF1 /* HealthRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthRemodelTests.swift; path = HealthRemodelTests.swift; sourceTree = "<group>"; };
 		RCLVWSF1 /* ReclaimViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimViews.swift; path = UI/Views/ReclaimViews.swift; sourceTree = "<group>"; };
+		DSKVWSF1 /* ReclaimDiskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimDiskViews.swift; path = UI/Views/ReclaimDiskViews.swift; sourceTree = "<group>"; };
+		DSKLDGF1 /* DiskLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiskLedger.swift; path = Services/DiskLedger.swift; sourceTree = "<group>"; };
+		DSKLDTF1 /* DiskLedgerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiskLedgerTests.swift; path = DiskLedgerTests.swift; sourceTree = "<group>"; };
 		24FREF0LR /* LibraryRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryRemodelTests.swift; path = LibraryRemodelTests.swift; sourceTree = "<group>"; };
 		24FREF025 /* CatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogClient.swift; path = Services/CatalogClient.swift; sourceTree = "<group>"; };
 		24FREF026 /* CatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStore.swift; path = Services/CatalogStore.swift; sourceTree = "<group>"; };
@@ -943,6 +949,7 @@
 				D52F00000000000000000003 /* ServedModelsView.swift */,
 				D52F00000000000000000004 /* ModelFamilyReviewView.swift */,
 				24FREF058 /* ReclaimAdvisor.swift */,
+				DSKLDGF1 /* DiskLedger.swift */,
 				24FREF059 /* ReclaimCoordinator.swift */,
 				24FREF05B /* LineageModels.swift */,
 				24FREF05C /* LineageIndexer.swift */,
@@ -1045,6 +1052,7 @@
 				STGPRBF1 /* SettingsDirectoryProbe.swift */,
 				STGDET02 /* SettingsEngineDetection.swift */,
 				RCLVWSF1 /* ReclaimViews.swift */,
+				DSKVWSF1 /* ReclaimDiskViews.swift */,
 				ACTVWSF1 /* ActivityViews.swift */,
 				FAILNTF1 /* FailureNotice.swift */,
 				DSCPRSF1 /* DiscoverPresentation.swift */,
@@ -1112,6 +1120,7 @@
 				RUNRMDF1 /* RunRemodelTests.swift */,
 				ACTRMDF1 /* ActivityRemodelTests.swift */,
 				RCLRMDF1 /* ReclaimRemodelTests.swift */,
+				DSKLDTF1 /* DiskLedgerTests.swift */,
 				HLTRMDF1 /* HealthRemodelTests.swift */,
 				CLNRMDF1 /* ClientsRemodelTests.swift */,
 				STGRMDF1 /* SettingsRemodelTests.swift */,
@@ -1488,6 +1497,7 @@
 				STGPRBB1 /* SettingsDirectoryProbe.swift in Sources */,
 				STGDET01 /* SettingsEngineDetection.swift in Sources */,
 				RCLVWSB1 /* ReclaimViews.swift in Sources */,
+				DSKVWSB1 /* ReclaimDiskViews.swift in Sources */,
 				ACTVWSB1 /* ActivityViews.swift in Sources */,
 				FAILNTB1 /* FailureNotice.swift in Sources */,
 				DSCPRSB1 /* DiscoverPresentation.swift in Sources */,
@@ -1590,6 +1600,7 @@
 				D52C00000000000000000003 /* ServedModelsView.swift in Sources */,
 				D52C00000000000000000004 /* ModelFamilyReviewView.swift in Sources */,
 				24BBLD05A /* ReclaimAdvisor.swift in Sources */,
+				DSKLDGB1 /* DiskLedger.swift in Sources */,
 				24BBLD05B /* ReclaimCoordinator.swift in Sources */,
 				24BBLD05D /* LineageModels.swift in Sources */,
 				24BBLD05E /* LineageIndexer.swift in Sources */,
@@ -1664,6 +1675,7 @@
 				RUNRMDB1 /* RunRemodelTests.swift in Sources */,
 				ACTRMDB1 /* ActivityRemodelTests.swift in Sources */,
 				RCLRMDB1 /* ReclaimRemodelTests.swift in Sources */,
+				DSKLDTB1 /* DiskLedgerTests.swift in Sources */,
 				HLTRMDB1 /* HealthRemodelTests.swift in Sources */,
 				CLNRMDB1 /* ClientsRemodelTests.swift in Sources */,
 				STGRMDB1 /* SettingsRemodelTests.swift in Sources */,
