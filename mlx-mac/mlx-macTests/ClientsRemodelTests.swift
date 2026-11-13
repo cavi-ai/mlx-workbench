@@ -1031,7 +1031,9 @@ final class ClientsCoordinatorTests: XCTestCase {
         try F.write(try ClientAdapters.opencode.plan(nil, F.local), ".config/opencode/opencode.jsonc", in: hostedHome)
         host.wiring.detect()
         XCTAssertEqual(host.wiring.installations.map(\.clientID), ["opencode"])
-        XCTAssertTrue(host.wiring.installations.allSatisfy { ($0.configPath ?? "").hasPrefix(hostedHome.path) })
+        // Config paths are reported at their real location; the temporary root sits behind /var -> /private/var.
+        let realHome = ClientConfigLocations.resolve(hostedHome.path)
+        XCTAssertTrue(host.wiring.installations.allSatisfy { ($0.configPath ?? "").hasPrefix(realHome) })
         await host.wiring.refreshReadings()
         XCTAssertEqual(host.wiring.readings["opencode"]?.reading, .entries([F.entry(F.local)]))
     }

@@ -766,7 +766,9 @@ actor WorkbenchAPI {
     }
 
     private var clientConfigurationRoots: [String] {
-        ClientAdapters.all.compactMap { $0.configurationInstallation(home: WorkbenchStatePaths.userHome())?.configPath } + [receiptDirectory]
+        ClientAdapters.all.compactMap {
+            $0.configPath(home: WorkbenchStatePaths.userHome(), directory: ClientConfigLocations.live.directory(for: $0.clientID))
+        } + [receiptDirectory]
     }
 
     // MARK: - Doctor

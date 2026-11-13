@@ -16,7 +16,7 @@
 | Aider | `~/.aider.conf.yml` | Writable |
 | LM Studio, Ollama | None | Advisory only |
 
-Write targets are a fixed allowlist of these paths. Symbolic links at the config, backup or restore path are refused.
+Write targets are these files, in their standard folder or a folder chosen with **Choose Folder…** in **Connect app…**; **Use Standard Folder** returns to the path above. Symbolic links in the path are followed to the real file when setup is reviewed. A link that appears at the reviewed config, backup or restore path afterwards, and links that loop, are refused.
 
 ## Add clients and check setup
 
@@ -26,9 +26,9 @@ Write targets are a fixed allowlist of these paths. Symbolic links at the config
 
 **Undo setup** reverses that setup transaction while its files still match the applied contents. **Connect another app** reuses the same flow for another client.
 
-**Check existing setup…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable or linked files, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
+**Check existing setup…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable files, links that loop, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
 
-Choose a running endpoint, then **Review config…** beside one client. OpenCode, Zed and Aider can create a config even when its folder does not exist. The wiring preview lists only that client; **Confirm client wiring** performs the existing server and file checks before writing. Rollback restores a backup or moves an unchanged newly created config to Trash. Unreadable and linked configs require manual review. Continue’s adapter supports existing legacy JSON files; its guide covers current YAML setup, and the doctor does not create a legacy file for a new installation.
+Choose a running endpoint, then **Review config…** beside one client. OpenCode, Zed and Aider can create a config even when its folder does not exist. The wiring preview lists only that client; **Confirm client wiring** performs the existing server and file checks before writing. Rollback restores a backup or moves an unchanged newly created config to Trash. Unreadable configs and links that loop require manual review. Continue’s adapter supports existing legacy JSON files; its guide covers current YAML setup, and the doctor does not create a legacy file for a new installation.
 
 **Install / setup guide** opens the application’s official instructions. Creating a config does not establish that the application is installed or that it used the endpoint.
 

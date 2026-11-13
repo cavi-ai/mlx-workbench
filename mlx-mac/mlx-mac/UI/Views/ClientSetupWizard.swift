@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ClientSetupWizard: View {
@@ -81,7 +82,21 @@ struct ClientSetupWizard: View {
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 }
             }
-            Text("Setup updates this app’s user configuration. Existing settings are retained; a backup supports rollback.")
+            if let path = session.configPath {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Configuration file").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    Text(path).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                        .accessibilityIdentifier("connect-app-config-path")
+                    HStack {
+                        Button("Choose Folder…") { chooseConfigFolder() }
+                            .accessibilityIdentifier("connect-app-config-folder")
+                        if session.choseConfigFolder {
+                            Button("Use Standard Folder") { session.chooseConfigFolder(nil) }
+                        }
+                    }.disabled(session.busy)
+                }
+            }
+            Text("Setup updates this app’s user configuration at its real location, following symbolic links. Existing settings are retained; a backup supports rollback.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             Button("Refresh apps and endpoints") { run { await session.load() } }.disabled(session.busy)
         }
@@ -180,6 +195,19 @@ struct ClientSetupWizard: View {
             }
         }
     }
+    private func chooseConfigFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the folder that holds \(session.client.title)’s configuration."
+        if let path = session.configPath { panel.directoryURL = URL(fileURLWithPath: path).deletingLastPathComponent() }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        session.chooseConfigFolder(url.path)
+    }
+
     private func run(_ action: @escaping @MainActor () async -> Void) {
         guard !session.busy else { return }
         operation = Task { await action() }

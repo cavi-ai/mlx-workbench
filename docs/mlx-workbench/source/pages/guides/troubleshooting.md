@@ -36,7 +36,7 @@ The cold-load check needs fresh headroom for weights × 1.10 + 1.5 GB + the endp
 
 ## Client wiring is refused
 
-Confirmation refuses a server that stopped or changed since the preview, a config file that changed since the preview, and symbolic links. **Refresh clients and servers**, preview again and confirm.
+Confirmation refuses a server that stopped or changed since the preview, a config file that changed since the preview, a symbolic link that replaced the reviewed file, and links that loop. **Refresh clients and servers**, preview again and confirm.
 
 ## Training or controlled studies cannot load
 

@@ -5,8 +5,56 @@ import Foundation
 // One adapter per supported client. Adapters are pure: they take the current
 // file contents (nil if missing) plus the endpoint and produce the new
 // contents. All file I/O, hashing, backups, and drift checks live in
-// WiringCoordinator. Write targets are a fixed allowlist of well-known
-// config paths — adapters never accept a user-supplied path.
+// WiringCoordinator. Write targets are each client's well-known config file,
+// in its standard folder or one the user chose, at its real location.
+
+/// Where writable clients keep their config: a folder the user chose, else the standard one,
+/// with every symbolic link in the path followed to the real location.
+struct ClientConfigLocations: @unchecked Sendable {
+    static let storageKey = "clientConfigDirectories"
+    /// The user's chosen folders, kept in the app's preferences; a hosted unit-test process never reads them.
+    static var live: ClientConfigLocations {
+        ClientConfigLocations(defaults: WorkbenchStatePaths.isHostedUnitTest() ? nil : .standard)
+    }
+    /// Standard folders only; nothing is chosen or kept.
+    static let standardFolders = ClientConfigLocations(defaults: nil)
+    let defaults: UserDefaults?
+
+    func directory(for clientID: String) -> String? {
+        (defaults?.dictionary(forKey: Self.storageKey) as? [String: String])?[clientID]
+    }
+
+    func setDirectory(_ path: String?, for clientID: String) {
+        guard let defaults else { return }
+        var all = defaults.dictionary(forKey: Self.storageKey) as? [String: String] ?? [:]
+        all[clientID] = path
+        defaults.set(all, forKey: Self.storageKey)
+    }
+
+    /// The real path: each symbolic link is followed, missing trailing components are kept and a link that
+    /// loops returns the path unchanged, so the write refuses it.
+    static func resolve(_ path: String, fileManager: FileManager = .default) -> String {
+        // Components are walked by hand: URL standardization drops a leading /private, which undoes the
+        // system's own /var -> private/var link.
+        var pending = path.split(separator: "/").map(String.init)
+        var resolved: [String] = []
+        var links = 0
+        while !pending.isEmpty {
+            let component = pending.removeFirst()
+            if component == "." { continue }
+            if component == ".." { _ = resolved.popLast(); continue }
+            guard let target = try? fileManager.destinationOfSymbolicLink(atPath: "/" + (resolved + [component]).joined(separator: "/")) else {
+                resolved.append(component)
+                continue
+            }
+            links += 1
+            guard links <= 32 else { return path }
+            if target.hasPrefix("/") { resolved = [] }
+            pending = target.split(separator: "/").map(String.init) + pending
+        }
+        return "/" + resolved.joined(separator: "/")
+    }
+}
 
 struct ClientAdapter: Sendable {
     let clientID: String
@@ -35,15 +83,22 @@ struct ClientAdapter: Sendable {
         return after
     }
 
-    /// A supported setup target, independent of whether its directory exists.
-    func configurationInstallation(home: URL) -> ClientInstallation? {
+    /// The config file at its real location: in `directory` when the user chose one, else at its standard path.
+    func configPath(home: URL, directory: String? = nil) -> String? {
         guard !advisoryOnly, let relativeConfigPath else { return nil }
-        return ClientInstallation(clientID: clientID, displayName: displayName,
-                                  configPath: home.appendingPathComponent(relativeConfigPath).path,
+        let standard = home.appendingPathComponent(relativeConfigPath)
+        let chosen = directory.map { URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent(standard.lastPathComponent) }
+        return ClientConfigLocations.resolve((chosen ?? standard).path)
+    }
+
+    /// A supported setup target, independent of whether its directory exists.
+    func configurationInstallation(home: URL, directory: String? = nil) -> ClientInstallation? {
+        guard let path = configPath(home: home, directory: directory) else { return nil }
+        return ClientInstallation(clientID: clientID, displayName: displayName, configPath: path,
                                   advisoryOnly: false, advisoryNote: nil)
     }
 
-    func installation(home: URL, fileManager: FileManager = .default) -> ClientInstallation? {
+    func installation(home: URL, directory: String? = nil, fileManager: FileManager = .default) -> ClientInstallation? {
         if advisoryOnly {
             // Advisory rows only appear when the client looks installed.
             guard let marker = relativeConfigPath,
@@ -58,16 +113,15 @@ struct ClientAdapter: Sendable {
                 advisoryNote: advisoryNote
             )
         }
-        guard let relative = relativeConfigPath else { return nil }
-        let path = home.appendingPathComponent(relative).path
-        let directory = (path as NSString).deletingLastPathComponent
+        guard let path = configPath(home: home, directory: directory) else { return nil }
+        let parent = (path as NSString).deletingLastPathComponent
         // Positive detection: the config file exists, or its parent directory
         // does — except home-root files (e.g. ~/.aider.conf.yml), whose parent
-        // is home itself and would always "detect".
-        let directoryIsClientOwned = directory != home.standardizedFileURL.path
-            && directory != home.path
+        // is home itself and would always "detect". A chosen folder is the client's.
+        let directoryIsClientOwned = directory != nil || ![home.standardizedFileURL.path, home.path,
+            ClientConfigLocations.resolve(home.path, fileManager: fileManager)].contains(parent)
         guard fileManager.fileExists(atPath: path)
-                || (directoryIsClientOwned && fileManager.fileExists(atPath: directory)) else {
+                || (directoryIsClientOwned && fileManager.fileExists(atPath: parent)) else {
             return nil
         }
         return ClientInstallation(
