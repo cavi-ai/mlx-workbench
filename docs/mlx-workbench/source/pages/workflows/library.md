@@ -66,7 +66,7 @@ each with where to choose it. Experimental ones carry a flask:
 
 | Option | Models | Where |
 |---|---|---|
-| Splash (experimental) | Quantized MLX text and vision models, prepared Strata profiles | **Serve with Splash** opens **Start now** with **Text · Splash** selected |
+| Splash (experimental) | Quantized MLX models of a family Splash serves, as the scan reports it; prepared Strata profiles | **Serve with Splash** opens **Start now** with **Text · Splash** selected |
 | Strata | Prepared Strata profiles | **Serve** |
 | Prompt text reuse | Text models | Run's inference settings |
 | M5 prompt processing (experimental) | Q4 text models on an M5 Mac | Run's hardware acceleration |

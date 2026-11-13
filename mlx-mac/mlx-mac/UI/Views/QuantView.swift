@@ -480,7 +480,8 @@ struct QuantView: View {
 
     private func runtimeChoices(for model: LibraryModel) -> [ComparisonLaneConfiguration.RuntimeChoice] {
         guard mode == .chat else { return [] }
-        return ComparisonLaneConfiguration.runtimeChoices(task: model.item.task?.type, servingRuntime: model.item.servingRuntime)
+        return ComparisonLaneConfiguration.runtimeChoices(task: model.item.task?.type, servingRuntime: model.item.servingRuntime,
+                                                          splashFamily: model.item.splashFamily)
     }
 
     private func laneRuntime(_ index: Int, model: LibraryModel) -> String? {

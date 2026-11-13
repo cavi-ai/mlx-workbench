@@ -38,11 +38,14 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     var backend: OutputBackend? = nil
     /// The bit widths the engine converts this GGUF at; nil when the scan did not report them.
     var qBits: [Int]? = nil
+    /// The model family Splash's engine serves this output as; nil when Splash does not serve it or is not installed.
+    var splashFamily: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, name, bytes, shard, architecture, quantization, parameters
         case structure, signature, companion, readable, status, outputs, error, task, draft, backend
         case qBits = "q_bits"
+        case splashFamily = "splash_family"
         case modifiedAt = "modified_at"
         case modelKey = "model_key"
         case tensorCount = "tensor_count"
@@ -59,8 +62,9 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
          structure: String?, signature: String?, companion: Bool?, readable: Bool?,
          status: String, outputs: [String], tensorCount: Int?, error: String?,
          task: ModelTask? = nil, draft: ModelDraft? = nil, servingRuntime: String? = nil,
-         backend: OutputBackend? = nil) {
+         backend: OutputBackend? = nil, splashFamily: String? = nil) {
         self.backend = backend
+        self.splashFamily = splashFamily
         self.path = path
         self.name = name
         self.bytes = bytes
@@ -137,10 +141,13 @@ struct MLXOutput: Codable, Equatable, Identifiable, Hashable {
     var runtime: String? = nil
     /// The backend that runs this output for its task, as the scan reports it.
     var backend: OutputBackend? = nil
+    /// The family Splash's engine finds this output's config to describe, as the scan reports it.
+    var splashFamily: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, name, quantization, provenance, task, runtime, backend
         case modelKey = "model_key"
+        case splashFamily = "splash_family"
     }
 
     var id: String { path }

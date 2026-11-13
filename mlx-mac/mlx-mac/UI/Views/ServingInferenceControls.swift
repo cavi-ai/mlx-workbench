@@ -100,14 +100,15 @@ enum ModelInferencePresentation {
     static func options(for model: LibraryModel, chip: String?) -> [ModelInferenceOption] {
         let task = model.item.task?.type
         let runtime = model.item.servingRuntime
-        let quantizedMLX = model.item.quantization?.range(of: #"^q\d+$"#, options: .regularExpression) != nil
+        let splashFamily = model.item.splashFamily
         var result: [ModelInferenceOption] = []
         if runtime == "strata" {
             result.append(.init(id: "strata", title: "Strata", detail: "Prepared profile with its own decoding, expert memory and context. Verify the profile before use.",
                                 experimental: false, place: .run(runtime: nil)))
         }
-        if task == .textLLM || task == .visionLanguage, runtime == "strata" || (runtime == nil && quantizedMLX) {
-            result.append(.init(id: "splash", title: "Splash", detail: "DFlash2 speculative decoding with this family's cached draft. Needs Splash 1.4 or later, Apple M3 or newer and macOS 26.4.",
+        if runtime == "strata" || (runtime == nil && splashFamily != nil) {
+            let draft = splashFamily.map { "the \($0) family's cached draft" } ?? "this family's cached draft"
+            result.append(.init(id: "splash", title: "Splash", detail: "DFlash2 speculative decoding with \(draft). Needs Splash 1.4 or later, Apple M3 or newer and macOS 26.4.",
                                 experimental: true, place: .run(runtime: "splash")))
         }
         if task == .textLLM, runtime == nil {

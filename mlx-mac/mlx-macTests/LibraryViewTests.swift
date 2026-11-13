@@ -4,26 +4,30 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
-    func testInferenceOptionsOfferSplashToQuantizedChatModelsAndMarkExperimentalPaths() {
-        func model(_ type: ModelTaskType, quantization: String?, runtime: String? = nil) -> LibraryModel {
+    func testInferenceOptionsOfferSplashOnlyToScannedFamiliesAndMarkExperimentalPaths() {
+        func model(_ type: ModelTaskType, quantization: String?, runtime: String? = nil, splash: String? = nil) -> LibraryModel {
             LibraryModel(item: ModelItem(
                 path: "/models/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
                 architecture: nil, quantization: quantization, parameters: nil, structure: nil, signature: nil, companion: nil,
                 readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
-                task: ModelTask(type: type, useCases: [], source: "scan", confidence: "high"), servingRuntime: runtime))
+                task: ModelTask(type: type, useCases: [], source: "scan", confidence: "high"), servingRuntime: runtime,
+                splashFamily: splash))
         }
         func ids(_ model: LibraryModel, chip: String? = "Apple M3 Max") -> [String] {
             ModelInferencePresentation.options(for: model, chip: chip).map(\.id)
         }
 
-        let vision = ModelInferencePresentation.options(for: model(.visionLanguage, quantization: "q8"), chip: "Apple M3 Max")
+        let vision = ModelInferencePresentation.options(for: model(.visionLanguage, quantization: "q8", splash: "Qwen3.8-27B"), chip: "Apple M3 Max")
         XCTAssertEqual(vision.map(\.id), ["splash", "vision"])
         XCTAssertEqual(vision.first?.place, .run(runtime: "splash"))
+        XCTAssertEqual(vision.first?.detail.contains("Qwen3.8-27B family"), true)
         XCTAssertEqual(vision.filter(\.experimental).map(\.id), ["splash"])
+        XCTAssertEqual(ids(model(.visionLanguage, quantization: "q4")), ["vision"])
         XCTAssertEqual(ids(model(.visionLanguage, quantization: nil, runtime: "strata")), ["strata", "splash"])
         XCTAssertEqual(ids(model(.visionLanguage, quantization: "Q4_K_M")), ["vision"])
-        XCTAssertEqual(ids(model(.textLLM, quantization: "q4")), ["splash", "lookup"])
-        XCTAssertEqual(ids(model(.textLLM, quantization: "q4"), chip: "Apple M5 Max"), ["splash", "lookup", "m5"])
+        XCTAssertEqual(ids(model(.textLLM, quantization: "q4")), ["lookup"])
+        XCTAssertEqual(ids(model(.textLLM, quantization: "q4", splash: "Qwen3.6-35B-A3B")), ["splash", "lookup"])
+        XCTAssertEqual(ids(model(.textLLM, quantization: "q4", splash: "Qwen3.6-35B-A3B"), chip: "Apple M5 Max"), ["splash", "lookup", "m5"])
         XCTAssertEqual(ids(model(.musicGeneration, quantization: "q8")), ["fx"])
         XCTAssertEqual(ids(model(.videoGeneration, quantization: "q4")), ["reuse"])
         XCTAssertEqual(ids(model(.textToSpeech, quantization: "q8")), [])

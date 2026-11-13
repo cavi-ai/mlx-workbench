@@ -13,7 +13,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ## [Unreleased]
 ### Added
 
-- Library: a **Type** column names each model's kind (Text, Vision, Image, Video, Music, Voice and others), and the inspector's **Inference** section lists Splash, Strata and other options with experimental ones marked; **Serve with Splash** opens Start now with Splash selected, and vision models offer Splash in Compare lanes.
+- Library: a **Type** column names each model's kind (Text, Vision, Image, Video, Music, Voice and others), and the inspector's **Inference** section lists Splash, Strata and other options with experimental ones marked; **Serve with Splash** opens Start now with Splash selected, and Splash appears in the inspector and Compare lanes only for models whose family the scan reports Splash serves.
 
 
 ## [0.9.0] - 2026-11-12

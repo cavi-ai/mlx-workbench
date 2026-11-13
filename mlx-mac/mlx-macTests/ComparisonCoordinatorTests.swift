@@ -1408,11 +1408,15 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
     }
 
-    func testVisionLanguageLanesOfferSplashBesideTheirOwnRuntime() {
-        let choices = ComparisonLaneConfiguration.runtimeChoices(task: .visionLanguage, servingRuntime: nil)
+    func testLanesOfferSplashOnlyForScannedFamilies() {
+        let choices = ComparisonLaneConfiguration.runtimeChoices(task: .visionLanguage, servingRuntime: nil, splashFamily: "Qwen3.8-27B")
         XCTAssertEqual(choices.map(\.tag), [nil, "splash"])
         XCTAssertEqual(choices.map(\.title), ["Automatic", "Splash"])
-        XCTAssertEqual(ComparisonLaneConfiguration.runtimeChoices(task: .musicGeneration, servingRuntime: nil), [])
+        XCTAssertEqual(ComparisonLaneConfiguration.runtimeChoices(task: .visionLanguage, servingRuntime: nil, splashFamily: nil), [])
+        XCTAssertEqual(ComparisonLaneConfiguration.runtimeChoices(task: .textLLM, servingRuntime: nil, splashFamily: nil).map(\.tag), [nil, "mlx_lm"])
+        XCTAssertEqual(ComparisonLaneConfiguration.runtimeChoices(task: .textLLM, servingRuntime: nil, splashFamily: "Qwen3.8-27B").map(\.tag),
+                       [nil, "mlx_lm", "splash"])
+        XCTAssertEqual(ComparisonLaneConfiguration.runtimeChoices(task: .musicGeneration, servingRuntime: nil, splashFamily: nil), [])
     }
 
     func testRepeatedLanesNeedADistinctConfiguredRuntime() {
