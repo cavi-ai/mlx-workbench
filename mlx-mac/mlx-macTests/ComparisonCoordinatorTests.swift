@@ -1408,6 +1408,13 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
     }
 
+    func testVisionLanguageLanesOfferSplashBesideTheirOwnRuntime() {
+        let choices = ComparisonLaneConfiguration.runtimeChoices(task: .visionLanguage, servingRuntime: nil)
+        XCTAssertEqual(choices.map(\.tag), [nil, "splash"])
+        XCTAssertEqual(choices.map(\.title), ["Automatic", "Splash"])
+        XCTAssertEqual(ComparisonLaneConfiguration.runtimeChoices(task: .musicGeneration, servingRuntime: nil), [])
+    }
+
     func testRepeatedLanesNeedADistinctConfiguredRuntime() {
         let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in }, stop: { _ in }),
             prober: StubComparisonProber(gate: nil), pickPort: { 9997 })

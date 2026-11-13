@@ -230,6 +230,9 @@ extension WorkbenchSize {
         static let fitsMinimum: CGFloat = 64
         static let fitsIdeal: CGFloat = 148
         static let fitsMaximum: CGFloat = 180
+        static let typeMinimum: CGFloat = 72
+        static let typeIdeal: CGFloat = 112
+        static let typeMaximum: CGFloat = 148
         static let quantMinimum: CGFloat = 56
         static let quantIdeal: CGFloat = 64
         static let quantMaximum: CGFloat = 72

@@ -833,6 +833,14 @@ struct LibraryView: View {
             .customizationID("model")
             .disabledCustomizationBehavior(.visibility)
 
+            TableColumn("Type", value: \.kindTitle) { row in
+                LibraryTypeCell(row: row, experimental: row.model.map {
+                    ModelInferencePresentation.options(for: $0, chip: appHost.hardwareProfile.chip).filter(\.experimental)
+                } ?? [])
+            }
+            .width(min: WorkbenchSize.Library.typeMinimum, ideal: WorkbenchSize.Library.typeIdeal, max: WorkbenchSize.Library.typeMaximum)
+            .customizationID("type")
+
             TableColumn("Size", value: \.bytes) { row in
                 LibrarySizeCell(row: row, largestLeafBytes: largestLeafBytes, showsBar: false)
             }

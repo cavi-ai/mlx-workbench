@@ -4,6 +4,30 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testInferenceOptionsOfferSplashToQuantizedChatModelsAndMarkExperimentalPaths() {
+        func model(_ type: ModelTaskType, quantization: String?, runtime: String? = nil) -> LibraryModel {
+            LibraryModel(item: ModelItem(
+                path: "/models/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
+                architecture: nil, quantization: quantization, parameters: nil, structure: nil, signature: nil, companion: nil,
+                readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
+                task: ModelTask(type: type, useCases: [], source: "scan", confidence: "high"), servingRuntime: runtime))
+        }
+        func ids(_ model: LibraryModel, chip: String? = "Apple M3 Max") -> [String] {
+            ModelInferencePresentation.options(for: model, chip: chip).map(\.id)
+        }
+
+        let vision = ModelInferencePresentation.options(for: model(.visionLanguage, quantization: "q8"), chip: "Apple M3 Max")
+        XCTAssertEqual(vision.map(\.id), ["splash", "vision"])
+        XCTAssertEqual(vision.first?.place, .run(runtime: "splash"))
+        XCTAssertEqual(vision.filter(\.experimental).map(\.id), ["splash"])
+        XCTAssertEqual(ids(model(.visionLanguage, quantization: nil, runtime: "strata")), ["strata", "splash"])
+        XCTAssertEqual(ids(model(.visionLanguage, quantization: "Q4_K_M")), ["vision"])
+        XCTAssertEqual(ids(model(.textLLM, quantization: "q4")), ["splash", "lookup"])
+        XCTAssertEqual(ids(model(.textLLM, quantization: "q4"), chip: "Apple M5 Max"), ["splash", "lookup", "m5"])
+        XCTAssertEqual(ids(model(.musicGeneration, quantization: "q8")), ["fx"])
+        XCTAssertEqual(ids(model(.videoGeneration, quantization: "q4")), ["reuse"])
+        XCTAssertEqual(ids(model(.textToSpeech, quantization: "q8")), [])
+    }
     func testModelSourceFoldersCombineFormatsAndManagedStorageAtOnePath() {
         var config = Config.defaults(ggufRoots: ["/Models/shared", "/Models/shared/"])
         config.mlxRoots = ["/Models/shared", "/Models/managed"]

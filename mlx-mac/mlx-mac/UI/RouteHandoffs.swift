@@ -17,6 +17,14 @@ extension HandoffKind where Value == ServingProfileComparisonSetup { static var 
 extension HandoffKind where Value == WorkflowReportImportRequest { static var importWorkflowReport: Self { Self(name: "importWorkflowReport") } }
 
 extension HandoffKind where Value == ServingFocusRequest { static var openServing: Self { Self(name: "openServing") } }
+extension HandoffKind where Value == ServeRuntimeRequest { static var serveWithRuntime: Self { Self(name: "serveWithRuntime") } }
+
+/// Opens Run's Start now setup for one model with a runtime selected; serving still needs preview and confirmation.
+struct ServeRuntimeRequest: Equatable {
+    let id = UUID()
+    let modelPath: String
+    let runtime: String
+}
 
 /// Brings Run's served models, or one served row, into view.
 struct ServingFocusRequest: Equatable {
