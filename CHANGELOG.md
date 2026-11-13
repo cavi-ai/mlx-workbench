@@ -15,6 +15,8 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 - Library: a **Type** column names each model's kind (Text, Vision, Image, Video, Music, Voice and others), and the inspector's **Inference** section lists Splash, Strata and other options with experimental ones marked; **Serve with Splash** opens Start now with Splash selected, and Splash appears in the inspector and Compare lanes only for models whose family the scan reports Splash serves.
 
+- Terminal: a Workspaces page launches OpenCode or a shell in a chosen folder through your login shell, inside the app, and links to OpenCode's installation guide when the shell cannot find it.
+
 ### Fixed
 
 - Connect app: setup follows symbolic links in a client's config path and writes the real file, and **Choose Folder…** sets the folder that holds the config.

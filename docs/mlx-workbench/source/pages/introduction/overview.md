@@ -27,7 +27,7 @@ screen's title.
 
 ## Screens
 
-The sidebar groups sixteen screens. **Models** rows open the Library table, filtered to all models, one kind of model or **Needs converting**.
+The sidebar groups seventeen screens. **Models** rows open the Library table, filtered to all models, one kind of model or **Needs converting**.
 
 | Group | Screen | Purpose |
 |---|---|---|
@@ -42,6 +42,7 @@ The sidebar groups sixteen screens. **Models** rows open the Library table, filt
 | | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | | **Studies** | Controlled experiments, generation jobs and blind review |
+| | **Terminal** | OpenCode or a shell in a chosen folder, run through your login shell |
 | System | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
 | | **Activity** | Conversion, server, experiment and training jobs on one timeline |
 | | **Clients** | Guided setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code, connection tests, config wiring and rollback |

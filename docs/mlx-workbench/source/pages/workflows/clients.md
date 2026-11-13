@@ -26,6 +26,10 @@ Write targets are these files, in their standard folder or a folder chosen with 
 
 **Undo setup** reverses that setup transaction while its files still match the applied contents. **Connect another app** reuses the same flow for another client.
 
+## Terminal
+
+**Terminal**, in the Workspaces sidebar group, runs OpenCode or a shell inside Workbench. Choose **OpenCode** or **Shell** and a folder, then **Launch OpenCode** or **Launch Shell**. The command runs through your login shell, so the PATH and settings from your shell configuration apply. When the login shell cannot find OpenCode, the page says so and links to its installation guide. **Stop** ends the running process; after it exits the terminal keeps its last output until the next launch. The terminal stays open while you use other pages.
+
 **Check existing setup…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable files, links that loop, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
 
 Choose a running endpoint, then **Review config…** beside one client. OpenCode, Zed and Aider can create a config even when its folder does not exist. The wiring preview lists only that client; **Confirm client wiring** performs the existing server and file checks before writing. Rollback restores a backup or moves an unchanged newly created config to Trash. Unreadable configs and links that loop require manual review. Continue’s adapter supports existing legacy JSON files; its guide covers current YAML setup, and the doctor does not create a legacy file for a new installation.

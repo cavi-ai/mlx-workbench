@@ -83,7 +83,7 @@ def main():
                        TEST_RUNNER_MLX_WORKBENCH_RELEASE_EXPECTED_COMMIT=commit[:12],
                        TEST_RUNNER_MLX_WORKBENCH_RELEASE_EXPECTED_ENGINE=engine,
                        TEST_RUNNER_MLX_WORKBENCH_RELEASE_EXPECTED_VERSION=version)
-    command = ["xcodebuild", "-project", "mlx-mac/mlx-mac.xcodeproj", "-scheme", "mlx-workbench",
+    command = ["xcodebuild", "-skipPackagePluginValidation", "-project", "mlx-mac/mlx-mac.xcodeproj", "-scheme", "mlx-workbench",
                "-configuration", "Debug", "-destination", "platform=macOS",
                "-derivedDataPath", str(args.derived_data or repo / ".run/swift-build"),
                "-resultBundlePath", str(result), "-only-testing:" + TEST, "test"]

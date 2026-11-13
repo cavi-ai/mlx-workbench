@@ -196,7 +196,7 @@ test-live-scan:
 	MLX_WORKBENCH_LIVE_SCAN=1 $(PYTHON) -m unittest tests.test_live_scan_e2e -v
 
 test-swift:
-	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) test
 
@@ -210,7 +210,7 @@ accept-release-candidate: mac-only
 	@$(PYTHON) scripts/release_candidate.py --dmg "$(RELEASE_DMG)" --derived-data "$(MLX_SWIFT_DD)"
 
 test-swift-live-scan:
-	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		OTHER_SWIFT_FLAGS='$(OTHER_SWIFT_FLAGS) -DMLX_WORKBENCH_LIVE_SCAN' test
@@ -218,7 +218,7 @@ test-swift-live-scan:
 CLIENTS_RENDER_BUNDLE ?= $(RUN_DIR)/clients-render-$(shell git rev-parse --short HEAD).xcresult
 
 render-clients:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		-only-testing:mlx-workbenchTests/ClientsRenderTests \
@@ -227,7 +227,7 @@ render-clients:
 DISCOVER_RENDER_BUNDLE ?= $(RUN_DIR)/discover-render-$(shell git rev-parse --short HEAD).xcresult
 
 render-discover:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		-only-testing:mlx-workbenchTests/DiscoverRenderTests \
@@ -236,7 +236,7 @@ render-discover:
 LMSTUDIO_RENDER_BUNDLE ?= $(RUN_DIR)/lmstudio-render-$(shell git rev-parse --short HEAD).xcresult
 
 render-lmstudio:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		-only-testing:mlx-workbenchTests/LMStudioRenderTests \
@@ -245,7 +245,7 @@ render-lmstudio:
 SETTINGS_RENDER_BUNDLE ?= $(RUN_DIR)/settings-render-$(shell git rev-parse --short HEAD).xcresult
 
 render-settings:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		-only-testing:mlx-workbenchTests/SettingsRenderTests \
@@ -300,7 +300,7 @@ install-app: build-swift
 
 build-swift:
 	@echo "Building mlx-workbench (Swift)..."
-	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -arch arm64 -jobs $(MLX_BUILD_JOBS) \
 		-derivedDataPath $(MLX_SWIFT_DD) MLX_WORKBENCH_COMMIT="$(shell git rev-parse HEAD)" MLX_WORKBENCH_CHANNEL=local build
 
@@ -322,7 +322,7 @@ prepare-runtime-bundle:
 
 build-swift-dist: prepare-runtime-bundle
 	@echo "Building mlx-workbench (Swift, distribution)..."
-	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -arch arm64 \
 		-derivedDataPath $(MLX_DIST_DD) $(DIST_IDENTITY) $(RUNTIME_BUNDLE_SETTINGS) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' build
@@ -352,7 +352,7 @@ build-swift-devid: prepare-runtime-bundle
 	@plutil -insert teamID -string "$(DEVELOPER_TEAM)" "$(MLX_DIST_DD)/ExportOptions.plist"
 	@plutil -insert destination -string upload "$(MLX_DIST_DD)/ExportOptions.plist"
 	@echo "Archiving mlx-workbench (Swift, Developer ID)..."
-	@xcodebuild archive -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+	@xcodebuild archive -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 \
 		-archivePath "$(MLX_DIST_ARCHIVE)" -derivedDataPath "$(MLX_DIST_DD)" \
 		DEVELOPMENT_TEAM="$(DEVELOPER_TEAM)" CODE_SIGN_STYLE=Manual \

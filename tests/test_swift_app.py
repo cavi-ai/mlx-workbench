@@ -33,6 +33,7 @@ class SwiftAppHardeningTests(unittest.TestCase):
     def _run_xcodebuild(self, build_dir: str, configuration: str = "Debug") -> subprocess.CompletedProcess[str]:
         cmd = [
             "xcodebuild",
+            "-skipPackagePluginValidation",
             "-project",
             str(SWIFT_PROJECT),
             "-scheme",
