@@ -17,6 +17,8 @@ struct QuantView: View {
     @Environment(\.isRouteActive) private var isRouteActive
 
     @State private var compareContentWidth = WorkbenchSize.assumedContentWidth
+    /// The tallest lane tile's content; every tile takes this height so lanes line up.
+    @State private var laneTileHeight: CGFloat = 0
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
     /// A saved-set edit or a customized copy; new sets use `showingSetEditor`.
@@ -542,6 +544,9 @@ struct QuantView: View {
                 ) {
                     slotControls
                 }
+                .onPreferenceChange(CompareLaneTileHeightKey.self) { height in
+                    if height > 0 { laneTileHeight = height }
+                }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { inlineControls }
@@ -699,6 +704,9 @@ struct QuantView: View {
                         .buttonStyle(.borderless)
                         .help("Remove this model")
                         .accessibilityLabel("Remove model \(ComparePresentation.letter(index))")
+                } else {
+                    // Keeps model names the same width in every tile.
+                    Image(systemName: "minus").hidden().accessibilityHidden(true)
                 }
             }
             if let line = model.flatMap(ComparePresentation.tileLine) {
@@ -715,6 +723,10 @@ struct QuantView: View {
                 .accessibilityLabel("Runtime \(ComparePresentation.letter(index))")
                 .help("Splash serves this model's weights in place with a DFlash2 draft.")
                 .disabled(comparison.activeRunID != nil)
+            } else if let model, mode == .chat {
+                LabeledContent("Runtime") { Text(ComparePresentation.fixedRuntimeTitle(model.item.servingRuntime)) }
+                    .accessibilityLabel("Runtime \(ComparePresentation.letter(index))")
+                    .help("This model has one runtime here.")
             }
             if model?.item.servingRuntime == "strata", laneRuntimes[slotIDs[index]] == nil {
                 Text("Strata · Metal · GGUF")
@@ -732,6 +744,10 @@ struct QuantView: View {
                 }
             }
         }
+        .background(GeometryReader { proxy in
+            Color.clear.preference(key: CompareLaneTileHeightKey.self, value: proxy.size.height)
+        })
+        .frame(minHeight: laneTileHeight, alignment: .topLeading)
         .padding(WorkbenchSpacing.xs)
         .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
         .overlay {
@@ -1221,4 +1237,10 @@ struct QuantView: View {
     private func shortName(_ path: String) -> String {
         ComparePresentation.displayName(for: path, models: appHost.librarySnapshot?.models ?? [])
     }
+}
+
+/// The tallest lane tile's content height.
+private struct CompareLaneTileHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

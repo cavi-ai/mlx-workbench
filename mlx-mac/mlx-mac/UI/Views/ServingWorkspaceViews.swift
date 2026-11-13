@@ -83,6 +83,72 @@ enum ServingWorkspacePresentation {
         if let server = server(row) { return server.state == "running" }
         return service(row).map { !$0.stale && [.loaded, .loading, .unloading].contains($0.residency) && $0.modelID != "__inventory__" } ?? false
     }
+
+    /// Why a running row needs attention, in the engine's words; nil when it does not.
+    static func attentionReason(_ row: ServingRow) -> String? {
+        guard isRunning(row), let server = server(row), server.modelState == "failed" else { return nil }
+        return server.lastError.flatMap { $0.isEmpty ? nil : $0 } ?? "The model failed to load. The server log has the details."
+    }
+
+    static let attentionNextStep = "The next request loads the model again. Stop the server to release it."
+
+    /// Running rows that need attention first, the rest in their order.
+    static func attentionFirst(_ rows: [ServingRow]) -> [ServingRow] {
+        rows.filter { attentionReason($0) != nil } + rows.filter { attentionReason($0) == nil }
+    }
+
+    /// Running rows counted the way their status reads: attention, in memory, loading, or loaded on request.
+    static func tally(_ rows: [ServingRow]) -> ServingTally {
+        rows.filter(isRunning).reduce(into: ServingTally()) { tally, row in
+            if attentionReason(row) != nil { tally.attention += 1; return }
+            switch server(row)?.modelState ?? service(row)?.residency.rawValue {
+            case "unloaded": tally.onRequest += 1
+            case "loading": tally.loading += 1
+            default: tally.loaded += 1
+            }
+        }
+    }
+}
+
+struct ServingTally: Equatable {
+    var attention = 0
+    var loaded = 0
+    var loading = 0
+    var onRequest = 0
+}
+
+/// A row's status; one that needs attention is a link that explains itself in place.
+struct ServingStatusLabel: View {
+    let row: ServingRow
+    let states: [UUID: EndpointState]
+    var text: String? = nil
+    @State private var explaining = false
+
+    var body: some View {
+        let status = text ?? ServingWorkspacePresentation.status(row, states: states)
+        if let reason = ServingWorkspacePresentation.attentionReason(row) {
+            Button { explaining = true } label: {
+                Label(status, systemImage: "exclamationmark.triangle.fill")
+            }
+            .buttonStyle(.link)
+            .foregroundStyle(WorkbenchColor.failure)
+            .help(reason)
+            .accessibilityHint("Shows why this model needs attention")
+            .popover(isPresented: $explaining, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text(status).font(WorkbenchTypography.emphasis)
+                    Text(reason).textSelection(.enabled)
+                    Text(ServingWorkspacePresentation.attentionNextStep).foregroundStyle(WorkbenchColor.muted)
+                }
+                .font(WorkbenchTypography.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 320, alignment: .leading)
+                .padding(WorkbenchSpacing.md)
+            }
+        } else {
+            Text(status)
+        }
+    }
 }
 
 struct ServingModelList: View {
@@ -125,7 +191,7 @@ struct ServingModelList: View {
                         HStack(spacing: WorkbenchSpacing.xs) {
                             Text(ServingWorkspacePresentation.provider(row))
                             Text("·")
-                            Text(ServingWorkspacePresentation.status(row, states: states))
+                            ServingStatusLabel(row: row, states: states)
                         }.font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
                     }.padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
                         .accessibilityIdentifier("serving-model-\(row.id)")

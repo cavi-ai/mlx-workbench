@@ -762,4 +762,24 @@ final class CompareRemodelTests: XCTestCase {
                        "8bit · " + ByteCountFormatter.string(fromByteCount: 2_000_000_000, countStyle: .file))
         XCTAssertNil(ComparePresentation.tileLine(library("/c", quantization: nil, parameters: nil, bytes: 0)))
     }
+
+    func testChatLaneWithoutARuntimeChoiceStillNamesItsRuntime() {
+        XCTAssertEqual(ComparePresentation.fixedRuntimeTitle(nil), "Automatic")
+        XCTAssertEqual(ComparePresentation.fixedRuntimeTitle("splash"), "Splash")
+        XCTAssertEqual(ComparePresentation.fixedRuntimeTitle("mlx_lm"), "MLX-LM")
+    }
+
+    func testABlockedLaneSaysSoOnceWhenThePromptAndTheRunAgree() {
+        typealias P = ChatComparisonPresentation
+        let blocked = P.Completion(finished: 0, total: 2, label: "Blocked", isComplete: false)
+        let lines = P.outcomeLines(prompt: .blocked, run: blocked)
+        XCTAssertEqual(lines.prompt, "Blocked · entire run")
+        XCTAssertNil(lines.run)
+
+        let partial = P.Completion(finished: 1, total: 2, label: "1/2 finished · incomplete", isComplete: false)
+        let mixed = P.outcomeLines(prompt: .finished, run: partial)
+        XCTAssertEqual(mixed.prompt, "Finished · this prompt")
+        XCTAssertEqual(mixed.run, "1/2 finished · incomplete · entire run")
+        XCTAssertNil(P.outcomeLines(prompt: .notRecorded, run: nil).run)
+    }
 }

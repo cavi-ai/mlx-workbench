@@ -346,8 +346,18 @@ struct ServeView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Text(name).font(WorkbenchTypography.pageTitle).textSelection(.enabled)
-                        Text(ServingWorkspacePresentation.provider(row) + " · " + ServingWorkspacePresentation.status(row, states: endpoint.slotStates))
-                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        HStack(spacing: WorkbenchSpacing.xs) {
+                            Text(ServingWorkspacePresentation.provider(row) + " ·")
+                            ServingStatusLabel(row: row, states: endpoint.slotStates)
+                        }
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        if let reason = ServingWorkspacePresentation.attentionReason(row) {
+                            Label {
+                                Text(reason + " " + ServingWorkspacePresentation.attentionNextStep).textSelection(.enabled)
+                            } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(WorkbenchColor.failure) }
+                            .font(WorkbenchTypography.secondary)
+                            .accessibilityIdentifier("serving-attention-reason")
+                        }
                     }
                     Spacer()
                     if case .endpoint(let slot, _, let service) = row {

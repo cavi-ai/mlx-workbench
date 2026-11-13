@@ -33,16 +33,38 @@ final class ServingInventoryPresentationTests: XCTestCase {
         XCTAssertEqual(ServingInventoryPresentation.summary(.empty), "Reading local serving models…")
     }
 
-    func testToolbarNamesServingModelsThatAreNotLoaded() {
+    func testToolbarCountsTheRunningRowsMonitorListsAndLeadsWithTheModelThatNeedsAttention() throws {
+        let failed = ServerInfo(path: "/models/strata", runtime: "strata", port: 8766, pid: 40, state: "running", jit: true,
+                                modelState: "failed", receiptsDirectory: "/receipts",
+                                lastError: "Agent memory guard stopped the owned model worker.")
         let servers = [
-            ServerInfo(path: "/models/loaded", port: 1, pid: 10, state: "running", modelState: "loaded"),
-            ServerInfo(path: "/models/idle", port: 2, pid: 20, state: "running", modelState: "unloaded"),
-            ServerInfo(path: "/models/unknown", port: 3, pid: 30, state: "running")
+            ServerInfo(path: "/models/loaded", port: 1, pid: 10, state: "running", modelState: "loaded", receiptsDirectory: "/receipts"),
+            ServerInfo(path: "/models/idle", port: 2, pid: 20, state: "running", jit: true, modelState: "unloaded", receiptsDirectory: "/receipts"),
+            ServerInfo(path: "/models/stopped", port: 3, pid: 30, state: "stopped", receiptsDirectory: "/receipts"),
+            failed,
         ]
         let snapshot = ServingInventorySnapshot.make(engine: servers, hosts: [], managedReceipts: "/receipts", capturedAt: capturedAt)
-        let text = ResourceHeaderPresentation.memoryText(availableBytes: 12_000_000_000, loaded: snapshot.loadedCount,
-                                                         serving: snapshot.servingCount, compact: false)
-        XCTAssertEqual(text, "3 serving · 1 loaded · ~12.0 GB available")
+        let rows = ServingRows.build(slots: [], servers: servers, snapshot: snapshot)
+        let tally = ServingWorkspacePresentation.tally(rows)
+        let twelve: Int64 = 12_000_000_000
+
+        XCTAssertEqual(tally, ServingTally(attention: 1, loaded: 1, loading: 0, onRequest: 1))
+        XCTAssertEqual(tally.attention + tally.loaded + tally.loading + tally.onRequest,
+                       rows.filter(ServingWorkspacePresentation.isRunning).count, "the toolbar counts what Monitor lists")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: false),
+                       "1 needs attention · 1 loaded · 1 ready on request · ~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: true), "1 needs attention")
+
+        let attention = try XCTUnwrap(rows.first { ServingWorkspacePresentation.server($0)?.port == 8766 })
+        XCTAssertEqual(ServingWorkspacePresentation.status(attention), "Needs attention")
+        XCTAssertEqual(ServingWorkspacePresentation.attentionReason(attention), "Agent memory guard stopped the owned model worker.")
+        XCTAssertEqual(ServingWorkspacePresentation.attentionFirst(rows).first?.id, attention.id)
+        XCTAssertTrue(rows.filter { $0.id != attention.id }.allSatisfy { ServingWorkspacePresentation.attentionReason($0) == nil })
+
+        let idleOnly = ServingWorkspacePresentation.tally(rows.filter { ServingWorkspacePresentation.server($0)?.port == 2 })
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: idleOnly, compact: false),
+                       "1 ready on request · ~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(), compact: false), "~12.0 GB available")
     }
 
     func testLibraryLinksRequireKnownPathsAndDoNotGuessByName() {

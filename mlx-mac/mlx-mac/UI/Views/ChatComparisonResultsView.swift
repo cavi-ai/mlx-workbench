@@ -303,11 +303,11 @@ private struct ChatInspectorOutput: View {
                 }
             }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                Label("\(outcome.label) · this prompt", systemImage: outcome.symbol)
+                let lines = ChatComparisonPresentation.outcomeLines(prompt: outcome, run: result.map { ChatComparisonPresentation.completion($0, in: run) })
+                Label(lines.prompt, systemImage: outcome.symbol)
                     .foregroundStyle(outcome.color)
-                if let result {
-                    Text("\(ChatComparisonPresentation.completion(result, in: run).label) · entire run")
-                        .foregroundStyle(WorkbenchColor.muted)
+                if let runLine = lines.run {
+                    Text(runLine).foregroundStyle(WorkbenchColor.muted)
                 }
             }.font(WorkbenchTypography.secondary)
             if let result, let recorded = ComparisonDiff.output(result, promptID: prompt.id) {

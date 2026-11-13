@@ -31,27 +31,31 @@ struct SystemResourceHeader: View {
         Group {
             if let servingInventory {
                 ObservedInventorySnapshot(inventory: servingInventory) { snapshot in
-                    toggleButton(loaded: snapshot.capturedAt == nil ? nil : snapshot.loadedCount,
-                                 serving: snapshot.capturedAt == nil ? nil : snapshot.servingCount)
+                    // The same running rows Monitor lists, so both screens count alike.
+                    toggleButton(tally: snapshot.capturedAt == nil ? nil : ServingWorkspacePresentation.tally(
+                        ServingRows.build(slots: endpoint.fleet.slots, servers: servers, snapshot: snapshot)))
                 }
             } else {
-                toggleButton(loaded: nil, serving: nil)
+                toggleButton(tally: nil)
             }
         }
         .popover(isPresented: $expanded, arrowEdge: .bottom) { panel }
         .sheet(isPresented: $inspectingProcesses) { ProcessMemorySheet(resources: resources) }
     }
 
-    private func toggleButton(loaded: Int?, serving: Int?) -> some View {
+    private func toggleButton(tally: ServingTally?) -> some View {
         let attention = ResourceHeaderPresentation.attentionState(slots: endpoint.fleet.slots, state: endpoint.state)
+        let modelsNeedAttention = (tally?.attention ?? 0) > 0
         let available = resources.memory?.availableBytes
         return Button { expanded.toggle() } label: {
             HStack(spacing: WorkbenchSpacing.xs) {
-                Image(systemName: attention.map(EndpointIcon.name(for:)) ?? "memorychip")
-                    .foregroundStyle(attention.map { ResourceHeaderPresentation.status(for: $0).color } ?? WorkbenchColor.muted)
+                Image(systemName: modelsNeedAttention ? "exclamationmark.triangle.fill" : attention.map(EndpointIcon.name(for:)) ?? "memorychip")
+                    .foregroundStyle(modelsNeedAttention ? WorkbenchColor.failure
+                                     : attention.map { ResourceHeaderPresentation.status(for: $0).color } ?? WorkbenchColor.muted)
                 if let available {
-                    Text(ResourceHeaderPresentation.memoryText(availableBytes: available, loaded: loaded, serving: serving, compact: compactLabel))
-                        .foregroundStyle(available < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
+                    Text(ResourceHeaderPresentation.memoryText(availableBytes: available, tally: tally, compact: compactLabel))
+                        .foregroundStyle(modelsNeedAttention ? WorkbenchColor.failure
+                                         : available < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
                         .contentTransition(.numericText())
                 } else {
                     Text("RAM unavailable").foregroundStyle(WorkbenchColor.muted)
@@ -63,8 +67,8 @@ struct SystemResourceHeader: View {
             .workbenchAnimation(value: available)
         }
         .buttonStyle(.plain)
-        .help("Memory headroom and serving")
-        .accessibilityLabel(ResourceHeaderPresentation.accessibilityLabel(availableBytes: available, loaded: loaded, serving: serving, attention: attention))
+        .help(modelsNeedAttention ? "A serving model needs attention; open for the reason" : "Memory headroom and serving")
+        .accessibilityLabel(ResourceHeaderPresentation.accessibilityLabel(availableBytes: available, tally: tally, attention: attention))
         .accessibilityIdentifier("system-memory-header")
     }
 
@@ -233,19 +237,22 @@ enum ResourceHeaderPresentation {
         }
     }
 
-    /// `loaded` is nil until the inventory has been read; a compact label never shows it.
-    /// `serving` counts the services a Library row marks Serving; it is named when some of them are not loaded.
-    static func memoryText(availableBytes: Int64, loaded: Int?, serving: Int? = nil, compact: Bool) -> String {
+    /// `tally` is nil until the inventory has been read. Models that need attention lead, and a compact label
+    /// keeps only them; the rest name where running models stand, in the words Serving and Monitor use.
+    static func memoryText(availableBytes: Int64, tally: ServingTally?, compact: Bool) -> String {
         let available = "~\(gigabytes(availableBytes)) GB available"
-        guard !compact, let loaded else { return available }
-        if let serving, serving > loaded {
-            return "\(serving) serving · \(loaded) loaded · \(available)"
-        }
-        return "\(loaded) loaded · \(available)"
+        guard let tally else { return available }
+        let attention = tally.attention > 0 ? "\(tally.attention) need\(tally.attention == 1 ? "s" : "") attention" : nil
+        if compact { return attention ?? available }
+        let parts = [attention,
+                     tally.loaded > 0 ? "\(tally.loaded) loaded" : nil,
+                     tally.loading > 0 ? "\(tally.loading) loading" : nil,
+                     tally.onRequest > 0 ? "\(tally.onRequest) ready on request" : nil].compactMap { $0 }
+        return (parts + [available]).joined(separator: " · ")
     }
 
-    static func accessibilityLabel(availableBytes: Int64?, loaded: Int?, serving: Int? = nil, attention: EndpointState?) -> String {
-        let memory = availableBytes.map { memoryText(availableBytes: $0, loaded: loaded, serving: serving, compact: false) } ?? "RAM unavailable"
+    static func accessibilityLabel(availableBytes: Int64?, tally: ServingTally?, attention: EndpointState?) -> String {
+        let memory = availableBytes.map { memoryText(availableBytes: $0, tally: tally, compact: false) } ?? "RAM unavailable"
         guard let attention else { return memory }
         return memory + ", endpoint: " + attention.summary
     }
@@ -296,7 +303,8 @@ private struct ServingInventoryResourceSection: View {
     let onReview: (ServingActionKind, ServingServiceObservation) -> Void
 
     var body: some View {
-        let rows = ServingWorkspacePresentation.rows(ServingRows.build(slots: endpoint.fleet.slots, servers: servers, snapshot: inventory.snapshot), includeAvailable: false)
+        let rows = ServingWorkspacePresentation.attentionFirst(ServingWorkspacePresentation.rows(
+            ServingRows.build(slots: endpoint.fleet.slots, servers: servers, snapshot: inventory.snapshot), includeAvailable: false))
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             HStack {
                 Text("Local serving models").font(WorkbenchTypography.label)
@@ -401,6 +409,14 @@ private struct ServingPopoverRow: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(name).font(WorkbenchTypography.label).lineLimit(1).truncationMode(.middle).help(identity)
             Text(facts).font(WorkbenchTypography.metadata).foregroundStyle(factsColor).lineLimit(2)
+            if let reason = ServingWorkspacePresentation.attentionReason(row) {
+                Label {
+                    Text(reason + " " + ServingWorkspacePresentation.attentionNextStep).textSelection(.enabled)
+                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(WorkbenchColor.failure) }
+                .font(WorkbenchTypography.metadata)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("popover-attention-\(row.id)")
+            }
             HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
                 ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xxs) { inlineActions }
                 Spacer(minLength: WorkbenchSpacing.xs)

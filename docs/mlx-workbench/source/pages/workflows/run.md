@@ -45,7 +45,7 @@ The endpoint list combines saved endpoints, temporary Workbench servers and othe
 
 ## Live Monitor
 
-**Monitor** is a separate workspace for active model servers from the shared inventory. It shows provider, status, input/output tokens, active requests and the most recent response throughput. Select a row for its API address, measurement interval, completed/failed/measured request counts and source/memory details. **Open model settings** selects that exact endpoint in Serving.
+**Monitor** is a separate workspace for active model servers from the shared inventory. It shows provider, status, input/output tokens, active requests and the most recent response throughput. Models that need attention come first; their **Needs attention** status, here and in Serving, opens the engine's reason in place, and the selected row's details repeat it. Select a row for its API address, measurement interval, completed/failed/measured request counts and source/memory details. **Open model settings** selects that exact endpoint in Serving.
 
 Managed chat gateways report process-lifetime counters, reset when the gateway restarts. Token totals include only completed responses whose workers reported usage. Missing measurements display a dash; a reported zero stays zero. Response tokens per second includes queueing, loading and response generation, so it differs from a decoder-only benchmark. External providers without these metrics retain status and source visibility. Monitor uses the existing inventory refresh and never starts inference.
 
@@ -239,7 +239,7 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 ## The memory header
 
-The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Its label adds the loaded count at wider window sizes, plus the serving count when some served models are not in memory (for example `3 serving · 1 loaded`), and flags an endpoint that is starting or degraded. Open it for the same rows as Serving’s endpoint list, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
+The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. At wider window sizes its label counts the models Monitor lists, in the words their status uses (for example `1 loaded · 2 ready on request`), and flags an endpoint that is starting or degraded. A model whose load failed turns the label red and leads it with `1 needs attention`, at every window size. Open it for the same rows as Serving’s endpoint list, models that need attention first with the engine's reason, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
 
 Choose **What’s using memory…** from the toolbar popover
 for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.

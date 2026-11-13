@@ -33,6 +33,15 @@ final class ScanContractTests: XCTestCase {
         XCTAssertFalse(result.services[0].canUnload)
     }
 
+    func testServeStatusCarriesWhyTheGatewayModelFailed() throws {
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [[
+            "path": "/Models/Strata", "runtime": "strata", "port": 8766, "pid": 42, "alive": true, "argv_match": true,
+            "jit": true, "model_state": "failed", "last_error": "Agent memory guard stopped the owned model worker.",
+        ]]])?.first)
+        XCTAssertEqual(server.modelState, "failed")
+        XCTAssertEqual(server.lastError, "Agent memory guard stopped the owned model worker.")
+    }
+
     func testHostedModelListingDoesNotInventResidencyOrLocalMemory() throws {
         let host = ModelHost(name: "Local", provider: .openAICompatible, baseURL: "http://127.0.0.1:8080")
         let model = HostedModel(hostID: host.id, modelID: "org/model", name: "Model")

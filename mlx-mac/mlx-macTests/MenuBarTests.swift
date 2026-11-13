@@ -209,9 +209,9 @@ final class MenuBarTests: XCTestCase {
 
     func testToolbarLabelNamesLoadedCountOnlyWhenWideAndRead() {
         let twelve: Int64 = 12_000_000_000
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, loaded: 2, compact: false), "2 loaded · ~12.0 GB available")
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, loaded: 2, compact: true), "~12.0 GB available")
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, loaded: nil, compact: false), "~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: false), "2 loaded · ~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: true), "~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: nil, compact: false), "~12.0 GB available")
         XCTAssertEqual(WorkbenchSize.ResourceHeader.fullLabelWindowMinimum, 908)
         XCTAssertGreaterThan(WorkbenchSize.ResourceHeader.fullLabelWindowMinimum, 907)
     }
@@ -226,9 +226,9 @@ final class MenuBarTests: XCTestCase {
         XCTAssertNil(ResourceHeaderPresentation.attentionState(slots: fleet, state: .disabled))
         let degraded = EndpointState.degraded(reason: "down")
         XCTAssertEqual(EndpointIcon.name(for: degraded), "exclamationmark.triangle")
-        XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: 12_000_000_000, loaded: 1, attention: degraded),
+        XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: 12_000_000_000, tally: ServingTally(loaded: 1), attention: degraded),
                        "1 loaded · ~12.0 GB available, endpoint: " + degraded.summary)
-        XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: nil, loaded: nil, attention: nil), "RAM unavailable")
+        XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: nil, tally: nil, attention: nil), "RAM unavailable")
     }
 
     @MainActor

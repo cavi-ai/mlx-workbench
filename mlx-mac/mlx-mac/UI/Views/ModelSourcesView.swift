@@ -130,7 +130,7 @@ struct ModelSourcesView: View {
                     Text(ServingWorkspacePresentation.service(row)?.providerName ?? "MLX Workbench")
                 }.width(min: 100, ideal: 145)
                 TableColumn("State") { row in
-                    Text(ServingWorkspacePresentation.service(row)?.statusText ?? ServingWorkspacePresentation.status(row, states: endpoint.slotStates))
+                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(row)?.statusText)
                 }.width(min: 110, ideal: 160)
                 TableColumn("API address") { row in
                     Text(ServingWorkspacePresentation.baseURL(row) ?? "Not reported").lineLimit(1).truncationMode(.middle)
