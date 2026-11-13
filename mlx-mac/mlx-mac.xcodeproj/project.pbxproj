@@ -9,6 +9,10 @@
 /* Begin PBXBuildFile section */
         E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
         E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
+        E71300000000000000000015 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000023; };
+		E71400000000000000000102 /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71400000000000000000101 /* TerminalSession.swift */; };
+		E71400000000000000000202 /* TerminalWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71400000000000000000201 /* TerminalWorkspaceView.swift */; };
+		E71400000000000000000302 /* TerminalSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71400000000000000000301 /* TerminalSessionTests.swift */; };
 		E71200000000000000000402 /* ServingClientSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000401 /* ServingClientSetup.swift */; };
 		E71200000000000000000302 /* ServingMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000301 /* ServingMonitorView.swift */; };
 		E71200000000000000000502 /* ModelSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000501 /* ModelSourcesView.swift */; };
@@ -386,6 +390,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		E71400000000000000000101 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TerminalSession.swift; sourceTree = "<group>"; };
+		E71400000000000000000201 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TerminalWorkspaceView.swift; sourceTree = "<group>"; };
+		E71400000000000000000301 /* TerminalSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionTests.swift; sourceTree = "<group>"; };
 		E71200000000000000000401 /* ServingClientSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingClientSetup.swift; sourceTree = "<group>"; };
 		E71200000000000000000301 /* ServingMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingMonitorView.swift; sourceTree = "<group>"; };
 		E71200000000000000000501 /* ModelSourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ModelSourcesView.swift; sourceTree = "<group>"; };
@@ -790,6 +797,7 @@
 			files = (
                 E71300000000000000000011,
                 E71300000000000000000012,
+                E71300000000000000000015,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -825,6 +833,7 @@
 				B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */,
 				9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */,
 				563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */,
+				E71400000000000000000101 /* TerminalSession.swift */,
 				3C8442EC04625C7E02ED9E6C /* AgentClientAdapters.swift */,
 				B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */,
 				005CE28BCD11F9309E165034 /* HostedModelsView.swift */,
@@ -865,6 +874,7 @@
 				E71200000000000000000301 /* ServingMonitorView.swift */,
 				E71200000000000000000501 /* ModelSourcesView.swift */,
 				E71200000000000000000401 /* ServingClientSetup.swift */,
+				E71400000000000000000201 /* TerminalWorkspaceView.swift */,
 				E71200000000000000000201 /* ServingWorkspaceViews.swift */,
 				E71200000000000000000101 /* ServingTelemetry.swift */,
 				E70500000000000000000401 /* TaskDestinationPanel.swift */,
@@ -1088,6 +1098,7 @@
 			isa = PBXGroup;
 			children = (
 				52A6F668CE64C0383A9D6AE7 /* ClientSetupSessionTests.swift */,
+				E71400000000000000000301 /* TerminalSessionTests.swift */,
 				B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */,
 				8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */,
 				66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */,
@@ -1216,7 +1227,7 @@
 			dependencies = (
 			);
 			name = mlx-workbench;
-            packageProductDependencies = (E71300000000000000000021, E71300000000000000000022);
+            packageProductDependencies = (E71300000000000000000021, E71300000000000000000022, E71300000000000000000023);
 			productName = mlx-workbench;
 			productReference = 24PROD01 /* mlx-workbench.app */;
 			productType = "com.apple.product-type.application";
@@ -1288,7 +1299,7 @@
 			);
 			mainGroup = 24GMAIN01;
 			productRefGroup = 24GIV01 /* Products */;
-			packageReferences = (E71300000000000000000031, E71300000000000000000032);
+			packageReferences = (E71300000000000000000031, E71300000000000000000032, E71300000000000000000033);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -1385,6 +1396,8 @@
 				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
 				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
 				9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */,
+				E71400000000000000000102 /* TerminalSession.swift in Sources */,
+				E71400000000000000000202 /* TerminalWorkspaceView.swift in Sources */,
 				1F24F07AD72BCC1A65E1D227 /* AgentClientAdapters.swift in Sources */,
 				BE10FB560CF5CCF42E69AB69 /* HostedComparisonView.swift in Sources */,
 				DA220300AF9616739E5D2445 /* HostedModelsView.swift in Sources */,
@@ -1637,6 +1650,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0BDC1FD23F1A80856D6C2CCE /* ClientSetupSessionTests.swift in Sources */,
+				E71400000000000000000302 /* TerminalSessionTests.swift in Sources */,
 				1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */,
 				33CB1B0DE6A5B26995477A5A /* ModelHostClientTests.swift in Sources */,
 				07DC542B16E33D64215AB114 /* ComfyWorkflowTests.swift in Sources */,
@@ -1740,10 +1754,12 @@
 /* Begin XCRemoteSwiftPackageReference section */
         E71300000000000000000031 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/LebJe/TOMLKit.git"; requirement = {kind = exactVersion; version = 0.6.0; }; };
         E71300000000000000000032 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/jpsim/Yams.git"; requirement = {kind = exactVersion; version = 6.2.2; }; };
+        E71300000000000000000033 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git"; requirement = {kind = exactVersion; version = 1.99.3; }; };
 /* End XCRemoteSwiftPackageReference section */
 /* Begin XCSwiftPackageProductDependency section */
         E71300000000000000000021 = {isa = XCSwiftPackageProductDependency; package = E71300000000000000000031; productName = TOMLKit; };
         E71300000000000000000022 = {isa = XCSwiftPackageProductDependency; package = E71300000000000000000032; productName = Yams; };
+        E71300000000000000000023 = {isa = XCSwiftPackageProductDependency; package = E71300000000000000000033; productName = SwiftTerm; };
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */

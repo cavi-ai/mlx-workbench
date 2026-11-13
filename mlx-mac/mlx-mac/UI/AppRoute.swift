@@ -24,6 +24,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case settings = "settings"
     case monitor = "monitor"
     case sources = "sources"
+    case terminal = "terminal"
 
     enum Group: String, CaseIterable, Hashable {
         case models = "Models"
@@ -68,7 +69,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     /// which stays fixed for `order` and mount order.
     private static let sidebarOrder: [Group: [AppRoute]] = [
         .models: [.library, .sources, .discover, .prepare, .reclaim],
-        .workspaces: [.use, .compare, .run, .monitor, .training, .studies],
+        .workspaces: [.use, .compare, .run, .monitor, .training, .studies, .terminal],
         .system: [.overview, .activity, .clientSetup, .health],
         .settings: [.settings],
     ]
@@ -85,7 +86,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     var group: Group {
         switch self {
         case .library, .sources, .discover, .prepare, .reclaim, .lmStudio, .adopt: return .models
-        case .use, .compare, .run, .monitor, .training, .studies: return .workspaces
+        case .use, .compare, .run, .monitor, .training, .studies, .terminal: return .workspaces
         case .overview, .activity, .clientSetup, .health: return .system
         case .settings: return .settings
         }
@@ -111,6 +112,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .training: return "Training"
         case .adopt: return "Adopt"
         case .settings: return "Settings"
+        case .terminal: return "Terminal"
         }
     }
 
@@ -134,6 +136,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .training: return "sparkles"
         case .adopt: return "hand.tap"
         case .settings: return "gearshape"
+        case .terminal: return "apple.terminal"
         }
     }
 
@@ -157,6 +160,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .training: return "Review local training and fine-tuning tools."
         case .adopt: return "Adopt a model role using the available evidence."
         case .settings: return "Configure Workbench paths, runtime, and feature controls."
+        case .terminal: return "Run OpenCode or a shell in a folder, inside the Workbench."
         }
     }
 

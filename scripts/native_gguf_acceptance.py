@@ -234,6 +234,7 @@ def cleanup_training(manifest: RuntimeManifest, environment: dict[str, str]) -> 
 def xcodebuild_command(xcodebuild: str, evidence: Path, source_format: str = "gguf", workflow: str = "serving") -> list[str]:
     return [
         xcodebuild,
+        "-skipPackagePluginValidation",
         "-project",
         "mlx-mac/mlx-mac.xcodeproj",
         "-scheme",

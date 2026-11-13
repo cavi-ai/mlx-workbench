@@ -372,7 +372,7 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
     (output_dir / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     os.chdir(checkout)
     dd = checkout / ".build/native-ui"
-    common = ["xcodebuild", "-project", "mlx-mac/mlx-mac.xcodeproj", "-configuration", "Debug",
+    common = ["xcodebuild", "-skipPackagePluginValidation", "-project", "mlx-mac/mlx-mac.xcodeproj", "-configuration", "Debug",
               "-destination", "platform=macOS,arch=arm64", "-derivedDataPath", str(dd)]
     if manifest.get("runtime_bundle"):
         payload = input_dir / "runtime-bundle"

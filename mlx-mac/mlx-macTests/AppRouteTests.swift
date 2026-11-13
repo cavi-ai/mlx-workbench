@@ -11,23 +11,23 @@ final class AppRouteTests: XCTestCase {
             "convert", "quant", "serve",
             "jobs", "duplicates", "wire", "doctor",
             "scout", "lmstudio", "studies", "training-studio", "adopt",
-            "settings", "monitor", "sources"
+            "settings", "monitor", "sources", "terminal"
         ]
 
-        XCTAssertEqual(routes.count, 18)
+        XCTAssertEqual(routes.count, 19)
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [5, 6, 4, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [5, 7, 4, 1])
     }
 
     func testSidebarGroupsFollowTheModelFirstOrder() {
         let grouped = AppRoute.grouped
         XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
         XCTAssertEqual(grouped[0].routes, [.library, .sources, .discover, .prepare, .reclaim])
-        XCTAssertEqual(grouped[1].routes, [.use, .compare, .run, .monitor, .training, .studies])
+        XCTAssertEqual(grouped[1].routes, [.use, .compare, .run, .monitor, .training, .studies, .terminal])
         XCTAssertEqual(grouped[2].routes, [.overview, .activity, .clientSetup, .health])
         XCTAssertEqual(grouped[3].routes, [.settings])
     }
@@ -137,7 +137,8 @@ final class AppRouteTests: XCTestCase {
             (.adopt, "Models", "Adopt", "hand.tap"),
             (.settings, "Settings", "Settings", "gearshape"),
             (.monitor, "Workspaces", "Monitor", "waveform.path.ecg"),
-            (.sources, "Models", "Model sources", "externaldrive.connected.to.line.below")
+            (.sources, "Models", "Model sources", "externaldrive.connected.to.line.below"),
+            (.terminal, "Workspaces", "Terminal", "apple.terminal")
         ]
 
         for (route, group, label, symbol) in expected {

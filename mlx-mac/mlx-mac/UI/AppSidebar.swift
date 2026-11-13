@@ -101,7 +101,7 @@ struct AppSidebar: View {
     @AppStorage("sidebar.workspacesExpanded") private var workspacesExpanded = true
     @AppStorage("sidebar.systemExpanded") private var systemExpanded = false
 
-    private static let workspaceRoutes: [AppRoute] = [.use, .run, .monitor, .compare, .prepare, .training, .studies]
+    private static let workspaceRoutes: [AppRoute] = [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal]
     private static let systemRoutes: [AppRoute] = [.overview, .activity, .clientSetup, .health]
 
     private var selection: Binding<SidebarItem> {
