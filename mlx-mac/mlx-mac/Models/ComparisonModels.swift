@@ -1329,6 +1329,13 @@ enum ChatComparisonPresentation {
         return Completion(finished: finished, total: prompts.count, label: label, isComplete: complete)
     }
 
+    /// The prompt's outcome and the run's; one line when they say the same thing, such as a lane blocked for the whole run.
+    static func outcomeLines(prompt: PromptOutcome, run: Completion?) -> (prompt: String, run: String?) {
+        guard let run else { return (prompt.label + " · this prompt", nil) }
+        if run.label == prompt.label { return (prompt.label + " · entire run", nil) }
+        return (prompt.label + " · this prompt", run.label + " · entire run")
+    }
+
     static func readingResults(in run: ComparisonRun) -> [VariantResult] {
         run.results.filter { result in
             result.error == nil && result.samples.contains { $0.error == nil && !($0.fullOutput ?? $0.outputExcerpt).isEmpty }

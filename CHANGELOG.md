@@ -18,6 +18,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ### Fixed
 
 - Connect app: setup follows symbolic links in a client's config path and writes the real file, and **Choose Folder…** sets the folder that holds the config.
+- Serving: a model whose load failed leads the toolbar label with **needs attention**, and its **Needs attention** status in Serving and Monitor opens the engine's reason in place; the toolbar counts the models Monitor lists, Compare lane tiles keep one size, and a lane blocked for the whole run says so once.
 
 
 ## [0.9.0] - 2026-11-12

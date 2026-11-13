@@ -415,4 +415,15 @@ extension ComparePresentation {
         let line = [model.item.quantization, parameters ?? disk].compactMap { $0 }.joined(separator: " · ")
         return line.isEmpty ? nil : line
     }
+
+    /// The runtime a chat lane shows when its model has no runtime to choose.
+    static func fixedRuntimeTitle(_ servingRuntime: String?) -> String {
+        switch servingRuntime {
+        case "strata": "Strata"
+        case "splash": "Splash"
+        case "mlx_lm": "MLX-LM"
+        case "mlx-vlm": "MLX-VLM"
+        default: "Automatic"
+        }
+    }
 }

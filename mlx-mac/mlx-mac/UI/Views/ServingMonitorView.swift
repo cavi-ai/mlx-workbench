@@ -18,8 +18,9 @@ struct ServingMonitorView: View {
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
     }
     private var rows: [ServingRow] {
-        ServingRows.build(slots: endpoint.fleet.slots, servers: workflow.servers, snapshot: inventory.snapshot)
-            .filter { ServingWorkspacePresentation.isRunning($0) }
+        ServingWorkspacePresentation.attentionFirst(
+            ServingRows.build(slots: endpoint.fleet.slots, servers: workflow.servers, snapshot: inventory.snapshot)
+                .filter { ServingWorkspacePresentation.isRunning($0) })
     }
     private var selected: ServingRow? { rows.first { $0.id == selection } }
     private var models: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
@@ -44,7 +45,7 @@ struct ServingMonitorView: View {
                         Text(ServingWorkspacePresentation.provider(row)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                     }
                 }.width(min: 160, ideal: 240)
-                TableColumn("Status") { row in Text(ServingWorkspacePresentation.status(row, states: endpoint.slotStates)) }.width(min: 90, ideal: 125)
+                TableColumn("Status") { row in ServingStatusLabel(row: row, states: endpoint.slotStates) }.width(min: 90, ideal: 125)
                 TableColumn("Input tokens") { row in Text(token(telemetry(row)?.inputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Output tokens") { row in Text(token(telemetry(row)?.outputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Response tok/s") { row in
@@ -86,6 +87,12 @@ struct ServingMonitorView: View {
                     appHost.handoffs.send(ServingFocusRequest(rowID: row.id), as: .openServing)
                     onRouteSelection(.run)
                 }.accessibilityIdentifier("monitor-open-settings")
+            }
+            if let reason = ServingWorkspacePresentation.attentionReason(row) {
+                Label {
+                    Text(reason + " " + ServingWorkspacePresentation.attentionNextStep).textSelection(.enabled)
+                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(WorkbenchColor.failure) }
+                .accessibilityIdentifier("monitor-attention-reason")
             }
             if let url = ServingWorkspacePresentation.baseURL(row) { Text(url).textSelection(.enabled) }
             if let metrics = telemetry(row) {

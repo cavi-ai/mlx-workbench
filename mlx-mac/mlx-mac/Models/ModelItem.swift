@@ -283,6 +283,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let apiKeySHA256: String?
     var inferenceTelemetry: LabValue? = nil
     var requestDefaults: LabValue? = nil
+    /// Why the gateway's last load or worker failed, as the engine reports it.
+    var lastError: String? = nil
     var supportsChatCompletions: Bool { runtime != "tasks" && (taskKinds?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
@@ -309,6 +311,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case taskKinds = "task_kinds"
         case apiKeySHA256 = "api_key_sha256"
         case inferenceTelemetry = "inference_telemetry", requestDefaults = "request_defaults"
+        case lastError = "last_error"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -345,7 +348,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         taskKinds: [String]? = nil,
         apiKeySHA256: String? = nil,
         inferenceTelemetry: LabValue? = nil,
-        requestDefaults: LabValue? = nil
+        requestDefaults: LabValue? = nil,
+        lastError: String? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -379,6 +383,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.apiKeySHA256 = apiKeySHA256
         self.inferenceTelemetry = inferenceTelemetry
         self.requestDefaults = requestDefaults
+        self.lastError = lastError
     }
 
     /// The identity serve reports for this server's model: the repo id for
