@@ -78,6 +78,8 @@ final class EnvironmentVersionProbe: Sendable {
 final class WatchCoordinator: ObservableObject {
     @Published private(set) var alerts: [WatchAlert] = []
     @Published private(set) var lastCheckedAt: Date?
+    @Published private(set) var lastUpstreamSuccessAt: Date?
+    @Published private(set) var upstreamCheckFailed = false
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
     @Published private(set) var upstreamIssue: String?
@@ -86,6 +88,7 @@ final class WatchCoordinator: ObservableObject {
 
     private var watchDiff: @Sendable () async throws -> [[String: Any]]
     private var watchSnapshot: @Sendable () async throws -> Void
+    private var upstreamGeneration = UUID()
     private let fingerprint: () -> EnvironmentFingerprint
     private let verifiedReports: () -> [VerificationReport]
     private let alertStore: JSONStore<WatchAlert>
@@ -133,6 +136,7 @@ final class WatchCoordinator: ObservableObject {
                            watchSnapshot: @escaping @Sendable () async throws -> Void) {
         self.watchDiff = watchDiff
         self.watchSnapshot = watchSnapshot
+        upstreamGeneration = UUID()
     }
 
     func waitForHistory() async { await historyTask?.value }
@@ -155,6 +159,8 @@ final class WatchCoordinator: ObservableObject {
             let stored = try await WorkbenchIO.perform(on: io) { Result { try stateStore.load() } }.get()
             state = stored.first ?? .empty
             lastCheckedAt = state.lastCheckedAt
+            lastUpstreamSuccessAt = state.lastUpstreamSuccessAt
+            upstreamCheckFailed = state.lastUpstreamAttemptFailed ?? false
             stateLoaded = true
         } catch {
             statePersistenceError = "Saved watch state is unavailable: \(AppHost.render(error))"
@@ -220,16 +226,23 @@ final class WatchCoordinator: ObservableObject {
         isChecking = true
         defer { isChecking = false }
         var next = state
-        var candidates = await checkUpstream(state: &next)
+        let generation = upstreamGeneration
+        let (upstreamSucceeded, upstreamAlerts) = await checkUpstream(state: &next)
+        guard generation == upstreamGeneration, !Task.isCancelled else { return }
+        var candidates = upstreamAlerts
         if let environment = checkEnvironment(state: &next) { candidates.append(environment) }
         guard await persistNewAlerts(candidates).value else { return }
         next.lastCheckedAt = now()
+        next.lastUpstreamAttemptFailed = !upstreamSucceeded
+        if upstreamSucceeded { next.lastUpstreamSuccessAt = next.lastCheckedAt }
         let captured = next, store = stateStore
         _ = await enqueue {
             do {
                 try await WorkbenchIO.perform(on: self.io) { Result { try store.replaceAll([captured]) } }.get()
                 self.state = captured
                 self.lastCheckedAt = captured.lastCheckedAt
+                self.lastUpstreamSuccessAt = captured.lastUpstreamSuccessAt
+                self.upstreamCheckFailed = !upstreamSucceeded
                 self.statePersistenceError = nil
                 self.refreshPersistenceError()
                 return true
@@ -242,17 +255,17 @@ final class WatchCoordinator: ObservableObject {
     }
 
     /// First run establishes the upstream baseline silently; later runs diff.
-    private func checkUpstream(state next: inout WatchState) async -> [WatchAlert] {
+    private func checkUpstream(state next: inout WatchState) async -> (Bool, [WatchAlert]) {
         do {
             if !next.baselineEstablished {
                 try await watchSnapshot()
                 upstreamIssue = nil
                 next.baselineEstablished = true
-                return []
+                return (true, [])
             }
             let findings = try await watchDiff()
             upstreamIssue = nil
-            return findings.compactMap { finding in
+            return (true, findings.compactMap { finding in
                 guard let repo = finding["repo"] as? String else { return nil }
                 let detail = (finding["detail"] as? String) ?? "upstream change detected"
                 let code = (finding["code"] as? String) ?? "changed"
@@ -266,15 +279,16 @@ final class WatchCoordinator: ObservableObject {
                     code: code,
                     detail: detail
                 )
-            }
+            })
         } catch {
+            upstreamIssue = nil
             // Network failure stays quiet; an unavailable local scope needs an actionable explanation.
             if let error = error as? BridgeError, ["engine_update_required", "engine_changed"].contains(error.code) {
                 upstreamIssue = AppHost.render(error)
             } else if let error = error as? ModelUpdateError {
                 upstreamIssue = error.localizedDescription
             }
-            return []
+            return (false, [])
         }
     }
 
@@ -337,16 +351,27 @@ final class WatchCoordinator: ObservableObject {
 
     var isMonitoring: Bool { monitorTask != nil }
 
-    /// Check on launch when stale (>24h or never), then daily. Idempotent.
+    /// Successful checks run daily; a failed upstream check is retried after an hour.
     func startMonitoring(intervalNanoseconds: UInt64 = 86_400_000_000_000) {
         guard monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             await self?.waitForHistory()
             while !Task.isCancelled {
                 guard let self else { return }
-                let stale = state.lastCheckedAt.map { now().timeIntervalSince($0) > 86_400 } ?? true
-                if stale { await checkNow() }
-                try? await Task.sleep(nanoseconds: intervalNanoseconds)
+                let interval = self.upstreamCheckFailed ? min(intervalNanoseconds, 3_600_000_000_000) : intervalNanoseconds
+                let legacyNeedsCheck = self.state.lastUpstreamAttemptFailed == nil && self.state.lastUpstreamSuccessAt == nil
+                let elapsed = legacyNeedsCheck ? .infinity : (self.state.lastCheckedAt.map { max(0, self.now().timeIntervalSince($0)) } ?? .infinity)
+                let seconds = Double(interval) / 1_000_000_000
+                if elapsed >= seconds {
+                    await self.checkNow()
+                    if Task.isCancelled { return }
+                    // A concurrent check or failed state write must not create a retry loop.
+                    if self.isChecking || self.persistenceError != nil {
+                        try? await Task.sleep(nanoseconds: min(intervalNanoseconds, 3_600_000_000_000))
+                    }
+                    continue
+                }
+                try? await Task.sleep(nanoseconds: min(3_600_000_000_000, UInt64((seconds - elapsed) * 1_000_000_000)))
             }
         }
     }

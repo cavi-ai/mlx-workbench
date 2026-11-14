@@ -83,6 +83,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
             f.write(json.dumps(args) + '\\n')
+        if args[:2] == ['watch', 'snapshot'] and (root / 'watch-offline').exists():
+            print('Watch unavailable', file=sys.stderr)
+            sys.exit(2)
         if args and args[0] == 'task':
             task_root = pathlib.Path(args[args.index('--state-dir') + 1]) if '--state-dir' in args else root / 'Library/Application Support/mlx-agent/tasks'
             records_path = task_root / 'fixture-tasks.json'
@@ -848,6 +851,23 @@ final class WorkbenchReviewUITests: XCTestCase {
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"intake\", \"fetch\""))
         XCTAssertFalse(calls.contains("\"backend\", \"install\""))
+    }
+
+    func testWatchStatusRecoversAfterManualRetry() throws {
+        let configURL = root.appendingPathComponent("config.json")
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        config["watch_enabled"] = true
+        try JSONSerialization.data(withJSONObject: config).write(to: configURL)
+        let offline = root.appendingPathComponent("watch-offline")
+        try Data().write(to: offline)
+        launch(appearance: "Dark", route: "models", isolatedHome: true, expandedSystem: true)
+        select("Overview")
+        XCTAssertTrue(app.staticTexts["Check unavailable · No successful check recorded"].waitForExistence(timeout: 30))
+        try FileManager.default.removeItem(at: offline)
+        let retry = app.buttons["watch-check-now"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+        retry.click()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Last successful check")).firstMatch.waitForExistence(timeout: 30))
     }
 
     func testVisionGGUFUpdateReviewsExactBundleBeforePreparation() throws {

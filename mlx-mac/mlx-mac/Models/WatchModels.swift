@@ -1,7 +1,7 @@
 import Foundation
 
 /// Explicit ownership inputs; Watch never expands the selected cache or searches a working directory.
-struct WatchInventoryScope: Sendable {
+struct WatchInventoryScope: Sendable, Equatable {
     let hfCache: String?
     let ownedRepos: [String]
 }
@@ -154,6 +154,8 @@ struct WatchState: Codable, Equatable, Sendable {
     var lastCheckedAt: Date?
     var baselineEstablished: Bool
     var lastEnvironmentFingerprint: String?
+    var lastUpstreamSuccessAt: Date? = nil
+    var lastUpstreamAttemptFailed: Bool? = nil
 
     static var empty: WatchState {
         WatchState(lastCheckedAt: nil, baselineEstablished: false, lastEnvironmentFingerprint: nil)
