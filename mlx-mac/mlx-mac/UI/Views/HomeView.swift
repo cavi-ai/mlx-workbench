@@ -325,6 +325,30 @@ struct HomeView: View {
             hero
             ErrorBanner(text: watch.persistenceError)
             ErrorBanner(text: watch.upstreamIssue)
+            if appHost.config.watchEnabled {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Model update checks").font(WorkbenchTypography.section)
+                        if watch.isChecking {
+                            Text("Checking for updates…")
+                        } else if watch.upstreamCheckFailed {
+                            if let checked = watch.lastUpstreamSuccessAt {
+                                Text("Check unavailable · Last successful check \(checked.formatted(date: .abbreviated, time: .shortened))")
+                            } else {
+                                Text("Check unavailable · No successful check recorded")
+                            }
+                        } else if let checked = watch.lastUpstreamSuccessAt {
+                            Text("Last successful check \(checked.formatted(date: .abbreviated, time: .shortened))")
+                        } else {
+                            Text("No successful check recorded")
+                        }
+                    }.foregroundStyle(WorkbenchColor.muted)
+                    Spacer()
+                    Button("Check now") { Task { await watch.checkNow() } }
+                        .disabled(watch.isChecking || watch.isLoadingHistory)
+                        .accessibilityIdentifier("watch-check-now")
+                }
+            }
             ErrorBanner(text: usage.persistenceError)
             FlightPathPanel(
                 model: selectedModel,

@@ -79,10 +79,12 @@ status. Opening a log never restarts work.
 
 With **Settings → Advisors → Watch & regression alerts** on, the app checks two kinds of change and shows them under **Watch alerts** on Overview:
 
-- **Upstream changes.** The engine's `watch diff` digests changes to the Hugging Face repositories your models came from. The first check sets a baseline silently, and network failures stay silent.
+- **Upstream changes.** The engine's `watch diff` digests changes to the Hugging Face repositories your models came from. The first successful check sets a baseline without an alert.
 - **Environment drift.** A macOS or MLX change makes verified models stale. The alert offers **Re-verify** to run the quality gate again for those models.
 
 Watch checks only the selected Hugging Face cache, existing downloads recorded in the managed model folder, known client configuration files and runtime inventories. It never searches the app’s working directory. Changing the scope establishes new ownership evidence before reporting a missing model. An engine that cannot honor this scope shows an update requirement on Overview.
+
+Overview shows the last successful upstream check and offers **Check now**. An unavailable check keeps the last successful time and existing alerts, and retries automatically after an hour while Watch is enabled. A legacy check time is not treated as proof of a successful upstream check. Network failures do not send notifications.
 
 Alerts are deduplicated. **Snooze**, **Snooze 7 days** and **Mute** persist across launches.
 New alerts appear and send notifications after their batch is saved. Saving runs

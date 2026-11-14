@@ -458,11 +458,18 @@ class AppHost {
             self.watch.configureUpstream(watchDiff: { [weak self] in
                 guard let self else { throw CancellationError() }
                 let scope = try await self.watchInventoryScope()
-                return try await api.watchDiff(stateDirectory: watchStateDir, scope: scope)
+                let findings = try await api.watchDiff(stateDirectory: watchStateDir, scope: scope)
+                guard try await self.watchInventoryScope() == scope else {
+                    throw ModelUpdateError.invalid("Model locations changed during the Watch check. Check again to use the selected locations.")
+                }
+                return findings
             }, watchSnapshot: { [weak self] in
                 guard let self else { throw CancellationError() }
                 let scope = try await self.watchInventoryScope()
                 try await api.watchSnapshot(stateDirectory: watchStateDir, scope: scope)
+                guard try await self.watchInventoryScope() == scope else {
+                    throw ModelUpdateError.invalid("Model locations changed during the Watch check. Check again to use the selected locations.")
+                }
             })
         }
     }
@@ -479,7 +486,7 @@ class AppHost {
                 ManagedModelInstallStore.matchesManagedSourcePath(install, root: root) && FileManager.default.fileExists(atPath: install.path)
             }.map(\.repo)).sorted()
         }
-        guard selectedRoots == config.ggufRoots + config.mlxRoots, root == config.outputDir else {
+        guard selectedRoots == config.ggufRoots + config.mlxRoots, root == config.outputDir, cache == selectedHFCache else {
             throw ModelUpdateError.invalid("Model locations changed during the Watch check. Check again to use the selected locations.")
         }
         return WatchInventoryScope(hfCache: cache, ownedRepos: repos)

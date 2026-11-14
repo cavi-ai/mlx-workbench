@@ -251,6 +251,82 @@ final class WatchCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.upstreamIssue)
     }
 
+    func testFailedInitialSnapshotDoesNotRecordSuccessfulCheck() async {
+        struct Offline: Error {}
+        let coordinator = makeCoordinator(snapshot: { throw Offline() }, diff: { [] })
+        await coordinator.checkNow()
+        XCTAssertNil(coordinator.lastUpstreamSuccessAt)
+        XCTAssertTrue(coordinator.upstreamCheckFailed)
+        XCTAssertTrue(coordinator.alerts.isEmpty)
+    }
+
+    func testFailedDiffPreservesLastSuccessAndAlertsAcrossRestart() async throws {
+        struct Offline: Error {}
+        let alerts = temporaryURL("alerts.json"), state = temporaryURL("state.json")
+        let coordinator = WatchCoordinator(watchDiff: { [["repo": "org/model", "detail": "changed"]] },
+            watchSnapshot: {}, fingerprint: { self.fingerprintA }, verifiedReports: { [] },
+            alertStore: JSONStore(fileURL: alerts), stateStore: JSONStore(fileURL: state), now: { self.now })
+        await coordinator.checkNow()
+        await coordinator.checkNow()
+        XCTAssertEqual(coordinator.alerts.count, 1)
+        coordinator.configureUpstream(watchDiff: { throw Offline() }, watchSnapshot: {})
+        await coordinator.checkNow()
+        XCTAssertEqual(coordinator.lastUpstreamSuccessAt, now)
+        XCTAssertTrue(coordinator.upstreamCheckFailed)
+        let restarted = WatchCoordinator(watchDiff: { [] }, watchSnapshot: {}, fingerprint: { self.fingerprintA },
+            verifiedReports: { [] }, alertStore: JSONStore(fileURL: alerts), stateStore: JSONStore(fileURL: state), now: { self.now })
+        await restarted.waitForHistory()
+        XCTAssertEqual(restarted.lastUpstreamSuccessAt, now)
+        XCTAssertTrue(restarted.upstreamCheckFailed)
+        XCTAssertEqual(restarted.alerts.count, 1)
+        await restarted.checkNow()
+        XCTAssertFalse(restarted.upstreamCheckFailed)
+        XCTAssertEqual(restarted.lastUpstreamSuccessAt, now)
+    }
+
+    func testLegacyWatchStateDoesNotImplyUpstreamSuccess() throws {
+        let data = Data("{\"lastCheckedAt\":1000,\"baselineEstablished\":true}".utf8)
+        let state = try JSONDecoder().decode(WatchState.self, from: data)
+        XCTAssertNotNil(state.lastCheckedAt)
+        XCTAssertNil(state.lastUpstreamSuccessAt)
+        XCTAssertNil(state.lastUpstreamAttemptFailed)
+    }
+
+    func testMonitoringRetriesFailedSnapshotAndRecovers() async throws {
+        struct Offline: Error {}
+        let calls = ProbeCalls()
+        let coordinator = WatchCoordinator(watchDiff: { [] }, watchSnapshot: {
+            if calls.next() == 1 { throw Offline() }
+        }, fingerprint: { self.fingerprintA }, verifiedReports: { [] },
+            alertStore: JSONStore(fileURL: temporaryURL("alerts.json")),
+            stateStore: JSONStore(fileURL: temporaryURL("state.json")))
+        coordinator.startMonitoring(intervalNanoseconds: 100_000_000)
+        defer { coordinator.stopMonitoring() }
+        for _ in 0..<40 where coordinator.lastUpstreamSuccessAt == nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(coordinator.lastUpstreamSuccessAt)
+        XCTAssertFalse(coordinator.upstreamCheckFailed)
+        XCTAssertGreaterThanOrEqual(calls.total, 2)
+    }
+
+    func testReconfiguredUpstreamDiscardsInFlightResult() async {
+        let entered = expectation(description: "old check started")
+        let release = AsyncWatchGate()
+        let coordinator = makeCoordinator(snapshot: {
+            entered.fulfill()
+            await release.wait()
+        }, diff: { [] })
+        let check = Task { await coordinator.checkNow() }
+        await fulfillment(of: [entered], timeout: 5)
+        coordinator.configureUpstream(watchDiff: { [] }, watchSnapshot: {})
+        await release.open()
+        await check.value
+        XCTAssertNil(coordinator.lastUpstreamSuccessAt)
+        await coordinator.checkNow()
+        XCTAssertNotNil(coordinator.lastUpstreamSuccessAt)
+    }
+
     func testOfflineDiffStaysSilent() async {
         struct Offline: Error {}
         let coordinator = makeCoordinator(
@@ -437,4 +513,10 @@ private final class PathRecorder: @unchecked Sendable {
         recorded.append(value)
         lock.unlock()
     }
+}
+
+private actor AsyncWatchGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    func open() { continuation?.resume(); continuation = nil }
 }
