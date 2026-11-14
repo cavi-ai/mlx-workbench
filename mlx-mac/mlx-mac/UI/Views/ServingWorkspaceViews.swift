@@ -14,6 +14,14 @@ enum ServingWorkspaceTab: String, CaseIterable, Identifiable {
 }
 
 enum ServingWorkspacePresentation {
+    enum Section: String, CaseIterable {
+        case live = "Live endpoints", saved = "Saved configurations", available = "Available from other apps"
+    }
+    static func section(_ row: ServingRow) -> Section {
+        if isRunning(row) { return .live }
+        if case .endpoint = row { return .saved }
+        return .available
+    }
     static func rows(_ rows: [ServingRow], includeAvailable: Bool) -> [ServingRow] {
         rows.filter { row in
             guard case .service(let service) = row else { return true }
@@ -51,8 +59,9 @@ enum ServingWorkspacePresentation {
             case "loaded": return "Loaded"
             case "unloaded": return "Ready on request"
             case "loading": return "Loading"
+            case "unloading": return "Unloading"
             case "failed": return "Needs attention"
-            default: return server.state == "running" ? "Running" : "Stopped"
+            default: return server.state == "running" ? "Running · residency unknown" : "Stopped"
             }
         }
         return service(row)?.statusText ?? "Unavailable"
@@ -78,6 +87,24 @@ enum ServingWorkspacePresentation {
         if case .endpoint(let slot, _, _) = row { return slot.modelPath }
         return service(row)?.modelID ?? ""
     }
+    /// Related endpoints require a concrete local model path and existing model identity evidence.
+    static func siblingEndpoints(of row: ServingRow, in rows: [ServingRow]) -> [ServingRow] {
+        let path: String
+        if let current = server(row) {
+            guard let value = current.path, current.adapterPath == nil, current.adapterIdentity == nil,
+                  current.adapterStatus == nil, current.trainingBinding == nil else { return [] }
+            path = value
+        } else if case .endpoint(let slot, _, _) = row { path = slot.modelPath }
+        else { return [] }
+        guard path.hasPrefix("/") else { return [] }
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        return rows.filter { candidate in
+            guard candidate.id != row.id, isRunning(candidate), let other = server(candidate),
+                  let otherPath = other.path, otherPath.hasPrefix("/"), other.adapterPath == nil,
+                  other.adapterIdentity == nil, other.adapterStatus == nil, other.trainingBinding == nil else { return false }
+            return URL(fileURLWithPath: otherPath).standardizedFileURL.path == normalized
+        }
+    }
     static func isRunning(_ row: ServingRow) -> Bool {
         if service(row)?.stale == true { return false }
         if let server = server(row) { return server.state == "running" }
@@ -102,10 +129,32 @@ enum ServingWorkspacePresentation {
         rows.filter(isRunning).reduce(into: ServingTally()) { tally, row in
             if attentionReason(row) != nil { tally.attention += 1; return }
             switch server(row)?.modelState ?? service(row)?.residency.rawValue {
+            case "loaded": tally.loaded += 1
             case "unloaded": tally.onRequest += 1
             case "loading": tally.loading += 1
-            default: tally.loaded += 1
+            case "unloading": tally.unloading += 1
+            default: tally.unknown += 1
             }
+        }
+    }
+}
+
+struct ServingSiblingEndpoints: View {
+    let row: ServingRow
+    let rows: [ServingRow]
+    let onSelect: (String) -> Void
+    var body: some View {
+        let siblings = ServingWorkspacePresentation.siblingEndpoints(of: row, in: rows)
+        if !siblings.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Text("Same model at other endpoints").font(WorkbenchTypography.label)
+                ForEach(siblings) { sibling in
+                    Button("\(ServingWorkspacePresentation.baseURL(sibling) ?? "Address unavailable") · \(ServingWorkspacePresentation.status(sibling))") {
+                        onSelect(sibling.id)
+                    }.buttonStyle(.link).fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Each endpoint can be managed separately.").foregroundStyle(WorkbenchColor.muted)
+            }.font(WorkbenchTypography.secondary)
         }
     }
 }
@@ -114,7 +163,9 @@ struct ServingTally: Equatable {
     var attention = 0
     var loaded = 0
     var loading = 0
+    var unloading = 0
     var onRequest = 0
+    var unknown = 0
 }
 
 /// A row's status; one that needs attention is a link that explains itself in place.
@@ -151,6 +202,35 @@ struct ServingStatusLabel: View {
     }
 }
 
+private struct ServingModelRow: View {
+    let row: ServingRow
+    let models: [LibraryModel]
+    let states: [UUID: EndpointState]
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack {
+                Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis).lineLimit(2)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if let port = ServingWorkspacePresentation.server(row)?.port {
+                    Text(verbatim: ":\(port)").font(WorkbenchTypography.compactValue).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                } else if case .endpoint(let slot, _, _) = row {
+                    Text(verbatim: ":\(slot.port)").font(WorkbenchTypography.compactValue).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                }
+            }
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Text(ServingWorkspacePresentation.provider(row))
+                Text("·")
+                ServingStatusLabel(row: row, states: states)
+            }.font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1)
+            if let address = ServingWorkspacePresentation.baseURL(row) {
+                Text(address).font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(address)
+            }
+        }.foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
+    }
+}
+
 struct ServingModelList: View {
     let rows: [ServingRow]
     let models: [LibraryModel]
@@ -177,24 +257,15 @@ struct ServingModelList: View {
             TextField("Filter models", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
                 .accessibilityIdentifier("serving-model-filter")
             List(selection: $selectedID) {
-                ForEach(visibleRows) { row in
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        HStack {
-                            Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis).lineLimit(1).truncationMode(.middle)
-                            Spacer(minLength: WorkbenchSpacing.xs)
-                            if let port = ServingWorkspacePresentation.server(row)?.port {
-                                Text(verbatim: ":\(port)").font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
-                            } else if case .endpoint(let slot, _, _) = row {
-                                Text(verbatim: ":\(slot.port)").font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
-                            }
-                        }
-                        HStack(spacing: WorkbenchSpacing.xs) {
-                            Text(ServingWorkspacePresentation.provider(row))
-                            Text("·")
-                            ServingStatusLabel(row: row, states: states)
-                        }.font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
-                    }.padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
+                ForEach(ServingWorkspacePresentation.Section.allCases, id: \.self) { section in
+                    let entries = visibleRows.filter { ServingWorkspacePresentation.section($0) == section }
+                    if !entries.isEmpty { Section(section.rawValue) {
+                ForEach(entries) { row in
+                    ServingModelRow(row: row, models: models, states: states)
+                        .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
                         .accessibilityIdentifier("serving-model-\(row.id)")
+                }
+                    } }
                 }
             }.listStyle(.sidebar).accessibilityIdentifier("serving-model-list")
             .overlay {
@@ -219,16 +290,18 @@ struct ServingConnectionField: View {
     let title: String
     let value: String
     var identifier: String? = nil
+    var compact = false
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text(title).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
             HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
-                Text(value).font(WorkbenchTypography.value).textSelection(.enabled).lineLimit(3).truncationMode(.middle)
+                Text(value).font(WorkbenchTypography.value).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button { ServedModelsSelection.copy(value) } label: { Image(systemName: "doc.on.doc") }
                     .buttonStyle(.borderless).accessibilityLabel("Copy \(title.lowercased())")
                     .accessibilityIdentifier(identifier ?? "serving-copy-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
             }
-        }.padding(WorkbenchSpacing.md).background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+        }.padding(compact ? 0 : WorkbenchSpacing.md)
+            .background(compact ? Color.clear : WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
     }
 }

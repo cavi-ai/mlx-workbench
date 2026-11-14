@@ -39,6 +39,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
     let reviewError: String?
     let onPromote: (VariantResult) -> Void
     let allowsPromotion: Bool
+    let onHealth: (() -> Void)?
     @ViewBuilder let laneActions: (CompareLane) -> Actions
     @State private var promptID: String
     @State private var firstID: String?
@@ -50,10 +51,11 @@ struct ChatComparisonResultsView<Actions: View>: View {
     init(run: ComparisonRun, store: ComparisonOutputStore, contentWidth: CGFloat,
          name: @escaping (String) -> String, onReview: @escaping (String, Int?) -> Void,
          reviewError: String?, onPromote: @escaping (VariantResult) -> Void, allowsPromotion: Bool = true,
+         onHealth: (() -> Void)? = nil,
          @ViewBuilder laneActions: @escaping (CompareLane) -> Actions) {
         self.run = run; self.store = store; self.contentWidth = contentWidth; self.name = name
         self.onReview = onReview; self.reviewError = reviewError; self.onPromote = onPromote; self.laneActions = laneActions
-        self.allowsPromotion = allowsPromotion
+        self.allowsPromotion = allowsPromotion; self.onHealth = onHealth
         _promptID = State(initialValue: ComparisonViewLogic.rows(for: run).first?.id ?? "")
         let readable = ChatComparisonPresentation.readingResults(in: run)
         let first = readable.first?.id ?? run.variantIdentities.first
@@ -69,7 +71,9 @@ struct ChatComparisonResultsView<Actions: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if wide {
+            if ChatComparisonPresentation.hasNoOutput(run) {
+                noOutput
+            } else if wide {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
                     matrix.frame(width: layout.matrixWidth)
                     inspector
@@ -88,6 +92,41 @@ struct ChatComparisonResultsView<Actions: View>: View {
             if firstID == nil { firstID = readable.first?.id }
             if secondID == nil { secondID = readable.first { $0.id != firstID }?.id }
         }
+    }
+
+    private var noOutput: some View {
+        let grouped = Dictionary(grouping: run.results) { result in
+            result.error ?? result.samples.compactMap(\.error).first ?? "No output was recorded."
+        }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Label("No comparison output", systemImage: "exclamationmark.triangle")
+                .font(WorkbenchTypography.section)
+            Text("Recorded \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            Text(onHealth == nil ? "Review the model errors, then adjust the comparison before running it again." : "Review the model errors, then check Health or adjust the comparison before running it again.")
+                .font(WorkbenchTypography.secondary)
+            ForEach(grouped.keys.sorted(), id: \.self) { error in
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    ForEach(grouped[error] ?? []) { result in
+                        Text(name(result.modelPath)).font(WorkbenchTypography.emphasis)
+                        if let lane = lanes.first(where: { $0.resultKey == result.id }) { laneActions(lane) }
+                    }
+                    Text(error.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? error)
+                        .font(WorkbenchTypography.secondary).lineLimit(2)
+                    DisclosureGroup("Details") {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text(error).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            ForEach(grouped[error] ?? []) { result in
+                                Text(result.modelPath).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+            if let onHealth { Button("Open Health", action: onHealth) }
+        }.padding(WorkbenchSpacing.md)
+            .accessibilityIdentifier("comparison-no-output")
     }
 
     private var matrix: some View {
@@ -212,12 +251,14 @@ struct ChatComparisonResultsView<Actions: View>: View {
                     }.pickerStyle(.segmented)
                     output(secondVisible ? secondID : firstID, prompt: prompt, first: !secondVisible)
                 }
-                Divider()
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Label("Review model quality across this run", systemImage: "star").font(WorkbenchTypography.label)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: WorkbenchSpacing.md) { ratings }
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { ratings }
+                if !eligibleSelectedLanes.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        Label("Review model quality across this run", systemImage: "star").font(WorkbenchTypography.label)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: WorkbenchSpacing.md) { ratings }
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { ratings }
+                        }
                     }
                 }
                 if let reviewError { ErrorBanner(text: reviewError) }
@@ -239,8 +280,12 @@ struct ChatComparisonResultsView<Actions: View>: View {
         .accessibilityIdentifier("comparison-reading-inspector")
     }
 
+    private var eligibleSelectedLanes: [CompareLane] {
+        lanes.filter { ($0.resultKey == firstID || $0.resultKey == secondID) &&
+            ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: $0.resultKey, store: store) == nil }
+    }
     private var ratings: some View {
-        ForEach(lanes.filter { $0.resultKey == firstID || $0.resultKey == secondID }) { lane in
+        ForEach(eligibleSelectedLanes) { lane in
             HStack {
                 LetterChip(letter: lane.letter)
                 TaskQualityRating(run: run, modelPath: lane.resultKey, modelName: name(lane.path), store: store, onReview: onReview)
@@ -293,7 +338,7 @@ private struct ChatInspectorOutput: View {
                 } label: { Text(name(lane.path)).font(WorkbenchTypography.emphasis) }
                 .menuStyle(.borderlessButton).help(lane.path)
                 Spacer(minLength: 0)
-                if let result, let output = ComparisonDiff.output(result, promptID: prompt.id) {
+                if let result, let output = ChatComparisonPresentation.recordedOutput(result, promptID: prompt.id) {
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(output.text, forType: .string)
@@ -310,8 +355,11 @@ private struct ChatInspectorOutput: View {
                     Text(runLine).foregroundStyle(WorkbenchColor.muted)
                 }
             }.font(WorkbenchTypography.secondary)
-            if let result, let recorded = ComparisonDiff.output(result, promptID: prompt.id) {
+            if let result, let recorded = ChatComparisonPresentation.recordedOutput(result, promptID: prompt.id) {
                 let display = ChatRecordedText(recorded.text)
+                if result.error != nil || sample?.error != nil {
+                    Text("Partial output").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                }
                 if recorded.isExcerpt {
                     Text("Saved excerpt · full text not recorded").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 }
@@ -320,9 +368,14 @@ private struct ChatInspectorOutput: View {
                         .padding(WorkbenchSpacing.sm)
                         .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                 } else {
-                    Text(outcome == .tokenLimit ? "The token limit was reached before an answer was recorded."
+                    Text(run.historyDetailsOmitted == true || sample?.historyAnswerPresent == true ? "Recorded output details are unavailable."
+                         : outcome == .tokenLimit ? "The token limit was reached before an answer was recorded."
                          : sample?.finishReason == "tool_calls" ? "Tool calls were emitted without answer text." : "No answer text recorded.")
                         .font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted)
+                }
+                if let error = result.error ?? sample?.error {
+                    Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Text(result?.error ?? sample?.error ?? (outcome == .waiting ? "Waiting for recorded output…" : "No output was recorded for this prompt."))

@@ -4,6 +4,33 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServingInventoryPresentationTests: XCTestCase {
+    func testTallySeparatesUnknownAndUnloadingFromLoaded() {
+        let states: [String?] = ["loaded", "loading", "unloading", "unloaded", nil, "failed"]
+        let servers = states.enumerated().map { index, state in
+            ServerInfo(path: "/models/\(index)", port: 8000 + index, pid: 100 + index,
+                       state: "running", modelState: state)
+        }
+        let rows = ServingRows.build(slots: [], servers: servers, snapshot: .empty)
+        let tally = ServingWorkspacePresentation.tally(rows)
+        XCTAssertEqual(tally, ServingTally(attention: 1, loaded: 1, loading: 1, unloading: 1, onRequest: 1, unknown: 1))
+        XCTAssertEqual(ServingWorkspacePresentation.status(rows[2]), "Unloading")
+        XCTAssertEqual(ServingWorkspacePresentation.status(rows[4]), "Running · residency unknown")
+    }
+
+    func testSiblingEndpointsRequireTheSameConcreteLocalPath() {
+        let a = ServerInfo(path: "/models/a", port: 8001, pid: 1, state: "running", modelState: "loaded")
+        let b = ServerInfo(path: "/models/./a", port: 8002, pid: 2, state: "running", modelState: "unloaded")
+        let c = ServerInfo(path: "/other/a", port: 8003, pid: 3, state: "running", modelState: "loaded")
+        let rows = ServingRows.build(slots: [], servers: [a, b, c], snapshot: .empty)
+        XCTAssertEqual(ServingWorkspacePresentation.siblingEndpoints(of: rows[0], in: rows).map(\.id), [rows[1].id])
+        XCTAssertEqual(ServingWorkspacePresentation.section(rows[0]), .live)
+        let saved = EndpointSlot(enabled: false, port: 8004, modelPath: "/models/a")
+        let savedRow = ServingRow.endpoint(slot: saved, server: nil, service: nil)
+        XCTAssertEqual(ServingWorkspacePresentation.section(savedRow), .saved)
+        XCTAssertEqual(ServingWorkspacePresentation.siblingEndpoints(of: savedRow, in: rows).count, 2)
+        let waiting = EndpointSlot(enabled: true, port: 8005, modelPath: "/models/a")
+        XCTAssertEqual(ServingWorkspacePresentation.section(.endpoint(slot: waiting, server: nil, service: nil)), .saved)
+    }
     private let capturedAt = Date(timeIntervalSince1970: 1_000)
 
     func testConfiguredFleetRowsDoNotHideExternalServersAtTheSamePort() {

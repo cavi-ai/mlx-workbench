@@ -1016,6 +1016,7 @@ struct QuantView: View {
                     onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
                     reviewError: comparison.persistenceError,
                     onPromote: { winner in promoteContext = PromoteContext(run: run, winner: winner) },
+                    onHealth: { onRouteSelection(.health) },
                     laneActions: { lane in laneActions(lane, run: run, winnerPath: nil) })
                     .id(run.id)
             } else {

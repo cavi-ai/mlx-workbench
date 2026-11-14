@@ -345,7 +345,7 @@ struct ServeView: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text(name).font(WorkbenchTypography.pageTitle).textSelection(.enabled)
+                        Text(name).font(WorkbenchTypography.title).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: WorkbenchSpacing.xs) {
                             Text(ServingWorkspacePresentation.provider(row) + " ·")
                             ServingStatusLabel(row: row, states: endpoint.slotStates)
@@ -374,6 +374,7 @@ struct ServeView: View {
                 }
                 if let server { HStack(spacing: WorkbenchSpacing.sm) { promptButtons(server, name: name) } }
             }
+            ServingSiblingEndpoints(row: row, rows: workspaceRows) { workspaceSelection = $0 }
             Picker("Model settings", selection: $workspaceTab) {
                 ForEach(ServingWorkspaceTab.allCases) { tab in Text(tab.title).tag(tab) }
             }.pickerStyle(.segmented).accessibilityIdentifier("serving-workspace-tabs")
@@ -397,17 +398,19 @@ struct ServeView: View {
     private func connectionWorkspace(_ row: ServingRow) -> some View {
         let server = ServingWorkspacePresentation.server(row)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            if let url = ServingWorkspacePresentation.baseURL(row) {
-                ServingConnectionField(title: "Base URL", value: url, identifier: "serving-copy-base-url")
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                if let url = ServingWorkspacePresentation.baseURL(row) {
+                    ServingConnectionField(title: "Base URL", value: url, identifier: "serving-copy-base-url", compact: true)
+                }
+                ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id", compact: true)
             }
-            ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id")
             if let server {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             if case .endpoint(let slot, _, _) = row {
-                GroupBox("Connection & security") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        Text("Connection & security").font(WorkbenchTypography.label)
                         LabeledContent("Address", value: "127.0.0.1 · loopback only")
                         LabeledContent("Port") {
                             TextField("Port", text: $connectionPort).accessibilityIdentifier("serving-endpoint-port")
@@ -431,13 +434,14 @@ struct ServeView: View {
                             Text("Stop the server to change its port or authentication. Existing settings remain visible here.")
                                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                         }
-                    }.padding(WorkbenchSpacing.sm)
                 }
             } else if let server {
                 LabeledContent("Authentication", value: server.apiKeySHA256 == nil ? "No API key required" : "API key required")
                 if let port = server.port { LabeledContent("Port", value: String(port)) }
             }
-        }
+        }.padding(WorkbenchSpacing.md)
+            .frame(maxWidth: 680, alignment: .leading)
+            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
         .onAppear(perform: synchronizeConnectionPort)
     }
 

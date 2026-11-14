@@ -219,3 +219,6 @@ A prepared Strata model can run in two lanes with different speculation, expert-
 ## Runtime lanes
 
 In Chat, each text-model lane has a **Runtime** menu with **Automatic** and **MLX-LM**, plus **Splash** for a model of a family Splash serves; such a vision model's lane offers **Automatic** and **Splash**, and a Strata model's lane offers **Strata** and **Splash**. A lane with no choice names the runtime it uses, so lane tiles keep one size. Select the same model in another lane and choose a different runtime to measure both side by side. Each lane starts, measures and stops its own server, and the results matrix names each lane's runtime. Lanes that repeat a model need a different runtime or their own Strata settings. Runs with an explicitly chosen runtime are excluded from default recommendations and **Promote winner**. Splash lanes need Splash and the model family's DFlash2 draft installed; see [Splash](splash.md).
+## Failed comparisons
+
+When a finished chat comparison has no recorded output, Compare groups the models by their reported error. Open **Details** to read the original message, or open Health before adjusting and running the comparison again. A mixed run keeps its available outputs; quality ratings are offered only for a complete successful model result.

@@ -4,6 +4,32 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class ComparisonInsightsTests: XCTestCase {
+    func testNoOutputStateKeepsMixedRunsReadable() {
+        let blocked = VariantResult(modelPath: "/a", modelSignature: "s", samples: [], aggregateTokensPerSecond: nil,
+                                    aggregateTTFTSeconds: nil, error: "Server unavailable")
+        let empty = run([blocked, result("/b", output: "")])
+        XCTAssertTrue(ChatComparisonPresentation.hasNoOutput(empty))
+        let mixed = run([blocked, result("/b", output: "answer")])
+        XCTAssertFalse(ChatComparisonPresentation.hasNoOutput(mixed))
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(mixed, modelPath: "/a", store: ComparisonOutputStore()))
+        var running = empty
+        running.state = .running
+        XCTAssertFalse(ChatComparisonPresentation.hasNoOutput(running))
+        let partial = VariantResult(modelPath: "/partial", modelSignature: "s",
+            samples: [ComparisonSample(promptID: "p", outputExcerpt: "partial answer", tokensPerSecond: nil,
+                                       timeToFirstTokenSeconds: nil, error: "Connection lost")],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: "Connection lost")
+        XCTAssertFalse(ChatComparisonPresentation.hasNoOutput(run([partial])))
+        XCTAssertEqual(ChatComparisonPresentation.recordedOutput(partial, promptID: "p")?.text, "partial answer")
+        let tool = VariantResult(modelPath: "/tool", modelSignature: "s",
+            samples: [ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil,
+                                       timeToFirstTokenSeconds: nil, error: nil, toolCalls: 1, toolNames: ["weather"])],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)
+        XCTAssertFalse(ChatComparisonPresentation.hasNoOutput(run([tool])))
+        var summarized = empty
+        summarized.historyDetailsOmitted = true
+        XCTAssertFalse(ChatComparisonPresentation.hasNoOutput(summarized))
+    }
     func testCompletedResponseTimingRequiresEveryFinishedTimedAnswer() throws {
         func result(_ durations: [Double?], answer: Double? = 1, finish: String = "stop", output: String = "Answer", error: String? = nil) -> VariantResult {
             VariantResult(modelPath: "/Models/strata", modelSignature: "model", samples: durations.enumerated().map { index, duration in
