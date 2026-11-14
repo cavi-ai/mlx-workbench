@@ -37,7 +37,7 @@ final class ServingUXRealUITests: XCTestCase {
         }
     }
 
-    private func command(_ args: [String]) throws -> [String: Any] {
+    private func command(_ args: [String], expectingPreview: Bool = false) throws -> [String: Any] {
         let root = try XCTUnwrap(root)
         commandNumber += 1
         let stdout = root.appendingPathComponent("command-\(commandNumber)-stdout")
@@ -68,11 +68,15 @@ final class ServingUXRealUITests: XCTestCase {
             "status": process.terminationStatus, "stdout_base64": data.base64EncodedString(), "stderr_base64": error.base64EncodedString()]
         try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).write(to: root.appendingPathComponent("command-\(commandNumber).json"))
         if timedOut { throw CommandFailure.timedOut }
-        guard process.terminationStatus == 0 else { throw CommandFailure.exit(process.terminationStatus) }
         guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               envelope["status"] as? String == "ok", let payload = envelope["data"] as? [String: Any] else {
             throw CommandFailure.invalidEnvelope
         }
+        if expectingPreview {
+            guard process.terminationStatus == 2, payload["requires_confirmation"] as? Bool == true,
+                  let plan = payload["plan"] as? [String: Any],
+                  let hash = plan["preview_hash"] as? String, !hash.isEmpty else { throw CommandFailure.invalidEnvelope }
+        } else if process.terminationStatus != 0 { throw CommandFailure.exit(process.terminationStatus) }
         return payload
     }
 
@@ -100,7 +104,7 @@ final class ServingUXRealUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: config).write(to: configURL)
         for port in [19081, 19082] {
             let args = ["serve", "start", "--runtime", "mlx_lm", "--path", model, "--port", String(port), "--jit", "--receipts-dir", receipts.path]
-            let preview = try command(args)
+            let preview = try command(args, expectingPreview: true)
             let plan = try XCTUnwrap(preview["plan"] as? [String: Any]); let hash = try XCTUnwrap(plan["preview_hash"] as? String)
             ownedPorts.append(port)
             _ = try command(args + ["--confirm", "--preview-hash", hash])
