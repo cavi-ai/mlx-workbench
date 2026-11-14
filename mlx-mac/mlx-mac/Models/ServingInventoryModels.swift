@@ -69,6 +69,20 @@ struct ServingServiceObservation: Identifiable, Equatable {
         server?.processStartedAt != nil && server?.receiptsDirectory != nil
     }
 
+    /// A loaded, idle load-on-request worker whose allocator can drop its free buffers.
+    var canReleaseCache: Bool {
+        canStop && residency == .loaded && server?.jit == true && server?.activeRequests == 0 &&
+            server?.allocatorCache?.canRelease == true
+    }
+
+    func allows(_ action: ServingActionKind) -> Bool {
+        switch action {
+        case .unload: canUnload
+        case .stop: canStop
+        case .releaseCache: canReleaseCache
+        }
+    }
+
     var name: String {
         if modelID == "__inventory__" { return "Model inventory" }
         return hostedModel?.name ?? modelPath.map {

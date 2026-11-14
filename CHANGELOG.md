@@ -17,12 +17,12 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 - Terminal: a Workspaces page launches OpenCode or a shell in a chosen folder through your login shell, inside the app, and links to OpenCode's installation guide when the shell cannot find it.
 
-- Reclaim: **Models** counts disk under the scan folders once per file, lists unrecognized space by folder, and groups copies of one model across MLX, GGUF, the Hugging Face cache and Ollama in a sortable table with a kept copy, exact space freed and removal of any other copy, Ollama tags included; Model sources columns sort.
+- Reclaim: **Models** counts disk under the scan folders once per file, lists unrecognized space by folder, and groups versions of one model across MLX, GGUF, the Hugging Face cache and Ollama in a sortable table with exact space freed and removal of any other version, Ollama tags included; fine-tunes stay separate models, a version is kept only with recorded use, serving or your choice, **Suggested removals** names what to remove and why, and **This Mac** shows memory, disk, processor load, swap and each loaded model's MLX cache with a reviewed **Release cache…**; Model sources columns sort.
 
 ### Fixed
 
 - Connect app: setup follows symbolic links in a client's config path and writes the real file, and **Choose Folder…** sets the folder that holds the config.
-- Serving: a model whose load failed leads the toolbar label with **needs attention**, and its **Needs attention** status in Serving and Monitor opens the engine's reason in place; the toolbar counts the models Monitor lists, Compare lane tiles keep one size, and a lane blocked for the whole run says so once.
+- Serving: a model whose load failed leads the toolbar label with a **needs attention** badge and the label shortens to fit the toolbar instead of overflowing, and its **Needs attention** status in Serving and Monitor opens the engine's reason in place; the toolbar counts the models Monitor lists, Compare lane tiles keep one size, and a lane blocked for the whole run says so once.
 
 
 ## [0.9.0] - 2026-11-12

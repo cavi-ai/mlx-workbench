@@ -54,6 +54,22 @@ enum ServedModelsSelection {
 
 /// Cached observations only; path matching never resolves files during rendering.
 enum ServingInventoryPresentation {
+    /// "18.2 GB in use · 6.4 GB cache · 25.0 GB peak", leaving out counters the worker could not read.
+    static func allocatorSummary(_ reading: WorkerMemoryReading) -> String {
+        let parts = [reading.activeBytes.map { ReclaimFormat.byteCount($0) + " in use" },
+                     reading.cacheBytes.map { ReclaimFormat.byteCount($0) + " cache" },
+                     reading.peakBytes.map { ReclaimFormat.byteCount($0) + " peak" }].compactMap { $0 }
+        return parts.isEmpty ? "Not reported" : parts.joined(separator: " · ")
+    }
+
+    static func actionNote(_ action: ServingActionKind) -> String {
+        switch action {
+        case .unload: "Release model weights and keep the endpoint reachable. Its next request loads the same local files."
+        case .stop: "Stop this server. Model files stay in place."
+        case .releaseCache: "Return the free buffers MLX keeps for reuse to the system. The model stays loaded; the next request may run slightly slower while buffers are reallocated."
+        }
+    }
+
     static func localServices(_ snapshot: ServingInventorySnapshot) -> [ServingServiceObservation] {
         snapshot.services.filter(\.isLocal)
     }
@@ -268,6 +284,9 @@ struct ServingServiceDetails: View {
             if let pid = service.hostProcessID {
                 Text("Shared host process RAM: " + memory(for: pid) + " · PID \(pid)")
             }
+            if let reading = service.server?.workerMemory {
+                Text("MLX allocator: " + ServingInventoryPresentation.allocatorSummary(reading))
+            }
             if let date = inventory.processMemoryCapturedAt, service.modelProcessID != nil || service.server?.pid != nil {
                 Text("Process RAM read " + date.formatted(date: .omitted, time: .standard))
             }
@@ -311,9 +330,7 @@ struct ServingInventoryReviewSheet: View {
                     Text(review.service.providerName + " · " + review.service.statusText)
                         .font(WorkbenchTypography.secondary)
                     ServingServiceDetails(service: review.service, inventory: inventory)
-                    Text(review.action == .unload
-                         ? "Release model weights and keep the endpoint reachable. Its next request loads the same local files."
-                         : "Stop this server. Model files stay in place.")
+                    Text(ServingInventoryPresentation.actionNote(review.action))
                         .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
                     ErrorBanner(text: inventory.actionError)
                     HStack {
