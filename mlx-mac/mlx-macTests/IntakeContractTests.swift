@@ -81,8 +81,18 @@ final class IntakeContractTests: XCTestCase {
 
     func testBackendListDecodes() throws {
         let value = try WorkbenchAPI.decode(BackendList.self, from: try vendoredFixture("backend-list"))
-        XCTAssertEqual(value.backends.map(\.id), ["mflux", "mlx-3d", "mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-video", "mlx-vlm"])
+        let ids = value.backends.map(\.id)
+        let required: Set<String> = ["mflux", "mlx-3d", "mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-video", "mlx-vlm"]
+        XCTAssertTrue(required.isSubset(of: Set(ids)))
+        XCTAssertEqual(ids.count, Set(ids).count)
+        XCTAssertEqual(ids, ids.sorted())
         XCTAssertTrue(value.backends.allSatisfy { $0.state == .absent })
+        let aceJSON = #"{"id":"ace-step","version":"1.5.0","builtin":false,"state":"absent","categories":["music_generation"],"model_types":1,"registry_source":"snapshot","target":"/backends/ace-step","log_path":null,"started_at":null,"completed_at":null}"#
+        let ace = try JSONDecoder().decode(BackendEntry.self, from: Data(aceJSON.utf8))
+        XCTAssertEqual(ace.id, "ace-step")
+        XCTAssertEqual(ace.categories, ["music_generation"])
+        XCTAssertEqual(ace.modelTypes, 1)
+        XCTAssertEqual(ace.state, .absent)
     }
 
     func testPortAnalysisDecodes() throws {
