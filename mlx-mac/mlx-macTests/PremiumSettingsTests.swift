@@ -225,7 +225,7 @@ final class PremiumSettingsTests: XCTestCase {
         return AppHost(
             configModule: configModule ?? ConfigModule(pathOverride: temporaryConfigURL().path),
             config: Config.defaults(),
-            scanOperation: { _, _, _, _ in
+            scanOperation: { _, _, _, _, _, exclusions in
                 scanned?.fulfill()
                 throw CancellationError()
             },

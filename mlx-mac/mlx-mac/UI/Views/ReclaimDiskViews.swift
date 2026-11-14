@@ -62,6 +62,8 @@ struct ReclaimDiskPanel: View {
     @State private var keep: [String: String] = [:]
     @State private var expanded: Set<String> = []
     @State private var allSuggestions = false
+    @State private var compareTask: Task<Void, Never>?
+    @State private var comparisonCancelled = false
 
     var body: some View {
         ScrollView {
@@ -104,6 +106,19 @@ struct ReclaimDiskPanel: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Text("Models").font(WorkbenchTypography.section)
+                    if compareTask != nil {
+                        Button("Cancel comparison") { compareTask?.cancel() }.controlSize(.small)
+                    } else {
+                        Button("Compare model files") {
+                            comparisonCancelled = false
+                            compareTask = Task {
+                                await appHost.compareStoredAssets()
+                                comparisonCancelled = Task.isCancelled
+                                compareTask = nil
+                            }
+                        }.disabled(appHost.isScanning || reclaim.isApplying).controlSize(.small)
+                            .help("Reads each same-size model file in full to compare its bytes.")
+                    }
                     Picker("Show", selection: $filter) {
                         ForEach(DiskFilter.allCases) { option in
                             Text("\(option.title) (\(DiskLedger.filter(all, by: option, staleBefore: staleBefore).count))").tag(option)
@@ -117,6 +132,7 @@ struct ReclaimDiskPanel: View {
                             .help("Every version except the kept one, or the largest when none is kept")
                     }
                 }
+                Text(assetStatus).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 Text(filterNote(staleDays: staleDays)).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 table(DiskRow.rows(shown, items: storage.items, sortOrder: sortOrder), models: all)
                     .frame(height: WorkbenchSize.Reclaim.modelTableHeight)
@@ -124,6 +140,21 @@ struct ReclaimDiskPanel: View {
                 if !reclaim.lastMoves.isEmpty { moveResults }
             }
         }
+    }
+
+    private var assetStatus: String {
+        if compareTask != nil { return "Comparing complete model files…" }
+        if comparisonCancelled { return "Comparison cancelled; previous results retained." }
+        if let error = appHost.scanError { return "Comparison unavailable: " + error }
+        guard let scan = appHost.scanResult?.assetScan else { return "Update the engine to compare standalone model files." }
+        if let problem = scan.errors.first {
+            return scan.compared
+                ? "Comparison incomplete: \(scan.checked) of \(scan.candidates) files checked. \(problem.message)"
+                : "Model-file scan incomplete: \(problem.message)"
+        }
+        if !scan.compared { return "Standalone model files have not been compared." }
+        let count = (appHost.scanResult?.duplicates ?? []).filter { $0.verification == "full_sha256" }.count
+        return count == 0 ? "No identical standalone model files found." : "Found \(ReclaimFormat.count(count, "group")) of identical model files."
     }
 
     private func filterNote(staleDays: Int) -> String {
@@ -183,7 +214,7 @@ struct ReclaimDiskPanel: View {
                     .controlSize(.small)
                     .help("Show the versions so you can mark the one to keep")
             } else {
-                Button("Review…") { Task { await reclaim.previewCopies(Set(suggestion.remove), items: items) } }
+                Button("Review…") { Task { await reclaim.previewCopies(Set(suggestion.remove), items: items, duplicates: appHost.scanResult?.duplicates ?? [], keep: keep) } }
                     .controlSize(.small)
                     .disabled(reclaim.isApplying)
             }
@@ -277,9 +308,9 @@ struct ReclaimDiskPanel: View {
                     get: { selected.contains(copy.id) },
                     set: { if $0 { selected.insert(copy.id) } else { selected.remove(copy.id) } }))
                     .toggleStyle(.checkbox).labelsHidden()
-                    .disabled(isKept || copy.isProtected || reclaim.isApplying)
+                    .disabled(isKept || copy.isProtected || !copy.isEligible || reclaim.isApplying)
                     .help(isKept ? "The kept version stays. Choose Keep on another version to remove this one."
-                          : copy.isProtected ? "Serving, preferred or in use." : "Remove this " + (several ? "version" : "model"))
+                          : copy.isProtected ? "Serving, preferred or in use." : !copy.isEligible ? "Compare matching files before removal." : "Remove this " + (several ? "version" : "model"))
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: WorkbenchSpacing.xxs) {
                         Text(several ? DiskLedger.versionLabel(copy.item, model: model) : copy.item.name)
@@ -313,6 +344,7 @@ struct ReclaimDiskPanel: View {
         switch reason {
         case .used: "Used · keep"
         case .protected: "Serving · keep"
+        case .verified: "Match · keep"
         case .chosen, nil: "Keep"
         }
     }
@@ -343,7 +375,7 @@ struct ReclaimDiskPanel: View {
                     .font(WorkbenchTypography.tabular)
                 Button("Clear") { selected = [] }.controlSize(.small)
             }
-            Button("Review removal…") { Task { await reclaim.previewCopies(selection, items: items) } }
+            Button("Review removal…") { Task { await reclaim.previewCopies(selection, items: items, duplicates: appHost.scanResult?.duplicates ?? [], keep: keep) } }
                 .buttonStyle(.workbenchPrimary)
                 .disabled(selection.isEmpty || reclaim.isApplying)
         }
@@ -535,6 +567,15 @@ struct CopyRemovalSheet: View {
     let plan: CopyRemovalPlan
     @ObservedObject var reclaim: ReclaimCoordinator
     let onDone: () -> Void
+    @State private var removalTask: Task<Void, Never>?
+    @State private var checkedOtherApps = false
+
+    private var hasAsset: Bool {
+        plan.actionable.contains { removal in
+            if case .quarantineAsset = removal.step { return true }
+            return false
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -548,6 +589,17 @@ struct CopyRemovalSheet: View {
                             Text(removal.name).font(WorkbenchTypography.emphasis)
                             if let step = removal.step {
                                 Text(step.summary).font(WorkbenchTypography.secondary)
+                                if case .quarantineAsset(let review) = step {
+                                    Text("Keep: " + review.keeper.item.path).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                                    Button("Reveal kept file") {
+                                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: review.keeper.item.path)])
+                                    }.buttonStyle(.borderless)
+                                    Button("Reveal file to remove") {
+                                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: review.source.item.path)])
+                                    }.buttonStyle(.borderless)
+                                    Text("Update other apps to use the kept path before removing this copy.")
+                                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                                }
                             } else {
                                 Text("Skipped: \(removal.refusal ?? "not removable")").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
                             }
@@ -557,17 +609,31 @@ struct CopyRemovalSheet: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: 320)
+            if hasAsset {
+                Toggle("I’ve checked other apps’ model paths", isOn: $checkedOtherApps)
+                    .toggleStyle(.checkbox).disabled(reclaim.isApplying)
+            }
             HStack {
-                Button("Cancel") { reclaim.cancelCopies() }.keyboardShortcut(.cancelAction)
+                if reclaim.isApplying {
+                    Button("Cancel verification") { removalTask?.cancel() }
+                } else {
+                    Button("Cancel") { reclaim.cancelCopies() }.keyboardShortcut(.cancelAction)
+                }
                 Spacer()
                 if reclaim.isApplying { ProgressView().controlSize(.small) }
                 Button("Remove \(ReclaimFormat.count(plan.actionable.count, "item"))") {
-                    Task { await reclaim.confirmCopies(); onDone() }
+                    removalTask = Task {
+                        await reclaim.confirmCopies()
+                        let cancelled = Task.isCancelled
+                        removalTask = nil
+                        if !cancelled || !reclaim.lastMoves.isEmpty { onDone() }
+                    }
                 }
                 .buttonStyle(.workbenchPrimary)
-                .disabled(plan.actionable.isEmpty)
-            }.disabled(reclaim.isApplying)
+                .disabled(plan.actionable.isEmpty || reclaim.isApplying || (hasAsset && !checkedOtherApps))
+            }
         }
+        .onChange(of: plan) { _, _ in checkedOtherApps = false }
         .padding(WorkbenchSpacing.lg).frame(width: 520)
         .interactiveDismissDisabled(reclaim.isApplying)
     }

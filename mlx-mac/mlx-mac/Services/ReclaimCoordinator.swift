@@ -44,12 +44,14 @@ enum CopyRemovalStep: Equatable, Sendable {
     case quarantineFolder(QuarantineFileSnapshot)
     case trashRepository(LibraryTrashPlan)
     case quarantineOllama(OllamaRemovalPlan)
+    case quarantineAsset(AssetRemovalReview)
 
     var summary: String {
         switch self {
         case .quarantineFiles(let files): files.count == 1 ? "GGUF file to quarantine" : "\(files.count) GGUF files to quarantine"
         case .quarantineFolder: "Folder to quarantine"
         case .trashRepository: "Hugging Face cache repository to Trash"
+        case .quarantineAsset: "Model file to quarantine"
         case .quarantineOllama(let plan): plan.blobs.isEmpty ? "Ollama tag to quarantine; its weights stay for other tags" : "Ollama tag and unshared weights to quarantine"
         }
     }
@@ -335,7 +337,7 @@ final class ReclaimCoordinator: ObservableObject {
 
     /// Freeze how each selected copy leaves the disk. Copies a guard refuses
     /// stay in the plan with the reason and are skipped at confirm.
-    func previewCopies(_ selected: Set<String>, items: [StoredModel]) async {
+    func previewCopies(_ selected: Set<String>, items: [StoredModel], duplicates: [DuplicateGroup] = [], keep: [String: String] = [:]) async {
         guard !isApplying else { return }
         isApplying = true
         defer { isApplying = false }
@@ -347,21 +349,48 @@ final class ReclaimCoordinator: ObservableObject {
             let paths = DiskLedger.expanded(selected, items: items)
             let chosen = items.filter { paths.contains($0.path) }
             let freed = DiskLedger.freedBytes(removing: paths, items: items)
+            let assetProtected = protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path } + serving
             let removals = await Task.detached(priority: .userInitiated) {
-                Self.removals(chosen, roots: roots, protected: protected, fileManager: manager)
+                Self.removals(chosen, roots: roots, protected: protected, fileManager: manager,
+                              allItems: items, selected: paths, duplicates: duplicates,
+                              quarantineDir: dir, assetProtected: assetProtected, keep: keep)
             }.value
             guard roots == sourceRoots, dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
             copyPlan = CopyRemovalPlan(removals: removals, freedBytes: freed, roots: roots, quarantineDir: dir)
         } catch { lastError = AppHost.render(error) }
     }
 
-    nonisolated static func removals(_ items: [StoredModel], roots: [String], protected: [String], fileManager: FileManager) -> [CopyRemoval] {
+    nonisolated static func removals(_ items: [StoredModel], roots: [String], protected: [String], fileManager: FileManager,
+                                     allItems: [StoredModel] = [], selected: Set<String> = [], duplicates: [DuplicateGroup] = [],
+                                     quarantineDir: String = "", assetProtected: [String] = [], keep: [String: String] = [:]) -> [CopyRemoval] {
         var repositories = Set<String>()
         return items.compactMap { item in
             if let repository = DiskLedger.cacheRepository(item), !repositories.insert(repository).inserted { return nil }
             do {
                 let step: CopyRemovalStep
                 switch (item.kind, item.store) {
+                case ("asset", _):
+                    guard let digest = item.asset?.sha256,
+                          let group = duplicates.first(where: { $0.kind == "exact" && $0.verification == "full_sha256"
+                              && $0.identity == "asset:sha256:" + digest && $0.sources.contains(item.path) }),
+                          let identity = group.identity else {
+                        throw QuarantineError.unsafeFolder("Compare the files before removal.")
+                    }
+                    let candidates = allItems.filter { !selected.contains($0.path) && $0.path != item.path
+                        && group.sources.contains($0.path) && $0.kind == "asset" && $0.asset?.sha256 == digest
+                        && $0.files.first?.id != item.files.first?.id }.sorted { $0.path < $1.path }
+                    let chosen = keep[identity]
+                    let protected = Set(assetProtected)
+                    let keeper = chosen.flatMap { path in candidates.first { $0.path == path } }
+                        ?? (chosen == nil ? candidates.first { DiskLedger.isProtected($0.path, by: protected) } : nil)
+                        ?? (chosen == nil ? candidates.first { $0.path == group.keep } : nil)
+                        ?? (chosen == nil ? candidates.first : nil)
+                    guard let keeper else {
+                        throw QuarantineError.unsafeFolder("Keep an unselected matching copy.")
+                    }
+                    let source = try Quarantine.assetReview(item, roots: roots, protected: assetProtected, quarantineDir: quarantineDir, fileManager: fileManager)
+                    let retained = try Quarantine.assetReview(keeper, roots: roots, protected: [], quarantineDir: quarantineDir, requireSameVolume: false, fileManager: fileManager)
+                    step = .quarantineAsset(AssetRemovalReview(source: source, keeper: retained))
                 case ("ollama", _):
                     step = .quarantineOllama(try Quarantine.ollamaSnapshot(manifest: item.path, roots: roots, protected: protected, fileManager: fileManager))
                 case (_, "huggingface"):
@@ -397,12 +426,39 @@ final class ReclaimCoordinator: ObservableObject {
         defer { isApplying = false; progressMessage = nil; copyPlan = nil }
         var results: [ReclaimMoveResult] = []
         let manager = fileManager
+        let cancellation = AssetVerificationCancellation()
+        let deadline = ProcessInfo.processInfo.systemUptime + 600
         for (index, removal) in plan.actionable.enumerated() {
+            if Task.isCancelled { cancellation.cancel(); break }
             guard let step = removal.step else { continue }
             progressMessage = "Removing \(index + 1) of \(plan.actionable.count)…"
             do {
                 let serving = try await servingModelPaths?() ?? []
                 let protected = protectedFolderPaths + serving, roots = plan.roots, dir = plan.quarantineDir, timestamp = now()
+                if case .quarantineAsset(let asset) = step {
+                    let assetProtected = protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path } + serving
+                    let worker = Task.detached(priority: .userInitiated) {
+                        try Quarantine.verifyAsset(asset.source, roots: roots, protected: assetProtected, quarantineDir: dir,
+                                                   cancellation: cancellation, deadline: deadline, fileManager: manager)
+                        try Quarantine.verifyAsset(asset.keeper, roots: roots, protected: [], quarantineDir: dir,
+                                                   cancellation: cancellation, deadline: deadline, requireSameVolume: false, fileManager: manager)
+                    }
+                    try await withTaskCancellationHandler { try await worker.value } onCancel: { cancellation.cancel() }
+                    try Task.checkCancellation()
+                    try cancellation.check(deadline: deadline)
+                    guard let servingModelPaths else { throw QuarantineError.unsafeFolder("Serving status is unavailable.") }
+                    let freshServing = try await servingModelPaths()
+                    try Task.checkCancellation()
+                    let freshProtected = protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path } + freshServing
+                    guard roots == sourceRoots, dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
+                    let mover = Task.detached(priority: .userInitiated) {
+                        try cancellation.check(deadline: deadline)
+                        return try Quarantine.moveAsset(asset, roots: roots, protected: freshProtected, quarantineDir: dir, now: timestamp, fileManager: manager)
+                    }
+                    let record = try await withTaskCancellationHandler { try await mover.value } onCancel: { cancellation.cancel() }
+                    results.append(ReclaimMoveResult(path: removal.path, destination: record.to, error: nil))
+                    continue
+                }
                 let destination = try await Task.detached(priority: .userInitiated) { () throws -> String in
                     switch step {
                     case .quarantineFiles(let files):
@@ -419,9 +475,12 @@ final class ReclaimCoordinator: ObservableObject {
                         return try Quarantine.trashModel(trash, roots: roots, protected: protected, fileManager: manager).path
                     case .quarantineOllama(let ollama):
                         return try Quarantine.moveOllamaModel(expected: ollama, roots: roots, protected: protected, quarantineDir: dir, now: timestamp, fileManager: manager).to
+                    case .quarantineAsset: throw QuarantineError.changedSincePreview
                     }
                 }.value
                 results.append(ReclaimMoveResult(path: removal.path, destination: destination, error: nil))
+            } catch is CancellationError {
+                break
             } catch {
                 results.append(ReclaimMoveResult(path: removal.path, destination: nil, error: AppHost.render(error)))
             }
@@ -505,6 +564,13 @@ final class ReclaimCoordinator: ObservableObject {
         isApplying = true
         let dir = quarantineDir(), manager = fileManager
         do {
+            if record.kind == .assetFile {
+                let original = Quarantine.resolve(record.from)
+                guard sourceRoots.contains(where: { Quarantine.isWithin(original, parent: Quarantine.resolve($0)) && original != Quarantine.resolve($0) }),
+                      !DiskLedger.isProtected(original, by: Set(protectedPaths())) else {
+                    throw QuarantineError.unsafeFolder("The original model folder is no longer available or is protected.")
+                }
+            }
             try await Task.detached(priority: .userInitiated) {
                 _ = try Quarantine.trashSnapshot(record, quarantineDir: dir, fileManager: manager)
                 try Quarantine.restore(record, fileManager: manager)

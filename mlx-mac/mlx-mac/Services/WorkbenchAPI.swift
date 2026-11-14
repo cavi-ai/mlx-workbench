@@ -287,7 +287,7 @@ actor WorkbenchAPI {
     // MARK: - Scan
 
     func scan(ggufRoots: [String], mlxRoots: [String], signatures: Bool,
-              limit: Int? = nil) async throws -> ScanResult {
+              limit: Int? = nil, compareAssets: Bool = false, assetExcludeRoots: [String] = []) async throws -> ScanResult {
         var argv = ["convert", "scan"]
         for root in ggufRoots {
             argv.append(contentsOf: ["--gguf-root", root])
@@ -301,8 +301,14 @@ actor WorkbenchAPI {
         if let limit {
             argv.append(contentsOf: ["--limit", String(limit)])
         }
+        if compareAssets { argv.append("--compare-assets") }
+        for root in assetExcludeRoots { argv.append(contentsOf: ["--asset-exclude-root", root]) }
         do {
-            return try Self.decodeScan(await raw(argv))
+            return try Self.decodeScan(await raw(argv, timeout: compareAssets ? 600 : nil, cancellable: compareAssets))
+        } catch let BridgeError.remote(code, message, _) where code == "skill_output_unreadable"
+            && message.contains("unrecognized arguments:") && message.contains("--asset-exclude-root") {
+            throw BridgeError.remote(code: "engine_update_required", message: "This engine cannot exclude quarantine from model-file scanning.",
+                                     remediation: "Update the engine in Health, then scan again.")
         } catch BridgeError.skillTimeout {
             throw BridgeError.remote(
                 code: "skill_timeout",
@@ -1415,7 +1421,7 @@ actor WorkbenchAPI {
                            redundant: d["redundant"] as? [String],
                            members: d["members"] as? [String],
                            count: d.int("count"),
-                           groupId: d.string("group_id"))
+                           groupId: d.string("group_id"), verification: d.string("verification"), identity: d.string("identity"))
         }
         let roots = (data["roots"] as? [String: Any]).map { raw in
             ScanRoots(
@@ -1440,6 +1446,17 @@ actor WorkbenchAPI {
                       let members = raw["members"] as? [String], !members.isEmpty,
                       let bytes = try? raw.requiredInt64("bytes", at: "families.bytes") else { return nil }
                 return ModelFamily(familyID: id, name: name, members: members, bytes: bytes)
+            },
+            assetScan: try (data["asset_scan"] as? [String: Any]).map { raw in
+                guard let compared = raw["compared"] as? Bool, let candidates = raw["candidates"] as? Int,
+                      let checked = raw["checked"] as? Int, let errors = raw["errors"] as? [[String: Any]],
+                      candidates >= 0, checked >= 0, checked <= candidates else {
+                    throw ScanContractError.invalidRequiredField("asset_scan")
+                }
+                return AssetScan(compared: compared, candidates: candidates, checked: checked, errors: try errors.map { error in
+                    ScanRootError(path: try error.requiredString("path", at: "asset_scan.errors.path"),
+                                  message: try error.requiredString("message", at: "asset_scan.errors.message"))
+                }, excludedRoots: raw["excluded_roots"] as? [String] ?? [])
             }
         )
     }
@@ -1461,6 +1478,12 @@ actor WorkbenchAPI {
                     return StoredFile(id: try file.requiredString("id", at: at + ".id"),
                                       path: try file.requiredString("path", at: at + ".path"),
                                       bytes: try file.requiredInt64("bytes", at: at + ".bytes"))
+                },
+                asset: try (item["asset"] as? [String: Any]).map { raw in
+                    AssetEvidence(sha256: raw.string("sha256"),
+                        mtimeNS: try raw.requiredInt64("mtime_ns", at: "asset.mtime_ns"),
+                        ctimeNS: try raw.requiredInt64("ctime_ns", at: "asset.ctime_ns"),
+                        nlink: try raw.requiredInt64("nlink", at: "asset.nlink"))
                 }
             )
         }

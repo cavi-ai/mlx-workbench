@@ -34,11 +34,17 @@ Select versions, or **Select extra versions**, then **Review removal…**. The r
 
 Quarantined copies still occupy disk until you move them to the Trash and empty it. The bar under the table shows what quarantine holds and opens **Quarantine & cleanup**.
 
+## Compare standalone model files
+
+**Compare model files** reads independent same-size standalone files in full and groups matching SHA-256 digests. It may take time for large files; **Cancel comparison** stops the check and keeps the previous scan. Model-owned files, provider stores, symlinks, shard-pattern files and files with multiple hard links are excluded. Missing files, changed folders and incomplete checks remain visible; they do not establish that no other copies exist.
+
+A verified group keeps the file named in the review. Choose **Keep** on another matching copy to retain it instead. **Review removal…** shows both the file to move and a retained match. Update other apps to use the kept path and confirm that you checked their model paths before removing the copy. Workbench cannot determine every external reference. Confirmation rechecks both files and their complete digests, and moves the selected file into same-volume Quarantine. It does not edit app configuration. The kept file remains in place, and **Put back** restores a quarantined file if its original location is free.
+
 ## What it suggests
 
 **Analyze** ranks reclaim opportunities from evidence the app already holds:
 
-The scan status and **Scan coverage** show the folders checked by the last successful scan. **Review scan folders…** opens Settings; add the shared model folder there and rescan if it is absent. Connecting Ollama, LM Studio, ComfyUI or another host does not add its server-side folders to the local disk scan. The scan compares GGUF files and recognized MLX folders, and includes Ollama stores beneath those roots. Standalone model assets, including ComfyUI checkpoints, are not compared.
+The scan status and **Scan coverage** show the folders checked by the last successful scan. **Review scan folders…** opens Settings; add the shared model folder there and rescan if it is absent. Connecting Ollama, LM Studio, ComfyUI or another host does not add its server-side folders to the local disk scan. The scan inventories GGUF files, recognized MLX folders, Ollama stores and standalone `.safetensors` and `.ckpt` files beneath those roots. Standalone files are not compared until you choose **Compare model files** in Models.
 
 Folder copies that need a separate review remain visible in the headline as an item count instead of zero bytes. **Review folder…** beside a matching local MLX copy opens its guarded preview. Scan-reported copy sizes are logical file sizes, not guaranteed physical disk savings; shared files and filesystem storage sharing can change the space released. Failed or missing scans are labeled, and retained results remain tied to their previous coverage and date.
 

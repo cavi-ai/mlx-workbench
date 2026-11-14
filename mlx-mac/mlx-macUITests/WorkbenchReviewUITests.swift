@@ -286,6 +286,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             data = {'status':'preview', 'plan':dict(out=args[args.index('--out') + 1], q_bits=int(args[args.index('--q-bits') + 1]),
                 preview_hash='update-conversion', source=source)}
         elif args[:2] == ['convert', 'scan']:
+            if '--compare-assets' in args:
+                print('Asset comparison is unavailable in this fixture.', file=sys.stderr)
+                sys.exit(2)
             if (root / 'fail-scan').exists():
                 print('Fixture scan failed: choose a readable model root.', file=sys.stderr)
                 sys.exit(2)
@@ -293,6 +296,8 @@ final class WorkbenchReviewUITests: XCTestCase {
                     'totals': {'gguf': 0, 'pending': 0, 'converted': 0, 'unreadable': 0, 'bytes': 0, 'reclaimable_bytes': 0}}
             if (root / 'scan-result.json').exists():
                 data = json.loads((root / 'scan-result.json').read_text())
+            exclusions = [str(pathlib.Path(args[index + 1]).expanduser().resolve()) for index, value in enumerate(args) if value == '--asset-exclude-root']
+            data['asset_scan'] = {'compared': False, 'candidates': 0, 'checked': 0, 'errors': [], 'excluded_roots': exclusions}
         elif args[:2] == ['backend', 'list']:
             time.sleep(0.2)
             if (root / 'fail-backends').exists():

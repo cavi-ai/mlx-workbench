@@ -377,7 +377,7 @@ final class IntakeRemodelTests: XCTestCase {
         XCTAssertEqual(IntakeLibraryMatch.path(for: resolution, readyPaths: paths, selectedFile: "model.gguf"), path)
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/unused", command: { _, _, _, _ in throw IntakeStubError.unused })
         let host = AppHost(config: .defaults(), discoveredRoots: [], agentHealth: .notConfigured, runtimeReport: .checking,
-            hardwareProfile: F.hardware, scanOperation: { _, _, _, _ in scan }, workbenchAPI: api)
+            hardwareProfile: F.hardware, scanOperation: { _, _, _, _, _, exclusions in scan.reportingExclusions(exclusions) }, workbenchAPI: api)
         host.intake.selectedGGUF = "model.gguf"
         let route = await host.reuseIntake(resolution)
         XCTAssertEqual(route, .prepare)

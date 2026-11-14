@@ -70,6 +70,7 @@
 		28MEM002B /* SystemResourceHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM002F /* SystemResourceHeader.swift */; };
 		28MEM001B /* SystemResourceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM001F /* SystemResourceMonitor.swift */; };
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
+		A91D00000000000000000001 /* StandaloneReclaimUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91D00000000000000000002 /* StandaloneReclaimUITests.swift */; };
 		26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* WorkbenchReviewUITests.swift */; };
 		5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E77000000000000004F /* SetupAssistantUITests.swift */; };
 		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
@@ -453,6 +454,7 @@
 		28MEM002F /* SystemResourceHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceHeader.swift; path = UI/SystemResourceHeader.swift; sourceTree = "<group>"; };
 		28MEM001F /* SystemResourceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceMonitor.swift; path = Services/SystemResourceMonitor.swift; sourceTree = "<group>"; };
 		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
+		A91D00000000000000000002 /* StandaloneReclaimUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StandaloneReclaimUITests.swift; sourceTree = "<group>"; };
 		26UIREF101 /* WorkbenchReviewUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchReviewUITests.swift; sourceTree = "<group>"; };
 		5A1E5E77000000000000004F /* SetupAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantUITests.swift; sourceTree = "<group>"; };
 		26UIREF002 /* mlx-workbenchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mlx-workbenchUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1212,6 +1214,7 @@
 			children = (
 				74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */,
 				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
+				A91D00000000000000000002 /* StandaloneReclaimUITests.swift */,
 				26UIREF101 /* WorkbenchReviewUITests.swift */,
 				5A1E5E77000000000000004F /* SetupAssistantUITests.swift */,
                 26UIREF201 /* UnifiedWorkflowUITests.swift */,
@@ -1392,6 +1395,7 @@
 			files = (
 				344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */,
 				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
+				A91D00000000000000000001 /* StandaloneReclaimUITests.swift in Sources */,
 				26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */,
 				5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */,
                 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */,

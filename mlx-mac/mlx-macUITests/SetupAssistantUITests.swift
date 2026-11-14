@@ -369,7 +369,12 @@ final class SetupAssistantUITests: XCTestCase {
         import json, pathlib, sys
         root = pathlib.Path(__file__).resolve().parents[2]
         if sys.argv[1:3] == ['convert', 'scan']:
+            if '--compare-assets' in sys.argv:
+                print('Asset comparison is unavailable in this fixture.', file=sys.stderr)
+                sys.exit(2)
             data = json.loads((root / 'scan.json').read_text())
+            exclusions = [str(pathlib.Path(sys.argv[index + 1]).expanduser().resolve()) for index, value in enumerate(sys.argv) if value == '--asset-exclude-root']
+            data['asset_scan'] = {'compared': False, 'candidates': 0, 'checked': 0, 'errors': [], 'excluded_roots': exclusions}
         else:
             data = {'servers': [], 'jobs': [], 'changes': []}
         print(json.dumps({'status': 'ok', 'data': data}))

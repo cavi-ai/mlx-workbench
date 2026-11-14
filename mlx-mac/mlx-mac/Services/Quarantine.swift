@@ -37,7 +37,7 @@ enum QuarantineError: LocalizedError {
         case .symlinkRefused(let path):
             return "\(path) is a symbolic link; refusing to move or write through it."
         case .notInQuarantine(let path):
-            return "\(path) is not a recorded GGUF file, GGUF bundle or MLX folder in the configured quarantine directory."
+            return "\(path) is not a recorded model file, GGUF bundle or MLX folder in the configured quarantine directory."
         case .changedSincePreview:
             return "The item or its configuration changed after preview. Review it again before moving it."
         case .trashFailed(let detail):
@@ -49,9 +49,9 @@ enum QuarantineError: LocalizedError {
 }
 
 enum QuarantineKind: String, Codable, Sendable {
-    case mlxDirectory, ggufBundle, updateStaging, ollamaModel
+    case mlxDirectory, ggufBundle, updateStaging, ollamaModel, assetFile
     var isDirectory: Bool {
-        switch self { case .mlxDirectory, .ggufBundle, .updateStaging, .ollamaModel: true }
+        switch self { case .mlxDirectory, .ggufBundle, .updateStaging, .ollamaModel: true; case .assetFile: false }
     }
 }
 
@@ -89,6 +89,29 @@ struct QuarantineFileSnapshot: Codable, Equatable, Sendable {
     let createdAt: Date
     var treeFingerprint: String? = nil
     var fileCount: Int? = nil
+}
+
+struct AssetFileReview: Equatable, Sendable {
+    let item: StoredModel
+    let root: String
+}
+
+struct AssetRemovalReview: Equatable, Sendable {
+    let source: AssetFileReview
+    let keeper: AssetFileReview
+}
+
+final class AssetVerificationCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    func check(deadline: TimeInterval) throws {
+        lock.lock(); let stopped = cancelled; lock.unlock()
+        if stopped { throw CancellationError() }
+        if ProcessInfo.processInfo.systemUptime >= deadline {
+            throw QuarantineError.unsafeFolder("File verification timed out. Compare again before retrying.")
+        }
+    }
 }
 
 struct QuarantineTrashResult: Sendable {
@@ -633,6 +656,202 @@ enum Quarantine {
         return location
     }
 
+    private static func assetMarkerExists(_ path: String) throws -> Bool {
+        var value = stat()
+        if lstat(path, &value) == 0 { return true }
+        if errno == ENOENT || errno == ENOTDIR { return false }
+        throw QuarantineError.unsafeFolder("Model-file ownership could not be checked at \(path).")
+    }
+
+    /// Freeze a compared standalone file without reading its payload again.
+    static func assetReview(_ item: StoredModel, roots: [String], protected: [String], quarantineDir: String,
+                            requireSameVolume: Bool = true, fileManager: FileManager = .default) throws -> AssetFileReview {
+        guard item.kind == "asset", item.files.count == 1, let evidence = item.asset,
+              let digest = evidence.sha256, digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+              evidence.nlink == 1, item.files[0].path == item.path, item.files[0].bytes == item.bytes else {
+            throw QuarantineError.unsafeFolder("Compare the model files again before removal.")
+        }
+        let expanded = NSString(string: item.path).expandingTildeInPath
+        let path = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        guard path == item.path, path.hasPrefix("/"), ["safetensors", "ckpt"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()),
+              URL(fileURLWithPath: path).lastPathComponent.range(of: #"(?:^|[-_.])\d+-of-\d+(?:\.|$)"#, options: [.regularExpression, .caseInsensitive]) == nil else {
+            throw QuarantineError.unsafeFolder("The file is not an independent standalone model file.")
+        }
+        try refuseLinks(in: path, fileManager: fileManager)
+        let root = try roots.map { raw -> String in
+            let expanded = NSString(string: raw).expandingTildeInPath
+            try refuseLinks(in: expanded, fileManager: fileManager)
+            return resolve(expanded)
+        }.filter { isWithin(path, parent: $0) && path != $0 }.max { $0.count < $1.count }
+        guard let root else { throw QuarantineError.outsideRoots(path) }
+        let folders = String(path.dropFirst(root.count)).split(separator: "/").dropLast()
+        let skipped: Set<String> = ["node_modules", "__pycache__", "venv"]
+        guard folders.allSatisfy({ !$0.hasPrefix(".") && !skipped.contains(String($0)) }) else {
+            throw QuarantineError.unsafeFolder("This folder is excluded from model-file scans.")
+        }
+        guard !quarantineDir.isEmpty else { throw QuarantineError.unsafeFolder("Configure quarantine first.") }
+        let expandedQuarantine = NSString(string: quarantineDir).expandingTildeInPath
+        try refuseLinks(in: expandedQuarantine, fileManager: fileManager)
+        let quarantine = resolve(expandedQuarantine)
+        guard !isWithin(path, parent: quarantine), !DiskLedger.isProtected(path, by: Set(protected)) else {
+            throw QuarantineError.unsafeFolder("The model file is protected or already in quarantine.")
+        }
+        var directory = URL(fileURLWithPath: path).deletingLastPathComponent()
+        let markers = ["config.json", "model_index.json", "model.safetensors.index.json", "pytorch_model.bin.index.json", "diffusion_pytorch_model.safetensors.index.json"]
+        while true {
+            if directory.lastPathComponent.hasPrefix("models--") {
+                throw QuarantineError.unsafeFolder("This file belongs to a provider store.")
+            }
+            for marker in markers where try assetMarkerExists(directory.appendingPathComponent(marker).path) {
+                throw QuarantineError.unsafeFolder("This file belongs to a model directory.")
+            }
+            if isWithin(directory.path, parent: root) {
+                let names = try fileManager.contentsOfDirectory(atPath: directory.path)
+                guard names.count <= 10_000, !names.contains(where: { $0.hasSuffix(".index.json") }) else {
+                    throw QuarantineError.unsafeFolder("The model directory has an index or too many entries to review.")
+                }
+            }
+            if try assetMarkerExists(directory.appendingPathComponent("blobs").path) {
+                for marker in ["manifests", "manifests-v2"] where try assetMarkerExists(directory.appendingPathComponent(marker).path) {
+                    throw QuarantineError.unsafeFolder("This file belongs to a provider store.")
+                }
+            }
+            if directory.path == "/" { break }
+            directory.deleteLastPathComponent()
+        }
+        var value = stat()
+        guard lstat(path, &value) == 0, value.st_mode & S_IFMT == S_IFREG,
+              value.st_nlink == 1, "\(value.st_dev):\(value.st_ino)" == item.files[0].id,
+              value.st_size == item.bytes,
+              Int64(value.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(value.st_mtimespec.tv_nsec) == evidence.mtimeNS,
+              Int64(value.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(value.st_ctimespec.tv_nsec) == evidence.ctimeNS else {
+            throw QuarantineError.changedSincePreview
+        }
+        var parent = URL(fileURLWithPath: quarantine)
+        while !fileManager.fileExists(atPath: parent.path), parent.path != "/" { parent.deleteLastPathComponent() }
+        var volume = stat()
+        guard lstat(parent.path, &volume) == 0, !requireSameVolume || volume.st_dev == value.st_dev else {
+            throw QuarantineError.unsafeFolder("Choose a quarantine folder on the same volume as this file.")
+        }
+        return AssetFileReview(item: item, root: root)
+    }
+
+    static func verifyAsset(_ review: AssetFileReview, roots: [String], protected: [String], quarantineDir: String,
+                            cancellation: AssetVerificationCancellation, deadline: TimeInterval,
+                            requireSameVolume: Bool = true, fileManager: FileManager = .default) throws {
+        try cancellation.check(deadline: deadline)
+        guard try assetReview(review.item, roots: roots, protected: protected, quarantineDir: quarantineDir, requireSameVolume: requireSameVolume, fileManager: fileManager) == review else {
+            throw QuarantineError.changedSincePreview
+        }
+        let relative = String(review.item.path.dropFirst(review.root.count)).split(separator: "/").map(String.init)
+        guard !relative.isEmpty else { throw QuarantineError.changedSincePreview }
+        var descriptors: [Int32] = []
+        defer { for descriptor in descriptors.reversed() { close(descriptor) } }
+        var parent = open(review.root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard parent >= 0 else { throw QuarantineError.changedSincePreview }
+        descriptors.append(parent)
+        for component in relative.dropLast() {
+            parent = openat(parent, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard parent >= 0 else { throw QuarantineError.changedSincePreview }
+            descriptors.append(parent)
+        }
+        let fd = openat(parent, relative.last!, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw QuarantineError.changedSincePreview }
+        descriptors.append(fd)
+        var opened = stat()
+        guard fstat(fd, &opened) == 0, "\(opened.st_dev):\(opened.st_ino)" == review.item.files[0].id,
+              opened.st_mode & S_IFMT == S_IFREG, opened.st_nlink == 1 else { throw QuarantineError.changedSincePreview }
+        var hash = SHA256(), buffer = [UInt8](repeating: 0, count: 1024 * 1024)
+        while true {
+            try cancellation.check(deadline: deadline)
+            let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
+            guard count >= 0 else { throw QuarantineError.changedSincePreview }
+            if count == 0 { break }
+            hash.update(data: Data(buffer.prefix(count)))
+        }
+        try cancellation.check(deadline: deadline)
+        let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
+        guard digest == review.item.asset?.sha256,
+              try assetReview(review.item, roots: roots, protected: protected, quarantineDir: quarantineDir, requireSameVolume: requireSameVolume, fileManager: fileManager) == review else {
+            throw QuarantineError.changedSincePreview
+        }
+    }
+
+    static func moveAsset(_ review: AssetRemovalReview, roots: [String], protected: [String], quarantineDir: String,
+                          now: Date, fileManager: FileManager = .default) throws -> QuarantineRecord {
+        guard review.source.item.path != review.keeper.item.path,
+              review.source.item.files.first?.id != review.keeper.item.files.first?.id,
+              let digest = review.source.item.asset?.sha256, digest == review.keeper.item.asset?.sha256 else {
+            throw QuarantineError.changedSincePreview
+        }
+        guard try assetReview(review.source.item, roots: roots, protected: protected, quarantineDir: quarantineDir, fileManager: fileManager) == review.source,
+              try assetReview(review.keeper.item, roots: roots, protected: [], quarantineDir: quarantineDir, requireSameVolume: false, fileManager: fileManager) == review.keeper else {
+            throw QuarantineError.changedSincePreview
+        }
+        let destinationRoot = resolve(quarantineDir)
+        try fileManager.createDirectory(atPath: destinationRoot, withIntermediateDirectories: true)
+        try refuseLinks(in: destinationRoot, fileManager: fileManager)
+        let rootFD = open(review.source.root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard rootFD >= 0 else { throw QuarantineError.changedSincePreview }
+        var descriptors = [rootFD]
+        defer { for descriptor in descriptors.reversed() { close(descriptor) } }
+        let relative = String(review.source.item.path.dropFirst(review.source.root.count)).split(separator: "/").map(String.init)
+        guard let sourceName = relative.last else { throw QuarantineError.changedSincePreview }
+        var sourceParent = rootFD
+        for component in relative.dropLast() {
+            sourceParent = openat(sourceParent, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard sourceParent >= 0 else { throw QuarantineError.changedSincePreview }
+            descriptors.append(sourceParent)
+        }
+        let destinationFD = open(destinationRoot, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard destinationFD >= 0 else { throw QuarantineError.changedSincePreview }
+        descriptors.append(destinationFD)
+        var sourceStat = stat(), destinationStat = stat(), currentDestination = stat()
+        guard fstatat(sourceParent, sourceName, &sourceStat, AT_SYMLINK_NOFOLLOW) == 0,
+              fstat(destinationFD, &destinationStat) == 0, lstat(destinationRoot, &currentDestination) == 0,
+              destinationStat.st_dev == sourceStat.st_dev, destinationStat.st_dev == currentDestination.st_dev,
+              destinationStat.st_ino == currentDestination.st_ino,
+              "\(sourceStat.st_dev):\(sourceStat.st_ino)" == review.source.item.files[0].id,
+              sourceStat.st_mode & S_IFMT == S_IFREG, sourceStat.st_nlink == 1,
+              sourceStat.st_size == review.source.item.bytes,
+              Int64(sourceStat.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(sourceStat.st_mtimespec.tv_nsec) == review.source.item.asset?.mtimeNS,
+              Int64(sourceStat.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(sourceStat.st_ctimespec.tv_nsec) == review.source.item.asset?.ctimeNS else { throw QuarantineError.changedSincePreview }
+        let destinationName = UUID().uuidString + "-" + sourceName
+        let destination = URL(fileURLWithPath: destinationRoot).appendingPathComponent(destinationName).path
+        guard try assetReview(review.keeper.item, roots: roots, protected: [], quarantineDir: quarantineDir, requireSameVolume: false, fileManager: fileManager) == review.keeper else {
+            throw QuarantineError.changedSincePreview
+        }
+        guard renameatx_np(sourceParent, sourceName, destinationFD, destinationName, UInt32(RENAME_EXCL)) == 0 else {
+            throw QuarantineError.moveFailed("The file could not be moved on its volume.")
+        }
+        var moved = stat(), stillDestination = stat()
+        guard fstatat(destinationFD, destinationName, &moved, AT_SYMLINK_NOFOLLOW) == 0,
+              lstat(destinationRoot, &stillDestination) == 0,
+              moved.st_dev == sourceStat.st_dev, moved.st_ino == sourceStat.st_ino,
+              stillDestination.st_dev == destinationStat.st_dev, stillDestination.st_ino == destinationStat.st_ino else {
+            if renameatx_np(destinationFD, destinationName, sourceParent, sourceName, UInt32(RENAME_EXCL)) != 0 {
+                throw QuarantineError.moveFailed("The location changed and rollback failed; recover the file at \(destination).")
+            }
+            throw QuarantineError.changedSincePreview
+        }
+        let record = QuarantineRecord(movedAt: isoFormatter.string(from: now), from: review.source.item.path,
+                                      to: destination, bytes: review.source.item.bytes, kind: .assetFile)
+        do {
+            guard try assetReview(review.keeper.item, roots: roots, protected: [], quarantineDir: quarantineDir,
+                                  requireSameVolume: false, fileManager: fileManager) == review.keeper else {
+                throw QuarantineError.changedSincePreview
+            }
+            try appendLedger(record, quarantineDir: destinationRoot, fileManager: fileManager)
+        }
+        catch {
+            if renameatx_np(destinationFD, destinationName, sourceParent, sourceName, UInt32(RENAME_EXCL)) != 0 {
+                throw QuarantineError.moveFailed("History and rollback failed; recover the file at \(destination).")
+            }
+            throw QuarantineError.moveFailed("History could not be saved; the file was put back.")
+        }
+        return record
+    }
+
     /// Move one redundant GGUF into the quarantine directory. Never deletes.
     @discardableResult
     static func move(
@@ -751,7 +970,8 @@ enum Quarantine {
         }
         let root = resolve(expandedRoot)
         let target = URL(fileURLWithPath: path).standardizedFileURL
-        guard target.lastPathComponent != ledgerName, (kind?.isDirectory == true || target.path.lowercased().hasSuffix(".gguf")),
+        let extensionAllowed = kind == .assetFile && ["safetensors", "ckpt"].contains(target.pathExtension.lowercased())
+        guard target.lastPathComponent != ledgerName, (kind?.isDirectory == true || extensionAllowed || target.path.lowercased().hasSuffix(".gguf")),
               target.path != root, isWithin(target.path, parent: root) else {
             throw QuarantineError.notInQuarantine(path)
         }
@@ -816,7 +1036,7 @@ enum Quarantine {
         if record.kind == .ollamaModel { return try restoreOllamaModel(record, fileManager: fileManager) }
         let quarantined = resolve(record.to)
         var isDirectory = ObjCBool(false)
-        if record.kind?.isDirectory == true { try refuseLinks(in: record.to, fileManager: fileManager) }
+        if record.kind?.isDirectory == true || record.kind == .assetFile { try refuseLinks(in: record.to, fileManager: fileManager) }
         guard fileManager.fileExists(atPath: quarantined, isDirectory: &isDirectory), isDirectory.boolValue == (record.kind?.isDirectory == true) else {
             throw QuarantineError.notFound(quarantined)
         }
@@ -824,7 +1044,7 @@ enum Quarantine {
         // Never write through a symlink when putting a file back; resolve()
         // follows links, so the check must use the unresolved path.
         let expandedOriginal = NSString(string: record.from).expandingTildeInPath
-        if record.kind?.isDirectory == true { try refuseLinks(in: expandedOriginal, fileManager: fileManager) }
+        if record.kind?.isDirectory == true || record.kind == .assetFile { try refuseLinks(in: expandedOriginal, fileManager: fileManager) }
         if (try? fileManager.destinationOfSymbolicLink(atPath: expandedOriginal)) != nil {
             throw QuarantineError.symlinkRefused(original)
         }

@@ -269,7 +269,7 @@ final class ActivityRemodelTests: XCTestCase {
         let persistence = ModelWorkflowPersistence(load: { [] }, upsert: { _ in counter.hit("upsert") })
         return AppHost(
             config: Config.defaults(),
-            scanOperation: { _, _, _, _ in counter.hit("scan"); return Self.scanResult() },
+            scanOperation: { _, _, _, _, _, exclusions in counter.hit("scan"); return Self.scanResult().reportingExclusions(exclusions) },
             modelWorkflowAPI: api,
             modelWorkflowPersistence: persistence
         )

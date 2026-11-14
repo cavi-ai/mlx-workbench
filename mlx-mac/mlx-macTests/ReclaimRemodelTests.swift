@@ -117,6 +117,11 @@ final class ReclaimRemodelTests: XCTestCase {
         XCTAssertEqual(ledger.stages.first { $0.id == .quarantine }?.detail, "2 files")
     }
 
+    func testQuarantineLedgerNamesStandaloneModelFiles() {
+        let ledger = Fixture.ledger(quarantined: [Fixture.quarantine("/m/a.ckpt", bytes: 10, kind: .assetFile)])
+        XCTAssertTrue(ledger.stages.first { $0.id == .quarantine }?.subject?.contains("Model file") == true)
+    }
+
     func testRecordsMarkedDeletedLeaveQuarantineAndTheLedger() async throws {
         let hold = try makeRoot()
         let directory = Quarantine.resolve(hold.path)
@@ -199,7 +204,7 @@ final class ReclaimRemodelTests: XCTestCase {
         XCTAssertEqual(unknown.heading, "Scan coverage unavailable")
         let successful = ReclaimScanCoverage(hasScan: true, isScanning: false, error: nil, roots: roots)
         XCTAssertEqual(successful.emptyMessage, "No matching copies or model variants in the scanned folders.")
-        XCTAssertTrue(ReclaimScanCoverage.limitations.contains("Standalone model assets"))
+        XCTAssertTrue(ReclaimScanCoverage.limitations.contains("standalone model files"))
         XCTAssertTrue(ReclaimScanCoverage.limitations.contains("Connecting a host does not add its folders"))
     }
 
@@ -226,7 +231,7 @@ final class ReclaimRemodelTests: XCTestCase {
         let report = RuntimeReport(convert: ConvertStatus(ok: true, modules: [:], executables: [:], missingModules: [], missingExecutables: [], install: "", message: ""),
             serve: ServeStatus(ok: true, executables: [:], missingExecutables: [], install: "", message: ""), install: "", ok: true)
         let app = AppHost(config: config, discoveredRoots: [], agentHealth: .notConfigured, runtimeReport: report,
-            scanOperation: { _, _, _, _ in scan })
+            scanOperation: { _, _, _, _, _, exclusions in scan.reportingExclusions(exclusions) })
         app.scanResult = scan
         app.librarySnapshot = ModelLibraryBuilder.build(scan: scan, hardware: app.hardwareProfile, now: Date())
         for width in [1100, 560] {
