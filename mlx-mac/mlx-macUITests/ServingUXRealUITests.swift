@@ -36,7 +36,7 @@ final class ServingUXRealUITests: XCTestCase {
         XCTAssertTrue(serving.waitForExistence(timeout: 20)); serving.click()
         let first = text(":19081", in: application)
         XCTAssertTrue(first.waitForExistence(timeout: 30)); first.click()
-        let sibling = application.buttons.matching(NSPredicate(format: "label CONTAINS %@", ":19082")).firstMatch
+        let sibling = application.links.matching(NSPredicate(format: "label CONTAINS %@", ":19082")).firstMatch
         XCTAssertTrue(sibling.waitForExistence(timeout: 15))
         resize(width: 1380, height: 850); XCTAssertGreaterThanOrEqual(application.windows.firstMatch.frame.width, 1300); capture("Serving real idle endpoints wide")
         resize(width: 1000, height: 720); XCTAssertLessThan(application.windows.firstMatch.frame.width, 1100); capture("Serving real idle endpoints ordinary")
