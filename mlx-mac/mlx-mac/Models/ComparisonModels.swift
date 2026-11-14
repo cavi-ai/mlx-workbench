@@ -1271,6 +1271,19 @@ struct ChatRecordedText: Equatable {
 }
 
 enum ChatComparisonPresentation {
+    static func hasNoOutput(_ run: ComparisonRun) -> Bool {
+        run.state != .running && run.historyDetailsOmitted != true && !run.results.contains { result in
+            result.samples.contains {
+                !($0.fullOutput ?? $0.outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    ($0.toolCalls ?? 0) > 0 || !($0.toolNames ?? []).isEmpty ||
+                    $0.historyAnswerPresent == true || $0.historyOutputIsEmpty == false
+            }
+        }
+    }
+    static func recordedOutput(_ result: VariantResult, promptID: String) -> ComparisonDiff.Output? {
+        guard let sample = result.samples.first(where: { $0.promptID == promptID }) else { return nil }
+        return ComparisonDiff.Output(text: sample.fullOutput ?? sample.outputExcerpt, isExcerpt: sample.fullOutput == nil)
+    }
     enum PromptOutcome: Equatable {
         case finished, tokenLimit, incomplete, blocked, unknown, notRecorded, waiting
 

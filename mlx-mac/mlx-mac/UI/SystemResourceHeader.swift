@@ -235,6 +235,8 @@ enum ResourceHeaderPresentation {
         let parts = [attention,
                      tally.loaded > 0 ? "\(tally.loaded) loaded" : nil,
                      tally.loading > 0 ? "\(tally.loading) loading" : nil,
+                     tally.unloading > 0 ? "\(tally.unloading) unloading" : nil,
+                     tally.unknown > 0 ? "\(tally.unknown) unknown" : nil,
                      tally.onRequest > 0 ? "\(tally.onRequest) ready on request" : nil].compactMap { $0 }
         return (parts + [available]).joined(separator: " · ")
     }
@@ -247,6 +249,8 @@ enum ResourceHeaderPresentation {
         let free = "~\(gigabytes(availableBytes)) GB free"
         let counts = [(tally?.loaded ?? 0) > 0 ? "\(tally?.loaded ?? 0) loaded" : nil,
                       (tally?.loading ?? 0) > 0 ? "\(tally?.loading ?? 0) loading" : nil,
+                      (tally?.unloading ?? 0) > 0 ? "\(tally?.unloading ?? 0) unloading" : nil,
+                      (tally?.unknown ?? 0) > 0 ? "\(tally?.unknown ?? 0) unknown" : nil,
                       (tally?.onRequest ?? 0) > 0 ? "\(tally?.onRequest ?? 0) on request" : nil].compactMap { $0 }
         let medium = ResourceHeaderLine(badge: badge, text: free)
         return [counts.isEmpty ? medium : ResourceHeaderLine(badge: badge, text: (counts + [free]).joined(separator: " · ")),

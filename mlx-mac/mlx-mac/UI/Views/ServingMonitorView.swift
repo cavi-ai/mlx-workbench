@@ -9,6 +9,7 @@ struct ServingMonitorView: View {
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var selection: String?
+    @State private var showingDetails = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -29,7 +30,16 @@ struct ServingMonitorView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             HStack {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("\(rows.count) active model\(rows.count == 1 ? "" : "s")").font(WorkbenchTypography.cardTitle)
+                    Text("\(rows.count) live endpoint\(rows.count == 1 ? "" : "s")").font(WorkbenchTypography.cardTitle)
+                    let tally = ServingWorkspacePresentation.tally(rows)
+                    let facts = [tally.attention > 0 ? "\(tally.attention) need attention" : nil,
+                                 tally.loaded > 0 ? "\(tally.loaded) loaded" : nil,
+                                 tally.loading > 0 ? "\(tally.loading) loading" : nil,
+                                 tally.unloading > 0 ? "\(tally.unloading) unloading" : nil,
+                                 tally.onRequest > 0 ? "\(tally.onRequest) ready on request" : nil,
+                                 tally.unknown > 0 ? "\(tally.unknown) unknown" : nil].compactMap { $0 }
+                    if !facts.isEmpty { Text(facts.joined(separator: " · ")).font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true) }
                     ServingSystemHeadroom(resources: appHost.resources)
                 }
                 Spacer()
@@ -38,14 +48,52 @@ struct ServingMonitorView: View {
                     .disabled(inventory.isRefreshing)
                 Button("Manage endpoints") { onRouteSelection(.run) }
             }
-            Table(rows, selection: $selection) {
+            GeometryReader { geometry in
+                if geometry.size.width >= 1100 {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                        monitorTable
+                        if let selected { ScrollView { details(selected) }.frame(width: 340) }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        monitorTable
+                        Button("Endpoint details…") { showingDetails = true }.disabled(selected == nil)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingDetails) {
+                if let selected {
+                    VStack(alignment: .trailing) {
+                        ScrollView { details(selected) }
+                        Button("Done") { showingDetails = false }.keyboardShortcut(.cancelAction)
+                    }.padding(WorkbenchSpacing.md).frame(minWidth: 420, minHeight: 300)
+                }
+            }
+            Text("Tokens cover completed requests with reported usage, since each gateway started. Response tok/s includes waiting, loading and generation. A dash means the provider has not reported a measurement.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(WorkbenchSpacing.lg)
+        .task(id: isRouteActive) {
+            guard isRouteActive else { return }
+            await workflow.refreshServers()
+        }
+        .onChange(of: rows.map(\.id), initial: true) { _, ids in
+            if selection == nil || !ids.contains(selection ?? "") { selection = ids.first }
+        }
+    }
+    private var monitorTable: some View {
+        Table(rows, selection: $selection) {
                 TableColumn("Model") { row in
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         Text(ServingWorkspacePresentation.name(row, models: models)).lineLimit(1).truncationMode(.middle)
-                        Text(ServingWorkspacePresentation.provider(row)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        let port = ServingWorkspacePresentation.server(row)?.port ?? URL(string: ServingWorkspacePresentation.baseURL(row) ?? "")?.port
+                        Text((port.map { ":\($0) · " } ?? "") + ServingWorkspacePresentation.provider(row))
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            .help(ServingWorkspacePresentation.baseURL(row) ?? "Address unavailable")
                     }
                 }.width(min: 160, ideal: 240)
                 TableColumn("Status") { row in ServingStatusLabel(row: row, states: endpoint.slotStates) }.width(min: 90, ideal: 125)
+                TableColumn("Process RAM") { row in Text(processMemory(row)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Input tokens") { row in Text(token(telemetry(row)?.inputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Output tokens") { row in Text(token(telemetry(row)?.outputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Response tok/s") { row in
@@ -60,18 +108,14 @@ struct ServingMonitorView: View {
                     ContentUnavailableView("No models serving", systemImage: "server.rack", description: Text("Start an endpoint in Serving. Other detected local services appear here too."))
                 }
             }
-            if let selected { details(selected) }
-            Text("Tokens cover completed requests with reported usage, since each gateway started. Response tok/s includes waiting, loading and generation. A dash means the provider has not reported a measurement.")
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(WorkbenchSpacing.lg)
-        .task(id: isRouteActive) {
-            guard isRouteActive else { return }
-            await workflow.refreshServers()
-        }
-        .onChange(of: rows.map(\.id), initial: true) { _, ids in
-            if selection == nil || !ids.contains(selection ?? "") { selection = ids.first }
-        }
+    }
+    private func processMemory(_ row: ServingRow) -> String {
+        let service = ServingWorkspacePresentation.service(row)
+        guard service?.stale != true else { return "—" }
+        let server = ServingWorkspacePresentation.server(row)
+        let pid = service?.modelProcessID ?? (server?.jit == true ? server?.workerPid : server?.pid)
+        guard let pid, let bytes = inventory.processMemory[pid] else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
     }
     private func telemetry(_ row: ServingRow) -> ServingTelemetry? {
         guard ServingWorkspacePresentation.isRunning(row) else { return nil }
@@ -95,6 +139,8 @@ struct ServingMonitorView: View {
                 .accessibilityIdentifier("monitor-attention-reason")
             }
             if let url = ServingWorkspacePresentation.baseURL(row) { Text(url).textSelection(.enabled) }
+            Text("Model ID: " + ServingWorkspacePresentation.modelID(row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            ServingSiblingEndpoints(row: row, rows: rows) { selection = $0 }
             if let metrics = telemetry(row) {
                 Text("\(metrics.completedRequests.formatted()) completed · \(metrics.failedRequests.formatted()) failed · \(metrics.measuredRequests.formatted()) with token usage")
                 if let start = ServingTelemetry.date(metrics.startedAt), let captured = ServingTelemetry.date(metrics.capturedAt) {
