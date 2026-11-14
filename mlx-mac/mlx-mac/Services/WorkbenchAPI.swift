@@ -625,7 +625,7 @@ actor WorkbenchAPI {
     }
 
     func changeDiscoveredService(_ expected: ServerInfo, action: String, policy: EndpointMemoryPolicy? = nil) async throws {
-        guard ["stop", "unload", "policy"].contains(action), let port = expected.port, (1...65535).contains(port),
+        guard ["stop", "unload", "policy", "reclaim-cache"].contains(action), let port = expected.port, (1...65535).contains(port),
               let pid = expected.pid, pid > 0, let start = expected.processStartedAt, !start.isEmpty,
               let root = expected.receiptsDirectory, root.hasPrefix("/"),
               let receipt = expected.receipt,
@@ -642,6 +642,9 @@ actor WorkbenchAPI {
         }
         if action == "unload", live.jit != true || live.activeRequests != 0 {
             throw WorkflowEvidenceError.invalid("Finish active requests before unloading this model.")
+        }
+        if action == "reclaim-cache", live.jit != true || live.activeRequests != 0 || live.allocatorCache?.canRelease != true {
+            throw WorkflowEvidenceError.invalid("This model's cache cannot be released now. Finish active requests and refresh.")
         }
         var argv = ["serve", action, "--port", String(port), "--receipts-dir", root,
                     "--expected-pid", String(pid), "--expected-start", start]
@@ -660,6 +663,10 @@ actor WorkbenchAPI {
         case "unload":
             guard remaining?.pid == pid, remaining?.processStartedAt == start, remaining?.modelState == "unloaded" else {
                 throw WorkflowEvidenceError.invalid("Model unload could not be confirmed. Refresh serving status.")
+            }
+        case "reclaim-cache":
+            guard remaining?.pid == pid, remaining?.processStartedAt == start, remaining?.allocatorCache?.lastReleasedBytes != nil else {
+                throw WorkflowEvidenceError.invalid("The cache release could not be confirmed. Refresh serving status.")
             }
         default:
             guard remaining?.pid == pid, remaining?.processStartedAt == start, remaining?.memoryPolicy == policy else {
@@ -1175,7 +1182,7 @@ actor WorkbenchAPI {
             let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding", "prefill_kernel", "decode_profile", "vision_profile", "memory_allocation"].contains($0.key) }
             let adapter = (try? JSONSerialization.data(withJSONObject: adapterFields))
                 .flatMap { try? JSONDecoder().decode(ServerInfo.self, from: $0) }
-            return ServerInfo(
+            var server = ServerInfo(
                 repo: r.string("repo"),
                 path: r.string("path"),
                 runtime: r.string("runtime"),
@@ -1210,6 +1217,9 @@ actor WorkbenchAPI {
                 requestDefaults: (r["request_defaults"] as? [String: Any]).flatMap { try? Self.decode(LabValue.self, from: $0) },
                 lastError: r.string("last_error")
             )
+            server.workerMemory = WorkerMemoryReading(r["worker_memory"])
+            server.allocatorCache = AllocatorCacheReading(r["allocator_cache"])
+            return server
         }
     }
 

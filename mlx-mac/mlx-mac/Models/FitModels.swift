@@ -84,3 +84,34 @@ struct MemorySnapshot: Codable, Equatable, Sendable {
         return MemorySnapshot(totalBytes: Int64(total), availableBytes: min(Int64(total), Int64(pages * UInt64(pageSize))))
     }
 }
+
+/// Processor load, swap in use and the free space on one volume, read together.
+struct SystemLoadReading: Equatable, Sendable {
+    /// One-minute run-queue average; equal to `processorCount` means every core is busy.
+    let loadAverage: Double
+    let processorCount: Int
+    let swapUsedBytes: Int64?
+    let swapTotalBytes: Int64?
+    let volumeName: String?
+    let volumeFreeBytes: Int64?
+    let volumeTotalBytes: Int64?
+
+    var busyFraction: Double { processorCount > 0 ? loadAverage / Double(processorCount) : 0 }
+
+    /// Reads the volume holding `path`; nil only when the load average is unavailable.
+    static func probe(volumeOf path: String?) -> SystemLoadReading? {
+        var loads = [Double](repeating: 0, count: 3)
+        guard getloadavg(&loads, 3) >= 1, loads[0].isFinite, loads[0] >= 0 else { return nil }
+        var swap = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        let swapRead = sysctlbyname("vm.swapusage", &swap, &size, nil, 0) == 0
+        let values = path.flatMap { try? URL(fileURLWithPath: $0).resourceValues(forKeys: [
+            .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey, .volumeLocalizedNameKey]) }
+        return SystemLoadReading(
+            loadAverage: loads[0], processorCount: ProcessInfo.processInfo.activeProcessorCount,
+            swapUsedBytes: swapRead ? Int64(clamping: swap.xsu_used) : nil,
+            swapTotalBytes: swapRead ? Int64(clamping: swap.xsu_total) : nil,
+            volumeName: values?.volumeLocalizedName, volumeFreeBytes: values?.volumeAvailableCapacityForImportantUsage,
+            volumeTotalBytes: values?.volumeTotalCapacity.map(Int64.init))
+    }
+}
