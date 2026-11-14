@@ -252,7 +252,6 @@ struct ContentView: View {
                                  servingInventory: appHost.servingInventory,
                                  servers: modelWorkflow.servers,
                                  libraryModels: appHost.librarySnapshot?.models ?? [],
-                                 compactLabel: viewport.width < WorkbenchSize.ResourceHeader.fullLabelWindowMinimum,
                                  historyLoaded: comparison.hasLoadedHistory,
                                  onManageServing: { rowID in
                 appHost.handoffs.send(ServingFocusRequest(rowID: rowID), as: .openServing)

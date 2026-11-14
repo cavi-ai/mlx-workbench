@@ -397,6 +397,9 @@ extension WorkbenchSize {
         static let stageThreshold: CGFloat = stageMinimum * 3 + stageGap * 2
 
         static let symbolColumn: CGFloat = 24
+        static let modelTableHeight: CGFloat = 460
+        static let suggestionPreview = 5
+        static let gaugeWidth: CGFloat = 180
         static let suggestionNameMinimum: CGFloat = 240
         static let byteColumn: CGFloat = 88
         static let checkboxColumn: CGFloat = 28
@@ -723,9 +726,6 @@ extension EnvironmentValues {
 extension WorkbenchSize {
     /// Toolbar resource label and popover dimensions.
     enum ResourceHeader {
-        /// Windows narrower than this show the short memory label.
-        static let fullLabelWindowMinimum: CGFloat = WorkbenchSize.sidebarIdeal + Run.compactThreshold
-            + Run.surfaceChrome + 2 * WorkbenchSpacing.pageInset
         static let popoverWidth: CGFloat = 420
         static let popoverMaxHeight: CGFloat = 620
     }

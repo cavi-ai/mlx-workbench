@@ -18,6 +18,39 @@ final class ServingInventoryPresentationTests: XCTestCase {
         XCTAssertEqual(ServingInventoryPresentation.additionalServices(snapshot, slots: [slot]).map(\.modelID), ["/models/external"])
     }
 
+    func testALoadedTaskWorkerShowsItsMLXCacheAndOffersReleaseOnlyWhileIdle() throws {
+        func row(active: Int = 0, cache: [String: Any], memorySchema: String = "worker-memory/1") -> [String: Any] {
+            ["path": "/models/vision", "runtime": "tasks", "port": 8770, "pid": 50, "state": "running", "jit": true, "worker_pid": 51,
+             "model_state": "loaded", "active_requests": active, "receipts_dir": "/receipts", "process_started_at": "2026-11-13T10:00:00Z",
+             "worker_memory": ["schema": memorySchema, "active_bytes": 6_000_000_000, "cache_bytes": 2_500_000_000,
+                               "peak_bytes": 9_000_000_000, "loads": 1, "cache_hits": 0, "load_seconds": 4.2, "captured_at": 1_763_000_000.0],
+             "allocator_cache": cache]
+        }
+        func service(_ row: [String: Any]) throws -> ServingServiceObservation {
+            let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+            return try XCTUnwrap(ServingInventorySnapshot.make(engine: [server], hosts: [], managedReceipts: "/receipts",
+                                                               capturedAt: capturedAt).services.first)
+        }
+        let ready: [String: Any] = ["supported": true, "available": true, "active": false, "pending": false,
+                                    "control_path": "/_mlx/cache", "last_reclaim": NSNull(), "error": NSNull()]
+        let idle = try service(row(cache: ready))
+        XCTAssertEqual(idle.server?.workerMemory?.cacheBytes, 2_500_000_000)
+        XCTAssertEqual(ReclaimSystemPresentation.memoryText(idle, processMemory: [:]), "6 GB in use · 2.5 GB cache · 9 GB peak")
+        XCTAssertTrue(idle.allows(.releaseCache))
+
+        XCTAssertFalse(try service(row(active: 1, cache: ready)).allows(.releaseCache), "a request is running")
+        var reclaiming = ready
+        reclaiming["active"] = true
+        XCTAssertFalse(try service(row(cache: reclaiming)).allows(.releaseCache), "a release is already running")
+        var chat = ready
+        chat["supported"] = false
+        XCTAssertFalse(try service(row(cache: chat)).allows(.releaseCache), "this runtime has no cache control")
+
+        let unknown = try service(row(cache: ready, memorySchema: "worker-memory/2"))
+        XCTAssertNil(unknown.server?.workerMemory)
+        XCTAssertEqual(ReclaimSystemPresentation.memoryText(unknown, processMemory: [51: 7_000_000_000]), "7 GB process memory")
+    }
+
     func testUnknownAndStaleObservationsDoNotCountAsLoaded() {
         let servers = [
             ServerInfo(path: "/models/loaded", port: 1, pid: 10, state: "running", modelState: "loaded"),

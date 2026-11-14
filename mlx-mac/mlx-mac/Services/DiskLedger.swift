@@ -2,106 +2,277 @@ import Foundation
 
 // MARK: - DiskLedger
 //
-// Reclaim's model view: one row per family of copies the scan groups across
-// MLX folders, GGUF files, the Hugging Face cache and Ollama. Bytes are
-// counted once per file on disk, so shared blobs and hard links never inflate
-// a total or a saving.
+// Reclaim's model view: one row per model, with every version of it the scan
+// found across MLX folders, GGUF files, the Hugging Face cache and Ollama.
+// Versions share the engine's architecture family and its model key, so
+// fine-tunes of one base model stay apart. Bytes are counted once per file on
+// disk, so shared blobs and hard links never inflate a total or a saving.
 
 struct DiskCopy: Identifiable, Hashable {
     let item: StoredModel
     let lastUsed: Date?
     /// Serving, preferred or otherwise claimed: never offered for removal.
     let isProtected: Bool
-    /// The scan found identical weights in another copy of this family.
+    /// The scan found identical weights in another copy.
     let isIdentical: Bool
     var id: String { item.path }
 }
 
-struct DiskFamily: Identifiable, Hashable {
+/// Every stored version of one model.
+struct DiskModel: Identifiable, Hashable {
+    enum KeepReason: Hashable {
+        case chosen
+        case used(Date)
+        case protected
+    }
+
     let id: String
     let name: String
-    /// Kept copy first, then the largest.
+    /// Kept version first, then the largest.
     let copies: [DiskCopy]
+    /// Set only with a reason: chosen, used here, or serving.
     let keep: String?
-    /// Every file of every copy, once.
+    let keepReason: KeepReason?
+    /// Every file of every version, once.
     let bytes: Int64
-    /// Bytes freed by removing every copy except the kept and protected ones.
+    /// Bytes freed by keeping one version (the kept one, else the largest) and removing the others that are not protected.
     let couldFree: Int64
     let lastUsed: Date?
     let stores: [String]
 
+    /// Versions a person may select for removal.
     var removable: [DiskCopy] { copies.filter { $0.id != keep && !$0.isProtected } }
+    /// Versions `couldFree` counts: all but the kept or largest one.
+    var extras: [DiskCopy] {
+        guard copies.count > 1 else { return [] }
+        let stays = keep ?? copies.first?.id
+        return copies.filter { $0.id != stays && !$0.isProtected }
+    }
+}
+
+/// One thing Reclaim recommends, with the evidence behind it and the exact bytes it frees.
+struct DiskSuggestion: Identifiable, Hashable {
+    enum Kind: Int, Hashable {
+        /// The same weights stored more than once.
+        case identical
+        /// One version is used, serving or chosen; the others are not used.
+        case otherVersions
+        /// Several versions, none used: a person picks the one to keep.
+        case chooseVersion
+        /// A model with no recent use here.
+        case notUsed
+    }
+
+    let kind: Kind
+    let modelID: String
+    let name: String
+    let detail: String
+    /// Paths the suggestion removes; empty when a person must choose first.
+    let remove: [String]
+    /// Freed by `remove`; for `chooseVersion`, freed by keeping the largest version.
+    let bytes: Int64
+
+    var id: String { "\(kind.rawValue):\(modelID):\(remove.sorted().joined(separator: "|"))" }
 }
 
 enum DiskFilter: String, CaseIterable, Identifiable {
-    case redundant, unused, identical, all
+    case all, redundant, unused, identical
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .redundant: "Several copies"
+        case .all: "All models"
+        case .redundant: "Several versions"
         case .unused: "Not used recently"
         case .identical: "Identical copies"
-        case .all: "All models"
         }
     }
 }
 
 enum DiskLedger {
-    static func families(
+    /// Smallest model `notUsed` suggests removing.
+    static let suggestionFloorBytes: Int64 = 1_000_000_000
+
+    static func models(
         storage: ScanStorage,
         families: [ModelFamily],
         duplicates: [DuplicateGroup] = [],
         lastUsedByPath: [String: Date] = [:],
         protectedPaths: Set<String> = [],
         keep overrides: [String: String] = [:]
-    ) -> [DiskFamily] {
-        let items = Dictionary(storage.items.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+    ) -> [DiskModel] {
         let identicalGroups = duplicates.filter { $0.kind == "exact" }.map { Set($0.sources) }
-        var grouped = Set<String>()
-        var result: [DiskFamily] = []
-        func family(id: String, name: String, members: [StoredModel]) -> DiskFamily {
+        var familyOf: [String: String] = [:]
+        for family in families { for path in family.members where familyOf[path] == nil { familyOf[path] = family.familyID } }
+        var groups: [String: [StoredModel]] = [:]
+        var order: [String] = []
+        for item in storage.items {
+            let family = familyOf[item.path] ?? "path:" + item.path
+            let key = "model:" + family + "|" + (item.modelKey.flatMap { $0.isEmpty ? nil : $0 } ?? item.path)
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(item)
+        }
+        return order.compactMap { id in
+            guard let members = groups[id] else { return nil }
             let paths = Set(members.map(\.path))
             let copies = members.map { item in
                 DiskCopy(item: item, lastUsed: lastUsedByPath[item.path],
                          isProtected: isProtected(item.path, by: protectedPaths),
-                         isIdentical: identicalGroups.contains { $0.contains(item.path) && !$0.intersection(paths).subtracting([item.path]).isEmpty })
+                         isIdentical: identicalGroups.contains { $0.contains(item.path) && $0.count > 1 })
             }
-            let keep = overrides[id].flatMap { paths.contains($0) ? $0 : nil } ?? defaultKeep(copies)
+            let chosen = overrides[id].flatMap { paths.contains($0) ? $0 : nil }
+            let kept = chosen.map { ($0, DiskModel.KeepReason.chosen) } ?? defaultKeep(copies)
             let ordered = copies.sorted { lhs, rhs in
-                if (lhs.id == keep) != (rhs.id == keep) { return lhs.id == keep }
+                if (lhs.id == kept?.0) != (rhs.id == kept?.0) { return lhs.id == kept?.0 }
                 return lhs.item.bytes == rhs.item.bytes ? lhs.id < rhs.id : lhs.item.bytes > rhs.item.bytes
             }
-            let removable = ordered.filter { $0.id != keep && !$0.isProtected }.map(\.item.path)
-            return DiskFamily(
-                id: id, name: name, copies: ordered, keep: keep,
+            let stays = kept?.0 ?? ordered.first?.id
+            let extras = ordered.count > 1 ? ordered.filter { $0.id != stays && !$0.isProtected }.map(\.id) : []
+            return DiskModel(
+                id: id, name: displayName(members), copies: ordered, keep: kept?.0, keepReason: kept?.1,
                 bytes: uniqueBytes(members.flatMap(\.files)),
-                couldFree: freedBytes(removing: Set(removable), items: storage.items),
+                couldFree: freedBytes(removing: Set(extras), items: storage.items),
                 lastUsed: copies.compactMap(\.lastUsed).max(),
                 stores: Array(Set(members.map(\.store))).sorted()
             )
         }
-        for entry in families {
-            let members = entry.members.compactMap { items[$0] }.filter { !grouped.contains($0.path) }
-            guard !members.isEmpty else { continue }
-            grouped.formUnion(members.map(\.path))
-            result.append(family(id: entry.familyID, name: entry.name, members: members))
-        }
-        for item in storage.items where !grouped.contains(item.path) {
-            result.append(family(id: "path:" + item.path, name: item.name, members: [item]))
-        }
-        return result
     }
 
-    static func filter(_ families: [DiskFamily], by filter: DiskFilter, staleBefore: Date) -> [DiskFamily] {
+    static func filter(_ models: [DiskModel], by filter: DiskFilter, staleBefore: Date) -> [DiskModel] {
         switch filter {
-        case .redundant: families.filter { $0.copies.count > 1 }
-        case .unused: families.filter { family in
-            !family.copies.contains(where: \.isProtected) && (family.lastUsed.map { $0 < staleBefore } ?? true)
+        case .all: models
+        case .redundant: models.filter { $0.copies.count > 1 }
+        case .unused: models.filter { model in
+            !model.copies.contains(where: \.isProtected) && (model.lastUsed.map { $0 < staleBefore } ?? true)
         }
-        case .identical: families.filter { $0.copies.contains(where: \.isIdentical) }
-        case .all: families
+        case .identical: models.filter { $0.copies.contains(where: \.isIdentical) }
         }
     }
+
+    // MARK: Suggestions
+
+    /// What to remove and why, largest saving first after identical copies.
+    /// `modifiedByPath` dates a model with no recorded use by when its files last changed.
+    static func suggestions(
+        models: [DiskModel],
+        items: [StoredModel],
+        duplicates: [DuplicateGroup],
+        staleBefore: Date,
+        modifiedByPath: [String: Date] = [:],
+        now: Date = Date()
+    ) -> [DiskSuggestion] {
+        let copies = Dictionary(models.flatMap { model in model.copies.map { ($0.id, (model, $0)) } },
+                                uniquingKeysWith: { first, _ in first })
+        var claimed = Set<String>()
+        var found: [DiskSuggestion] = []
+
+        for group in duplicates where group.kind == "exact" {
+            guard let keep = group.keep, let entry = copies[keep] else { continue }
+            let (model, kept) = entry
+            let remove = Array(Set(group.redundant ?? group.sources).subtracting([keep]))
+                .filter { copies[$0].map { !$0.1.isProtected } ?? false }.sorted()
+            claimed.formUnion(group.sources)
+            let bytes = freedBytes(removing: Set(remove), items: items)
+            guard !remove.isEmpty, bytes > 0 else { continue }
+            found.append(DiskSuggestion(
+                kind: .identical, modelID: model.id, name: model.name,
+                detail: "The same weights are stored \(remove.count + 1) times. Keeps the copy in \(place(kept.item)).",
+                remove: remove, bytes: bytes))
+        }
+
+        for model in models where model.copies.count > 1 {
+            let open = model.copies.filter { !claimed.contains($0.id) }
+            if let keep = model.keep, let reason = model.keepReason, let kept = model.copies.first(where: { $0.id == keep }) {
+                let remove = open.filter { $0.id != keep && !$0.isProtected && ($0.lastUsed.map { $0 < staleBefore } ?? true) }
+                let bytes = freedBytes(removing: Set(remove.map(\.id)), items: items)
+                guard !remove.isEmpty, bytes > 0 else { continue }
+                let others = remove.count == 1 ? "The other version was" : "The other \(remove.count) versions were"
+                let why: String
+                switch reason {
+                case .used(let date):
+                    why = "\(versionLabel(kept.item, model: model)) was used \(WorkbenchRelativeTime.text(for: date, style: .full, now: now))."
+                case .protected:
+                    why = "\(versionLabel(kept.item, model: model)) is serving or kept for a task."
+                case .chosen:
+                    why = "You chose to keep \(versionLabel(kept.item, model: model))."
+                }
+                found.append(DiskSuggestion(kind: .otherVersions, modelID: model.id, name: model.name,
+                                            detail: why + " " + others + " not used recently.",
+                                            remove: remove.map(\.id).sorted(), bytes: bytes))
+            } else if open.filter({ !$0.isProtected }).count > 1, model.couldFree > 0 {
+                let labels = model.copies.map { "\(versionLabel($0.item, model: model)) \(ReclaimFormat.byteCount($0.item.bytes))" }
+                found.append(DiskSuggestion(kind: .chooseVersion, modelID: model.id, name: model.name,
+                                            detail: "\(model.copies.count) versions, none used recently: " + labels.joined(separator: ", ") + ". Keep the one you run.",
+                                            remove: [], bytes: model.couldFree))
+            }
+        }
+
+        for model in models where model.copies.count == 1 {
+            guard let copy = model.copies.first, !copy.isProtected, !claimed.contains(copy.id),
+                  copy.lastUsed.map({ $0 < staleBefore }) ?? true,
+                  modifiedByPath[copy.id].map({ $0 < staleBefore }) ?? true else { continue }
+            let bytes = freedBytes(removing: [copy.id], items: items)
+            guard bytes >= suggestionFloorBytes else { continue }
+            let detail: String
+            if let used = copy.lastUsed {
+                detail = "Last used here \(WorkbenchRelativeTime.text(for: used, style: .full, now: now))."
+            } else if let modified = modifiedByPath[copy.id] {
+                detail = "No use recorded here; files unchanged since \(modified.formatted(date: .abbreviated, time: .omitted))."
+            } else {
+                detail = "No use recorded here."
+            }
+            found.append(DiskSuggestion(kind: .notUsed, modelID: model.id, name: model.name, detail: detail,
+                                        remove: [copy.id], bytes: bytes))
+        }
+
+        return found.sorted { lhs, rhs in
+            if (lhs.kind == .identical) != (rhs.kind == .identical) { return lhs.kind == .identical }
+            return lhs.bytes == rhs.bytes ? lhs.id < rhs.id : lhs.bytes > rhs.bytes
+        }
+    }
+
+    // MARK: Names
+
+    /// A trailing format or quantization label, as the engine strips it from model names.
+    private static let quantSuffix =
+        #"[-_.](?:mlx|vq|\d+(?:\.\d+)?-?bits?|\d+(?:\.\d+)?bpw|bf16|fp16|f16|fp32|f32|mxfp[48]|nvfp4|q[2-8](?:_[0-9a-z]+)*)$"#
+
+    /// A model name without its file extension and trailing quantization labels.
+    static func stem(_ name: String) -> String {
+        var stem = name.lowercased().hasSuffix(".gguf") ? String(name.dropLast(5)) : name
+        while let range = stem.range(of: quantSuffix, options: [.regularExpression, .caseInsensitive]),
+              range.lowerBound > stem.startIndex {
+            stem.removeSubrange(range)
+        }
+        return stem
+    }
+
+    /// The shortest stem among the non-Ollama versions, else among all.
+    static func displayName(_ members: [StoredModel]) -> String {
+        let named = members.filter { $0.kind != "ollama" }
+        let stems = (named.isEmpty ? members : named).map { stem($0.name) }
+        return stems.min { ($0.count, $0) < ($1.count, $1) } ?? members.first?.name ?? ""
+    }
+
+    /// How one version differs from the others: its format, quantization and store.
+    static func versionLabel(_ item: StoredModel, model: DiskModel) -> String {
+        if item.store == "ollama" { return "Ollama " + item.name }
+        var name = item.name.lowercased().hasSuffix(".gguf") ? String(item.name.dropLast(5)) : item.name
+        if name.lowercased().hasPrefix(model.name.lowercased()) { name.removeFirst(model.name.count) }
+        let label = name.trimmingCharacters(in: CharacterSet(charactersIn: "-_. "))
+        let format = (item.format ?? item.kind).uppercased()
+        let base = label.isEmpty ? format : (label.uppercased().hasPrefix(format) ? label : format + " " + label)
+        return item.store == "huggingface" ? base + " (Hugging Face cache)" : base
+    }
+
+    private static func place(_ item: StoredModel) -> String {
+        switch item.store {
+        case "huggingface": "the Hugging Face cache"
+        case "ollama": "Ollama"
+        default: URL(fileURLWithPath: item.path).deletingLastPathComponent().lastPathComponent
+        }
+    }
+
+    // MARK: Bytes
 
     /// Bytes that leave the disk when these copies go. A file shared with a
     /// copy that stays is not freed; removing a Hugging Face snapshot takes
@@ -155,10 +326,12 @@ enum DiskLedger {
         }
     }
 
-    /// The most recently used copy; else a protected one; else the largest.
-    private static func defaultKeep(_ copies: [DiskCopy]) -> String? {
-        if let used = copies.filter({ $0.lastUsed != nil }).max(by: { $0.lastUsed! < $1.lastUsed! }) { return used.id }
-        if let held = copies.first(where: \.isProtected) { return held.id }
-        return copies.max { $0.item.bytes == $1.item.bytes ? $0.id > $1.id : $0.item.bytes < $1.item.bytes }?.id
+    /// The most recently used version; else a protected one; else none.
+    private static func defaultKeep(_ copies: [DiskCopy]) -> (String, DiskModel.KeepReason)? {
+        if let used = copies.compactMap({ copy in copy.lastUsed.map { (copy.id, $0) } }).max(by: { $0.1 < $1.1 }) {
+            return (used.0, .used(used.1))
+        }
+        if let held = copies.first(where: \.isProtected) { return (held.id, .protected) }
+        return nil
     }
 }

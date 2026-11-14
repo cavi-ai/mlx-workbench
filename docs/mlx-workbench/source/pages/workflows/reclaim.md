@@ -1,16 +1,29 @@
 # Reclaim
 
-**Reclaim** frees disk space without guessing. **Models** shows where the disk under your scan folders goes and which copies of one model you can remove. **Quarantine & cleanup** holds suggestions, the quarantine, the Trash and cleanup history. Every move is previewed, rechecked at confirmation and reversible until you empty the Trash.
+**Reclaim** frees disk space without guessing. **Models** shows this Mac's load, what to remove and why, and where the disk under your scan folders goes. **Quarantine & cleanup** holds suggestions, the quarantine, the Trash and cleanup history. Every move is previewed, rechecked at confirmation and reversible until you empty the Trash.
 
 ## Models
 
+**This Mac** shows free memory, free space on the first scanned volume, processor load across its cores and swap in use, read again every ten seconds. Each loaded local model follows with the memory it holds: the MLX allocator's memory in use, cache and peak when its worker reports them, else the provider's figure, else its process memory. The MLX cache is memory a worker keeps for reuse after a request. **Release cache…** on an idle load-on-request task worker reviews the release, returns those buffers to the system and reads status afterwards; the model stays loaded. Runtimes without cache control do not offer it.
+
+**Suggested removals** names what to remove, why, and the exact space each frees, identical copies first and then the largest saving:
+
+| Suggestion | Evidence |
+|---|---|
+| Identical copies | The scan found the same weights in more than one place; the copy it keeps stays |
+| Other versions | One version was used here, is serving, or you chose it; its other versions were not used within **Stale after** |
+| Choose a version | Several versions and none used; **Choose…** opens the model so you mark the one you run |
+| Not used | A model stored once, at least 1 GB, with no use here within **Stale after** and, when no use is recorded, files unchanged in that time |
+
+Use here means MLX Workbench served, verified or compared the model; use in Ollama or LM Studio is not recorded. Serving, preferred and in-use models are never suggested. **Review…** opens the removal review for that suggestion.
+
 The header counts every file under the scanned folders once: the total on disk, the part held by recognized models, and that part by store (folders, the Hugging Face cache and Ollama). Hard links and blobs shared between Ollama tags or cache revisions are counted once. The remainder is listed by the folders and files that hold it, largest first, with **Reveal** to open each in Finder. Those bytes belong to no model the scan recognizes; they can be unsupported model formats as well as leftovers.
 
-The table has one row per model, grouping its copies across MLX folders, GGUF files, Hugging Face cache snapshots and Ollama tags by architecture, layer count, hidden width and attention heads. Embedding and classification models are never grouped with generators of the same architecture. Every column sorts. **Show** narrows the table to models stored more than once (the default), models with no copy used within **Stale after**, models with identical weights in two places, or every model.
+The table has one row per model. Versions of a model share its architecture (layer count, hidden width and attention heads) and its name without format and quantization labels, across MLX folders, GGUF files, Hugging Face cache snapshots and Ollama tags. Fine-tunes and named variants of one base model are separate rows, and embedding and classification models are never grouped with generators of the same architecture. Every column sorts. **Show** narrows the table to models stored more than once, models with no version used within **Stale after**, models with identical weights in two places, or every model (the default).
 
-Expand a row to see its copies. One copy is marked **Keep**: the one used most recently, else one that is serving or preferred, else the largest. **Keep** on another copy changes it. **Could free** is the space released by removing every other copy: a file still used by a copy that stays, such as an Ollama blob shared with another tag, is not counted. Serving, preferred and in-use copies show a lock and cannot be selected.
+Expand a row to see its versions. A version is marked **Keep** only with evidence: the one used here most recently, else one that is serving or preferred, or the one you mark with **Keep**. **Could free** is the space released by keeping that version, or the largest when none is marked, and removing the others: a file still used by a version that stays, such as an Ollama blob shared with another tag, is not counted. Serving, preferred and in-use versions show a lock and cannot be selected.
 
-Select copies, or **Select every extra copy**, then **Review removal…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
+Select versions, or **Select extra versions**, then **Review removal…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
 
 | Copy | Removal |
 |---|---|

@@ -37,28 +37,99 @@ final class DiskLedgerTests: XCTestCase {
                        "notes beside a GGUF stay on disk")
     }
 
-    func testFamiliesKeepTheLastUsedCopyAndOfferOnlyTheOthers() {
-        let items = Self.items
+    func testTheUsedVersionIsKeptAndAPersonCanChooseAnother() throws {
+        let keyed: Set<String> = ["/m/gguf/x-Q4.gguf", "/m/ollama/manifests/r/library/tiny/a", "/m/mlx/x-4bit"]
+        let items = Self.items.map { item in
+            StoredModel(path: item.path, kind: item.kind, format: item.format, name: item.name, modelKey: keyed.contains(item.path) ? "x" : nil,
+                        root: item.root, store: item.store, bytes: item.bytes, files: item.files)
+        }
         let storage = ScanStorage(diskBytes: 0, roots: [], stores: [], items: items)
-        let family = ModelFamily(familyID: "shape:x", name: "X", members: ["/m/gguf/x-Q4.gguf", "/m/ollama/manifests/r/library/tiny/a", "/m/mlx/x-4bit"], bytes: 0)
-        let used = ["/m/ollama/manifests/r/library/tiny/a": Date()]
-        let families = DiskLedger.families(storage: storage, families: [family], lastUsedByPath: used, protectedPaths: ["/m/mlx/x-4bit"])
-        let x = try! XCTUnwrap(families.first { $0.id == "shape:x" })
+        let family = ModelFamily(familyID: "shape:x", name: "X", members: keyed.sorted(), bytes: 0)
+        let usedAt = Date()
+        let used = ["/m/ollama/manifests/r/library/tiny/a": usedAt]
+        let models = DiskLedger.models(storage: storage, families: [family], lastUsedByPath: used, protectedPaths: ["/m/mlx/x-4bit"])
+        let x = try XCTUnwrap(models.first { $0.copies.count == 3 })
         XCTAssertEqual(x.keep, "/m/ollama/manifests/r/library/tiny/a")
+        XCTAssertEqual(x.keepReason, .used(usedAt))
         XCTAssertEqual(x.removable.map(\.id), ["/m/gguf/x-Q4.gguf"])
         XCTAssertEqual(x.couldFree, 400)
         XCTAssertEqual(x.bytes, 403 + 10 + 5 + 100 + 7 + 300)
-        XCTAssertEqual(families.count, 4, "every model outside a family is its own row")
+        XCTAssertEqual(models.count, 4, "every model outside a family is its own row")
 
-        let overridden = DiskLedger.families(storage: storage, families: [family], lastUsedByPath: used, protectedPaths: [],
-                                             keep: ["shape:x": "/m/mlx/x-4bit"]).first { $0.id == "shape:x" }
-        XCTAssertEqual(overridden?.keep, "/m/mlx/x-4bit")
-        XCTAssertEqual(overridden?.couldFree, 400 + 115)
+        let chosen = DiskLedger.models(storage: storage, families: [family], lastUsedByPath: used, protectedPaths: [],
+                                       keep: [x.id: "/m/mlx/x-4bit"]).first { $0.id == x.id }
+        XCTAssertEqual(chosen?.keep, "/m/mlx/x-4bit")
+        XCTAssertEqual(chosen?.keepReason, .chosen)
+        XCTAssertEqual(chosen?.couldFree, 400 + 115)
 
         let stale = Date().addingTimeInterval(-86_400)
-        XCTAssertEqual(DiskLedger.filter(families, by: .redundant, staleBefore: stale).map(\.id), ["shape:x"])
-        XCTAssertFalse(DiskLedger.filter(families, by: .unused, staleBefore: stale).contains { $0.id == "shape:x" })
-        XCTAssertTrue(DiskLedger.filter(families, by: .unused, staleBefore: stale).contains { $0.id == "path:/m/ollama/manifests/r/library/tiny/b" })
+        XCTAssertEqual(DiskLedger.filter(models, by: .redundant, staleBefore: stale).map(\.id), [x.id])
+        XCTAssertFalse(DiskLedger.filter(models, by: .unused, staleBefore: stale).contains { $0.id == x.id })
+        XCTAssertTrue(DiskLedger.filter(models, by: .unused, staleBefore: stale).contains { $0.copies.first?.id == "/m/ollama/manifests/r/library/tiny/b" })
+    }
+
+    func testFineTunesInOneArchitectureFamilyAreSeparateModelsAndNothingIsKeptWithoutEvidence() throws {
+        func item(_ path: String, key: String, _ bytes: Int64, kind: String = "folder") -> StoredModel {
+            StoredModel(path: path, kind: kind, format: kind == "gguf" ? "gguf" : "mlx", name: URL(fileURLWithPath: path).lastPathComponent,
+                        modelKey: key, root: "/models", store: "folder", bytes: bytes,
+                        files: [Self.file(path, kind == "gguf" ? path : path + "/model.safetensors", bytes)])
+        }
+        let items = [
+            item("/models/mlx/Qwen3.5-27B-4bit", key: "qwen3.5-27b", 15),
+            item("/models/gguf/Qwen3.5-27B-Q8_0.gguf", key: "qwen3.5-27b", 28, kind: "gguf"),
+            item("/models/mlx/Qwen3.8-27B-Coder-4bit", key: "qwen3.8-27b-coder", 15),
+        ]
+        let storage = ScanStorage(diskBytes: 0, roots: [], stores: [], items: items)
+        let family = ModelFamily(familyID: "shape:q27", name: "Qwen3.5-27B", members: items.map(\.path), bytes: 58)
+        let models = DiskLedger.models(storage: storage, families: [family])
+        XCTAssertEqual(models.map(\.name), ["Qwen3.5-27B", "Qwen3.8-27B-Coder"])
+        let base = try XCTUnwrap(models.first)
+        XCTAssertEqual(base.copies.map(\.id), ["/models/gguf/Qwen3.5-27B-Q8_0.gguf", "/models/mlx/Qwen3.5-27B-4bit"], "largest first")
+        XCTAssertNil(base.keep, "no recorded use and nothing serving: no version is marked to keep")
+        XCTAssertEqual(base.couldFree, 15)
+        XCTAssertEqual(base.copies.map { DiskLedger.versionLabel($0.item, model: base) }, ["GGUF Q8_0", "MLX 4bit"])
+        XCTAssertEqual(models.last?.copies.count, 1)
+    }
+
+    func testSuggestionsSayWhatToRemoveWhyAndHowMuchItFrees() {
+        let gb: Int64 = 1_000_000_000
+        func item(_ path: String, key: String, _ bytes: Int64) -> StoredModel {
+            StoredModel(path: path, kind: "folder", format: "mlx", name: URL(fileURLWithPath: path).lastPathComponent, modelKey: key,
+                        root: "/models", store: "folder", bytes: bytes, files: [Self.file(path, path + "/model.safetensors", bytes)])
+        }
+        let items = [
+            item("/models/a/Alpha-7B-4bit", key: "alpha-7b", 4 * gb), item("/models/b/Alpha-7B-4bit", key: "alpha-7b", 4 * gb),
+            item("/models/Beta-9B-4bit", key: "beta-9b", 5 * gb), item("/models/Beta-9B-8bit", key: "beta-9b", 9 * gb),
+            item("/models/Gamma-3B-4bit", key: "gamma-3b", 2 * gb), item("/models/Gamma-3B-bf16", key: "gamma-3b", 6 * gb),
+            item("/models/Delta-30B-4bit", key: "delta-30b", 17 * gb),
+            item("/models/Tiny-1B-4bit", key: "tiny-1b", gb / 2),
+            item("/models/Served-4B-4bit", key: "served-4b", 3 * gb),
+        ]
+        let families = [
+            ModelFamily(familyID: "shape:alpha", name: "Alpha", members: ["/models/a/Alpha-7B-4bit", "/models/b/Alpha-7B-4bit"], bytes: 0),
+            ModelFamily(familyID: "shape:beta", name: "Beta", members: ["/models/Beta-9B-4bit", "/models/Beta-9B-8bit"], bytes: 0),
+            ModelFamily(familyID: "shape:gamma", name: "Gamma", members: ["/models/Gamma-3B-4bit", "/models/Gamma-3B-bf16"], bytes: 0),
+        ]
+        let identical = DuplicateGroup(kind: "exact", modelKey: "alpha-7b", quantization: nil, quantizations: nil, reclaimableBytes: 4 * gb,
+                                       keep: "/models/a/Alpha-7B-4bit", redundant: ["/models/b/Alpha-7B-4bit"], members: nil, count: 2, groupId: "g1")
+        let now = Date()
+        let storage = ScanStorage(diskBytes: 0, roots: [], stores: [], items: items)
+        let models = DiskLedger.models(storage: storage, families: families, duplicates: [identical],
+                                       lastUsedByPath: ["/models/Beta-9B-4bit": now.addingTimeInterval(-86_400)],
+                                       protectedPaths: ["/models/Served-4B-4bit"])
+        let suggestions = DiskLedger.suggestions(models: models, items: items, duplicates: [identical],
+                                                 staleBefore: now.addingTimeInterval(-30 * 86_400),
+                                                 modifiedByPath: ["/models/Delta-30B-4bit": now.addingTimeInterval(-90 * 86_400)], now: now)
+        XCTAssertEqual(suggestions.map(\.kind), [.identical, .notUsed, .otherVersions, .chooseVersion])
+        XCTAssertEqual(suggestions.map(\.remove), [["/models/b/Alpha-7B-4bit"], ["/models/Delta-30B-4bit"], ["/models/Beta-9B-8bit"], []])
+        XCTAssertEqual(suggestions.map(\.bytes), [4 * gb, 17 * gb, 9 * gb, 2 * gb])
+        XCTAssertEqual(suggestions.map(\.name), ["Alpha-7B", "Delta-30B", "Beta-9B", "Gamma-3B"])
+        XCTAssertEqual(suggestions[0].detail, "The same weights are stored 2 times. Keeps the copy in a.")
+        XCTAssertTrue(suggestions[1].detail.hasPrefix("No use recorded here; files unchanged since "), suggestions[1].detail)
+        XCTAssertTrue(suggestions[2].detail.hasPrefix("MLX 4bit was used "), suggestions[2].detail)
+        XCTAssertTrue(suggestions[2].detail.hasSuffix(" The other version was not used recently."), suggestions[2].detail)
+        XCTAssertTrue(suggestions[3].detail.hasPrefix("2 versions, none used recently: MLX bf16 "), suggestions[3].detail)
+        XCTAssertTrue(suggestions[3].detail.hasSuffix(". Keep the one you run."), suggestions[3].detail)
     }
 
     // MARK: Ollama quarantine
