@@ -101,8 +101,9 @@ final class StandaloneReclaimUITests: XCTestCase {
         let scroll = application.scrollViews["reclaim-models-scroll"].firstMatch
         XCTAssertTrue(scroll.waitForExistence(timeout: 10))
         scroll.scroll(byDeltaX: 0, deltaY: -450)
-        let table = application.tables.firstMatch
-        XCTAssertTrue(table.waitForExistence(timeout: 10)); XCTAssertTrue(table.isHittable)
+        let table = scroll.outlines.firstMatch
+        let row = table.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "a.ckpt", "a.ckpt")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); XCTAssertTrue(row.isHittable)
         let resultCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         resultCapture.name = "Compared model files"; resultCapture.lifetime = .keepAlways; add(resultCapture)
         let review = application.buttons["Review…"].firstMatch
