@@ -82,6 +82,7 @@ struct ReclaimDiskPanel: View {
             .padding(WorkbenchSpacing.pageInset)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .accessibilityIdentifier("reclaim-models-scroll")
     }
 
     private func content(_ storage: ScanStorage) -> some View {
@@ -591,6 +592,10 @@ struct CopyRemovalSheet: View {
                                 Text(step.summary).font(WorkbenchTypography.secondary)
                                 if case .quarantineAsset(let review) = step {
                                     Text("Keep: " + review.keeper.item.path).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("Move: " + review.source.item.path).font(WorkbenchTypography.metadata)
+                                        .foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
                                     Button("Reveal kept file") {
                                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: review.keeper.item.path)])
                                     }.buttonStyle(.borderless)
@@ -603,8 +608,10 @@ struct CopyRemovalSheet: View {
                             } else {
                                 Text("Skipped: \(removal.refusal ?? "not removable")").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
                             }
-                            Text(removal.path).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                                .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            if case .quarantineAsset = removal.step {} else {
+                                Text(removal.path).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            }
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
