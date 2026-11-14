@@ -136,6 +136,13 @@ enum ModelDetailsPresentation {
                 prose: true
             ))
         }
+        if let identity = model.item.identity {
+            if let name = identity.baseModelName { rows.append(DetailRow("Base model", name)) }
+            if let repo = identity.baseModelRepo { rows.append(DetailRow("Base model repository", repo)) }
+            if let size = identity.declaredSize { rows.append(DetailRow(model.item.isCompanion ? "Declared base size" : "Declared size", size)) }
+            if let type = identity.projectorType { rows.append(DetailRow("Projector", type)) }
+            if let width = identity.projectorWidth { rows.append(DetailRow("Projector width", "\(width)")) }
+        }
         rows.append(DetailRow("Parameters", known(model.item.parameters)))
         rows.append(DetailRow("Quantization", known(model.item.quantization)))
         rows.append(DetailRow("Size", LibraryTablePresentation.byteCount(model.item.bytes)))

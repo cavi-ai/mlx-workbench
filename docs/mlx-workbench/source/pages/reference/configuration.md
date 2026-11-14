@@ -44,7 +44,7 @@ The app reads `~/.config/mlx-workbench/config.json`. A missing or unreadable fil
 | `verification_enabled` | Advisors → Verify conversions | `true` | Runs the conversion quality gate |
 | `watch_enabled` | Advisors → Watch & regression alerts | `true` | Upstream and environment-drift alerts |
 | `fit_reserve_gb` | Advisors → Fit reserve | `4` | Memory kept free for the system when judging fit, 0–16 |
-| `reclaim_stale_days` | Advisors → Stale after | `60` | Days without use before Reclaim flags a model, 2–365 |
+| `reclaim_stale_days` | Advisors → Stale after | `60` | Days without recorded use for the informational **Not used recently** filter, 2–365; does not affect removal suggestions |
 | `comparison_max_tokens` | Advisors → Comparison max tokens | `512` | Per-prompt cap during measured comparisons, 64–4096 |
 
 Values outside a key's range fall back to its default. Saving from Settings merges the fields it manages into the existing file and keeps every other key, then replaces the file atomically through a temporary file. Valid legacy `host` and `port` values are preserved from the stored file, including edits made after opening the form. The native app has no Workbench API server; manage model servers and endpoint ports in **Serving**, also reachable through **Settings → Serving → Open Run**.

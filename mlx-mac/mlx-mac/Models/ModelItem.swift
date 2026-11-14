@@ -34,6 +34,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     let error: String?
     let task: ModelTask?
     let draft: ModelDraft?
+    var identity: ModelIdentity? = nil
     var servingRuntime: String? = nil
     var backend: OutputBackend? = nil
     /// The bit widths the engine converts this GGUF at; nil when the scan did not report them.
@@ -43,7 +44,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case path, name, bytes, shard, architecture, quantization, parameters
-        case structure, signature, companion, readable, status, outputs, error, task, draft, backend
+        case structure, signature, companion, readable, status, outputs, error, task, draft, backend, identity
         case qBits = "q_bits"
         case splashFamily = "splash_family"
         case modifiedAt = "modified_at"
@@ -841,5 +842,27 @@ extension Dictionary where Key == String, Value == Any {
         }
         if let value = value as? String { return Int64(value) }
         return nil
+    }
+}
+
+struct ModelIdentity: Codable, Equatable, Hashable {
+    let artifactKind: String?
+    let declaredSize: String?
+    let baseModelName: String?
+    let baseModelRepo: String?
+    let projectorType: String?
+    let projectorWidth: Int?
+    enum CodingKeys: String, CodingKey {
+        case artifactKind = "artifact_kind", declaredSize = "declared_size", baseModelName = "base_model_name"
+        case baseModelRepo = "base_model_repo", projectorType = "projector_type", projectorWidth = "projector_width"
+    }
+    init?(dictionary: [String: Any]?) {
+        guard let dictionary, !dictionary.isEmpty else { return nil }
+        artifactKind = dictionary["artifact_kind"] as? String
+        declaredSize = dictionary["declared_size"] as? String
+        baseModelName = dictionary["base_model_name"] as? String
+        baseModelRepo = dictionary["base_model_repo"] as? String
+        projectorType = dictionary["projector_type"] as? String
+        projectorWidth = dictionary["projector_width"] as? Int
     }
 }

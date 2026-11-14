@@ -38,10 +38,11 @@ final class LibraryRemodelTests: XCTestCase {
             .imageGeneration: "photo",
             .videoGeneration: "film",
             .meshGeneration: "cube.transparent",
+            .visionProjector: "eye",
             .speculativeDraft: "bolt",
             .other: "cube",
         ]
-        XCTAssertEqual(ModelTaskType.allCases.count, 12)
+        XCTAssertEqual(ModelTaskType.allCases.count, 13)
         XCTAssertEqual(Set(ModelTaskType.allCases), Set(expected.keys))
         for type in ModelTaskType.allCases {
             XCTAssertEqual(type.symbolName, expected[type], type.rawValue)

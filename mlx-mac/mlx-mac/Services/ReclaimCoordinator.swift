@@ -84,9 +84,11 @@ struct SourceCleanupCandidate: Identifiable {
 enum ReclaimError: LocalizedError {
     case nothingSelected
     case previewHashMismatch
+    case ownershipUnavailable(String)
 
     var errorDescription: String? {
         switch self {
+        case .ownershipUnavailable(let message): return message
         case .nothingSelected: return "Select reclaimable items before previewing."
         case .previewHashMismatch: return "The reclaim selection changed after preview. Preview it again before confirming."
         }

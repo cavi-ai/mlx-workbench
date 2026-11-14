@@ -236,6 +236,25 @@ final class ComparisonInsightsTests: XCTestCase {
     }
     private let environment = "macOS|M4|1.0"
     private let prompt = PromptEntry(id: "p", text: "task")
+    func testReviewExportIncludesSingletonsAndExcludesUsageHistory() throws {
+        let item = model("/models/single", signature: "abc")
+        let json = try ModelFamilyReview.export(models: [item], purposes: [], preferred: [:],
+            protected: [], showdowns: [])
+        XCTAssertTrue(json.contains("/models/single"))
+        XCTAssertTrue(json.contains("abc"))
+        XCTAssertTrue(json.contains("missing_evidence"))
+        XCTAssertFalse(json.contains("last_used"))
+        XCTAssertFalse(json.contains("modified_at"))
+        XCTAssertFalse(json.contains("use_count"))
+        XCTAssertFalse(json.contains("usage_count"))
+        var saved = run([result("/a"), result("/b")])
+        saved.promptEntries = [PromptEntry(id: "private-prompt", text: "PRIVATE PROMPT CONTENT")]
+        let reviewed = ModelShowdownResults(run: saved, models: [model("/a"), model("/b")], environment: environment)
+        let export = try ModelFamilyReview.export(models: [item], purposes: [], preferred: [:], protected: [], showdowns: [reviewed])
+        XCTAssertTrue(export.contains("private-prompt"))
+        XCTAssertFalse(export.contains("PRIVATE PROMPT CONTENT"))
+    }
+
     private func model(_ path: String, bytes: Int64 = 4_000_000_000, signature: String? = "s", key: String = "family", readiness: ModelReadiness = .ready, task: ModelTaskType? = nil, capabilities: [UseCase]? = nil) -> LibraryModel {
         LibraryModel(item: ModelItem(path: path, name: path, bytes: bytes, modifiedAt: nil, shard: nil, modelKey: key,
             architecture: nil, quantization: "Q4", parameters: "8B", structure: nil, signature: signature,

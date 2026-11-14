@@ -669,7 +669,9 @@ struct ServeView: View {
                 case .nonServable:
                     designedState(
                         symbol: "nosign",
-                        text: "\(selectedModel?.item.task?.type.title ?? "This kind of") models are not served. Use them from the Library inspector."
+                        text: selectedModel?.item.isCompanion == true
+                            ? "A vision projector runs only beside its matching base model."
+                            : "\(selectedModel?.item.task?.type.title ?? "This kind of") models are not served. Use them from the Library inspector."
                     )
                     Button("Open Library") {
                         if let selectedModel { appHost.handoffs.send(LibraryRevealRequest(modelPath: selectedModel.item.path), as: .revealModel) }

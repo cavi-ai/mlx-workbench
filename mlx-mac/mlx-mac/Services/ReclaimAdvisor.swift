@@ -22,13 +22,6 @@ enum ReclaimAdvisor {
     ) -> [ReclaimOpportunity] {
         var found: [ReclaimOpportunity] = []
         found.append(contentsOf: crossRootDuplicates(duplicates))
-        found.append(contentsOf: staleModels(
-            snapshot: snapshot,
-            lastUsedByPath: lastUsedByPath,
-            occupiedPaths: occupiedPaths,
-            staleDays: staleDays,
-            now: now
-        ))
         found.insert(contentsOf: measuredSuperseded, at: 0)
         let keepers = Set(measuredSuperseded.compactMap { $0.replacement?.keeper.path })
             .union(duplicates.filter { $0.kind == "exact" }.compactMap(\.keep))
@@ -60,48 +53,6 @@ enum ReclaimAdvisor {
                 evidence: "Scan found \(redundant.count) redundant copies of \(group.modelKey ?? "this model"); keep: \(keep)",
                 confidence: .high,
                 actionable: redundant.allSatisfy { $0.lowercased().hasSuffix(".gguf") }
-            )
-        }
-    }
-
-    // MARK: - Staleness
-
-    static func staleModels(
-        snapshot: LibrarySnapshot?,
-        lastUsedByPath: [String: Date],
-        occupiedPaths: Set<String>,
-        staleDays: Int,
-        now: Date
-    ) -> [ReclaimOpportunity] {
-        let cutoff = now.addingTimeInterval(-TimeInterval(staleDays) * 86_400)
-        return (snapshot?.models ?? []).compactMap { model in
-            let path = model.item.path
-            guard !occupiedPaths.contains(path) else { return nil }
-            guard model.readiness != .quarantined else { return nil }
-            if let used = lastUsedByPath[path] {
-                guard used < cutoff else { return nil }
-                let days = Int(now.timeIntervalSince(used) / 86_400)
-                return ReclaimOpportunity(
-                    kind: .stale,
-                    paths: [path],
-                    bytes: model.item.bytes,
-                    evidence: "Not served, verified, or measured in \(days) days.",
-                    confidence: .high,
-                    actionable: path.lowercased().hasSuffix(".gguf")
-                )
-            }
-            // No usage evidence: fall back to file mtime at lower confidence.
-            guard let modified = model.item.modifiedAt else { return nil }
-            let modifiedDate = Date(timeIntervalSince1970: TimeInterval(modified))
-            guard modifiedDate < cutoff else { return nil }
-            let days = Int(now.timeIntervalSince(modifiedDate) / 86_400)
-            return ReclaimOpportunity(
-                kind: .stale,
-                paths: [path],
-                bytes: model.item.bytes,
-                evidence: "No recorded use; file last modified \(days) days ago.",
-                confidence: .review,
-                actionable: path.lowercased().hasSuffix(".gguf")
             )
         }
     }

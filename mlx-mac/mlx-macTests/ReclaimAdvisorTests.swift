@@ -273,10 +273,7 @@ final class ReclaimAdvisorTests: XCTestCase {
             now: now
         )
 
-        XCTAssertEqual(opportunities.count, 1)
-        XCTAssertEqual(opportunities.first?.kind, .stale)
-        XCTAssertEqual(opportunities.first?.confidence, .high)
-        XCTAssertTrue(opportunities.first?.actionable == true)
+        XCTAssertTrue(opportunities.isEmpty)
     }
 
     func testStaleFallsBackToMtimeAtReviewConfidence() {
@@ -290,8 +287,7 @@ final class ReclaimAdvisorTests: XCTestCase {
             now: now
         )
 
-        XCTAssertEqual(opportunities.first?.kind, .stale)
-        XCTAssertEqual(opportunities.first?.confidence, .review)
+        XCTAssertTrue(opportunities.isEmpty)
     }
 
     func testRecentlyUsedModelIsNotStale() {
