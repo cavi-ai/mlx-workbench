@@ -49,16 +49,7 @@ struct ServingMonitorView: View {
                 Button("Endpoint details…") { showingDetails = true }.disabled(selected == nil)
                 Button("Manage endpoints") { onRouteSelection(.run) }
             }
-            GeometryReader { geometry in
-                if geometry.size.width >= 1320 {
-                    HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
-                        monitorTable
-                        if let selected { ScrollView { details(selected) }.frame(width: 340) }
-                    }
-                } else {
-                    monitorTable
-                }
-            }
+            monitorTable
             .sheet(isPresented: $showingDetails) {
                 if let selected {
                     VStack(alignment: .trailing) {
@@ -94,7 +85,7 @@ struct ServingMonitorView: View {
                     let full = ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
                     ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
                 }.width(min: 80, ideal: 125)
-                TableColumn("Process RAM") { row in Text(processMemory(row)).monospacedDigit() }.width(min: 70, ideal: 100)
+                TableColumn("RAM") { row in Text(processMemory(row)).monospacedDigit().help("Memory used by the model process") }.width(min: 70, ideal: 100)
                 TableColumn("Input tokens") { row in Text(token(telemetry(row)?.inputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Output tokens") { row in Text(token(telemetry(row)?.outputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Response tok/s") { row in
