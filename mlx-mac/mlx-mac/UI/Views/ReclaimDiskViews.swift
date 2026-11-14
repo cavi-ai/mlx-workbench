@@ -179,9 +179,9 @@ struct ReclaimDiskPanel: View {
                     HStack(spacing: WorkbenchSpacing.xxs) {
                         Text(copy.item.name).font(WorkbenchTypography.secondary).lineLimit(1)
                         if copy.isIdentical { tag("identical") }
-                        if copy.isProtected { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(WorkbenchColor.muted).help("Serving, preferred or in use") }
+                        if copy.isProtected { Image(systemName: "lock.fill").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).help("Serving, preferred or in use") }
                     }
-                    Text(copy.id).font(.caption).foregroundStyle(WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(copy.id)
+                    Text(copy.id).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(copy.id)
                 }
                 Spacer(minLength: WorkbenchSpacing.xs)
                 if isKept {
@@ -198,9 +198,9 @@ struct ReclaimDiskPanel: View {
     }
 
     private func tag(_ text: String) -> some View {
-        Text(text).font(.caption2.weight(.semibold))
-            .padding(.horizontal, WorkbenchSpacing.xxs).padding(.vertical, 1)
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(WorkbenchColor.hairline))
+        Text(text).font(WorkbenchTypography.label)
+            .padding(.horizontal, WorkbenchSpacing.xxs).padding(.vertical, WorkbenchSpacing.xxxs)
+            .overlay(RoundedRectangle(cornerRadius: WorkbenchRadius.chip).stroke(WorkbenchColor.hairline))
     }
 
     // MARK: Action bar
@@ -311,7 +311,7 @@ struct CopyRemovalSheet: View {
                             } else {
                                 Text("Skipped: \(removal.refusal ?? "not removable")").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
                             }
-                            Text(removal.path).font(.caption).foregroundStyle(WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            Text(removal.path).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
