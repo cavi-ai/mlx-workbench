@@ -165,9 +165,9 @@ final class HealthBackendTests: XCTestCase {
                 "models": [], "outputs": outputs, "pending": [], "duplicates": [],
                 "totals": ["gguf": 0, "pending": 0, "converted": outputs.count, "unreadable": 0,
                            "bytes": 1024, "reclaimable_bytes": 0]]))
-            let host = AppHost(config: Config.defaults(), scanOperation: { _, _, _, _ in
+            let host = AppHost(config: Config.defaults(), scanOperation: { _, _, _, _, _, exclusions in
                 if outcome == "failed" { throw NSError(domain: "scan-failed", code: 1) }
-                return scan
+                return scan.reportingExclusions(exclusions)
             })
             host.librarySnapshot = LibrarySnapshot(models: [model], groups: [], hardware: host.hardwareProfile, generatedAt: Date())
             host.handoffs.send(request, as: .recoverModelRuntime)

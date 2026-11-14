@@ -118,9 +118,11 @@ struct ScanResult: Codable, Equatable {
     var storage: ScanStorage? = nil
     /// Copies of one model across formats and stores, as the scan groups them.
     var families: [ModelFamily]? = nil
+    var assetScan: AssetScan? = nil
 
     enum CodingKeys: String, CodingKey {
         case roots, models, outputs, pending, duplicates, totals, storage, families
+        case assetScan = "asset_scan"
         case rootErrors = "root_errors"
     }
 }
@@ -162,14 +164,39 @@ struct StoreUsage: Codable, Equatable {
     let bytes: Int64
 }
 
-struct StoredFile: Codable, Equatable, Hashable {
+struct StoredFile: Codable, Equatable, Hashable, Sendable {
     /// Device and inode: equal ids are one file on disk.
     let id: String
     let path: String
     let bytes: Int64
 }
 
-struct StoredModel: Codable, Equatable, Hashable, Identifiable {
+struct AssetEvidence: Codable, Equatable, Hashable, Sendable {
+    let sha256: String?
+    let mtimeNS: Int64
+    let ctimeNS: Int64
+    let nlink: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case sha256, nlink
+        case mtimeNS = "mtime_ns", ctimeNS = "ctime_ns"
+    }
+}
+
+struct AssetScan: Codable, Equatable {
+    let compared: Bool
+    let candidates: Int
+    let checked: Int
+    let errors: [ScanRootError]
+    var excludedRoots: [String] = []
+
+    enum CodingKeys: String, CodingKey {
+        case compared, candidates, checked, errors
+        case excludedRoots = "excluded_roots"
+    }
+}
+
+struct StoredModel: Codable, Equatable, Hashable, Identifiable, Sendable {
     let path: String
     /// `gguf`, `folder` or `ollama`.
     let kind: String
@@ -181,11 +208,12 @@ struct StoredModel: Codable, Equatable, Hashable, Identifiable {
     let store: String
     let bytes: Int64
     let files: [StoredFile]
+    var asset: AssetEvidence? = nil
 
     var id: String { path }
 
     enum CodingKeys: String, CodingKey {
-        case path, kind, format, name, root, store, bytes, files
+        case path, kind, format, name, root, store, bytes, files, asset
         case modelKey = "model_key"
     }
 }
@@ -255,7 +283,7 @@ struct QuantInfo: Codable, Equatable, Hashable {
 
 // MARK: - DuplicateGroup
 
-struct DuplicateGroup: Codable, Equatable, Identifiable {
+struct DuplicateGroup: Codable, Equatable, Identifiable, Sendable {
     let kind: String?
     let modelKey: String?
     let quantization: String?
@@ -266,9 +294,11 @@ struct DuplicateGroup: Codable, Equatable, Identifiable {
     let members: [String]?
     let count: Int?
     let groupId: String?
+    var verification: String? = nil
+    var identity: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case kind, quantization, quantizations, keep, redundant, members, count
+        case kind, quantization, quantizations, keep, redundant, members, count, verification, identity
         case modelKey = "model_key"
         case reclaimableBytes = "reclaimable_bytes"
         case groupId = "group_id"

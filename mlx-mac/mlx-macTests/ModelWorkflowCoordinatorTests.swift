@@ -344,9 +344,9 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let host = await makeHost(
             jobs: [terminalJob],
             onStatus: { await events.record("status") },
-            scanOperation: { _, _, _, _ in
+            scanOperation: { _, _, _, _, _, exclusions in
                 await events.record("scan")
-                return try await scans.next()
+                return (try await scans.next()).reportingExclusions(exclusions)
             }
         )
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
@@ -370,7 +370,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             ])
         ])
         let host = await makeHost(
-            scanOperation: { _, _, _, _ in try await scans.next() }
+            scanOperation: { _, _, _, _, _, exclusions in (try await scans.next()).reportingExclusions(exclusions) }
         )
         await MainActor.run {
             host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-activity"))
@@ -490,7 +490,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         ])
         let host = await makeHost(
             jobs: [completedJob],
-            scanOperation: { _, _, _, _ in try await scans.next() }
+            scanOperation: { _, _, _, _, _, exclusions in (try await scans.next()).reportingExclusions(exclusions) }
         )
         let (recordID, verifier) = await MainActor.run { () -> (UUID, StubCompletionVerifier) in
             let verifier = StubCompletionVerifier()
@@ -516,7 +516,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let completedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "done")
         let output = MLXOutput(path: "/Models/source", name: "source", modelKey: "source-model", quantization: nil, provenance: "signature-1")
         let scans = ScanSequence([scanResult(outputs: []), scanResult(outputs: [output]), scanResult(outputs: [output]), scanResult(outputs: [output])])
-        let host = await makeHost(jobs: [completedJob], scanOperation: { _, _, _, _ in try await scans.next() })
+        let host = await makeHost(jobs: [completedJob], scanOperation: { _, _, _, _, _, exclusions in (try await scans.next()).reportingExclusions(exclusions) })
         let verifier = await MainActor.run { () -> StubCompletionVerifier in
             let verifier = StubCompletionVerifier()
             host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1"))
@@ -541,7 +541,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let scans = ScanSequence([withOutput, withOutput])
         let host = await makeHost(
             jobs: [completedJob],
-            scanOperation: { _, _, _, _ in try await scans.next() }
+            scanOperation: { _, _, _, _, _, exclusions in (try await scans.next()).reportingExclusions(exclusions) }
         )
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
 
@@ -632,7 +632,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let doneJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "done")
         let output = MLXOutput(path: "/Models/source", name: "source", modelKey: "source-model", quantization: nil, provenance: "signature-1")
         let scans = ScanSequence([scanResult(outputs: []), scanResult(outputs: [output])])
-        let host = await makeHost(jobs: [doneJob], scanOperation: { _, _, _, _ in try await scans.next() })
+        let host = await makeHost(jobs: [doneJob], scanOperation: { _, _, _, _, _, exclusions in (try await scans.next()).reportingExclusions(exclusions) })
         let older = makeWorkflow(id: "old", state: .failed, receipt: "receipt-1", message: "Conversion failed.", errorMessage: "Conversion failed.", agentState: "failed")
         let newer = makeWorkflow(state: .running, receipt: "receipt-1", agentState: "running", createdAt: Date(timeIntervalSinceReferenceDate: 30))
         let verifier = await MainActor.run { () -> StubCompletionVerifier in
@@ -1009,7 +1009,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         onServeStart: (@Sendable (String, Int?) async -> Void)? = nil,
         servers: [ServerInfo] = [],
         dynamicServers: (@Sendable () async -> [ServerInfo])? = nil,
-        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        scanOperation: (@Sendable ([String], [String], Bool, Int?, Bool, [String]) async throws -> ScanResult)? = nil,
         store: ModelWorkflowStore? = nil
     ) async -> AppHost {
         let api = ModelWorkflowAPI(

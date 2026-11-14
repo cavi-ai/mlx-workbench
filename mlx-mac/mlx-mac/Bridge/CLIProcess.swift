@@ -261,6 +261,9 @@ struct CLIProcess {
 
         process.terminationHandler = { _ in exited.signal() }
 
+        #if DEBUG
+        let captureStart = Date()
+        #endif
         do {
             try process.run()
             onChildLaunched?()
@@ -304,6 +307,12 @@ struct CLIProcess {
         let outputTooLarge = stdoutCapture.tooLarge
         let stderrData = stderrCapture.data
 
+        #if DEBUG
+        if launchError == nil, Array(argv.prefix(2)) == ["convert", "scan"] {
+            try? Self.captureScan(process: process, agentPath: agentPath, command: command,
+                                  start: captureStart, stdout: stdoutCapture, stderr: stderrCapture)
+        }
+        #endif
         if launchError != nil {
             throw BridgeError.skillUnavailable
         }
@@ -317,6 +326,40 @@ struct CLIProcess {
         if preserveEnvelope { return envelope }
         return try unwrap(envelope)
     }
+
+    #if DEBUG
+    private struct ScanCapture: Codable {
+        let executable, cwd, agentPath: String
+        let argv: [String]
+        let pid: Int32
+        let startUTC, endUTC: String
+        let terminationStatus: Int32
+        let terminationReason: String
+        let stdoutBase64, stderrBase64: String
+        let stdoutTruncated, stderrTruncated: Bool
+    }
+
+    private static func captureScan(process: Process, agentPath: String, command: [String], start: Date,
+                                    stdout: (data: Data, tooLarge: Bool), stderr: (data: Data, tooLarge: Bool)) throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_SCAN_CAPTURE_DIR"],
+              path.hasPrefix("/") else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        var info = stat()
+        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR,
+              info.st_uid == getuid(), (info.st_mode & 0o077) == 0 else { return }
+        let formatter = ISO8601DateFormatter()
+        let record = ScanCapture(executable: command[0], cwd: FileManager.default.currentDirectoryPath,
+                                 agentPath: agentPath, argv: Array(command.dropFirst()), pid: process.processIdentifier,
+                                 startUTC: formatter.string(from: start), endUTC: formatter.string(from: Date()),
+                                 terminationStatus: process.terminationStatus,
+                                 terminationReason: process.terminationReason == .exit ? "exit" : "uncaughtSignal",
+                                 stdoutBase64: stdout.data.base64EncodedString(), stderrBase64: stderr.data.base64EncodedString(),
+                                 stdoutTruncated: stdout.tooLarge, stderrTruncated: stderr.tooLarge)
+        let target = directory.appendingPathComponent("scan-\(UUID().uuidString).json")
+        try JSONStore<ScanCapture>(fileURL: target).replaceAll([record])
+        guard chmod(target.path, 0o600) == 0 else { try? FileManager.default.removeItem(at: target); return }
+    }
+    #endif
 
     /// Drain a pipe until EOF with a hard byte cap so oversized output cannot
     /// balloon memory or hang the drain.

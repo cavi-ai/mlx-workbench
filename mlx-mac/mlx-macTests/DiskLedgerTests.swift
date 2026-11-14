@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import Darwin
 import XCTest
 
 @testable import mlx_workbench
@@ -23,6 +25,188 @@ final class DiskLedgerTests: XCTestCase {
         let older = try WorkbenchAPI.decodeScan(payload)
         XCTAssertNil(older.storage)
         XCTAssertNil(older.families)
+    }
+
+    func testStandaloneAssetsRequireFullDigestAndHonorKeeperChoice() throws {
+        let digest = String(repeating: "a", count: 64)
+        func asset(_ name: String, id: String) -> StoredModel {
+            let path = "/m/" + name
+            return StoredModel(path: path, kind: "asset", format: "ckpt", name: name, modelKey: path,
+                root: "/m", store: "folder", bytes: 10, files: [StoredFile(id: id, path: path, bytes: 10)],
+                asset: AssetEvidence(sha256: digest, mtimeNS: 10, ctimeNS: 20, nlink: 1))
+        }
+        let a = asset("a.ckpt", id: "1:1"), b = asset("b.ckpt", id: "1:2")
+        let storage = ScanStorage(diskBytes: 20, roots: [], stores: [], items: [a, b])
+        let unchecked = DiskLedger.models(storage: storage, families: [])
+        XCTAssertEqual(unchecked.count, 2)
+        XCTAssertTrue(unchecked.allSatisfy { $0.removable.isEmpty })
+        XCTAssertTrue(DiskLedger.suggestions(models: unchecked, items: storage.items, duplicates: [], staleBefore: Date()).isEmpty)
+        let group = DuplicateGroup(kind: "exact", modelKey: "a.ckpt", quantization: nil, quantizations: nil,
+            reclaimableBytes: 10, keep: a.path, redundant: [b.path], members: nil, count: nil, groupId: "asset",
+            verification: "full_sha256", identity: "asset:sha256:" + digest)
+        let verified = DiskLedger.models(storage: storage, families: [], duplicates: [group])
+        let model = try XCTUnwrap(verified.first)
+        XCTAssertEqual(verified.count, 1)
+        XCTAssertEqual(model.keep, a.path)
+        XCTAssertEqual(model.keepReason, .verified)
+        let chosen = DiskLedger.models(storage: storage, families: [], duplicates: [group], keep: [model.id: b.path])
+        XCTAssertEqual(chosen.first?.keep, b.path)
+        let suggestions = DiskLedger.suggestions(models: chosen, items: storage.items, duplicates: [group], staleBefore: Date())
+        XCTAssertEqual(suggestions.first?.remove, [a.path])
+        let c = asset("c.ckpt", id: "1:3")
+        let three = ScanStorage(diskBytes: 30, roots: [], stores: [], items: [a, b, c])
+        let threeGroup = DuplicateGroup(kind: "exact", modelKey: "a.ckpt", quantization: nil, quantizations: nil,
+            reclaimableBytes: 20, keep: a.path, redundant: [b.path, c.path], members: nil, count: nil, groupId: "asset",
+            verification: "full_sha256", identity: "asset:sha256:" + digest)
+        let protected = DiskLedger.models(storage: three, families: [], duplicates: [threeGroup], protectedPaths: [b.path])
+        XCTAssertEqual(protected.first?.keep, b.path)
+        XCTAssertEqual(protected.first?.keepReason, .protected)
+        let override = DiskLedger.models(storage: three, families: [], duplicates: [threeGroup],
+                                         protectedPaths: [b.path], keep: [model.id: a.path])
+        let protectedSuggestion = try XCTUnwrap(DiskLedger.suggestions(models: override, items: three.items,
+                                                                       duplicates: [threeGroup], staleBefore: Date()).first)
+        XCTAssertEqual(protectedSuggestion.remove, [c.path])
+        XCTAssertTrue(protectedSuggestion.detail.contains("stored 3 times"))
+        var sampled = group
+        sampled.verification = nil
+        XCTAssertTrue(DiskLedger.models(storage: storage, families: [], duplicates: [sampled]).allSatisfy { $0.removable.isEmpty })
+    }
+
+    func testAssetEvidenceAndCoverageDecodeWithoutChangingLegacyContract() throws {
+        var payload = Self.scanPayload
+        payload["asset_scan"] = ["compared": true, "candidates": 2, "checked": 1,
+            "errors": [["path": "/m/b.ckpt", "message": "unreadable"]]]
+        payload["storage"] = ["disk_bytes": 10, "roots": [], "stores": [], "items": [[
+            "path": "/m/a.ckpt", "kind": "asset", "format": "ckpt", "name": "a.ckpt", "model_key": "/m/a.ckpt",
+            "root": "/m", "store": "folder", "bytes": 10, "files": [["id": "1:2", "path": "/m/a.ckpt", "bytes": 10]],
+            "asset": ["sha256": String(repeating: "b", count: 64), "mtime_ns": Int64(1_700_000_000_000_000_123), "ctime_ns": Int64(1_700_000_000_000_000_456), "nlink": 1]
+        ]]] as [String: Any]
+        let result = try WorkbenchAPI.decodeScan(payload)
+        XCTAssertEqual(result.assetScan?.errors.first?.path, "/m/b.ckpt")
+        XCTAssertEqual(result.storage?.items.first?.asset?.mtimeNS, 1_700_000_000_000_000_123)
+        XCTAssertEqual(result.storage?.items.first?.asset?.ctimeNS, 1_700_000_000_000_000_456)
+        XCTAssertNil(try WorkbenchAPI.decodeScan(Self.scanPayload).assetScan)
+    }
+
+    @MainActor
+    func testAssetReviewVerifiesMovesAndRestoresWithAChosenKeeper() async throws {
+        let root = try makeRoot().resolvingSymlinksInPath()
+        let quarantine = root.appendingPathComponent("quarantine")
+        let a = root.appendingPathComponent("a.ckpt"), b = root.appendingPathComponent("b.safetensors")
+        let contents = Data("fixture model bytes".utf8)
+        try contents.write(to: a); try contents.write(to: b)
+        let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+        func item(_ url: URL) throws -> StoredModel {
+            var value = stat()
+            guard lstat(url.path, &value) == 0 else { throw CocoaError(.fileNoSuchFile) }
+            return StoredModel(path: url.path, kind: "asset", format: url.pathExtension, name: url.lastPathComponent,
+                modelKey: url.path, root: root.path, store: "folder", bytes: Int64(value.st_size),
+                files: [StoredFile(id: "\(value.st_dev):\(value.st_ino)", path: url.path, bytes: Int64(value.st_size))],
+                asset: AssetEvidence(sha256: digest,
+                    mtimeNS: Int64(value.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(value.st_mtimespec.tv_nsec),
+                    ctimeNS: Int64(value.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(value.st_ctimespec.tv_nsec), nlink: 1))
+        }
+        let one = try item(a), two = try item(b)
+        let c = root.appendingPathComponent("c.ckpt")
+        try contents.write(to: c)
+        let third = try item(c)
+        let threeGroup = DuplicateGroup(kind: "exact", modelKey: "a.ckpt", quantization: nil, quantizations: nil,
+            reclaimableBytes: Int64(contents.count * 2), keep: one.path, redundant: [two.path, third.path],
+            members: nil, count: nil, groupId: "asset", verification: "full_sha256", identity: "asset:sha256:" + digest)
+        let protectedPlan = ReclaimCoordinator.removals([third], roots: [root.path], protected: [], fileManager: .default,
+            allItems: [one, two, third], selected: [third.path], duplicates: [threeGroup], quarantineDir: quarantine.path,
+            assetProtected: [two.path])
+        guard case .quarantineAsset(let protectedReview) = try XCTUnwrap(protectedPlan.first?.step) else {
+            return XCTFail("Expected an asset review with the protected keeper")
+        }
+        XCTAssertEqual(protectedReview.keeper.item.path, two.path)
+        let group = DuplicateGroup(kind: "exact", modelKey: "a.ckpt", quantization: nil, quantizations: nil,
+            reclaimableBytes: Int64(contents.count), keep: one.path, redundant: [two.path], members: nil, count: nil,
+            groupId: "asset", verification: "full_sha256", identity: "asset:sha256:" + digest)
+        let coordinator = ReclaimCoordinator()
+        coordinator.ggufRoots = { [root.path] }; coordinator.mlxRoots = { [root.path] }
+        coordinator.quarantineDir = { quarantine.path }; coordinator.servingModelPaths = { [] }
+        await coordinator.previewCopies([one.path], items: [one, two], duplicates: [group], keep: ["asset:sha256:" + digest: two.path])
+        let plan = try XCTUnwrap(coordinator.copyPlan)
+        guard case .quarantineAsset(let review) = try XCTUnwrap(plan.actionable.first?.step) else { return XCTFail("Expected an asset review") }
+        XCTAssertEqual(review.keeper.item.path, two.path)
+        await coordinator.confirmCopies()
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: one.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: two.path))
+        let record = try XCTUnwrap(Quarantine.ledger(quarantineDir: quarantine.path).first)
+        XCTAssertEqual(record.kind, .assetFile)
+        await coordinator.restore(record)
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertEqual(try Data(contentsOf: a), contents)
+    }
+
+    func testAssetReviewRefusesDriftAndCancellation() throws {
+        let root = try makeRoot().resolvingSymlinksInPath()
+        let path = root.appendingPathComponent("file.ckpt"), quarantine = root.appendingPathComponent("q")
+        let contents = Data("fixture".utf8); try contents.write(to: path)
+        var value = stat(); XCTAssertEqual(lstat(path.path, &value), 0)
+        let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+        let item = StoredModel(path: path.path, kind: "asset", format: "ckpt", name: path.lastPathComponent, modelKey: path.path,
+            root: root.path, store: "folder", bytes: Int64(value.st_size), files: [StoredFile(id: "\(value.st_dev):\(value.st_ino)", path: path.path, bytes: Int64(value.st_size))],
+            asset: AssetEvidence(sha256: digest, mtimeNS: Int64(value.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(value.st_mtimespec.tv_nsec),
+                                 ctimeNS: Int64(value.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(value.st_ctimespec.tv_nsec), nlink: 1))
+        let review = try Quarantine.assetReview(item, roots: [root.path], protected: [], quarantineDir: quarantine.path)
+        let cancelled = AssetVerificationCancellation(); cancelled.cancel()
+        XCTAssertThrowsError(try Quarantine.verifyAsset(review, roots: [root.path], protected: [], quarantineDir: quarantine.path,
+            cancellation: cancelled, deadline: ProcessInfo.processInfo.systemUptime + 60))
+        try Data("changed".utf8).write(to: path)
+        XCTAssertThrowsError(try Quarantine.assetReview(item, roots: [root.path], protected: [], quarantineDir: quarantine.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+    }
+
+    @MainActor
+    func testCancelledComparisonKeepsPreviousScanWithoutRestarting() async throws {
+        let entered = expectation(description: "comparison started")
+        let gate = AssetComparisonGate()
+        let original = try WorkbenchAPI.decodeScan(Self.scanPayload)
+        let host = AppHost(config: Config.defaults(), scanOperation: { _, _, _, _, compareAssets, exclusions in
+            XCTAssertTrue(compareAssets)
+            XCTAssertFalse(exclusions.isEmpty)
+            entered.fulfill()
+            await gate.wait()
+            var result = original
+            result.assetScan = AssetScan(compared: true, candidates: 0, checked: 0, errors: [], excludedRoots: exclusions.map(Quarantine.resolve))
+            return result
+        })
+        host.scanResult = original
+        let task = Task { await host.compareStoredAssets() }
+        await fulfillment(of: [entered], timeout: 5)
+        task.cancel()
+        await gate.release()
+        await task.value
+        XCTAssertEqual(host.scanResult, original)
+        XCTAssertFalse(host.isScanning)
+    }
+
+    @MainActor
+    func testChangedConfigDoesNotRepeatComparison() async throws {
+        let entered = expectation(description: "comparison started")
+        let gate = AssetComparisonGate()
+        let original = try WorkbenchAPI.decodeScan(Self.scanPayload)
+        let host = AppHost(config: Config.defaults(), scanOperation: { _, _, _, _, compareAssets, exclusions in
+            XCTAssertTrue(compareAssets)
+            XCTAssertFalse(exclusions.isEmpty)
+            entered.fulfill()
+            await gate.wait()
+            var result = original
+            result.assetScan = AssetScan(compared: true, candidates: 0, checked: 0, errors: [], excludedRoots: exclusions.map(Quarantine.resolve))
+            return result
+        })
+        host.scanResult = original
+        let task = Task { await host.compareStoredAssets() }
+        await fulfillment(of: [entered], timeout: 5)
+        host.config.outputDir = "/changed"
+        await gate.release()
+        await task.value
+        XCTAssertEqual(host.scanResult, original)
+        XCTAssertTrue(host.scanError?.contains("changed") == true)
+        XCTAssertFalse(host.isScanning)
     }
 
     // MARK: Freed bytes
@@ -301,4 +485,23 @@ final class DiskLedgerTests: XCTestCase {
         "families": [["family_id": "shape:fa0543a6567a6ca2", "name": "llava", "copies": 1,
                       "members": ["/m/ollama/manifests/registry.ollama.ai/library/llava/latest"], "bytes": 4_733_365_399]],
     ]
+}
+
+private actor AssetComparisonGate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { isOpen = true; continuation?.resume(); continuation = nil }
+}
+
+// Test scan providers report the exclusion supplied by the app's scan contract.
+extension ScanResult {
+    func reportingExclusions(_ exclusions: [String]) -> ScanResult {
+        var copy = self
+        copy.assetScan = AssetScan(compared: false, candidates: 0, checked: 0, errors: [], excludedRoots: exclusions.map(Quarantine.resolve))
+        return copy
+    }
 }

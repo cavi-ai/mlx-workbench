@@ -16,6 +16,7 @@ struct DiskCopy: Identifiable, Hashable {
     /// The scan found identical weights in another copy.
     let isIdentical: Bool
     var id: String { item.path }
+    var isEligible: Bool { item.kind != "asset" || isIdentical }
 }
 
 /// Every stored version of one model.
@@ -24,6 +25,7 @@ struct DiskModel: Identifiable, Hashable {
         case chosen
         case used(Date)
         case protected
+        case verified
     }
 
     let id: String
@@ -41,12 +43,12 @@ struct DiskModel: Identifiable, Hashable {
     let stores: [String]
 
     /// Versions a person may select for removal.
-    var removable: [DiskCopy] { copies.filter { $0.id != keep && !$0.isProtected } }
+    var removable: [DiskCopy] { copies.filter { $0.id != keep && !$0.isProtected && $0.isEligible } }
     /// Versions `couldFree` counts: all but the kept or largest one.
     var extras: [DiskCopy] {
         guard copies.count > 1 else { return [] }
         let stays = keep ?? copies.first?.id
-        return copies.filter { $0.id != stays && !$0.isProtected }
+        return copies.filter { $0.id != stays && !$0.isProtected && $0.isEligible }
     }
 }
 
@@ -100,14 +102,29 @@ enum DiskLedger {
         protectedPaths: Set<String> = [],
         keep overrides: [String: String] = [:]
     ) -> [DiskModel] {
-        let identicalGroups = duplicates.filter { $0.kind == "exact" }.map { Set($0.sources) }
+        let itemsByPath = Dictionary(storage.items.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        var verifiedAssets: [String: DuplicateGroup] = [:]
+        for group in duplicates where group.kind == "exact" && group.verification == "full_sha256" {
+            guard let identity = group.identity, identity.hasPrefix("asset:sha256:"),
+                  let keep = group.keep, group.sources.contains(keep) else { continue }
+            let digest = String(identity.dropFirst("asset:sha256:".count))
+            let paths = group.sources
+            guard digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  paths.count >= 2, paths.allSatisfy({ path in
+                      guard let item = itemsByPath[path] else { return false }
+                      return item.kind == "asset" && item.asset?.sha256 == digest && item.asset?.nlink == 1 && item.files.count == 1
+                  }), Set(paths.compactMap { itemsByPath[$0]?.files.first?.id }).count == paths.count else { continue }
+            for path in paths { verifiedAssets[path] = group }
+        }
+        let identicalGroups = duplicates.filter { $0.kind == "exact" && $0.verification != "full_sha256" }.map { Set($0.sources) }
         var familyOf: [String: String] = [:]
         for family in families { for path in family.members where familyOf[path] == nil { familyOf[path] = family.familyID } }
         var groups: [String: [StoredModel]] = [:]
         var order: [String] = []
         for item in storage.items {
             let family = familyOf[item.path] ?? "path:" + item.path
-            let key = "model:" + family + "|" + (item.modelKey.flatMap { $0.isEmpty ? nil : $0 } ?? item.path)
+            let key = item.kind == "asset" ? (verifiedAssets[item.path]?.identity ?? "asset-path:" + item.path)
+                : "model:" + family + "|" + (item.modelKey.flatMap { $0.isEmpty ? nil : $0 } ?? item.path)
             if groups[key] == nil { order.append(key) }
             groups[key, default: []].append(item)
         }
@@ -117,16 +134,19 @@ enum DiskLedger {
             let copies = members.map { item in
                 DiskCopy(item: item, lastUsed: lastUsedByPath[item.path],
                          isProtected: isProtected(item.path, by: protectedPaths),
-                         isIdentical: identicalGroups.contains { $0.contains(item.path) && $0.count > 1 })
+                         isIdentical: item.kind == "asset" ? verifiedAssets[item.path] != nil
+                             : identicalGroups.contains { $0.contains(item.path) && $0.count > 1 })
             }
             let chosen = overrides[id].flatMap { paths.contains($0) ? $0 : nil }
-            let kept = chosen.map { ($0, DiskModel.KeepReason.chosen) } ?? defaultKeep(copies)
+            let verifiedKeep = members.first.flatMap { verifiedAssets[$0.path]?.keep }.flatMap { paths.contains($0) ? $0 : nil }
+            let kept = chosen.map { ($0, DiskModel.KeepReason.chosen) }
+                ?? defaultKeep(copies) ?? verifiedKeep.map { ($0, DiskModel.KeepReason.verified) }
             let ordered = copies.sorted { lhs, rhs in
                 if (lhs.id == kept?.0) != (rhs.id == kept?.0) { return lhs.id == kept?.0 }
                 return lhs.item.bytes == rhs.item.bytes ? lhs.id < rhs.id : lhs.item.bytes > rhs.item.bytes
             }
             let stays = kept?.0 ?? ordered.first?.id
-            let extras = ordered.count > 1 ? ordered.filter { $0.id != stays && !$0.isProtected }.map(\.id) : []
+            let extras = ordered.count > 1 ? ordered.filter { $0.id != stays && !$0.isProtected && $0.isEligible }.map(\.id) : []
             return DiskModel(
                 id: id, name: displayName(members), copies: ordered, keep: kept?.0, keepReason: kept?.1,
                 bytes: uniqueBytes(members.flatMap(\.files)),
@@ -142,7 +162,8 @@ enum DiskLedger {
         case .all: models
         case .redundant: models.filter { $0.copies.count > 1 }
         case .unused: models.filter { model in
-            !model.copies.contains(where: \.isProtected) && (model.lastUsed.map { $0 < staleBefore } ?? true)
+            model.copies.allSatisfy { $0.item.kind != "asset" } && !model.copies.contains(where: \.isProtected)
+                && (model.lastUsed.map { $0 < staleBefore } ?? true)
         }
         case .identical: models.filter { $0.copies.contains(where: \.isIdentical) }
         }
@@ -166,20 +187,24 @@ enum DiskLedger {
         var found: [DiskSuggestion] = []
 
         for group in duplicates where group.kind == "exact" {
-            guard let keep = group.keep, let entry = copies[keep] else { continue }
-            let (model, kept) = entry
-            let remove = Array(Set(group.redundant ?? group.sources).subtracting([keep]))
-                .filter { copies[$0].map { !$0.1.isProtected } ?? false }.sorted()
+            guard let originalKeep = group.keep, let entry = copies[originalKeep] else { continue }
+            let model = entry.0
+            let isAsset = entry.1.item.kind == "asset"
+            if isAsset && (group.verification != "full_sha256" || !entry.1.isIdentical) { continue }
+            let keep = isAsset ? (model.keep ?? originalKeep) : originalKeep
+            guard let kept = copies[keep]?.1 else { continue }
+            let remove = Array(Set(isAsset ? group.sources : (group.redundant ?? group.sources)).subtracting([keep]))
+                .filter { copies[$0].map { (!isAsset || $0.0.id == model.id) && !$0.1.isProtected && $0.1.isEligible } ?? false }.sorted()
             claimed.formUnion(group.sources)
             let bytes = freedBytes(removing: Set(remove), items: items)
             guard !remove.isEmpty, bytes > 0 else { continue }
             found.append(DiskSuggestion(
                 kind: .identical, modelID: model.id, name: model.name,
-                detail: "The same weights are stored \(remove.count + 1) times. Keeps the copy in \(place(kept.item)).",
+                detail: "The same weights are stored \(isAsset ? model.copies.count : remove.count + 1) times. Keeps the copy in \(place(kept.item)).",
                 remove: remove, bytes: bytes))
         }
 
-        for model in models where model.copies.count > 1 {
+        for model in models where model.copies.count > 1 && model.copies.allSatisfy({ $0.item.kind != "asset" }) {
             let open = model.copies.filter { !claimed.contains($0.id) }
             if let keep = model.keep, let reason = model.keepReason, let kept = model.copies.first(where: { $0.id == keep }) {
                 let remove = open.filter { $0.id != keep && !$0.isProtected && ($0.lastUsed.map { $0 < staleBefore } ?? true) }
@@ -192,6 +217,8 @@ enum DiskLedger {
                     why = "\(versionLabel(kept.item, model: model)) was used \(WorkbenchRelativeTime.text(for: date, style: .full, now: now))."
                 case .protected:
                     why = "\(versionLabel(kept.item, model: model)) is serving or kept for a task."
+                case .verified:
+                    why = "The matching file is kept."
                 case .chosen:
                     why = "You chose to keep \(versionLabel(kept.item, model: model))."
                 }
@@ -207,7 +234,7 @@ enum DiskLedger {
         }
 
         for model in models where model.copies.count == 1 {
-            guard let copy = model.copies.first, !copy.isProtected, !claimed.contains(copy.id),
+            guard let copy = model.copies.first, copy.item.kind != "asset", !copy.isProtected, !claimed.contains(copy.id),
                   copy.lastUsed.map({ $0 < staleBefore }) ?? true,
                   modifiedByPath[copy.id].map({ $0 < staleBefore }) ?? true else { continue }
             let bytes = freedBytes(removing: [copy.id], items: items)

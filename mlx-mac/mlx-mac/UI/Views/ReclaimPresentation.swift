@@ -237,7 +237,7 @@ struct ReclaimLedger: Equatable {
                 detail: quarantineCount == 0 ? "Empty" : ReclaimFormat.count(quarantineCount, "file"),
                 caption: quarantineCount == 0 ? "" : "restorable · still on disk",
                 subject: largestQuarantined.map {
-                    "\(ReclaimNames.resolve(paths: [$0.from], models: models).title) · \($0.kind == .mlxDirectory ? "Local MLX folder" : "GGUF file")"
+                    "\(ReclaimNames.resolve(paths: [$0.from], models: models).title) · \($0.kind == .assetFile ? "Model file" : ($0.kind == .mlxDirectory ? "Local MLX folder" : "GGUF file"))"
                 }
             ),
             Stage(
@@ -280,7 +280,7 @@ struct ReclaimScanCoverage: Equatable {
         }
     }
 
-    static let limitations = "Checks GGUF files, recognized MLX folders and Ollama stores under the scanned roots. Standalone model assets, including ComfyUI checkpoints, are not compared. Connecting a host does not add its folders to the disk scan."
+    static let limitations = "Checks GGUF files, recognized MLX folders, Ollama stores and standalone model files under the scanned roots. Use Compare model files to check standalone files in full. Connecting a host does not add its folders to the disk scan."
 }
 
 enum ReclaimFreshness {

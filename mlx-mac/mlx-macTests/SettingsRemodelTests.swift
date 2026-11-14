@@ -37,7 +37,7 @@ private enum SettingsFixtures {
 
     @MainActor
     static func host(
-        config: Config, scanOperation: @escaping @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
+        config: Config, scanOperation: @escaping @Sendable ([String], [String], Bool, Int?, Bool, [String]) async throws -> ScanResult
     ) -> AppHost {
         AppHost(
             config: config, discoveredRoots: [], configPath: "/state/config.json",
@@ -339,9 +339,9 @@ final class SettingsScannedRootsTests: XCTestCase {
 
     private func makeHost(_ config: Config, recorder: Recorder) -> AppHost {
         let result = scan()
-        return SettingsFixtures.host(config: config) { gguf, mlx, _, _ in
+        return SettingsFixtures.host(config: config) { gguf, mlx, _, _, _, exclusions in
             await recorder.record(gguf, mlx)
-            return result
+            return result.reportingExclusions(exclusions)
         }
     }
 
@@ -390,10 +390,10 @@ final class SettingsScannedRootsTests: XCTestCase {
     func testAFailedScanKeepsTheRootsOfTheLastSnapshot() async {
         let calls = Recorder()
         let result = scan()
-        let host = SettingsFixtures.host(config: SettingsFixtures.config(gguf: ["/m"])) { gguf, mlx, _, _ in
+        let host = SettingsFixtures.host(config: SettingsFixtures.config(gguf: ["/m"])) { gguf, mlx, _, _, _, exclusions in
             await calls.record(gguf, mlx)
             if await calls.calls.count > 1 { throw CancellationError() }
-            return result
+            return result.reportingExclusions(exclusions)
         }
         await host.rescan()
         let first = host.scannedRoots

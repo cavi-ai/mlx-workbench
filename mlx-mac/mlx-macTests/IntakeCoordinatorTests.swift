@@ -117,7 +117,7 @@ final class IntakeCoordinatorTests: XCTestCase {
         let scan = ScanResult(roots: nil, models: [item], outputs: [], pending: [], duplicates: [],
             totals: .init(gguf: 0, pending: 0, converted: 1, unreadable: 0, bytes: 1, reclaimableBytes: 0))
         let host = AppHost(config: config, discoveredRoots: [], agentHealth: .notConfigured, runtimeReport: .checking,
-            scanOperation: { _, _, _, _ in scan },
+            scanOperation: { _, _, _, _, _, exclusions in scan.reportingExclusions(exclusions) },
             modelPurposes: ModelPurposeStore(store: JSONStore(fileURL: root.appendingPathComponent("purposes.json"))),
             workbenchAPI: api, managedModels: ManagedModelInstallStore(store: JSONStore(fileURL: root.appendingPathComponent("models.json"))))
         host.librarySnapshot = ModelLibraryBuilder.build(scan: scan, hardware: host.hardwareProfile, now: Date())

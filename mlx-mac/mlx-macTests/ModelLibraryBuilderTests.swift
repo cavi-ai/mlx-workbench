@@ -26,7 +26,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
         let scan = makeFixtureScan(), gate = LibraryBuildGate(started: expectation(description: "build started"))
         let capturedRoots = LibraryScanRootsRecorder()
         let host = AppHost(config: makeConfig(), runtimeReport: makeRuntimeReport(),
-            scanOperation: { roots, _, _, _ in await capturedRoots.record(roots); return scan },
+            scanOperation: { roots, _, _, _, _, exclusions in await capturedRoots.record(roots); return scan.reportingExclusions(exclusions) },
             libraryBuildOperation: { scan, hardware, date in
                 gate.pauseOnce()
                 return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
@@ -68,7 +68,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
         let host = AppHost(config: makeConfig(), discoveredRoots: [], runtimeReport: makeRuntimeReport(),
-            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _ in scan },
+            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _, _, exclusions in scan.reportingExclusions(exclusions) },
             libraryBuildOperation: { scan, hardware, date in
                 XCTAssertFalse(Thread.isMainThread, "Model-folder reads must not block the UI thread")
                 entered.fulfill()
@@ -91,7 +91,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertFalse(host.isScanning)
         XCTAssertEqual(host.librarySnapshot?.generatedAt, date)
         XCTAssertEqual(host.librarySnapshot?.models.count, 8)
-        XCTAssertEqual(host.scanResult, scan)
+        XCTAssertEqual(host.scanResult, scan.reportingExclusions([makeConfig().quarantineDir]))
         XCTAssertEqual(host.selectedModelPath, "/models/selected-during-refresh")
     }
 
@@ -102,7 +102,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
         let host = AppHost(config: makeConfig(), discoveredRoots: [], runtimeReport: makeRuntimeReport(),
-            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _ in scan },
+            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _, _, exclusions in scan.reportingExclusions(exclusions) },
             libraryBuildOperation: { scan, hardware, date in
                 entered.fulfill()
                 if !Thread.isMainThread { _ = release.wait(timeout: .now() + 5) }
@@ -456,9 +456,9 @@ final class ModelLibraryBuilderTests: XCTestCase {
             runtimeReport: makeRuntimeReport(),
             hardwareProfile: hardware,
             now: { now },
-            scanOperation: { _, _, _, _ in
+            scanOperation: { _, _, _, _, _, exclusions in
                 await observation.capture()
-                return try await script.next()
+                return (try await script.next()).reportingExclusions(exclusions)
             }
         )
         observation.host = host
@@ -468,11 +468,11 @@ final class ModelLibraryBuilderTests: XCTestCase {
 
         await host.rescan()
         let firstSnapshot = try XCTUnwrap(host.librarySnapshot)
-        XCTAssertEqual(firstSnapshot, ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: now))
+        XCTAssertEqual(firstSnapshot, ModelLibraryBuilder.build(scan: scan.reportingExclusions([makeConfig().quarantineDir]), hardware: hardware, now: now))
 
         await host.rescan()
         XCTAssertEqual(host.librarySnapshot, firstSnapshot)
-        XCTAssertEqual(host.scanResult, scan)
+        XCTAssertEqual(host.scanResult, scan.reportingExclusions([makeConfig().quarantineDir]))
         XCTAssertEqual(host.hardwareProfile, hardware)
         XCTAssertEqual(host.lastError, TestScanError.boom.localizedDescription)
         XCTAssertEqual(host.scanError, TestScanError.boom.localizedDescription)

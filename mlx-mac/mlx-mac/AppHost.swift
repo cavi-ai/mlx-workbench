@@ -89,7 +89,7 @@ class AppHost {
     private let catalogTTL: TimeInterval
     private let preferencesStore: JSONStore<RecommendationPreferences>
     private let now: @Sendable () -> Date
-    private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
+    private let scanOperation: @Sendable ([String], [String], Bool, Int?, Bool, [String]) async throws -> ScanResult
     private let libraryBuildOperation: @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot
     private let runtimeProbe: @Sendable () -> RuntimeReport
     private var runtimeCheckGeneration = UUID()
@@ -110,7 +110,7 @@ class AppHost {
         runtimeReport: RuntimeReport? = nil,
         hardwareProfile: HardwareProfile = HardwareProfile.current(),
         now: @escaping @Sendable () -> Date = { Date() },
-        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        scanOperation: (@Sendable ([String], [String], Bool, Int?, Bool, [String]) async throws -> ScanResult)? = nil,
         libraryBuildOperation: @escaping @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot = {
             ModelLibraryBuilder.build(scan: $0, hardware: $1, now: $2)
         },
@@ -271,13 +271,9 @@ class AppHost {
             now: initialNow,
             ttl: catalogTTL
         )
-        self.scanOperation = scanOperation ?? { ggufRoots, mlxRoots, signatures, limit in
-            try await api.scan(
-                ggufRoots: ggufRoots,
-                mlxRoots: mlxRoots,
-                signatures: signatures,
-                limit: limit
-            )
+        self.scanOperation = scanOperation ?? { ggufRoots, mlxRoots, signatures, limit, compareAssets, exclusions in
+            try await api.scan(ggufRoots: ggufRoots, mlxRoots: mlxRoots, signatures: signatures,
+                               limit: limit, compareAssets: compareAssets, assetExcludeRoots: exclusions)
         }
         hosts.resourceUseBlocked = { [weak self] in
             guard let self else { return true }
@@ -695,7 +691,11 @@ class AppHost {
         (try? URL(fileURLWithPath: path).resolvingSymlinksInPath().resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject
     }
 
-    private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
+    func compareStoredAssets() async {
+        _ = await rescan(limit: nil, reconcileWorkflow: false, compareAssets: true)
+    }
+
+    private func rescan(limit: Int?, reconcileWorkflow: Bool, compareAssets: Bool = false) async -> LibrarySnapshot? {
         guard !isScanning else { return nil }
         if let scanError, lastError == scanError { lastError = nil }
         scanError = nil
@@ -711,12 +711,15 @@ class AppHost {
                 }
                 return (roots, Self.scanMLXRoots(scanConfig, ggufRoots: roots))
             }
-            let scan = try await scanOperation(
-                roots,
-                mlxRoots,
-                scanConfig.signatures,
-                limit
-            )
+            let exclusions = [scanConfig.quarantineDir].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let scan = try await scanOperation(roots, mlxRoots, scanConfig.signatures, limit, compareAssets, exclusions)
+            if !exclusions.isEmpty {
+                let reported = Set((scan.assetScan?.excludedRoots ?? []).map(Quarantine.resolve))
+                guard exclusions.allSatisfy({ reported.contains(Quarantine.resolve($0)) }) else {
+                    throw BridgeError.remote(code: "engine_update_required", message: "This engine did not confirm the quarantine exclusion.",
+                                             remediation: "Update the engine in Health, then scan again.")
+                }
+            }
             guard !Task.isCancelled else { isScanning = false; return nil }
             let builder = libraryBuildOperation, hardware = hardwareProfile, capturedAt = now()
             let snapshot = await WorkbenchIO.perform { builder(scan, hardware, capturedAt) }
@@ -726,6 +729,10 @@ class AppHost {
             guard !Task.isCancelled else { isScanning = false; return nil }
             guard config == scanConfig else {
                 isScanning = false
+                if compareAssets {
+                    scanError = "Model folders changed. Compare files again using the current folders."
+                    return nil
+                }
                 return await rescan(limit: limit, reconcileWorkflow: reconcileWorkflow)
             }
             scanResult = scan
@@ -742,8 +749,10 @@ class AppHost {
             isScanning = false
             return snapshot
         } catch {
-            scanError = Self.render(error)
-            lastError = Self.render(error)
+            if !(error is CancellationError) && !Task.isCancelled {
+                scanError = Self.render(error)
+                lastError = Self.render(error)
+            }
             isScanning = false
             return nil
         }
