@@ -45,8 +45,18 @@ final class ServingUXRealUITests: XCTestCase {
         let monitor = application.buttons["Monitor"].firstMatch
         XCTAssertTrue(monitor.waitForExistence(timeout: 10)); monitor.click()
         XCTAssertTrue(text("live endpoint", in: application).waitForExistence(timeout: 20))
-        resize(width: 1380, height: 850); capture("Monitor real idle endpoints wide")
+        resize(width: 1380, height: 850); capture("Monitor real idle endpoints standard")
+        let hideSidebar = application.buttons["Hide Sidebar"].firstMatch
+        XCTAssertTrue(hideSidebar.waitForExistence(timeout: 10)); hideSidebar.click()
+        capture("Monitor real idle endpoints wide")
+        let showSidebar = application.buttons["Show Sidebar"].firstMatch
+        XCTAssertTrue(showSidebar.waitForExistence(timeout: 10)); showSidebar.click()
         resize(width: 1000, height: 720); capture("Monitor real idle endpoints ordinary")
+        let details = application.buttons["Endpoint details…"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 10)); details.click()
+        XCTAssertTrue(application.buttons["monitor-open-settings"].waitForExistence(timeout: 10))
+        capture("Monitor endpoint details")
+        application.buttons["Done"].firstMatch.click()
         let compare = application.buttons["Compare"].firstMatch
         XCTAssertTrue(compare.waitForExistence(timeout: 10)); compare.click()
         XCTAssertTrue(text("No comparison output", in: application).waitForExistence(timeout: 30))

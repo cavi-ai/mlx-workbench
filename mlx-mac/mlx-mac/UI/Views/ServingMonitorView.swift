@@ -46,19 +46,17 @@ struct ServingMonitorView: View {
                 if inventory.isRefreshing { ProgressView().controlSize(.small) }
                 Button("Refresh") { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } }
                     .disabled(inventory.isRefreshing)
+                Button("Endpoint details…") { showingDetails = true }.disabled(selected == nil)
                 Button("Manage endpoints") { onRouteSelection(.run) }
             }
             GeometryReader { geometry in
-                if geometry.size.width >= 1100 {
+                if geometry.size.width >= 1320 {
                     HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
                         monitorTable
                         if let selected { ScrollView { details(selected) }.frame(width: 340) }
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        monitorTable
-                        Button("Endpoint details…") { showingDetails = true }.disabled(selected == nil)
-                    }
+                    monitorTable
                 }
             }
             .sheet(isPresented: $showingDetails) {
@@ -91,14 +89,17 @@ struct ServingMonitorView: View {
                             .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                             .help(ServingWorkspacePresentation.baseURL(row) ?? "Address unavailable")
                     }
-                }.width(min: 160, ideal: 240)
-                TableColumn("Status") { row in ServingStatusLabel(row: row, states: endpoint.slotStates) }.width(min: 90, ideal: 125)
-                TableColumn("Process RAM") { row in Text(processMemory(row)).monospacedDigit() }.width(min: 80, ideal: 100)
+                }.width(min: 150, ideal: 240)
+                TableColumn("Status") { row in
+                    let full = ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
+                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
+                }.width(min: 80, ideal: 125)
+                TableColumn("Process RAM") { row in Text(processMemory(row)).monospacedDigit() }.width(min: 70, ideal: 100)
                 TableColumn("Input tokens") { row in Text(token(telemetry(row)?.inputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Output tokens") { row in Text(token(telemetry(row)?.outputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
                 TableColumn("Response tok/s") { row in
                     Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit()
-                }.width(min: 100, ideal: 120)
+                }.width(min: 90, ideal: 120)
                 TableColumn("Active") { row in Text(ServingWorkspacePresentation.server(row)?.activeRequests.map(String.init) ?? "—").monospacedDigit() }.width(55)
             }
             .alternatingRowBackgrounds(.disabled)
@@ -108,6 +109,14 @@ struct ServingMonitorView: View {
                     ContentUnavailableView("No models serving", systemImage: "server.rack", description: Text("Start an endpoint in Serving. Other detected local services appear here too."))
                 }
             }
+    }
+    private func shortStatus(_ status: String) -> String {
+        switch status {
+        case "Ready on request": return "On request"
+        case "Running · residency unknown": return "Unknown"
+        case "Needs attention": return "Attention"
+        default: return status
+        }
     }
     private func processMemory(_ row: ServingRow) -> String {
         let service = ServingWorkspacePresentation.service(row)

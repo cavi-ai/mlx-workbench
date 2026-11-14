@@ -202,6 +202,35 @@ struct ServingStatusLabel: View {
     }
 }
 
+private struct ServingModelRow: View {
+    let row: ServingRow
+    let models: [LibraryModel]
+    let states: [UUID: EndpointState]
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack {
+                Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis).lineLimit(2)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if let port = ServingWorkspacePresentation.server(row)?.port {
+                    Text(verbatim: ":\(port)").font(WorkbenchTypography.compactValue).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                } else if case .endpoint(let slot, _, _) = row {
+                    Text(verbatim: ":\(slot.port)").font(WorkbenchTypography.compactValue).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                }
+            }
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Text(ServingWorkspacePresentation.provider(row))
+                Text("·")
+                ServingStatusLabel(row: row, states: states)
+            }.font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1)
+            if let address = ServingWorkspacePresentation.baseURL(row) {
+                Text(address).font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(address)
+            }
+        }.foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
+    }
+}
+
 struct ServingModelList: View {
     let rows: [ServingRow]
     let models: [LibraryModel]
@@ -232,25 +261,7 @@ struct ServingModelList: View {
                     let entries = visibleRows.filter { ServingWorkspacePresentation.section($0) == section }
                     if !entries.isEmpty { Section(section.rawValue) {
                 ForEach(entries) { row in
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        HStack {
-                            Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis).lineLimit(2)
-                            Spacer(minLength: WorkbenchSpacing.xs)
-                            if let port = ServingWorkspacePresentation.server(row)?.port {
-                                Text(verbatim: ":\(port)").font(WorkbenchTypography.compactValue).foregroundStyle(selectedID == row.id ? WorkbenchColor.onSelection : WorkbenchColor.muted)
-                            } else if case .endpoint(let slot, _, _) = row {
-                                Text(verbatim: ":\(slot.port)").font(WorkbenchTypography.compactValue).foregroundStyle(selectedID == row.id ? WorkbenchColor.onSelection : WorkbenchColor.muted)
-                            }
-                        }
-                        HStack(spacing: WorkbenchSpacing.xs) {
-                            Text(ServingWorkspacePresentation.provider(row))
-                            Text("·")
-                            ServingStatusLabel(row: row, states: states)
-                        }.font(WorkbenchTypography.metadata).foregroundStyle(selectedID == row.id ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1)
-                        if let address = ServingWorkspacePresentation.baseURL(row) {
-                            Text(address).font(WorkbenchTypography.metadata).foregroundStyle(selectedID == row.id ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(address)
-                        }
-                    }.foregroundStyle(selectedID == row.id ? WorkbenchColor.onSelection : Color.primary)
+                    ServingModelRow(row: row, models: models, states: states)
                         .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
                         .accessibilityIdentifier("serving-model-\(row.id)")
                 }
