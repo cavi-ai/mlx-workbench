@@ -368,6 +368,10 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     var requestDefaults: LabValue? = nil
     /// Why the gateway's last load or worker failed, as the engine reports it.
     var lastError: String? = nil
+    /// Allocator memory a load-on-request worker reports; nil when it reports none.
+    var workerMemory: WorkerMemoryReading? = nil
+    /// Whether the worker can release its free MLX buffers on request.
+    var allocatorCache: AllocatorCacheReading? = nil
     var supportsChatCompletions: Bool { runtime != "tasks" && (taskKinds?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
@@ -523,6 +527,61 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case "failed": return "JIT · load failed"
         default: return "JIT · residency unknown"
         }
+    }
+}
+
+/// A worker's MLX allocator counters (`worker-memory/1`): weights and live buffers, free buffers MLX keeps for reuse, and the peak.
+struct WorkerMemoryReading: Equatable, Sendable {
+    let activeBytes: Int64?
+    let cacheBytes: Int64?
+    let peakBytes: Int64?
+    let capturedAt: Date
+
+    init(activeBytes: Int64?, cacheBytes: Int64?, peakBytes: Int64?, capturedAt: Date) {
+        self.activeBytes = activeBytes; self.cacheBytes = cacheBytes; self.peakBytes = peakBytes; self.capturedAt = capturedAt
+    }
+
+    /// Nil unless `raw` is a well-formed reading; a counter the worker could not read stays nil.
+    init?(_ raw: Any?) {
+        guard let raw = raw as? [String: Any], raw["schema"] as? String == "worker-memory/1",
+              let captured = Self.number(raw["captured_at"]), captured.isFinite, captured >= 0 else { return nil }
+        var counters: [Int64?] = []
+        for key in ["active_bytes", "cache_bytes", "peak_bytes"] {
+            if raw[key] == nil || raw[key] is NSNull { counters.append(nil); continue }
+            guard let value = Self.number(raw[key]), value >= 0, value <= 1.2e18, value == value.rounded() else { return nil }
+            counters.append(Int64(value))
+        }
+        self.init(activeBytes: counters[0], cacheBytes: counters[1], peakBytes: counters[2],
+                  capturedAt: Date(timeIntervalSince1970: captured))
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        return number.doubleValue
+    }
+}
+
+/// A worker's allocator cache control, as the gateway reports it.
+struct AllocatorCacheReading: Equatable, Sendable {
+    let supported: Bool
+    let available: Bool
+    let busy: Bool
+    let lastReleasedBytes: Int64?
+    let error: String?
+
+    var canRelease: Bool { supported && available && !busy && error == nil }
+
+    init(supported: Bool, available: Bool, busy: Bool = false, lastReleasedBytes: Int64? = nil, error: String? = nil) {
+        self.supported = supported; self.available = available; self.busy = busy
+        self.lastReleasedBytes = lastReleasedBytes; self.error = error
+    }
+
+    init?(_ raw: Any?) {
+        guard let raw = raw as? [String: Any], let supported = raw["supported"] as? Bool else { return nil }
+        let released = ((raw["last_reclaim"] as? [String: Any])?["released_cache_bytes"] as? NSNumber)
+            .flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() || $0.int64Value < 0 ? nil : $0.int64Value }
+        self.init(supported: supported, available: raw["available"] as? Bool ?? false, busy: raw["active"] as? Bool ?? false,
+                  lastReleasedBytes: released, error: raw["error"] as? String)
     }
 }
 

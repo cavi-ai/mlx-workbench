@@ -295,7 +295,9 @@ class AppHost {
             guard self.comparison.hasLoadedHistory, !self.occupancy.blocksStop(server) else {
                 throw WorkflowEvidenceError.invalid("Finish work using this model before changing its server.")
             }
-            if service.isWorkbenchManaged {
+            if action == .releaseCache {
+                try await api.changeDiscoveredService(server, action: action.rawValue)
+            } else if service.isWorkbenchManaged {
                 let changed: Bool
                 if action == .unload {
                     changed = await self.endpoint.unloadObservedServer(server) { try await api.changeDiscoveredService($0, action: "unload") }

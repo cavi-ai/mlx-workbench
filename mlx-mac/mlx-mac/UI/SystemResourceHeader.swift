@@ -11,8 +11,6 @@ struct SystemResourceHeader: View {
     /// Running engine servers, as the workflow reports them.
     var servers: [ServerInfo] = []
     var libraryModels: [LibraryModel] = []
-    /// Shows the short memory label when the window is too narrow for the loaded count.
-    var compactLabel = false
     /// False until saved histories have loaded; stopping an endpoint waits for them.
     var historyLoaded = true
     /// Selects Run, scrolling to the row when one is given.
@@ -48,22 +46,12 @@ struct SystemResourceHeader: View {
         let modelsNeedAttention = (tally?.attention ?? 0) > 0
         let available = resources.memory?.availableBytes
         return Button { expanded.toggle() } label: {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                Image(systemName: modelsNeedAttention ? "exclamationmark.triangle.fill" : attention.map(EndpointIcon.name(for:)) ?? "memorychip")
-                    .foregroundStyle(modelsNeedAttention ? WorkbenchColor.failure
-                                     : attention.map { ResourceHeaderPresentation.status(for: $0).color } ?? WorkbenchColor.muted)
-                if let available {
-                    Text(ResourceHeaderPresentation.memoryText(availableBytes: available, tally: tally, compact: compactLabel))
-                        .foregroundStyle(modelsNeedAttention ? WorkbenchColor.failure
-                                         : available < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
-                        .contentTransition(.numericText())
-                } else {
-                    Text("RAM unavailable").foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-            .font(WorkbenchTypography.label.monospacedDigit())
-            .lineLimit(1)
-            .fixedSize()
+            ResourceHeaderLabel(
+                lines: available.map { ResourceHeaderPresentation.lines(availableBytes: $0, tally: tally) }
+                    ?? Array(repeating: ResourceHeaderLine(badge: nil, text: "RAM unavailable"), count: 3),
+                symbol: attention.map(EndpointIcon.name(for:)) ?? "memorychip",
+                symbolColor: attention.map { ResourceHeaderPresentation.status(for: $0).color } ?? WorkbenchColor.muted,
+                textColor: available.map { $0 < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink } ?? WorkbenchColor.muted)
             .workbenchAnimation(value: available)
         }
         .buttonStyle(.plain)
@@ -251,10 +239,66 @@ enum ResourceHeaderPresentation {
         return (parts + [available]).joined(separator: " · ")
     }
 
+    /// The toolbar's three renderings, longest first; it shows the first that fits.
+    /// Models that need attention ride in a badge; the rest names serving counts and headroom.
+    static func lines(availableBytes: Int64, tally: ServingTally?) -> [ResourceHeaderLine] {
+        let attention = tally?.attention ?? 0
+        let badge = attention > 0 ? "\(attention) need\(attention == 1 ? "s" : "") attention" : nil
+        let free = "~\(gigabytes(availableBytes)) GB free"
+        let counts = [(tally?.loaded ?? 0) > 0 ? "\(tally?.loaded ?? 0) loaded" : nil,
+                      (tally?.loading ?? 0) > 0 ? "\(tally?.loading ?? 0) loading" : nil,
+                      (tally?.onRequest ?? 0) > 0 ? "\(tally?.onRequest ?? 0) on request" : nil].compactMap { $0 }
+        let medium = ResourceHeaderLine(badge: badge, text: free)
+        return [counts.isEmpty ? medium : ResourceHeaderLine(badge: badge, text: (counts + [free]).joined(separator: " · ")),
+                medium,
+                ResourceHeaderLine(badge: attention > 0 ? "\(attention)" : nil, text: "\(gigabytes(availableBytes)) GB")]
+    }
+
     static func accessibilityLabel(availableBytes: Int64?, tally: ServingTally?, attention: EndpointState?) -> String {
         let memory = availableBytes.map { memoryText(availableBytes: $0, tally: tally, compact: false) } ?? "RAM unavailable"
         guard let attention else { return memory }
         return memory + ", endpoint: " + attention.summary
+    }
+}
+
+struct ResourceHeaderLine: Equatable {
+    /// Drawn as a red capsule with a warning symbol.
+    let badge: String?
+    let text: String
+}
+
+/// The toolbar entry. It takes the longest line that fits the width the toolbar offers, so it never draws past its item.
+struct ResourceHeaderLabel: View {
+    /// Exactly three, longest first.
+    let lines: [ResourceHeaderLine]
+    let symbol: String
+    let symbolColor: Color
+    let textColor: Color
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            line(lines[0])
+            line(lines[1])
+            line(lines[2])
+        }
+        .font(WorkbenchTypography.label.monospacedDigit())
+        .lineLimit(1)
+    }
+
+    private func line(_ line: ResourceHeaderLine) -> some View {
+        HStack(spacing: WorkbenchSpacing.xs) {
+            if let badge = line.badge {
+                Label(badge, systemImage: "exclamationmark.triangle.fill")
+                    .padding(.horizontal, WorkbenchSpacing.xs)
+                    .padding(.vertical, WorkbenchSpacing.xxxs)
+                    .foregroundStyle(WorkbenchColor.failure)
+                    .background(WorkbenchColor.failure.opacity(.fill), in: Capsule())
+            } else {
+                Image(systemName: symbol).foregroundStyle(symbolColor)
+            }
+            Text(line.text).foregroundStyle(textColor).contentTransition(.numericText())
+        }
+        .fixedSize()
     }
 }
 

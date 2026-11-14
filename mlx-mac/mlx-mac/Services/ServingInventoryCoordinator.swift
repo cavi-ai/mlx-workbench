@@ -8,7 +8,14 @@ struct ServingHostSnapshot {
 
 enum ServingActionKind: String {
     case unload, stop
-    var title: String { self == .unload ? "Unload model" : "Stop server" }
+    case releaseCache = "reclaim-cache"
+    var title: String {
+        switch self {
+        case .unload: "Unload model"
+        case .stop: "Stop server"
+        case .releaseCache: "Release MLX cache"
+        }
+    }
 }
 
 struct ServingActionReview: Identifiable {
@@ -149,7 +156,7 @@ final class ServingInventoryCoordinator: ObservableObject {
         actionReview = nil
         await refresh()
         guard let fresh = snapshot.services.first(where: { $0.id == service.id }), !fresh.stale,
-              mayChange(fresh), action == .unload ? fresh.canUnload : fresh.canStop else {
+              mayChange(fresh), fresh.allows(action) else {
             actionError = "The service changed or is in use. Refresh and review it again."
             return
         }

@@ -158,7 +158,7 @@ final class MenuBarTests: XCTestCase {
 
     /// One endpoint with its server, one third-party service and one running server no slot owns.
     @MainActor
-    private func servingFixture(readInventory: Bool) async throws -> (header: SystemResourceHeader, rows: [ServingRow]) {
+    private func servingFixture(readInventory: Bool, residency: String = "loaded") async throws -> (header: SystemResourceHeader, rows: [ServingRow]) {
         let stateRoot = WorkbenchStatePaths.hostedTestRoot
         let world = FakeServeWorld()
         let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Qwen3-8B-4bit", loadOnRequest: true, memoryPolicy: .automatic)
@@ -168,7 +168,7 @@ final class MenuBarTests: XCTestCase {
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore(fileURL: stateRoot.appendingPathComponent("popover-endpoint.json")), fleetStore: fleet)
         await supervisor.reconcile()
-        let owned = engineServer(slot.modelPath, port: slot.port, pid: 10, managed: true, residency: "loaded")
+        let owned = engineServer(slot.modelPath, port: slot.port, pid: 10, managed: true, residency: residency)
         let thirdParty = engineServer("/models/ollama-model", port: 11434, pid: 30, managed: false, residency: "unloaded")
         let bare = ServerInfo(path: "/models/bare", port: 9001, pid: 40, state: "running")
         let inventory = ServingInventoryCoordinator(managedReceipts: managedReceipts, now: { Date(timeIntervalSince1970: 1_000) },
@@ -212,8 +212,15 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: false), "2 loaded · ~12.0 GB available")
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: true), "~12.0 GB available")
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: nil, compact: false), "~12.0 GB available")
-        XCTAssertEqual(WorkbenchSize.ResourceHeader.fullLabelWindowMinimum, 908)
-        XCTAssertGreaterThan(WorkbenchSize.ResourceHeader.fullLabelWindowMinimum, 907)
+    }
+
+    func testToolbarLinesPutAttentionInABadgeAndShortenInOrder() {
+        let twelve: Int64 = 12_000_000_000
+        let lines = ResourceHeaderPresentation.lines(availableBytes: twelve, tally: ServingTally(attention: 1, loaded: 2, onRequest: 2))
+        XCTAssertEqual(lines, [ResourceHeaderLine(badge: "1 needs attention", text: "2 loaded · 2 on request · ~12.0 GB free"),
+                               ResourceHeaderLine(badge: "1 needs attention", text: "~12.0 GB free"),
+                               ResourceHeaderLine(badge: "1", text: "12.0 GB")])
+        XCTAssertEqual(ResourceHeaderPresentation.lines(availableBytes: twelve, tally: nil).map(\.badge), [nil, nil, nil])
     }
 
     func testToolbarSurfacesEndpointTroubleOnlyForANonEmptyFleet() {
@@ -232,22 +239,19 @@ final class MenuBarTests: XCTestCase {
     }
 
     @MainActor
-    func testHostedToolbarLabelFollowsTheCompactAndReadStates() async throws {
-        let read = try await servingFixture(readInventory: true)
-        let unread = try await servingFixture(readInventory: false)
-        /// The width the rendered label asks for.
-        func labelWidth(_ header: SystemResourceHeader, compact: Bool) -> CGFloat {
-            var shown = header
-            shown.compactLabel = compact
-            let (window, hosting) = host(shown, width: 600, height: 40)
-            defer { window.close() }
-            return hosting.fittingSize.width
+    func testHostedToolbarLabelNeverAsksForMoreWidthThanOffered() async throws {
+        let read = try await servingFixture(readInventory: true, residency: "failed")
+        XCTAssertEqual(ServingWorkspacePresentation.tally(read.rows).attention, 1, "the fixture has a model that needs attention")
+        /// The width the rendered label takes when the toolbar offers `offered` points.
+        func width(offered: CGFloat) -> CGFloat {
+            let hosting = NSHostingController(rootView: read.header)
+            return hosting.sizeThatFits(in: CGSize(width: offered, height: 40)).width
         }
-        let full = labelWidth(read.header, compact: false)
-        let compact = labelWidth(read.header, compact: true)
-        XCTAssertLessThan(compact, full, "the compact label drops the loaded count")
-        XCTAssertEqual(labelWidth(unread.header, compact: false), compact, accuracy: 0.5,
-                       "an unread inventory shows the short label at any width")
+        let roomy = width(offered: 900)
+        XCTAssertGreaterThan(roomy, 200, "with room, the label names the serving counts")
+        for offered: CGFloat in [260, 160, 110] {
+            XCTAssertLessThanOrEqual(width(offered: offered), offered, "offered \(offered) points")
+        }
     }
 
     func testServerRowsOfferOnlyReviewedStopsAndUnloads() {
