@@ -51,7 +51,7 @@ final class ExistingEndpointRealUITests: XCTestCase {
         XCTAssertTrue(address.waitForExistence(timeout: 20)); XCTAssertTrue(address.isHittable)
         capture("Existing endpoint settings")
         let hierarchy = XCTAttachment(string: application.debugDescription)
-        hierarchy.name = "Existing endpoint hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        hierarchy.name = "Existing endpoint hierarchy"; hierarchy.lifetime = .keepAlways; self.add(hierarchy)
         let workspace = application.scrollViews["serving-model-workspace"].firstMatch
         let title = workspace.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "mlx-community/Qwen3-4B-4bit", "mlx-community/Qwen3-4B-4bit")).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 10))
