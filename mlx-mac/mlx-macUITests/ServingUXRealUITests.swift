@@ -100,7 +100,7 @@ final class ServingUXRealUITests: XCTestCase {
 
     private func assertRateColumnVisible(in application: XCUIApplication) {
         let table = application.descendants(matching: .any)["serving-monitor-table"].firstMatch
-        let header = table.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Tok/s")).firstMatch
+        let header = application.buttons["Tok/s"].firstMatch
         XCTAssertTrue(header.waitForExistence(timeout: 10)); XCTAssertTrue(header.isHittable)
         XCTAssertGreaterThanOrEqual(header.frame.minX, table.frame.minX)
         XCTAssertLessThanOrEqual(header.frame.maxX, table.frame.maxX)
