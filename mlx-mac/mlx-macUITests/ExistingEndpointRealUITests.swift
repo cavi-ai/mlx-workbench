@@ -49,9 +49,13 @@ final class ExistingEndpointRealUITests: XCTestCase {
         XCTAssertTrue(tabs.waitForExistence(timeout: 20)); XCTAssertTrue(tabs.isHittable)
         let address = application.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", ":19081/v1", ":19081/v1")).firstMatch
         XCTAssertTrue(address.waitForExistence(timeout: 20)); XCTAssertTrue(address.isHittable)
-        let title = application.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Qwen3-4B", "Qwen3-4B")).firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 10)); XCTAssertTrue(title.isHittable)
         capture("Existing endpoint settings")
+        let hierarchy = XCTAttachment(string: application.debugDescription)
+        hierarchy.name = "Existing endpoint hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let workspace = application.scrollViews["serving-model-workspace"].firstMatch
+        let title = workspace.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "mlx-community/Qwen3-4B-4bit", "mlx-community/Qwen3-4B-4bit")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertTrue(workspace.frame.contains(title.frame)); XCTAssertTrue(application.windows.firstMatch.frame.contains(title.frame))
     }
     private func capture(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
