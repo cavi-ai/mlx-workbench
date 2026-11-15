@@ -83,8 +83,12 @@ final class ServingUXRealUITests: XCTestCase {
         first.click(); XCTAssertTrue(text("Gateway RAM · PID " + firstPID, in: application).waitForExistence(timeout: 20))
         XCTAssertTrue(text("2/2 measured", in: application).waitForExistence(timeout: 20))
         XCTAssertFalse(text("— · 2/2 measured", in: application).exists)
-        resize(width: 1380, height: 850); capture("Monitor memory wide")
-        resize(width: 1000, height: 720); capture("Monitor memory ordinary")
+        resize(width: 1380, height: 850)
+        XCTAssertGreaterThanOrEqual(application.windows.firstMatch.frame.width, 1300)
+        assertRateColumnVisible(in: application); capture("Monitor memory wide")
+        resize(width: 1000, height: 720)
+        XCTAssertLessThan(application.windows.firstMatch.frame.width, 1100)
+        assertRateColumnVisible(in: application); capture("Monitor memory ordinary")
         let copy = application.buttons["monitor-copy-address"].firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10)); copy.click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "http://127.0.0.1:19081/v1")
@@ -92,6 +96,14 @@ final class ServingUXRealUITests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.click()
         let tabs = application.radioGroups["serving-workspace-tabs"].firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 15)); XCTAssertTrue(tabs.isHittable)
+    }
+
+    private func assertRateColumnVisible(in application: XCUIApplication) {
+        let table = application.descendants(matching: .any)["serving-monitor-table"].firstMatch
+        let header = table.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Tok/s")).firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 10)); XCTAssertTrue(header.isHittable)
+        XCTAssertGreaterThanOrEqual(header.frame.minX, table.frame.minX)
+        XCTAssertLessThanOrEqual(header.frame.maxX, table.frame.maxX)
     }
 
     private func text(_ fragment: String, in app: XCUIApplication) -> XCUIElement {

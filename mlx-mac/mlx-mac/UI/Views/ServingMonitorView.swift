@@ -74,27 +74,31 @@ struct ServingMonitorView: View {
                             .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                             .help(ServingWorkspacePresentation.baseURL(row) ?? "Address unavailable")
                     }
-                }.width(min: 150, ideal: 240)
+                }.width(min: 110, ideal: 160)
                 TableColumn("Status") { row in
                     let full = ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
-                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
-                }.width(min: 80, ideal: 125)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
+                        if let active = ServingWorkspacePresentation.server(row)?.activeRequests {
+                            Text("\(active) active").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
+                }.width(85)
                 TableColumn("Memory") { row in
                     let display = memoryDisplay(memoryRow(row))
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         Text(display.amount).monospacedDigit()
                         Text(display.origin).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                     }
-                }.width(min: 110, ideal: 150)
+                }.width(100)
                 TableColumn("Tokens in / out") { row in
                     let input = telemetry(row)?.inputTokens, output = telemetry(row)?.outputTokens
                     Text(compactToken(input) + " / " + compactToken(output)).monospacedDigit()
                         .help("Input: " + token(input) + " · Output: " + token(output))
-                }.width(min: 95, ideal: 120)
-                TableColumn("Response tok/s") { row in
-                    Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit()
-                }.width(min: 90, ideal: 120)
-                TableColumn("Active") { row in Text(ServingWorkspacePresentation.server(row)?.activeRequests.map(String.init) ?? "—").monospacedDigit() }.width(55)
+                }.width(85)
+                TableColumn("Tok/s") { row in
+                    Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit().help("Response tokens per second includes waiting, loading and generation.")
+                }.width(65)
             }
             .alternatingRowBackgrounds(.disabled)
             .accessibilityIdentifier("serving-monitor-table")
