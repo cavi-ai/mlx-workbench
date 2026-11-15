@@ -255,9 +255,10 @@ struct MLXOutput: Codable, Equatable, Identifiable, Hashable {
     var backend: OutputBackend? = nil
     /// The family Splash's engine finds this output's config to describe, as the scan reports it.
     var splashFamily: String? = nil
+    var precision: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case path, name, quantization, provenance, task, runtime, backend
+        case path, name, quantization, provenance, task, runtime, backend, precision
         case modelKey = "model_key"
         case splashFamily = "splash_family"
     }

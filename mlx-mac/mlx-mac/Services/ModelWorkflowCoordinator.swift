@@ -215,7 +215,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         return true
     }
 
-    func inspect(source: ModelItem, snapshot: LibrarySnapshot?) {
+    func inspect(source: ModelItem, snapshot: LibrarySnapshot?, qBits: Int = 4) {
         selectedSource = source
         selectedSnapshot = snapshot
         conversionPreviewQBits = nil
@@ -223,11 +223,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         servePreviewHash = nil
         servePreviewIntent = nil
         inferenceEvidence = []
-        switch ModelWorkflowResolver.destination(for: source, library: snapshot) {
+        switch ModelWorkflowResolver.destination(for: source, library: snapshot, qBits: qBits) {
         case .reuseExisting(let model):
             let exactPath = preferredModelPath(
                 model,
-                preferred: ModelWorkflowResolver.sameDirectoryOutputURL(for: source).path
+                preferred: ModelWorkflowResolver.sameDirectoryOutputURL(for: source, qBits: qBits).path
             )
             replace(
                 makeWorkflow(
@@ -270,7 +270,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         servePreviewHash = nil
         servePreviewIntent = nil
         inferenceEvidence = []
-        let bits = Self.allowedBits(qBits, allowed: intake.qBits)
+        let bits = qBits
         let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, subfolder: intake.source.subfolder, qBits: bits)
         var record = repoRecord(repo: intake.source.repo, subfolder: intake.source.subfolder, backend: intake.backend ?? "mlx-lm", output: output)
         record.estimatedOutputBytes = intake.estimatedOutputBytes
@@ -282,9 +282,29 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     /// Prepare's bit-width picker for a repo source: the destination follows the
     /// width, and an output already converted at that width is offered instead.
+    func changePrecision() {
+        guard (workflow.state == .readyToConfirm || workflow.state == .failed), !isConversionSubmissionInFlight else { return }
+        conversionPreviewQBits = nil
+        conversionPreviewOutput = nil
+        update(state: .inspectingSource, message: "Choose an output precision and preview again.", clearPreviewHash: true)
+    }
+
+    func selectPrecision(_ qBits: Int) {
+        guard workflow.allowedBits?.contains(qBits) ?? [4, 8].contains(qBits),
+              workflow.state == .inspectingSource || workflow.state == .failed || workflow.state == .existingModelFound else { return }
+        if workflow.sourceRepo != nil { selectRepoBits(qBits); return }
+        guard let source = selectedSource ?? restoredSource() else { return }
+        let decision = ModelWorkflowResolver.destination(for: source, library: selectedSnapshot, qBits: qBits, fileManager: fileManager, now: now())
+        switch decision {
+        case .available(let url): update(state: .inspectingSource, outputPath: url.path, message: "Ready to preview conversion.", errorMessage: .some(nil), clearPreviewHash: true)
+        case .blocked(let url, let reason): failDestination(destination: url.path, reason: reason)
+        case .reuseExisting: break
+        }
+    }
+
     func selectRepoBits(_ qBits: Int) {
         guard let repo = workflow.sourceRepo,
-              workflow.state == .existingModelFound || workflow.state == .inspectingSource,
+              workflow.state == .existingModelFound || workflow.state == .inspectingSource || workflow.state == .failed,
               workflow.allowedBits?.contains(qBits) ?? true else { return }
         let directory = URL(fileURLWithPath: workflow.outputPath).deletingLastPathComponent().path
         let output = Self.repoOutputPath(directory: directory, repo: repo, subfolder: workflow.subfolder, qBits: qBits)
@@ -327,12 +347,6 @@ final class ModelWorkflowCoordinator: ObservableObject {
         )
     }
 
-    /// The requested width when intake allows it, else the widest it allows.
-    nonisolated static func allowedBits(_ qBits: Int, allowed: [Int]?) -> Int {
-        guard let allowed, !allowed.isEmpty, !allowed.contains(qBits) else { return qBits }
-        return allowed.max() ?? qBits
-    }
-
     func preview(qBits: Int, out: String?) async {
         guard !isConversionSubmissionInFlight else { return }
         isConversionSubmissionInFlight = true
@@ -351,10 +365,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
             await fail("The selected GGUF source is unavailable for validation.")
             return
         }
-        let output = safeOutputOverride(out) ?? workflow.outputPath
+        let output = safeOutputOverride(out) ?? ModelWorkflowResolver.sameDirectoryOutputURL(for: source, qBits: qBits).path
         switch ModelWorkflowResolver.destination(
             for: source,
             library: selectedSnapshot,
+            qBits: qBits,
             fileManager: fileManager,
             now: now()
         ) {
@@ -418,6 +433,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         switch ModelWorkflowResolver.destination(
             for: source,
             library: selectedSnapshot,
+            qBits: qBits,
             fileManager: fileManager,
             now: now()
         ) {
@@ -1107,7 +1123,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             outputPath: outputPath, state: state, completedModelPath: completedModelPath,
             message: message, errorMessage: errorMessage
         )
-        record.allowedBits = source.qBits?.isEmpty == false ? source.qBits : nil
+        record.allowedBits = source.qBits
         return record
     }
 

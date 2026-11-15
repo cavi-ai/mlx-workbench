@@ -20,6 +20,8 @@ struct PrepareWorkflowPresentation: Equatable {
     let subfolder: String?
     /// The bit widths the source converts to; a port can allow fewer than 4 and 8.
     let bitWidths: [Int]
+    let capabilitiesKnown: Bool
+    let sourceBackend: String?
     /// The width the destination names (`-MLX-<bits>bit`); nil when it names none.
     let destinationBits: Int?
     let estimatedOutputBytes: [String: Int64]?
@@ -39,7 +41,9 @@ struct PrepareWorkflowPresentation: Equatable {
         hasPreviewHash = !(workflow.previewHash?.isEmpty ?? true)
         sourceRepo = workflow.sourceRepo
         subfolder = workflow.subfolder
-        bitWidths = (workflow.allowedBits?.isEmpty == false ? workflow.allowedBits! : [4, 8]).sorted()
+        bitWidths = (workflow.allowedBits ?? [4, 8]).sorted()
+        capabilitiesKnown = workflow.allowedBits != nil
+        sourceBackend = workflow.backend
         destinationBits = workflow.destinationBits
         estimatedOutputBytes = workflow.estimatedOutputBytes
         completedModelPath = workflow.completedModelPath
@@ -114,7 +118,7 @@ struct PrepareWorkflowPresentation: Equatable {
     }
 
     var isQuantizationLocked: Bool {
-        hasPreviewHash
+        hasPreviewHash || state == .previewingConversion || state.isInFlight
     }
 
     var isBlockedDestination: Bool {
@@ -200,7 +204,7 @@ struct PrepareTile: Equatable, Identifiable {
     let bits: Int
     let size: Size
     var id: Int { bits }
-    var widthLabel: String { "\(bits)-bit" }
+    var widthLabel: String { bits >= 16 ? "FP\(bits)" : "\(bits)-bit" }
 }
 
 extension PrepareWorkflowPresentation {
@@ -224,7 +228,7 @@ extension PrepareWorkflowPresentation {
     /// previewed or converted, which is known only when the destination names
     /// it; never the configured default.
     func highlightedBits(selected: Int) -> Int? {
-        guard isQuantizationLocked else { return selected }
+        guard isQuantizationLocked else { return bitWidths.contains(selected) ? selected : nil }
         guard let destinationBits, bitWidths.contains(destinationBits) else { return nil }
         return destinationBits
     }
@@ -572,10 +576,7 @@ struct ConvertView: View {
             .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
         }
         .onChange(of: qBits) { _, bits in
-            modelWorkflow.selectRepoBits(bits)
-        }
-        .onChange(of: presentation.bitWidths, initial: true) { _, widths in
-            if !widths.contains(qBits), let widest = widths.last { qBits = widest }
+            modelWorkflow.selectPrecision(bits)
         }
         // A new workflow (intake, Library) names its destination's width; the tiles follow it.
         .onChange(of: modelWorkflow.workflow.id, initial: true) { _, _ in
@@ -666,10 +667,28 @@ struct ConvertView: View {
                         .truncationMode(.tail)
                         .help(presentation.destinationNote)
                 }
-                Text("Quantization")
+                Text("Output precision")
                     .font(WorkbenchTypography.label)
                     .foregroundStyle(WorkbenchColor.muted)
+                Text("Full precision changes storage format; it cannot restore information lost from a quantized source.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if !presentation.capabilitiesKnown {
+                    Text("This engine did not report supported formats. Update the engine for more choices.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                if presentation.bitWidths.isEmpty {
+                    Text("This source has no available conversion format.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                } else if presentation.capabilitiesKnown && presentation.bitWidths.count < 8 {
+                    Text(sourceModel?.item.draft?.port == "deepseek_v4_dspark"
+                         ? "DSpark retains MXFP4 experts, so full-precision output is unavailable."
+                         : "Unavailable formats are not supported by this source's converter.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
                 tiles
+                if presentation.state == .readyToConfirm || presentation.isBlockedDestination {
+                    Button("Change precision") { modelWorkflow.changePrecision() }
+                }
                 let previewing = presentation.state == .previewingConversion
                 if presentation.showsSourceCleanupChoice {
                     let note = sourceCleanupIsPossible
@@ -796,23 +815,27 @@ struct ConvertView: View {
         let taskModel = outputModel ?? sourceModel
         // A Hugging Face source is not in Library before it converts; intake labelled its task.
         let intakeTask = PrepareWorkflowPresentation.intakeTask(appHost.intake.resolution, repoID: presentation.repoID)
-        return LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: WorkbenchSize.Prepare.tileMinimum, maximum: WorkbenchSize.Prepare.tileMaximum), spacing: WorkbenchSpacing.sm, alignment: .top)],
-            alignment: .leading,
-            spacing: WorkbenchSpacing.sm
-        ) {
-            ForEach(presentation.tiles(actualBytes: actual)) { tile in
-                PrepareQuantTileView(
-                    resources: appHost.resources,
-                    tile: tile,
-                    parameters: taskModel?.item.parameters,
-                    task: taskModel?.item.task?.type ?? intakeTask,
-                    taskIsLabelled: taskModel != nil || intakeTask != nil,
-                    reserveGB: appHost.config.fitReserveGB,
-                    hardware: appHost.hardwareProfile,
-                    isHighlighted: highlighted == tile.bits,
-                    isLocked: presentation.isQuantizationLocked
-                ) { qBits = tile.bits }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if !presentation.bitWidths.contains(qBits) {
+                Text("Selected format is unavailable. Choose a supported output format.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            ForEach(["Full precision", "Quantized"], id: \.self) { group in
+                Text(group).font(WorkbenchTypography.label)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: WorkbenchSize.Prepare.tileMinimum, maximum: WorkbenchSize.Prepare.tileMaximum), spacing: WorkbenchSpacing.sm, alignment: .top)], alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    ForEach(group == "Full precision" ? [16, 32] : [2, 3, 4, 5, 6, 8], id: \.self) { bits in
+                        let tile = PrepareTile(bits: bits, size: presentation.size(forBits: bits, actualBytes: actual))
+                        let supported = presentation.bitWidths.contains(bits)
+                        PrepareQuantTileView(resources: appHost.resources, tile: tile,
+                            parameters: taskModel?.item.parameters, task: taskModel?.item.task?.type ?? intakeTask,
+                            taskIsLabelled: taskModel != nil || intakeTask != nil, reserveGB: appHost.config.fitReserveGB,
+                            hardware: appHost.hardwareProfile, isHighlighted: highlighted == bits,
+                            isLocked: presentation.isQuantizationLocked || !supported,
+                            titleOverride: bits == 32 && presentation.isRepoSource && presentation.sourceBackend != "mlx-lm" ? "Unquantized" : nil
+                        ) { qBits = bits }
+                        .help(supported ? "" : "This model or engine does not report support for this format.")
+                    }
+                }
             }
         }
     }
@@ -840,7 +863,7 @@ struct ConvertView: View {
         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
             Button(title(for: item.action)) { perform(item.action) }
                 .prepareButtonStyle(prominent: item.isProminent)
-                .disabled(!item.isEnabled)
+                .disabled(!item.isEnabled || ((item.action == .preview || item.action == .confirm) && !presentation.bitWidths.contains(qBits)))
         }
     }
 
@@ -1024,6 +1047,7 @@ private struct PrepareQuantTileView: View {
     let hardware: HardwareProfile
     let isHighlighted: Bool
     let isLocked: Bool
+    var titleOverride: String? = nil
     let select: () -> Void
 
     private var fit: PrepareTileFit {
@@ -1038,7 +1062,7 @@ private struct PrepareQuantTileView: View {
         let fit = fit
         Button(action: select) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                Text(tile.widthLabel)
+                Text(titleOverride ?? tile.widthLabel)
                     .font(WorkbenchTypography.display)
                     .foregroundStyle(isLocked && !isHighlighted ? WorkbenchColor.muted : WorkbenchColor.ink)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1070,7 +1094,7 @@ private struct PrepareQuantTileView: View {
         .disabled(isLocked)
         .workbenchAnimation(WorkbenchMotion.standard, value: isHighlighted)
         .help(fit.help)
-        .accessibilityLabel("\(tile.bits)-bit, \(tile.size.spokenText), \(fit.spokenVerdict)")
+        .accessibilityLabel("\(titleOverride ?? tile.widthLabel), \(tile.size.spokenText), \(fit.spokenVerdict)")
         .accessibilityAddTraits(isHighlighted ? .isSelected : [])
     }
 

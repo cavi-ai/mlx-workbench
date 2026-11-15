@@ -195,9 +195,10 @@ final class IntakeRemodelTests: XCTestCase {
                        "Qwen/Qwen-Image-2.1 + style.safetensors")
     }
 
-    func testNarrowedBitWidthSelectsTheEstimateThatWillBeUsed() throws {
+    func testUnsupportedWidthDoesNotShowAnotherEstimate() throws {
         let only8 = try F.resolution(F.Spec(qBits: "[8]"))
-        XCTAssertEqual(IntakePresentation.items(only8, qBits: 4)[1].label, "Estimated 8-bit output")
+        XCTAssertFalse(IntakePresentation.items(only8, qBits: 4).contains { $0.label.contains("Estimated") })
+        XCTAssertTrue(IntakePresentation.items(only8, qBits: 8).contains { $0.label == "Estimated 8-bit output" })
     }
 
     func testReasonCodesKeepTheirSentencesAndWarningsFollow() throws {
@@ -251,6 +252,14 @@ final class IntakeRemodelTests: XCTestCase {
         XCTAssertTrue(fit.detail.contains("estimated 4-bit output, \(LibraryTablePresentation.byteCount(4_800_000_000))"), fit.detail)
         let eight = try XCTUnwrap(F.fit(value, qBits: 8))
         XCTAssertTrue(eight.detail.contains("estimated 8-bit output"), eight.detail)
+    }
+
+    func testUnsupportedConfiguredFormatDoesNotUseAnotherEstimate() throws {
+        let value = try F.resolution(F.Spec(qBits: "[4,8]"))
+        let fit = try XCTUnwrap(F.fit(value, qBits: 16))
+        XCTAssertEqual(fit.state, .sizeUnknown)
+        XCTAssertEqual(fit.word, "Select supported format")
+        XCTAssertFalse(fit.showsTrack)
     }
 
     func testFitFlagsAnOutputLargerThanTheBudget() throws {

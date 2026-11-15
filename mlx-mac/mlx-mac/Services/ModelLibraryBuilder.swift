@@ -61,7 +61,7 @@ enum ModelLibraryBuilder {
                 shard: nil,
                 modelKey: output.modelKey,
                 architecture: configModelType(config),
-                quantization: output.quantization.map { "q\($0.bits)" },
+                quantization: output.quantization.map { "q\($0.bits)" } ?? output.precision,
                 parameters: nil,
                 structure: nil,
                 signature: (try? ManagedModelInstallStore.signature(path: output.path)) ?? output.provenance,

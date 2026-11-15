@@ -1373,6 +1373,7 @@ actor WorkbenchAPI {
                 draft: ModelDraft(dictionary: raw["draft"] as? [String: Any])
             )
             item.identity = ModelIdentity(dictionary: raw["identity"] as? [String: Any])
+            item.qBits = raw["q_bits"] as? [Int]
             return item
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []
@@ -1400,7 +1401,8 @@ actor WorkbenchAPI {
                 task: ModelTask(dictionary: raw["task"] as? [String: Any]),
                 runtime: raw.string("runtime"),
                 backend: backend,
-                splashFamily: (raw["splash"] as? [String: Any])?.string("family")
+                splashFamily: (raw["splash"] as? [String: Any])?.string("family"),
+                precision: raw.string("precision")
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {
