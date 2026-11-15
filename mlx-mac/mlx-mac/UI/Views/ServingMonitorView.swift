@@ -9,7 +9,6 @@ struct ServingMonitorView: View {
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var selection: String?
-    @State private var showingDetails = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -28,34 +27,29 @@ struct ServingMonitorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            HStack {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("\(rows.count) live endpoint\(rows.count == 1 ? "" : "s")").font(WorkbenchTypography.cardTitle)
-                    let tally = ServingWorkspacePresentation.tally(rows)
-                    let facts = [tally.attention > 0 ? "\(tally.attention) need attention" : nil,
-                                 tally.loaded > 0 ? "\(tally.loaded) loaded" : nil,
-                                 tally.loading > 0 ? "\(tally.loading) loading" : nil,
-                                 tally.unloading > 0 ? "\(tally.unloading) unloading" : nil,
-                                 tally.onRequest > 0 ? "\(tally.onRequest) ready on request" : nil,
-                                 tally.unknown > 0 ? "\(tally.unknown) unknown" : nil].compactMap { $0 }
-                    if !facts.isEmpty { Text(facts.joined(separator: " · ")).font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true) }
-                    ServingSystemHeadroom(resources: appHost.resources)
+            let summary = ServingMemory.summary(rows.map(memoryRow))
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                    overviewFacts(summary)
+                    Spacer(minLength: WorkbenchSpacing.sm)
+                    overviewControls
                 }
-                Spacer()
-                if inventory.isRefreshing { ProgressView().controlSize(.small) }
-                Button("Refresh") { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } }
-                    .disabled(inventory.isRefreshing)
-                Button("Endpoint details…") { showingDetails = true }.disabled(selected == nil)
-                Button("Manage endpoints") { onRouteSelection(.run) }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.lg) { overviewFacts(summary) }
+                    HStack { Spacer(); overviewControls }
+                }
             }
-            monitorTable
-            .sheet(isPresented: $showingDetails) {
-                if let selected {
-                    VStack(alignment: .trailing) {
-                        ScrollView { details(selected) }
-                        Button("Done") { showingDetails = false }.keyboardShortcut(.cancelAction)
-                    }.padding(WorkbenchSpacing.md).frame(minWidth: 420, minHeight: 300)
+            GeometryReader { geometry in
+                if geometry.size.width >= 1050 {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                        monitorTable.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        inspector.frame(width: 320).frame(maxHeight: .infinity)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        monitorTable.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        inspector.frame(height: min(230, max(150, geometry.size.height * 0.4)))
+                    }
                 }
             }
             Text("Tokens cover completed requests with reported usage, since each gateway started. Response tok/s includes waiting, loading and generation. A dash means the provider has not reported a measurement.")
@@ -73,25 +67,46 @@ struct ServingMonitorView: View {
     private var monitorTable: some View {
         Table(rows, selection: $selection) {
                 TableColumn("Model") { row in
+                    MonitorTableCell { selected in
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         Text(ServingWorkspacePresentation.name(row, models: models)).lineLimit(1).truncationMode(.middle)
                         let port = ServingWorkspacePresentation.server(row)?.port ?? URL(string: ServingWorkspacePresentation.baseURL(row) ?? "")?.port
                         Text((port.map { ":\($0) · " } ?? "") + ServingWorkspacePresentation.provider(row))
-                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            .font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                             .help(ServingWorkspacePresentation.baseURL(row) ?? "Address unavailable")
-                    }
-                }.width(min: 150, ideal: 240)
+                    }}
+                }.width(min: 110, ideal: 160)
                 TableColumn("Status") { row in
                     let full = ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
-                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
-                }.width(min: 80, ideal: 125)
-                TableColumn("RAM") { row in Text(processMemory(row)).monospacedDigit().help("Memory used by the model process") }.width(min: 70, ideal: 100)
-                TableColumn("Input tokens") { row in Text(token(telemetry(row)?.inputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
-                TableColumn("Output tokens") { row in Text(token(telemetry(row)?.outputTokens)).monospacedDigit() }.width(min: 80, ideal: 100)
-                TableColumn("Response tok/s") { row in
-                    Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit()
-                }.width(min: 90, ideal: 120)
-                TableColumn("Active") { row in Text(ServingWorkspacePresentation.server(row)?.activeRequests.map(String.init) ?? "—").monospacedDigit() }.width(55)
+                    MonitorTableCell { selected in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
+                        if let active = ServingWorkspacePresentation.server(row)?.activeRequests {
+                            Text("\(active) active").font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                        }
+                    }}
+                }.width(85)
+                TableColumn("Memory") { row in
+                    let display = memoryDisplay(memoryRow(row))
+                    MonitorTableCell { selected in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            Text(display.amount).monospacedDigit()
+                            Text(display.origin).font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                        }
+                    }
+                }.width(100)
+                TableColumn("Tokens in / out") { row in
+                    let input = telemetry(row)?.inputTokens, output = telemetry(row)?.outputTokens
+                    MonitorTableCell { _ in
+                        Text(compactToken(input) + " / " + compactToken(output)).monospacedDigit()
+                            .help("Input: " + token(input) + " · Output: " + token(output))
+                    }
+                }.width(85)
+                TableColumn("Tok/s") { row in
+                    MonitorTableCell { _ in
+                        Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit().help("Response tokens per second includes waiting, loading and generation.")
+                    }
+                }.width(65)
             }
             .alternatingRowBackgrounds(.disabled)
             .accessibilityIdentifier("serving-monitor-table")
@@ -109,36 +124,95 @@ struct ServingMonitorView: View {
         default: return status
         }
     }
-    private func processMemory(_ row: ServingRow) -> String {
+    private func memoryRow(_ row: ServingRow) -> ServingMemory.Row {
         let service = ServingWorkspacePresentation.service(row)
-        guard service?.stale != true else { return "—" }
         let server = ServingWorkspacePresentation.server(row)
-        let pid = service?.modelProcessID ?? (server?.jit == true ? server?.workerPid : server?.pid)
-        guard let pid, let bytes = inventory.processMemory[pid] else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+        let modelPID = service?.modelProcessID ?? (server?.jit == true ? server?.workerPid : server?.pid)
+        let gatewayPID = server?.jit == true ? server?.pid : nil
+        let unknownModel = (server?.jit == true && server?.modelState == "loaded" && modelPID == nil)
+            || (service?.isWorkbenchManaged == false && service?.residency == .loaded && modelPID == nil)
+        return ServingMemory.row(.init(modelPID: modelPID, gatewayPID: gatewayPID,
+                                       hostPID: service?.hostProcessID, reportedBytes: service?.reportedMemoryBytes,
+                                       unknownOwnership: unknownModel, stale: service?.stale == true), readings: inventory.processMemory)
+    }
+    private func bytes(_ value: UInt64?) -> String {
+        guard let value else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .memory)
+    }
+    private func memoryDisplay(_ memory: ServingMemory.Row) -> (amount: String, origin: String) {
+        if let reported = memory.reportedBytes { return (bytes(reported), "Provider allocation") }
+        if let pid = memory.modelPID { return (bytes(memory.readings[pid]), "Model process") }
+        if let pid = memory.gatewayPID { return (bytes(memory.readings[pid]), "Gateway") }
+        if let pid = memory.hostPID { return (bytes(memory.readings[pid]), "Shared host") }
+        return ("—", "Unknown")
+    }
+    private func memorySummary(_ summary: ServingMemory.Summary) -> String {
+        let amount = summary.overflow ? "Unavailable" : bytes(summary.measuredBytes)
+        return "\(amount) · \(summary.measuredProcesses)/\(summary.identifiedProcesses) measured"
+    }
+    @ViewBuilder
+    private func overviewFacts(_ summary: ServingMemory.Summary) -> some View {
+        let tally = ServingWorkspacePresentation.tally(rows)
+        overviewFact("Live endpoints", "\(rows.count) · \(tally.loaded) loaded")
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("Observed process RAM").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            Text(memorySummary(summary)).font(WorkbenchTypography.emphasis).monospacedDigit()
+            if summary.unknownOwners > 0 {
+                Text("\(summary.unknownOwners) unknown ownership").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }.help("Unique observed process RSS may share physical pages and excludes unknown workers. Provider allocations are separate.")
+            .accessibilityIdentifier("monitor-memory-summary")
+        MonitorHeadroomFact(resources: appHost.resources)
+    }
+    @ViewBuilder
+    private var overviewControls: some View {
+        if inventory.isRefreshing { ProgressView().controlSize(.small) }
+        Button("Refresh") { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } }
+            .disabled(inventory.isRefreshing)
+        Button("Manage endpoints") { onRouteSelection(.run) }
+    }
+    private func overviewFact(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(title).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            Text(value).font(WorkbenchTypography.emphasis).monospacedDigit()
+        }
+    }
+    private var inspector: some View {
+        Group {
+            if let selected { ScrollView { details(selected) } }
+            else { ContentUnavailableView("Select an endpoint", systemImage: "server.rack") }
+        }.accessibilityIdentifier("monitor-inspector")
     }
     private func telemetry(_ row: ServingRow) -> ServingTelemetry? {
         guard ServingWorkspacePresentation.isRunning(row) else { return nil }
         return ServingTelemetry(raw: ServingWorkspacePresentation.server(row)?.inferenceTelemetry)
     }
     private func token(_ count: Int?) -> String { count.map { $0.formatted() } ?? "—" }
+    private func compactToken(_ count: Int?) -> String { count.map { $0.formatted(.number.notation(.compactName)) } ?? "—" }
     private func details(_ row: ServingRow) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            HStack {
-                Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis)
-                Spacer()
-                Button("Open model settings") {
-                    appHost.handoffs.send(ServingFocusRequest(rowID: row.id), as: .openServing)
-                    onRouteSelection(.run)
-                }.accessibilityIdentifier("monitor-open-settings")
-            }
+            Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open model settings") {
+                appHost.handoffs.send(ServingFocusRequest(rowID: row.id), as: .openServing)
+                onRouteSelection(.run)
+            }.accessibilityIdentifier("monitor-open-settings")
             if let reason = ServingWorkspacePresentation.attentionReason(row) {
                 Label {
                     Text(reason + " " + ServingWorkspacePresentation.attentionNextStep).textSelection(.enabled)
                 } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(WorkbenchColor.failure) }
                 .accessibilityIdentifier("monitor-attention-reason")
             }
-            if let url = ServingWorkspacePresentation.baseURL(row) { Text(url).textSelection(.enabled) }
+            if let url = ServingWorkspacePresentation.baseURL(row) {
+                ServingConnectionField(title: "Address", value: url, identifier: "monitor-copy-address", compact: true)
+            }
+            let memory = memoryRow(row)
+            if let value = memory.reportedBytes { LabeledContent("Provider model allocation", value: bytes(value)) }
+            if let pid = memory.modelPID { LabeledContent("Model process RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
+            if let pid = memory.gatewayPID { LabeledContent("Gateway RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
+            if let pid = memory.hostPID { LabeledContent("Shared host RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
+            if memory.unknownOwnership { Text("Model process ownership not reported").foregroundStyle(WorkbenchColor.muted) }
+            if let captured = inventory.processMemoryCapturedAt { Text("Process memory read \(captured.formatted(date: .omitted, time: .standard))").foregroundStyle(WorkbenchColor.muted) }
             Text("Model ID: " + ServingWorkspacePresentation.modelID(row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             ServingSiblingEndpoints(row: row, rows: rows) { selection = $0 }
             if let metrics = telemetry(row) {
@@ -155,5 +229,30 @@ struct ServingMonitorView: View {
             }
         }.font(WorkbenchTypography.secondary).padding(WorkbenchSpacing.md)
             .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+    }
+}
+
+private struct MonitorHeadroomFact: View {
+    @ObservedObject var resources: SystemResourceMonitor
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("System headroom").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            if let memory = resources.memory {
+                Text(String(format: "~%.1f GB available", Double(memory.availableBytes) / 1e9))
+                    .font(WorkbenchTypography.emphasis).monospacedDigit()
+                    .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
+            } else {
+                Text("Unavailable").font(WorkbenchTypography.emphasis).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+    }
+}
+
+private struct MonitorTableCell<Content: View>: View {
+    @Environment(\.backgroundProminence) private var prominence
+    @ViewBuilder let content: (Bool) -> Content
+    var body: some View {
+        let selected = prominence == .increased
+        content(selected).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.ink)
     }
 }
