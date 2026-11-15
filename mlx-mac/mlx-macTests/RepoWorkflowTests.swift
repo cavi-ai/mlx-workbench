@@ -62,8 +62,8 @@ final class RepoWorkflowTests: XCTestCase {
 
     /// The destination opened at the configured bit width; an 8-bit preview
     /// must name its own folder, not write 8-bit weights into "-MLX-4bit".
-    /// Laya's multilingual folder: the destination names the folder, the port's 8-bit-only
-    /// limit overrides a configured 4, and preview and confirm carry the folder and model type.
+    /// Laya's multilingual folder keeps the requested width until a supported one is selected;
+    /// preview and confirm carry the folder and model type.
     func testSubfolderSourceNamesItsDestinationAndKeepsThePortBitLimit() async throws {
         let workflow = coordinator()
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)").path
@@ -77,11 +77,15 @@ final class RepoWorkflowTests: XCTestCase {
         """
         let intake = try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
         workflow.inspect(intake: intake, outputDirectory: output, qBits: 4, snapshot: nil)
-        XCTAssertEqual(workflow.workflow.outputPath, output + "/laya-multilingual-MLX-8bit")
+        XCTAssertEqual(workflow.workflow.outputPath, output + "/laya-multilingual-MLX-4bit")
         XCTAssertEqual(workflow.workflow.sourcePath, "hf://convaiinnovations/laya/multilingual")
-        XCTAssertEqual(PrepareWorkflowPresentation(workflow: workflow.workflow).bitWidths, [8])
-        XCTAssertEqual(PrepareWorkflowPresentation(workflow: workflow.workflow).sourceDisplay, "convaiinnovations/laya/multilingual")
+        let presentation = PrepareWorkflowPresentation(workflow: workflow.workflow)
+        XCTAssertEqual(presentation.bitWidths, [8])
+        XCTAssertNil(presentation.highlightedBits(selected: 4))
+        XCTAssertEqual(presentation.sourceDisplay, "convaiinnovations/laya/multilingual")
         workflow.selectRepoBits(4)
+        XCTAssertEqual(workflow.workflow.outputPath, output + "/laya-multilingual-MLX-4bit")
+        workflow.selectRepoBits(8)
         XCTAssertEqual(workflow.workflow.outputPath, output + "/laya-multilingual-MLX-8bit")
         await workflow.preview(qBits: 8, out: nil)
         XCTAssertEqual(repoCalls.first, RepoConversionRequest(

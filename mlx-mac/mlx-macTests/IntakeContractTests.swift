@@ -31,8 +31,8 @@ final class IntakeContractTests: XCTestCase {
         let rows = IntakePresentation.summaryRows(value, qBits: 4)
         XCTAssertEqual(rows.first { $0.label == "Download" }?.value, LibraryTablePresentation.byteCount(846_195_574))
         XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Classification")
-        XCTAssertNil(rows.first { $0.label == "Estimated 4-bit output" }, "Laya converts at 6 and 8 bits only")
-        XCTAssertEqual(rows.first { $0.label == "Estimated 8-bit output" }?.value,
+        XCTAssertNil(rows.first { $0.label.hasPrefix("Estimated ") }, "Laya converts at 6 and 8 bits only")
+        XCTAssertEqual(IntakePresentation.summaryRows(value, qBits: 8).first { $0.label == "Estimated 8-bit output" }?.value,
                        LibraryTablePresentation.byteCount(value.estimatedOutputBytes?["8"] ?? 0))
         XCTAssertEqual(IntakePresentation.summaryRows(value, qBits: 6).first { $0.label == "Estimated 6-bit output" }?.value,
                        LibraryTablePresentation.byteCount(431_822_670))
