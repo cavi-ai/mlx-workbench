@@ -67,37 +67,45 @@ struct ServingMonitorView: View {
     private var monitorTable: some View {
         Table(rows, selection: $selection) {
                 TableColumn("Model") { row in
+                    MonitorTableCell { selected in
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         Text(ServingWorkspacePresentation.name(row, models: models)).lineLimit(1).truncationMode(.middle)
                         let port = ServingWorkspacePresentation.server(row)?.port ?? URL(string: ServingWorkspacePresentation.baseURL(row) ?? "")?.port
                         Text((port.map { ":\($0) · " } ?? "") + ServingWorkspacePresentation.provider(row))
-                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            .font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                             .help(ServingWorkspacePresentation.baseURL(row) ?? "Address unavailable")
-                    }
+                    }}
                 }.width(min: 110, ideal: 160)
                 TableColumn("Status") { row in
                     let full = ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
+                    MonitorTableCell { selected in
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
                         if let active = ServingWorkspacePresentation.server(row)?.activeRequests {
-                            Text("\(active) active").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            Text("\(active) active").font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                         }
-                    }
+                    }}
                 }.width(85)
                 TableColumn("Memory") { row in
                     let display = memoryDisplay(memoryRow(row))
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        Text(display.amount).monospacedDigit()
-                        Text(display.origin).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    MonitorTableCell { selected in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            Text(display.amount).monospacedDigit()
+                            Text(display.origin).font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                        }
                     }
                 }.width(100)
                 TableColumn("Tokens in / out") { row in
                     let input = telemetry(row)?.inputTokens, output = telemetry(row)?.outputTokens
-                    Text(compactToken(input) + " / " + compactToken(output)).monospacedDigit()
-                        .help("Input: " + token(input) + " · Output: " + token(output))
+                    MonitorTableCell { _ in
+                        Text(compactToken(input) + " / " + compactToken(output)).monospacedDigit()
+                            .help("Input: " + token(input) + " · Output: " + token(output))
+                    }
                 }.width(85)
                 TableColumn("Tok/s") { row in
-                    Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit().help("Response tokens per second includes waiting, loading and generation.")
+                    MonitorTableCell { _ in
+                        Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit().help("Response tokens per second includes waiting, loading and generation.")
+                    }
                 }.width(65)
             }
             .alternatingRowBackgrounds(.disabled)
@@ -237,5 +245,14 @@ private struct MonitorHeadroomFact: View {
                 Text("Unavailable").font(WorkbenchTypography.emphasis).foregroundStyle(WorkbenchColor.muted)
             }
         }
+    }
+}
+
+private struct MonitorTableCell<Content: View>: View {
+    @Environment(\.backgroundProminence) private var prominence
+    @ViewBuilder let content: (Bool) -> Content
+    var body: some View {
+        let selected = prominence == .increased
+        content(selected).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.ink)
     }
 }
