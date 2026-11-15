@@ -107,6 +107,16 @@ private enum Fixture {
 
 @MainActor
 final class RunRemodelTests: XCTestCase {
+    func testDiscoveredEndpointUsesLibraryModelName() throws {
+        let path = "/cache/models--mlx-community--Qwen3-4B-4bit/snapshots/abc123"
+        let model = LibraryModel(item: Fixture.model(path: path).item, displayName: "mlx-community/Qwen3-4B-4bit")
+        let server = ServerInfo(path: path, runtime: "mlx_lm", port: 19081, pid: 42, state: "running",
+                                receiptsDirectory: "/other", processStartedAt: "start")
+        let snapshot = ServingInventorySnapshot.make(engine: [server], hosts: [], managedReceipts: "/owned", capturedAt: Date())
+        let row = try XCTUnwrap(ServingRows.build(slots: [], servers: [], snapshot: snapshot).first)
+        XCTAssertEqual(ServingWorkspacePresentation.name(row, models: [model]), "mlx-community/Qwen3-4B-4bit")
+    }
+
     func testExistingStrataModelCanReachARealPreviewWithTheBaseRuntimeMissing() async throws {
         guard let manifest = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RUN_PREVIEW_MANIFEST"] else {
             throw XCTSkip("Set MLX_WORKBENCH_RUN_PREVIEW_MANIFEST for a local model preview; no server is started.")

@@ -598,6 +598,102 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testOwnedMatchDoesNotDependOnDiscovery() async {
+        let server = existingServer(), discovered = FlagBox(), started = FlagBox()
+        let host = await makeHost(onServeStart: { _, _ in await started.set(true) }, servers: [server], discoverServers: {
+            await discovered.set(true); throw TestError.replacementFailed
+        })
+        host.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await host.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        let called = await discovered.value, didStart = await started.value
+        XCTAssertFalse(called); XCTAssertFalse(didStart)
+        XCTAssertEqual(host.modelWorkflow.existingServers, [server])
+        XCTAssertEqual(host.modelWorkflow.workflow.serveState, .idle)
+        XCTAssertNil(host.modelWorkflow.workflow.errorMessage)
+    }
+
+    @MainActor
+    func testSameRecordRestoreDuringServeSaveDoesNotStart() async {
+        let entered = expectation(description: "Saving reviewed serve")
+        let release = DispatchSemaphore(value: 0), started = FlagBox()
+        let persistence = ModelWorkflowPersistence(load: { [] }, upsert: { _ in
+            entered.fulfill(); _ = release.wait(timeout: .now() + 5)
+        })
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] }, servePreview: { _, _, _ in ["preview_hash": "hash"] },
+            serveStart: { _, _, _, _ in await started.set(true); return [:] }, serveStatus: { [] }, serveStop: { _ in [:] })
+        let coordinator = ModelWorkflowCoordinator(api: api, persistence: persistence)
+        await coordinator.waitForHistory()
+        let record = makeWorkflow(id: "original", state: .completed, receipt: nil, completedModelPath: "/Models/source")
+        coordinator.restore(record)
+        await coordinator.previewServe(runtime: "auto", port: nil)
+        let confirmation = Task { await coordinator.confirmServe(runtime: "auto", port: nil) }
+        await fulfillment(of: [entered], timeout: 5)
+        coordinator.restore(record); release.signal(); await confirmation.value
+        let didStart = await started.value
+        XCTAssertFalse(didStart)
+    }
+
+    @MainActor
+    func testDiscoveredServerBlocksPreviewAndIsNotOwned() async {
+        let server = existingServer()
+        let host = await makeHost(discoverServers: { ServingEngineSnapshot(servers: [server], errors: ["engine:/unrelated": "unavailable"]) })
+        host.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await host.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(host.modelWorkflow.existingServers, [server])
+        XCTAssertTrue(host.modelWorkflow.servers.isEmpty)
+        XCTAssertNotEqual(host.modelWorkflow.workflow.serveState, .readyToConfirm)
+    }
+
+    @MainActor
+    func testServerAppearingAfterPreviewBlocksConfirmation() async {
+        let seen = FlagBox(), started = FlagBox(), server = existingServer()
+        let host = await makeHost(onServeStart: { _, _ in await started.set(true) }, discoverServers: {
+            if await seen.value { return ServingEngineSnapshot(servers: [server]) }
+            await seen.set(true); return ServingEngineSnapshot(servers: [])
+        })
+        host.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await host.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(host.modelWorkflow.workflow.serveState, .readyToConfirm)
+        await host.modelWorkflow.confirmServe(runtime: "auto", port: nil)
+        let didStart = await started.value
+        XCTAssertFalse(didStart); XCTAssertEqual(host.modelWorkflow.existingServers, [server])
+    }
+
+    @MainActor
+    func testDiscoveryFailureAndLegacyFallback() async {
+        let failed = await makeHost(discoverServers: { throw TestError.replacementFailed })
+        failed.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await failed.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(failed.modelWorkflow.workflow.serveState, .failed)
+        let legacy = await makeHost(discoverServers: { ServingEngineSnapshot(servers: [], supportsDiscovery: false) })
+        legacy.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await legacy.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(legacy.modelWorkflow.workflow.serveState, .readyToConfirm)
+        XCTAssertTrue(legacy.modelWorkflow.discoveryCoverageLimited)
+        let owned = await makeHost(servers: [existingServer()], discoverServers: { ServingEngineSnapshot(servers: [], supportsDiscovery: false) })
+        owned.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await owned.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(owned.modelWorkflow.existingServers.count, 1)
+    }
+
+    @MainActor
+    func testDiscoveryIgnoresStoppedUnrelatedAndAdaptedServers() async {
+        let stopped = existingServer(state: "stopped"), other = existingServer(path: "/Models/other"), adapted = existingServer(adapter: "/Models/adapter")
+        let host = await makeHost(discoverServers: { ServingEngineSnapshot(servers: [stopped, other, adapted], errors: ["engine:/unrelated": "unavailable"]) })
+        host.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        await host.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(host.modelWorkflow.workflow.serveState, .readyToConfirm)
+        XCTAssertTrue(host.modelWorkflow.existingServers.isEmpty)
+    }
+
+    private func existingServer(path: String = "/Models/source", state: String = "running", adapter: String? = nil) -> ServerInfo {
+        ServerInfo(repo: nil, path: path, runtime: "mlx_lm", port: 19081, pid: 42, state: state,
+                   logPath: nil, startedAt: nil, receipt: "/tmp/server.json", adapterPath: adapter,
+                   receiptsDirectory: "/tmp/receipts", processStartedAt: "start")
+    }
+
     func testConfirmServeMatchesAuthoritativeServerByRepoID() async {
         // The server record reports the HF repo id; the workflow tracks the
         // HF-cache snapshot path. They must reconcile as the same model.
@@ -758,6 +854,45 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
 
         XCTAssertTrue(recorder.states.isEmpty)
+    }
+
+    @MainActor
+    func testDelayedServePreviewDoesNotArmChangedWorkflow() async {
+        let entered = expectation(description: "Serve preview started")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] }, servePreview: { _, _, _ in
+                entered.fulfill(); for await _ in gate { break }; return ["preview_hash": "old"]
+            }, serveStart: { _, _, _, _ in [:] }, serveStatus: { [] }, serveStop: { _ in [:] })
+        let coordinator = ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }))
+        await coordinator.waitForHistory()
+        let record = makeWorkflow(id: "original", state: .completed, receipt: nil, completedModelPath: "/Models/source")
+        coordinator.restore(record)
+        let preview = Task { await coordinator.previewServe(runtime: "auto", port: nil) }
+        await fulfillment(of: [entered], timeout: 5)
+        coordinator.restore(record)
+        release.yield(()); release.finish(); await preview.value
+        XCTAssertNotEqual(coordinator.workflow.serveState, .readyToConfirm)
+        XCTAssertEqual(coordinator.workflow.completedModelPath, "/Models/source")
+    }
+
+    @MainActor
+    func testFreshOwnedReplyGuardsPreviewWhenNewerCacheWasPublished() async throws {
+        let replies = StatusReplies(), running = existingServer()
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] }, servePreview: { _, _, _ in ["preview_hash": "hash"] },
+            serveStart: { _, _, _, _ in [:] }, serveStatus: { try await replies.next() }, serveStop: { _ in [:] })
+        let coordinator = ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }))
+        await coordinator.waitForHistory()
+        coordinator.restore(makeWorkflow(state: .completed, receipt: nil, completedModelPath: "/Models/source"))
+        let preview = Task { await coordinator.previewServe(runtime: "auto", port: nil) }
+        try await replies.waitForRequests(1)
+        let refresh = Task { await coordinator.refreshServers() }
+        try await replies.waitForRequests(2)
+        await replies.answer(1, with: .success([])); await refresh.value
+        await replies.answer(0, with: .success([running])); await preview.value
+        XCTAssertTrue(coordinator.servers.isEmpty)
+        XCTAssertEqual(coordinator.existingServers, [running])
     }
 
     @MainActor
@@ -1036,10 +1171,11 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         onServeStart: (@Sendable (String, Int?) async -> Void)? = nil,
         servers: [ServerInfo] = [],
         dynamicServers: (@Sendable () async -> [ServerInfo])? = nil,
+        discoverServers: (() async throws -> ServingEngineSnapshot)? = nil,
         scanOperation: (@Sendable ([String], [String], Bool, Int?, Bool, [String]) async throws -> ScanResult)? = nil,
         store: ModelWorkflowStore? = nil
     ) async -> AppHost {
-        let api = ModelWorkflowAPI(
+        var api = ModelWorkflowAPI(
             convertPreview: { _, _, _ in preview },
             convertStart: { _, _, _, _ in confirmResponse ?? ["receipt": confirmReceipt] },
             convertStatus: {
@@ -1058,6 +1194,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             },
             serveStop: { _ in [:] }
         )
+        api.discoverServers = discoverServers
         let store = store ?? makeStore()
         let host = await MainActor.run {
             let host = AppHost(

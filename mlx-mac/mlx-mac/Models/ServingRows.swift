@@ -16,6 +16,23 @@ enum ServingRow: Identifiable, Equatable {
 }
 
 enum ServingRows {
+    static func existingEndpoint(_ expected: ServerInfo, in rows: [ServingRow]) -> ServingRow? {
+        guard let pid = expected.pid, pid > 0, pid <= Int(Int32.max),
+              let port = expected.port, (1...65535).contains(port),
+              let started = expected.processStartedAt, !started.isEmpty else { return nil }
+        let candidates = rows.filter { row in
+            let service: ServingServiceObservation?
+            switch row {
+            case .endpoint(_, _, let observation), .server(_, let observation): service = observation
+            case .service(let observation): service = observation
+            }
+            guard let service, !service.stale, let current = service.server,
+                  current.state?.lowercased() == "running" else { return false }
+            return current.sameProcess(as: expected)
+        }
+        return candidates.count == 1 ? candidates.first : nil
+    }
+
     /// Endpoint rows in fleet order, then running-server rows, then the remaining local services in
     /// snapshot order. A running server or inventory service appears in at most one row.
     static func build(slots: [EndpointSlot], servers: [ServerInfo], snapshot: ServingInventorySnapshot) -> [ServingRow] {
