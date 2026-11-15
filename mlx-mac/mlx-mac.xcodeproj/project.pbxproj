@@ -73,6 +73,7 @@
 		A91D00000000000000000001 /* StandaloneReclaimUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91D00000000000000000002 /* StandaloneReclaimUITests.swift */; };
 		26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* WorkbenchReviewUITests.swift */; };
 		B62D00000000000000000001 /* ServingUXRealUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B62D00000000000000000002 /* ServingUXRealUITests.swift */; };
+		EXIST001 /* ExistingEndpointRealUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXIST002 /* ExistingEndpointRealUITests.swift */; };
 		5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E77000000000000004F /* SetupAssistantUITests.swift */; };
 		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
@@ -458,6 +459,7 @@
 		A91D00000000000000000002 /* StandaloneReclaimUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StandaloneReclaimUITests.swift; sourceTree = "<group>"; };
 		26UIREF101 /* WorkbenchReviewUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchReviewUITests.swift; sourceTree = "<group>"; };
 		B62D00000000000000000002 /* ServingUXRealUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServingUXRealUITests.swift; sourceTree = "<group>"; };
+		EXIST002 /* ExistingEndpointRealUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExistingEndpointRealUITests.swift; sourceTree = "<group>"; };
 		5A1E5E77000000000000004F /* SetupAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantUITests.swift; sourceTree = "<group>"; };
 		26UIREF002 /* mlx-workbenchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mlx-workbenchUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		24FREF000000 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = App.swift; path = App.swift; sourceTree = "<group>"; };
@@ -1219,6 +1221,7 @@
 				A91D00000000000000000002 /* StandaloneReclaimUITests.swift */,
 				26UIREF101 /* WorkbenchReviewUITests.swift */,
 				B62D00000000000000000002 /* ServingUXRealUITests.swift */,
+				EXIST002 /* ExistingEndpointRealUITests.swift */,
 				5A1E5E77000000000000004F /* SetupAssistantUITests.swift */,
                 26UIREF201 /* UnifiedWorkflowUITests.swift */,
 			);
@@ -1401,6 +1404,7 @@
 				A91D00000000000000000001 /* StandaloneReclaimUITests.swift in Sources */,
 				26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */,
 				B62D00000000000000000001 /* ServingUXRealUITests.swift in Sources */,
+				EXIST001 /* ExistingEndpointRealUITests.swift in Sources */,
 				5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */,
                 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */,
 			);

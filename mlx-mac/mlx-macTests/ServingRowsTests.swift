@@ -80,6 +80,26 @@ final class ServingRowsTests: XCTestCase {
         XCTAssertEqual(rowServer, squatter)
     }
 
+    func testExistingEndpointRequiresCurrentProcessIdentity() throws {
+        let expected = ServerInfo(path: "/models/owned", runtime: "mlx_lm", port: 8766, pid: 10, state: "running",
+                                  receiptsDirectory: "/receipts/other", processStartedAt: "start")
+        let current = ServingRows.build(slots: [], servers: [], snapshot: snapshot([expected]))
+        XCTAssertEqual(ServingRows.existingEndpoint(expected, in: current)?.id, current.first?.id)
+        let replacement = ServerInfo(path: "/models/owned", runtime: "mlx_lm", port: 8766, pid: 11, state: "running",
+                                     receiptsDirectory: "/receipts/other", processStartedAt: "later")
+        let changed = ServingRows.build(slots: [], servers: [], snapshot: snapshot([replacement]))
+        XCTAssertNil(ServingRows.existingEndpoint(expected, in: changed))
+        let incomplete = ServerInfo(path: "/models/owned", port: 8766, state: "running")
+        XCTAssertNil(ServingRows.existingEndpoint(incomplete, in: ServingRows.build(slots: [], servers: [], snapshot: snapshot([incomplete]))))
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/owned")
+        let slotted = ServingRows.build(slots: [slot], servers: [], snapshot: snapshot([expected]))
+        XCTAssertTrue(ServingRows.existingEndpoint(expected, in: slotted)?.id.hasPrefix("service-") == true)
+        let managedServer = ServerInfo(path: "/models/owned", runtime: "mlx_lm", port: 8766, pid: 12, state: "running",
+                                       receiptsDirectory: managed, processStartedAt: "start")
+        let managedRows = ServingRows.build(slots: [slot], servers: [managedServer], snapshot: snapshot([managedServer]))
+        XCTAssertEqual(ServingRows.existingEndpoint(managedServer, in: managedRows)?.id, "endpoint-\(slot.id.uuidString)")
+    }
+
     func testRowsAreEndpointsThenServersThenServices() {
         let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/owned")
         let owned = server(slot.modelPath, port: slot.port, pid: 10)

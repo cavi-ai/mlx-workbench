@@ -51,6 +51,7 @@ struct ServeView: View {
     @State private var connectionPort = ""
     @State private var portReview: ServingPortReview?
     @State private var actionError: String?
+    @State private var openingExistingEndpoint = false
     @State private var keepModelLoaded = false
     @State private var requireAPIKey = false
     @State private var endpointPortError: String?
@@ -747,6 +748,24 @@ struct ServeView: View {
                 launchFields
             }
         }
+        if modelWorkflow.discoveryCoverageLimited {
+            Text("This engine checks Workbench servers only.").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+        }
+        if !modelWorkflow.existingServers.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Text("This model is already serving").font(WorkbenchTypography.emphasis)
+                Text("The existing endpoint keeps its own settings.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                ForEach(Array(modelWorkflow.existingServers.enumerated()), id: \.offset) { _, server in
+                    HStack {
+                        Text("\(server.runtime ?? "Runtime unavailable") · port \(server.port.map(String.init) ?? "—") · Running")
+                        Spacer()
+                        Button("Open existing endpoint") { Task { await openExistingEndpoint(server) } }
+                            .buttonStyle(.workbenchPrimary).disabled(openingExistingEndpoint)
+                            .accessibilityIdentifier("open-existing-endpoint")
+                    }
+                }
+            }.accessibilityIdentifier("existing-serving-endpoints")
+        }
         inferenceSettings
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
@@ -779,7 +798,7 @@ struct ServeView: View {
 
     @ViewBuilder
     private func stateWords(_ presentation: RunPresentation) -> some View {
-        if let words = presentation.stateWords {
+        if modelWorkflow.existingServers.isEmpty, let words = presentation.stateWords {
             Text(words)
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.muted)
@@ -817,7 +836,7 @@ struct ServeView: View {
     }
 
     private func previewServeAction() {
-        guard portInput.error == nil, presentation.canPreview else { return }
+        guard portInput.error == nil, presentation.canPreview || !modelWorkflow.existingServers.isEmpty else { return }
         if presentation.canPrepareSelection {
             guard let model = selectedModel else { return }
             modelWorkflow.prepareServe(model: model)
@@ -846,7 +865,9 @@ struct ServeView: View {
             || inferenceOptions.validationError != nil || (modelWorkflow.servingProfile.map { !$0.hasPassedVerification } ?? false) || appHost.servingProfiles.activeID != nil
         // Exactly one action is armed at a time: preview until the intent is
         // ready to confirm, then confirm.
-        if presentation.canConfirm {
+        if !modelWorkflow.existingServers.isEmpty {
+            Button("Check again", action: previewServeAction).buttonStyle(.bordered).disabled(busy || openingExistingEndpoint)
+        } else if presentation.canConfirm {
             Button("Preview serve", action: previewServeAction)
                 .buttonStyle(.bordered)
                 .disabled(!presentation.canPreview || busy)
@@ -882,6 +903,21 @@ struct ServeView: View {
 
     private var servingRows: [ServingRow] {
         ServingRows.build(slots: endpoint.fleet.slots, servers: modelWorkflow.servers, snapshot: inventory.snapshot)
+    }
+
+    private func openExistingEndpoint(_ expected: ServerInfo) async {
+        guard !openingExistingEndpoint else { return }
+        openingExistingEndpoint = true
+        defer { openingExistingEndpoint = false }
+        let workflowID = modelWorkflow.workflow.id
+        let modelPath = modelWorkflow.workflow.completedModelPath
+        await inventory.refresh()
+        guard isRouteActive, modelWorkflow.workflow.id == workflowID,
+              modelWorkflow.workflow.completedModelPath == modelPath else { return }
+        guard let row = ServingRows.existingEndpoint(expected, in: servingRows) else {
+            actionError = "The endpoint changed or is unavailable. Refresh and try again."; return
+        }
+        workspaceSelection = row.id; showsServerSetup = false; workspaceTab = .connection; actionError = nil
     }
 
     private func refreshServing() async {

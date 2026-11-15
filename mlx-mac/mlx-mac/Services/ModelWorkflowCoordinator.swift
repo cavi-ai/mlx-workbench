@@ -20,6 +20,7 @@ struct ModelWorkflowAPI {
     let serveStart: (String, String, Int?, String) async throws -> [String: Any]
     let serveStatus: () async throws -> [ServerInfo]
     let serveStop: (Int) async throws -> [String: Any]
+    var discoverServers: (() async throws -> ServingEngineSnapshot)? = nil
     var profilePreview: (ServingProfile, Int?) async throws -> [String: Any] = { _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
     var profileStart: (ServingProfile, Int?, String) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
     var profileInferencePreview: (ServingProfile, Int?, LocalInferenceOptions) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("Profile inference settings are unavailable.") }
@@ -46,6 +47,7 @@ struct ModelWorkflowAPI {
             serveStatus: { try await api.serveStatus() },
             serveStop: { port in try await api.serveStop(port: port) }
         )
+        workflowAPI.discoverServers = { try await api.discoverServingServices() }
         workflowAPI.profilePreview = { profile, port in try await resolveProfile(profile).preview(api: api, port: port) }
         workflowAPI.profileStart = { profile, port, hash in try await resolveProfile(profile).start(api: api, port: port, hash: hash) }
         workflowAPI.profileInferencePreview = { profile, port, options in try await resolveProfile(profile).preview(api: api, port: port, inference: options) }
@@ -105,7 +107,9 @@ struct ModelWorkflowPersistence: Sendable {
 
 @MainActor
 final class ModelWorkflowCoordinator: ObservableObject {
-    @Published private(set) var workflow: ConversionWorkflow
+    @Published private(set) var workflow: ConversionWorkflow {
+        didSet { if oldValue.id != workflow.id || oldValue.completedModelPath != workflow.completedModelPath { existingServers = []; discoveryCoverageLimited = false } }
+    }
     @Published private(set) var history: [ConversionWorkflow]
     @Published private(set) var servers: [ServerInfo]
     /// The agent's conversion jobs from the latest status refresh.
@@ -116,6 +120,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
     @Published private(set) var isConversionSubmissionInFlight = false
     @Published private(set) var isServeSubmissionInFlight = false
     @Published private(set) var servingProfile: ServingProfile?
+    @Published private(set) var discoveryCoverageLimited = false
+    @Published private(set) var existingServers: [ServerInfo] = []
     @Published private(set) var inferenceEvidence: [InferenceOptionEvidence] = []
 
     private let api: ModelWorkflowAPI
@@ -576,6 +582,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     func prepareServe(model: LibraryModel, exactPath: String? = nil) {
         guard model.readiness == .ready, !isServeSubmissionInFlight else { return }
+        existingServers = []
         guard ModelTaskPresentation.supportsEndpoint(model) else {
             let title = model.item.task?.type.title ?? "This"
             update(serveState: .failed, message: "\(title) models have no standalone serving adapter.", errorMessage: "\(title) models have no standalone serving adapter.")
@@ -635,20 +642,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
         servePreviewHash = nil
         servePreviewIntent = nil
         inferenceEvidence = []
-        let request = nextServersRequest()
-        do {
-            let snapshot = try await api.serveStatus()
-            if showsServers(request) { servers = snapshot }
-        } catch {
-            update(serveState: .failed, message: "Serve status is unavailable; serving remains blocked.", errorMessage: AppHost.render(error))
-            return
-        }
-        guard !servers.contains(where: { serverRunsModel($0, model) }) else {
-            update(serveState: .failed, message: "A server is already running for the selected model.", errorMessage: "Stop the authoritative running server before starting another.")
-            return
-        }
+        guard await checkExistingServers(model: model, workflowID: requestedID) else { return }
 
         update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: .some(nil))
+        let previewRevision = workflowRevision
         let acceleration = LocalInferenceOptions(m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, thinkingOff: thinkingOff, maximumTokens: maximumTokens)
         do {
             if let profile = servingProfile, profile.modelPath != model { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
@@ -658,6 +655,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             if let profile = servingProfile { response = try await (acceleration.requested ? api.profileInferencePreview(profile, port, acceleration) : api.profilePreview(profile, port)) }
             else if acceleration.requested { response = try await api.accelerationPreview(model, runtime, port, acceleration) }
             else { response = try await api.servePreview(model, runtime, port) }
+            guard workflow.id == requestedID, workflow.completedModelPath == model, workflowRevision == previewRevision else { return }
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 update(serveState: .failed, message: "Serve preview did not include a preview hash.", errorMessage: "Missing serve preview hash.")
                 return
@@ -667,6 +665,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             servePreviewIntent = ServeIntent(runtime: runtime, port: port, profile: servingProfile, acceleration: acceleration)
             update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
+            guard workflow.id == requestedID, workflow.completedModelPath == model, workflowRevision == previewRevision else { return }
             update(serveState: .failed, message: "Serve preview failed: \(AppHost.render(error))", errorMessage: AppHost.render(error))
         }
     }
@@ -697,18 +696,14 @@ final class ModelWorkflowCoordinator: ObservableObject {
             )
             return
         }
-        guard !servers.contains(where: { serverRunsModel($0, model) }) else {
-            update(serveState: .failed, message: "A server is already running for the selected model.", errorMessage: "Stop the authoritative running server before starting another.")
-            return
-        }
-        servePreviewHash = nil
-        servePreviewIntent = nil
-        inferenceEvidence = []
+        guard await checkExistingServers(model: model, workflowID: requestedID) else { return }
         let submitted = workflow
         do {
             let requestedID = workflow.id
-            guard await save(workflow), workflow.id == requestedID else { return }
-            if let profile = servingProfile {
+            guard await save(workflow), workflow.id == requestedID, workflow.completedModelPath == model,
+                  servePreviewHash == hash, servePreviewIntent == intent else { return }
+            servePreviewHash = nil; servePreviewIntent = nil; inferenceEvidence = []
+            if let profile = intent.profile {
                 if acceleration.requested { _ = try await api.profileInferenceStart(profile, port, hash, acceleration) }
                 else { _ = try await api.profileStart(profile, port, hash) }
             }
@@ -724,6 +719,46 @@ final class ModelWorkflowCoordinator: ObservableObject {
             onServeStarted?(model)
         } catch {
             await savedUpdate(from: submitted, serveState: .failed, message: "Server could not be started: \(AppHost.render(error))", errorMessage: AppHost.render(error))
+        }
+    }
+
+    private func checkExistingServers(model: String, workflowID: UUID) async -> Bool {
+        let request = nextServersRequest()
+        do {
+            let owned = try await api.serveStatus()
+            guard workflow.id == workflowID, workflow.completedModelPath == model else { return false }
+            if showsServers(request) { servers = owned }
+            let ownedMatches = owned.filter { serverRunsModel($0, model) }
+            if !ownedMatches.isEmpty {
+                existingServers = ownedMatches
+                servePreviewHash = nil; servePreviewIntent = nil; inferenceEvidence = []
+                update(serveState: .idle, message: "This model is already serving.", errorMessage: .some(nil))
+                return false
+            }
+            let discovered = try await api.discoverServers?()
+            guard workflow.id == workflowID, workflow.completedModelPath == model else { return false }
+            discoveryCoverageLimited = discovered?.supportsDiscovery != true
+            var matches: [ServerInfo] = []
+            let fresh = (discovered?.servers ?? []).filter { server in
+                guard let root = server.receiptsDirectory else { return true }
+                let source = "engine:" + URL(fileURLWithPath: root).standardizedFileURL.path
+                return discovered?.errors[source] == nil
+            }
+            for server in owned + fresh where serverRunsModel(server, model) {
+                if !matches.contains(where: { $0.sameProcess(as: server) }) { matches.append(server) }
+            }
+            existingServers = matches
+            guard matches.isEmpty else {
+                servePreviewHash = nil; servePreviewIntent = nil; inferenceEvidence = []
+                update(serveState: .idle, message: "This model is already serving.", errorMessage: .some(nil))
+                return false
+            }
+            return true
+        } catch {
+            guard workflow.id == workflowID, workflow.completedModelPath == model else { return false }
+            existingServers = []; servePreviewHash = nil; servePreviewIntent = nil; inferenceEvidence = []
+            update(serveState: .failed, message: "Could not check existing endpoints. Try again.", errorMessage: AppHost.render(error))
+            return false
         }
     }
 
