@@ -70,7 +70,7 @@ final class WebConvertQueueTests: XCTestCase {
                 "repo": "org/model", "hf_cache": NSNull(), "label": "x", "state": "queued", "failure": NSNull(),
             ]]]
         }
-        for bits in [4, 5, 6, 8] {
+        for bits in [2, 3, 4, 5, 6, 8] {
             let url = try writeTemp(String(decoding: try JSONSerialization.data(withJSONObject: payload(bits)), as: UTF8.self))
             let snapshot = WebConvertQueue.load(from: url)
             XCTAssertNil(snapshot.problem, "\(bits)-bit")
@@ -100,8 +100,12 @@ final class WebConvertQueueTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), data, "Native queue reads must preserve the durable engine-owned payload")
     }
 
-    func testFullPrecisionWidthIsOnlyAcceptedForPreparedRepositories() throws {
-        XCTAssertThrowsError(try WebConvertQueue.parse(queueData(preparedQueueItem(kind: "gguf", bits: 32))))
+    func testFullPrecisionWidthsLoadForPreparedConversions() throws {
+        for kind in ["repo", "gguf"] {
+            for bits in [16, 32] {
+                XCTAssertEqual(try WebConvertQueue.parse(queueData(preparedQueueItem(kind: kind, bits: bits))).map(\.qBits), [bits])
+            }
+        }
         let repository = preparedQueueItem(kind: "repo", bits: 32)
         XCTAssertThrowsError(try WebConvertQueue.parse(queueData(repository, version: "1.1")))
         for width: Any in [4.5, 8.9, true] {

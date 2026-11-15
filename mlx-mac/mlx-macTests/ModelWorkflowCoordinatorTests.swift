@@ -5,6 +5,32 @@ import XCTest
 
 final class ModelWorkflowCoordinatorTests: XCTestCase {
     @MainActor
+    func testPreviewUsesRequestedWidthEvenWithoutPriorSelectionCallback() async {
+        let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
+        var source = ggufSource
+        source.qBits = [4, 16]
+        host.modelWorkflow.inspect(source: source, snapshot: nil, qBits: 4)
+        await host.modelWorkflow.preview(qBits: 16, out: nil)
+        XCTAssertTrue(host.modelWorkflow.workflow.outputPath.hasSuffix("-MLX-16bit"))
+        XCTAssertEqual(host.modelWorkflow.workflow.state, .readyToConfirm)
+    }
+
+    @MainActor
+    func testChangePrecisionInvalidatesPreviewAndUpdatesGGUFDestination() async {
+        let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
+        var source = ggufSource
+        source.qBits = [4, 16, 32]
+        host.modelWorkflow.inspect(source: source, snapshot: nil, qBits: 4)
+        await host.modelWorkflow.preview(qBits: 4, out: nil)
+        XCTAssertNotNil(host.modelWorkflow.workflow.previewHash)
+        host.modelWorkflow.changePrecision()
+        XCTAssertNil(host.modelWorkflow.workflow.previewHash)
+        host.modelWorkflow.selectPrecision(16)
+        XCTAssertTrue(host.modelWorkflow.workflow.outputPath.hasSuffix("-MLX-16bit"))
+        XCTAssertEqual(host.modelWorkflow.workflow.state, .inspectingSource)
+    }
+
+    @MainActor
     func testWorkflowStartupReadsHistoryOffTheMainActor() async throws {
         let store = makeStore(), record = makeWorkflow(state: .completed, receipt: "saved-receipt")
         try store.upsert(record)
@@ -134,8 +160,9 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
 
         await MainActor.run {
             host.modelWorkflow.inspect(source: ggufSource, snapshot: host.librarySnapshot)
-            XCTAssertEqual(host.modelWorkflow.workflow.state, .existingModelFound)
-            XCTAssertEqual(host.modelWorkflow.workflow.completedModelPath, existingMLXPath)
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .inspectingSource)
+            XCTAssertNil(host.modelWorkflow.workflow.completedModelPath)
+            XCTAssertTrue(host.modelWorkflow.workflow.outputPath.hasSuffix("-MLX-4bit"))
         }
     }
 
@@ -555,7 +582,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
     func testConfirmResolvesReceiptFromStatusWhenStartReturnsReceiptObject() async {
         // mlx-agent ≥ 0.5.x: convert start returns receipt as an object; the
         // authoritative receipt path only exists in convert status.
-        let startedJob = Job(receipt: "/receipts/stories.json", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: 42, logPath: nil, startedAt: nil, completedAt: nil, state: "running")
+        let startedJob = Job(receipt: "/receipts/stories.json", repo: nil, source: nil, qBits: 4, out: "/Models/source-MLX-4bit", pid: 42, logPath: nil, startedAt: nil, completedAt: nil, state: "running")
         let host = await makeHost(
             confirmResponse: ["status": "started", "receipt": ["pid": 42]],
             jobs: [startedJob]

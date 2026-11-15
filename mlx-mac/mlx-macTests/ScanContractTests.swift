@@ -18,6 +18,29 @@ final class ScanContractTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.label == "Declared base size" && $0.value == "27B" })
     }
 
+    func testScanPreservesAdvertisedConversionWidthsAndEmptyCapabilities() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        payload["models"] = [
+            ["path": "/models/a.gguf", "name": "a.gguf", "bytes": 1, "q_bits": [2, 3, 4, 5, 6, 8, 16, 32]],
+            ["path": "/models/b.gguf", "name": "b.gguf", "bytes": 1, "q_bits": []],
+            ["path": "/models/c.gguf", "name": "c.gguf", "bytes": 1],
+        ]
+        let models = try WorkbenchAPI.decodeScan(payload).models
+        XCTAssertEqual(models[0].qBits, [2, 3, 4, 5, 6, 8, 16, 32])
+        XCTAssertEqual(models[1].qBits, [])
+        XCTAssertNil(models[2].qBits)
+    }
+
+    func testFloatingOutputPrecisionSurvivesScanIntoLibrary() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        payload["outputs"] = [["path": "/Models/float", "name": "float", "precision": "FP16"]]
+        let scan = try WorkbenchAPI.decodeScan(payload)
+        XCTAssertEqual(scan.outputs.first?.precision, "FP16")
+        let snapshot = ModelLibraryBuilder.build(scan: scan,
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 64_000_000_000, macOSVersion: "26"), now: Date())
+        XCTAssertEqual(snapshot.models.first { $0.item.path == "/Models/float" }?.item.quantization, "FP16")
+    }
+
     func testLocalHostDiscoveryUsesTheListeningPortAndRecognizedProcess() {
         let listeners = "p42\ncPython\nn127.0.0.1:19080\np43\ncLM Studio\nn*:2345\np44\ncOther\nn127.0.0.1:9999\n"
         let processes = "42 python /engine/src/mlx_agent/jit_serve.py --config /service/config.json\n43 /Applications/LM Studio.app/Contents/MacOS/LM Studio\n44 unrelated-app\n"

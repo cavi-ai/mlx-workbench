@@ -100,6 +100,9 @@ final class ModelTaskTests: XCTestCase {
         let unsupported = actions("checkpoint", status: "unsupported")
         XCTAssertTrue(unsupported.canPrepare)
         XCTAssertEqual(unsupported.prepareTitle, "Prepare to run")
+        let convertedSource = actions("ready-source.gguf", status: "ready")
+        XCTAssertTrue(convertedSource.canPrepare)
+        XCTAssertEqual(convertedSource.prepareTitle, "Convert to MLX…")
         XCTAssertFalse(actions("ready-model", status: "ready").canPrepare)
     }
 

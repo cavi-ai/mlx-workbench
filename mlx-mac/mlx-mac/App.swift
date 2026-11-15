@@ -9,6 +9,9 @@ struct MlxWorkbenchApp: App {
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
 
     init() {
+        #if WORKBENCH_HOSTED_TEST_BUILD
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        #endif
         if CommandLine.arguments.contains("--check-installation") {
             NSApplication.shared.setActivationPolicy(.prohibited)
             let result = ["protocol": "workbench-installation/1", "application": Bundle.main.bundleURL.path,
@@ -24,6 +27,9 @@ struct MlxWorkbenchApp: App {
     }
 
     var body: some Scene {
+        #if WORKBENCH_HOSTED_TEST_BUILD
+        Settings { EmptyView() }
+        #else
         Window("MLX Workbench", id: ServedModelsWindow.mainID) {
             ContentView(appHost: appHost)
                 .workbenchTheme()
@@ -81,6 +87,7 @@ struct MlxWorkbenchApp: App {
                 .onAppear { appHost.startLiveServices() }
         }
         .menuBarExtraStyle(.menu)
+        #endif
     }
 
     private static var marketingVersion: String {

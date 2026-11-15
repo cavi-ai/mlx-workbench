@@ -531,7 +531,7 @@ struct SettingsView: View {
         SettingsSection(title: "Conversion defaults") {
             SettingsRow(label: "Default quantization", stacked: layout.stacksRows) {
                 Picker("Default bits", selection: $qBits) {
-                    ForEach(Config.Q_BITS_CHOICES.sorted(), id: \.self) { bits in Text("\(bits)-bit").tag(bits) }
+                    ForEach(Config.Q_BITS_CHOICES.sorted(), id: \.self) { bits in Text(bits == 32 ? "FP32 / Unquantized" : bits == 16 ? "FP16" : "\(bits)-bit").tag(bits) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

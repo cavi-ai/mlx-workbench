@@ -589,7 +589,7 @@ class AppHost {
             readyPaths: ready, selectedFile: intake.selectedGGUF) else { return nil }
         selectedModelPath = path
         if resolution.verdict == .gguf, let model = librarySnapshot?.models.first(where: { $0.item.path == path }) {
-            modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot)
+            modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot, qBits: config.qBits)
             return .prepare
         }
         if resolution.verdict == .convertible {
@@ -625,7 +625,7 @@ class AppHost {
             let path = URL(fileURLWithPath: downloadedPath).appendingPathComponent(selectedFile).path
             selectedModelPath = path
             if let model = librarySnapshot?.models.first(where: { $0.item.path == path }) {
-                modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot)
+                modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot, qBits: config.qBits)
                 return .prepare
             }
             handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)

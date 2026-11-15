@@ -204,7 +204,7 @@ struct LMStudioView: View {
     private func prepare(_ path: String) {
         guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) else { return }
         appHost.selectedModelPath = model.item.path
-        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot, qBits: appHost.config.qBits)
         onRouteSelection(.prepare)
     }
 

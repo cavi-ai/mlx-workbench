@@ -292,7 +292,7 @@ class ConvertQueueTests(unittest.TestCase):
             "state": "queued",
         }
         both_sources = dict(valid_item, repo="org/model")
-        unsupported_quantization = dict(valid_item, q_bits=3)
+        unsupported_quantization = dict(valid_item, q_bits=7)
         cases = [
             ("schema", {"schema_version": "2.0", "items": [valid_item]}),
             ("sources", {"schema_version": "1.0", "items": [both_sources]}),

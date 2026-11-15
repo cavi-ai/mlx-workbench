@@ -179,7 +179,10 @@ struct IntakeFit: Equatable {
         if let task, !task.isServable {
             return plain(.notServable, word: "Not estimated", detail: "Fit is not estimated for \(task.title.lowercased()) models.")
         }
-        let bits = ModelWorkflowCoordinator.allowedBits(configured, allowed: resolution.qBits)
+        if resolution.verdict != .alreadyMLX, let supported = resolution.qBits, !supported.contains(configured) {
+            return plain(.sizeUnknown, word: "Select supported format", detail: "Choose a supported output format to estimate fit.")
+        }
+        let bits = configured
         let bytes: Int64?
         let basis: String
         if let estimate = resolution.estimatedOutputBytes?[String(bits)] {
@@ -249,13 +252,13 @@ struct IntakeComponentRow: Equatable, Identifiable {
 // MARK: - IntakePresentation
 
 enum IntakePresentation {
-    /// `qBits` is the configured width; a source that converts only at other widths shows the one Prepare will use.
+    /// Estimates refer to the configured width when that format is supported.
     static func summaryRows(_ resolution: IntakeResolution, qBits configured: Int) -> [DetailRow] {
-        let qBits = ModelWorkflowCoordinator.allowedBits(configured, allowed: resolution.qBits)
+        let qBits = configured
         var rows = [DetailRow("Download", resolution.cached == true
             ? "Already cached"
             : LibraryTablePresentation.byteCount(resolution.downloadBytes ?? resolution.bytes))]
-        if let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
+        if (resolution.qBits == nil || resolution.qBits?.contains(qBits) == true), let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
             rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(estimate)))
         }
         if let task = resolution.task {

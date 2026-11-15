@@ -3,8 +3,8 @@ import SwiftUI
 enum ModelUpdateReviewPresentation {
     static func bitWidths(_ review: ModelUpdateReview) -> [Int] {
         guard let recipe = review.conversion else { return [] }
-        let supported = recipe.kind == .gguf ? Array(Config.Q_BITS_CHOICES) : review.resolution.qBits ?? [4, 8]
-        return Array(Set(supported)).filter { [4, 5, 6, 8, 32].contains($0) && (recipe.kind != .gguf || $0 != 32) }.sorted()
+        let supported = recipe.kind == .gguf ? [2, 3, 4, 5, 6, 8] : review.resolution.qBits ?? [4, 8]
+        return Array(Set(supported)).filter { Config.Q_BITS_CHOICES.contains($0) }.sorted()
     }
 
     static func downloadTitle(_ review: ModelUpdateReview?) -> String {
@@ -262,10 +262,14 @@ struct ModelUpdateReviewSheet: View {
                         }, set: { bits in
                             var next = settings; next.qBits = bits; select(next)
                         })) {
-                            if !supportedBits.contains(currentBits) { Text("\(currentBits)-bit · not supported by this revision").tag(currentBits) }
-                            ForEach(supportedBits, id: \.self) { bits in Text("\(bits)-bit").tag(bits) }
+                            if !supportedBits.contains(currentBits) {
+                                Text(recipe.kind == .gguf && currentBits >= 16 ? "FP\(currentBits) · inspect source to confirm" : "\(currentBits)-bit · not supported by this revision").tag(currentBits)
+                            }
+                            ForEach(supportedBits, id: \.self) { bits in
+                                Text(bits == 32 && recipe.kind == .repository && recipe.backend != "mlx-lm" ? "Unquantized" : bits >= 16 ? "FP\(bits)" : "\(bits)-bit").tag(bits)
+                            }
                         }.accessibilityIdentifier("model-update-bits")
-                        Text(recipe.kind == .gguf ? "GGUF to MLX conversion" : "Converter: " + (recipe.backend ?? "Not reported"))
+                        Text(recipe.kind == .gguf ? "Download and inspect this GGUF to check full-precision support." : "Converter: " + (recipe.backend ?? "Not reported"))
                             .foregroundStyle(WorkbenchColor.muted)
                         if review.resolution.backendInstalled == false, let backend = recipe.backend {
                             Text("\(backend) needs installation. Its installation will be reviewed after the source download.")

@@ -268,7 +268,7 @@ final class ModelUpdateReviewPresentationTests: XCTestCase {
         XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(repository), [8])
         XCTAssertFalse(ModelUpdateReviewPresentation.canDownload(review: repository, settingsLocked: false))
         let gguf = review(kind: .gguf, bits: 4, supported: [32])
-        XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(gguf), Config.Q_BITS_CHOICES.filter { $0 != 32 }.sorted())
+        XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(gguf), [2, 3, 4, 5, 6, 8])
         XCTAssertEqual(ModelUpdateReviewPresentation.bitWidths(review()), [])
     }
 

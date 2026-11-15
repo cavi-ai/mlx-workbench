@@ -16,12 +16,12 @@ struct ModelActions {
     /// "destination already exists" blocker. Projector companions and drafters
     /// no port converts only run beside their model, so they offer nothing.
     var canPrepare: Bool {
-        model.readiness != .ready && !model.item.isCompanion
+        (model.readiness != .ready || model.item.path.lowercased().hasSuffix(".gguf")) && !model.item.isCompanion
             && !(model.item.draft != nil && model.item.draft?.port == nil)
     }
 
     /// The prepare action's label: unconverted weights convert, everything else is prepared.
-    var prepareTitle: String { model.readiness == .needsConversion ? "Convert to MLX…" : "Prepare to run" }
+    var prepareTitle: String { model.item.path.lowercased().hasSuffix(".gguf") || model.readiness == .needsConversion ? "Convert to MLX…" : "Prepare to run" }
 
     /// Run serves chat models. Compare also supports ready media models.
     var canServe: Bool { ModelTaskPresentation.supportsEndpoint(model) }
@@ -48,7 +48,7 @@ struct ModelActions {
 
     func prepare() {
         appHost.selectedModelPath = model.item.path
-        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot, qBits: appHost.config.qBits)
         onRouteSelection(.prepare)
     }
 
