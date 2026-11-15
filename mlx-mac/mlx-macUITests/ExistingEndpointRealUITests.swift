@@ -41,7 +41,7 @@ final class ExistingEndpointRealUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 10)); start.click()
         let preview = application.buttons["Preview serve"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 15)); XCTAssertTrue(preview.isHittable); preview.click()
-        let open = application.buttons["open-existing-endpoint"].firstMatch
+        let open = application.buttons["Open existing endpoint"].firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 30)); XCTAssertTrue(open.isHittable)
         capture("Existing endpoint notice")
         open.click()
