@@ -32,8 +32,8 @@ enum ServingWorkspacePresentation {
     }
     static func name(_ row: ServingRow, models: [LibraryModel]) -> String {
         switch row {
-        case .endpoint(let slot, _, _): MenuBarPresentation.modelName(slot.modelPath, models: models)
-        case .server(let server, _): MenuBarPresentation.modelName(server.modelIdentity, models: models) + (server.adapterSummary.map { " · " + $0 } ?? "")
+        case .endpoint(let slot, _, _): return MenuBarPresentation.modelName(slot.modelPath, models: models)
+        case .server(let server, _): return MenuBarPresentation.modelName(server.modelIdentity, models: models) + (server.adapterSummary.map { " · " + $0 } ?? "")
         case .service(let service):
             if let name = service.hostedModel?.name { return name }
             if let server = service.server {
