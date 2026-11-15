@@ -30,8 +30,9 @@ final class ExistingEndpointRealUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 30)); add.click()
         let picker = application.popUpButtons["serving-model-picker"].firstMatch
         XCTAssertTrue(picker.waitForExistence(timeout: 30)); picker.click()
-        let model = application.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Qwen3-4B")).firstMatch
-        XCTAssertTrue(model.waitForExistence(timeout: 20)); model.click()
+        let model = picker.menuItems["mlx-community/Qwen3-4B-4bit"].firstMatch
+        XCTAssertTrue(model.waitForExistence(timeout: 20)); XCTAssertTrue(model.isHittable); model.click()
+        XCTAssertEqual(picker.value as? String, "mlx-community/Qwen3-4B-4bit")
         let start = application.radioButtons["Start now"].firstMatch
         XCTAssertTrue(start.waitForExistence(timeout: 10)); start.click()
         let preview = application.buttons["Preview serve"].firstMatch
