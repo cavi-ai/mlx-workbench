@@ -14,6 +14,75 @@ enum ModelFamilyReview {
             .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
+    private struct Export: Encodable {
+        struct Entry: Encodable {
+            let path: String, name: String
+            let signature: String?, type: String?, architecture: String?, parameters: String?, quantization: String?
+            let identity: ModelIdentity?
+            let logicalBytes: Int64
+            let companion: Bool
+            let purpose: ModelPurpose?
+            let preferredRoles: [String]
+            let protected: Bool
+        }
+        struct Measurement: Encodable {
+            let runID: String, taskID: String, taskName: String, availability: String
+            let finishedAt: Date?
+            let promptIDs: [String]?
+            let configurations: [ComparisonLaneConfiguration]?
+            let rows: [Row]
+            struct Row: Encodable {
+                let path: String
+                let signature: String?
+                let environmentFingerprint: String?
+                let rubricID: String?
+                let qualityScore: Int?
+                let tokensPerSecond: Double?
+                let speedEstimated: Bool
+                let firstTokenSeconds: Double?
+                let diskBytes: Int64?
+            }
+        }
+        let instructions: String
+        let missingEvidence: String
+        let models: [Entry]
+        let measurements: [Measurement]
+    }
+
+    static func export(models: [LibraryModel], purposes: [ModelPurpose], preferred: [UseCase: String],
+                       protected: Set<String>, showdowns: [ModelShowdownResults]) throws -> String {
+        let entries = models.sorted { $0.item.path < $1.item.path }.map { model in
+            Export.Entry(path: model.item.path, name: model.displayName, signature: model.item.signature,
+                type: model.item.task?.type.rawValue, architecture: model.item.architecture,
+                parameters: model.item.parameters, quantization: model.item.quantization, identity: model.item.identity,
+                logicalBytes: model.item.bytes, companion: model.item.isCompanion,
+                purpose: purposes.first { $0.path == model.item.path },
+                preferredRoles: preferred.filter { $0.value == model.item.path }.map { $0.key.rawValue }.sorted(),
+                protected: DiskLedger.isProtected(model.item.path, by: protected))
+        }
+        let measurements = showdowns.sorted { $0.id.uuidString < $1.id.uuidString }.map { result in
+            Export.Measurement(runID: result.id.uuidString, taskID: result.run.promptSetID,
+                taskName: result.run.promptSetName, availability: result.explanation,
+                finishedAt: result.run.finishedAt, promptIDs: result.run.promptEntries?.map(\.id),
+                configurations: result.run.laneConfigurations, rows: result.rows.map { row in
+                    let original = result.run.results.first { $0.id == row.id }
+                    return Export.Measurement.Row(path: row.path, signature: original?.modelSignature,
+                        environmentFingerprint: original?.environmentFingerprint,
+                        rubricID: result.run.qualityReviews?[row.id]?.rubricID, qualityScore: row.qualityScore,
+                        tokensPerSecond: row.tokensPerSecond, speedEstimated: row.speedEstimated,
+                        firstTokenSeconds: row.firstTokenSeconds, diskBytes: row.diskBytes)
+                })
+        }
+        let payload = Export(instructions: "Base removal advice on capability, reviewed quality, measured speed and storage. Preserve companions, protected models and explicit purposes. Do not remove anything automatically.",
+            missingEvidence: "Absent measurements and ratings are unknown; compare relevant tasks before recommending a replacement.",
+            models: entries, measurements: measurements)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return String(decoding: try encoder.encode(payload), as: UTF8.self)
+    }
+
     private static func familyHint(_ model: LibraryModel) -> String {
         let name = NSString(string: model.displayName).lastPathComponent.lowercased()
         // Keep model generation, size and MoE active size distinct; tuning labels stay on each row.

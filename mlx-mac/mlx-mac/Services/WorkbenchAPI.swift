@@ -686,7 +686,7 @@ actor WorkbenchAPI {
         let current = try await discoverServingServices()
         guard current.supportsDiscovery, current.errors.isEmpty,
               current.servers.allSatisfy({ !$0.modelIdentity.isEmpty }) else {
-            throw WorkflowEvidenceError.invalid("Serving ownership could not be checked across model servers. Update the engine or resolve inventory errors before removing models.")
+            throw ReclaimError.ownershipUnavailable("Serving ownership could not be checked across model servers. Update the engine or resolve inventory errors before removing models.")
         }
         return current.servers.filter { $0.state != "stopped" }.flatMap { [$0.modelIdentity] + [$0.repo].compactMap { $0 } }
     }
@@ -1348,7 +1348,7 @@ actor WorkbenchAPI {
             throw ScanContractError.invalidRequiredField("models")
         }
         let models = try modelsRaw.enumerated().map { index, raw in
-            ModelItem(
+            var item = ModelItem(
                 path: try raw.requiredString("path", at: "models[\(index)].path"),
                 name: try raw.requiredString("name", at: "models[\(index)].name"),
                 bytes: try raw.requiredInt64("bytes", at: "models[\(index)].bytes"),
@@ -1366,9 +1366,14 @@ actor WorkbenchAPI {
                 outputs: raw["outputs"] as? [String] ?? [],
                 tensorCount: raw.int("tensor_count"),
                 error: raw.string("error"),
-                task: ModelTask(dictionary: raw["task"] as? [String: Any]),
+                task: (raw.bool("companion") == true || raw.string("status") == "companion")
+                    && (raw["task"] as? [String: Any])?["type"] as? String != "vision_projector"
+                    ? ModelTask(type: .visionProjector, useCases: [], source: "scan_companion", confidence: "reported")
+                    : ModelTask(dictionary: raw["task"] as? [String: Any]),
                 draft: ModelDraft(dictionary: raw["draft"] as? [String: Any])
             )
+            item.identity = ModelIdentity(dictionary: raw["identity"] as? [String: Any])
+            return item
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []
         let outputs = outputsRaw.compactMap { raw -> MLXOutput? in

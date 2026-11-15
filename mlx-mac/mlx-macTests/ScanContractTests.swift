@@ -5,6 +5,19 @@ import XCTest
 @testable import mlx_workbench
 
 final class ScanContractTests: XCTestCase {
+    func testLegacyProjectorClassificationAndIdentityDecodeForDetails() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        payload["models"] = [["path": "/models/mmproj.gguf", "name": "mmproj.gguf", "bytes": 123,
+            "companion": true, "task": ["type": "classification"],
+            "identity": ["declared_size": "27B", "base_model_name": "Qwen3.8-27B", "projector_type": "qwen3vl_merger", "projector_width": 5120]]]
+        let item = try XCTUnwrap(WorkbenchAPI.decodeScan(payload).models.first)
+        XCTAssertEqual(item.task?.type, .visionProjector)
+        XCTAssertNil(item.parameters)
+        let rows = ModelDetailsPresentation.identityRows(for: LibraryModel(item: item), prepareDestination: nil)
+        XCTAssertTrue(rows.contains { $0.label == "Base model" && $0.value == "Qwen3.8-27B" })
+        XCTAssertTrue(rows.contains { $0.label == "Declared base size" && $0.value == "27B" })
+    }
+
     func testLocalHostDiscoveryUsesTheListeningPortAndRecognizedProcess() {
         let listeners = "p42\ncPython\nn127.0.0.1:19080\np43\ncLM Studio\nn*:2345\np44\ncOther\nn127.0.0.1:9999\n"
         let processes = "42 python /engine/src/mlx_agent/jit_serve.py --config /service/config.json\n43 /Applications/LM Studio.app/Contents/MacOS/LM Studio\n44 unrelated-app\n"

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Purpose, measured replacements and explicit comparison selection in one review.
@@ -42,11 +43,22 @@ struct ModelFamilyReviewView: View {
         let groups = ModelFamilyReview.groups(models: models, purposes: purposes.records)
         let showdowns = ModelShowdownResults.latest(runs: comparison.runs, models: models,
             environment: watch.currentFingerprintDescription, promptSets: comparison.promptSets)
-        if !groups.isEmpty || !purposes.records.isEmpty || purposes.error != nil {
+        if !models.isEmpty || !purposes.records.isEmpty || purposes.error != nil {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 SectionTitle(text: "Which variants should I keep?")
                 Text("Related names suggest models to review, not identical weights. Keep abliterated or tuned models for a distinct purpose. Compare interchangeable candidates on prompts that exercise those purposes.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Button("Copy model review JSON") {
+                    do {
+                        let text = try ModelFamilyReview.export(models: models, purposes: purposes.records,
+                            preferred: appHost.recommendationPreferences.preferredModelIDs,
+                            protected: appHost.occupancy.protectedPaths, showdowns: showdowns)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                        error = nil
+                    } catch { self.error = error.localizedDescription }
+                }
+                .disabled(models.isEmpty)
                 ErrorBanner(text: purposes.error ?? error)
                 let replacements = self.replacements
                 ForEach(groups) { group in
@@ -114,6 +126,12 @@ struct ModelFamilyReviewView: View {
                     .accessibilityLabel("Select \(model.displayName) for showdown")
                 Text("\(model.item.quantization ?? "Quantization unknown") · \(ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))")
                     .font(WorkbenchTypography.secondaryTabular).foregroundStyle(WorkbenchColor.muted)
+                if let identity = model.item.identity {
+                    if let base = identity.baseModelName { Text("Base model: \(base)") }
+                    if let size = identity.declaredSize { Text("Declared \(model.item.isCompanion ? "base " : "")size: \(size)") }
+                    if let type = identity.projectorType { Text("Projector: \(type)") }
+                    if let width = identity.projectorWidth { Text("Projector width: \(width)") }
+                }
                 ForEach(reasons, id: \.self) { Text($0).font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true) }
                 ViewThatFits(in: .horizontal) {
                     HStack { modelActions(model, candidate: candidate) }

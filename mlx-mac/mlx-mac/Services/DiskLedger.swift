@@ -206,49 +206,20 @@ enum DiskLedger {
 
         for model in models where model.copies.count > 1 && model.copies.allSatisfy({ $0.item.kind != "asset" }) {
             let open = model.copies.filter { !claimed.contains($0.id) }
-            if let keep = model.keep, let reason = model.keepReason, let kept = model.copies.first(where: { $0.id == keep }) {
-                let remove = open.filter { $0.id != keep && !$0.isProtected && ($0.lastUsed.map { $0 < staleBefore } ?? true) }
+            if model.keepReason == .chosen, let keep = model.keep,
+               let kept = model.copies.first(where: { $0.id == keep }) {
+                let remove = open.filter { $0.id != keep && !$0.isProtected && $0.isEligible }
                 let bytes = freedBytes(removing: Set(remove.map(\.id)), items: items)
                 guard !remove.isEmpty, bytes > 0 else { continue }
-                let others = remove.count == 1 ? "The other version was" : "The other \(remove.count) versions were"
-                let why: String
-                switch reason {
-                case .used(let date):
-                    why = "\(versionLabel(kept.item, model: model)) was used \(WorkbenchRelativeTime.text(for: date, style: .full, now: now))."
-                case .protected:
-                    why = "\(versionLabel(kept.item, model: model)) is serving or kept for a task."
-                case .verified:
-                    why = "The matching file is kept."
-                case .chosen:
-                    why = "You chose to keep \(versionLabel(kept.item, model: model))."
-                }
                 found.append(DiskSuggestion(kind: .otherVersions, modelID: model.id, name: model.name,
-                                            detail: why + " " + others + " not used recently.",
-                                            remove: remove.map(\.id).sorted(), bytes: bytes))
-            } else if open.filter({ !$0.isProtected }).count > 1, model.couldFree > 0 {
+                    detail: "You chose to keep \(versionLabel(kept.item, model: model)). Review the other versions before removal.",
+                    remove: remove.map(\.id).sorted(), bytes: bytes))
+            } else if open.count > 1, model.couldFree > 0 {
                 let labels = model.copies.map { "\(versionLabel($0.item, model: model)) \(ReclaimFormat.byteCount($0.item.bytes))" }
                 found.append(DiskSuggestion(kind: .chooseVersion, modelID: model.id, name: model.name,
-                                            detail: "\(model.copies.count) versions, none used recently: " + labels.joined(separator: ", ") + ". Keep the one you run.",
-                                            remove: [], bytes: model.couldFree))
+                    detail: "Review \(model.copies.count) versions: " + labels.joined(separator: ", ") + ". Compare their capabilities and quality before deciding.",
+                    remove: [], bytes: model.couldFree))
             }
-        }
-
-        for model in models where model.copies.count == 1 {
-            guard let copy = model.copies.first, copy.item.kind != "asset", !copy.isProtected, !claimed.contains(copy.id),
-                  copy.lastUsed.map({ $0 < staleBefore }) ?? true,
-                  modifiedByPath[copy.id].map({ $0 < staleBefore }) ?? true else { continue }
-            let bytes = freedBytes(removing: [copy.id], items: items)
-            guard bytes >= suggestionFloorBytes else { continue }
-            let detail: String
-            if let used = copy.lastUsed {
-                detail = "Last used here \(WorkbenchRelativeTime.text(for: used, style: .full, now: now))."
-            } else if let modified = modifiedByPath[copy.id] {
-                detail = "No use recorded here; files unchanged since \(modified.formatted(date: .abbreviated, time: .omitted))."
-            } else {
-                detail = "No use recorded here."
-            }
-            found.append(DiskSuggestion(kind: .notUsed, modelID: model.id, name: model.name, detail: detail,
-                                        remove: [copy.id], bytes: bytes))
         }
 
         return found.sorted { lhs, rhs in
@@ -353,11 +324,8 @@ enum DiskLedger {
         }
     }
 
-    /// The most recently used version; else a protected one; else none.
+    /// Protect a claimed version; usage history never chooses the keeper.
     private static func defaultKeep(_ copies: [DiskCopy]) -> (String, DiskModel.KeepReason)? {
-        if let used = copies.compactMap({ copy in copy.lastUsed.map { (copy.id, $0) } }).max(by: { $0.1 < $1.1 }) {
-            return (used.0, .used(used.1))
-        }
         if let held = copies.first(where: \.isProtected) { return (held.id, .protected) }
         return nil
     }

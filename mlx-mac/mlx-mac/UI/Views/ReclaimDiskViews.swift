@@ -181,7 +181,7 @@ struct ReclaimDiskPanel: View {
                     }
                 }
                 if suggestions.isEmpty {
-                    Text("Nothing to remove: no identical copies, no unused extra versions, and no model over 1 GB idle for \(staleDays) days.")
+                    Text("No identical copies or reviewed variant choices found.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 ForEach(visible) { suggestion in
@@ -192,7 +192,7 @@ struct ReclaimDiskPanel: View {
                     Button(allSuggestions ? "Show fewer" : "Show all \(suggestions.count)") { allSuggestions.toggle() }
                         .buttonStyle(.borderless).font(WorkbenchTypography.secondary)
                 }
-                Text("Use counts what MLX Workbench serves, verifies or compares. Removed models go to quarantine and can be put back.")
+                Text("Review capabilities, quality and measured speed before selecting versions. Removed models go to quarantine and can be put back.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
         }

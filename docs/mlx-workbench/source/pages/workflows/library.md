@@ -371,3 +371,5 @@ Workbench refreshes inventory after a request and distinguishes acceptance from 
 ### Serving connections
 
 The selected model’s inspector shows **Serving · N** when N observed local services use its exact known local paths. It opens Run, where **Served models** lists each service with provider, endpoint, residency, model location and receipt location when reported; the inspector itself no longer lists them. A provider that does not report a file path or loaded state is shown as unknown. Listing a model does not imply that its weights are loaded.
+
+Vision projector GGUF files appear as **Projector**. Their details show the base model and its declared size when present in the header. A declared base size is not the projector’s measured parameter count. Projectors run beside a matching base model, not independently.

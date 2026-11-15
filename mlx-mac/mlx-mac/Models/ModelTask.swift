@@ -17,6 +17,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     case imageGeneration = "image_generation"
     case videoGeneration = "video_generation"
     case meshGeneration = "mesh_generation"
+    case visionProjector = "vision_projector"
     case speculativeDraft = "speculative_draft"
     case other = "other"
 
@@ -39,6 +40,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .imageGeneration: return "Image generation"
         case .videoGeneration: return "Video generation"
         case .meshGeneration: return "3D generation"
+        case .visionProjector: return "Vision projector"
         case .speculativeDraft: return "Speculative drafter"
         case .other: return "Other"
         }
@@ -57,6 +59,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .imageGeneration: return "Image"
         case .videoGeneration: return "Video"
         case .meshGeneration: return "3D"
+        case .visionProjector: return "Projector"
         case .speculativeDraft: return "Draft"
         case .other: return "Other"
         }
@@ -76,6 +79,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .imageGeneration: return "photo"
         case .videoGeneration: return "film"
         case .meshGeneration: return "cube.transparent"
+        case .visionProjector: return "eye"
         case .speculativeDraft: return "bolt"
         case .other: return "cube"
         }
@@ -91,7 +95,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     var isServable: Bool { self == .textLLM || self == .visionLanguage }
 
     /// A typed endpoint is distinct from chat completions and chat verification.
-    var supportsEndpoint: Bool { self != .speculativeDraft && self != .other }
+    var supportsEndpoint: Bool { self != .speculativeDraft && self != .visionProjector && self != .other }
 }
 
 // MARK: - ModelTask

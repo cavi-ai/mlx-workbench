@@ -401,15 +401,15 @@ class AppHost {
         }
         self.reclaim.servingModelPaths = { [weak self] in
             guard self?.comparison.hasLoadedHistory == true else {
-                throw WorkflowEvidenceError.invalid("Saved comparison ownership is unavailable. Wait for history to load before reclaiming models.")
+                throw ReclaimError.ownershipUnavailable("Saved comparison ownership is unavailable. Wait for history to load before reclaiming models.")
             }
             guard self?.modelPurposes.hasLoadedHistory == true, self?.modelPurposes.isSaving == false else {
-                throw WorkflowEvidenceError.invalid("Saved model purposes are unavailable or changing. Resolve that state before removing models.")
+                throw ReclaimError.ownershipUnavailable("Saved model purposes are unavailable or changing. Resolve that state before removing models.")
             }
-            guard let self else { throw WorkflowEvidenceError.invalid("Serving inventory is unavailable.") }
+            guard let self else { throw ReclaimError.ownershipUnavailable("Serving inventory is unavailable.") }
             await self.servingInventory.refresh(refreshHosts: true)
             guard self.servingInventory.snapshot.sourceErrors.isEmpty else {
-                throw WorkflowEvidenceError.invalid("Resolve serving inventory errors before removing models.")
+                throw ReclaimError.ownershipUnavailable("Resolve serving inventory errors before removing models.")
             }
             return try await api.servingPathsForRemoval() + self.servingInventory.snapshot.services.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
         }

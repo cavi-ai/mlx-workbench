@@ -233,10 +233,10 @@ final class DiskLedgerTests: XCTestCase {
         let used = ["/m/ollama/manifests/r/library/tiny/a": usedAt]
         let models = DiskLedger.models(storage: storage, families: [family], lastUsedByPath: used, protectedPaths: ["/m/mlx/x-4bit"])
         let x = try XCTUnwrap(models.first { $0.copies.count == 3 })
-        XCTAssertEqual(x.keep, "/m/ollama/manifests/r/library/tiny/a")
-        XCTAssertEqual(x.keepReason, .used(usedAt))
-        XCTAssertEqual(x.removable.map(\.id), ["/m/gguf/x-Q4.gguf"])
-        XCTAssertEqual(x.couldFree, 400)
+        XCTAssertEqual(x.keep, "/m/mlx/x-4bit")
+        XCTAssertEqual(x.keepReason, .protected)
+        XCTAssertEqual(Set(x.removable.map(\.id)), Set(["/m/gguf/x-Q4.gguf", "/m/ollama/manifests/r/library/tiny/a"]))
+        XCTAssertEqual(x.couldFree, 515)
         XCTAssertEqual(x.bytes, 403 + 10 + 5 + 100 + 7 + 300)
         XCTAssertEqual(models.count, 4, "every model outside a family is its own row")
 
@@ -304,16 +304,10 @@ final class DiskLedgerTests: XCTestCase {
         let suggestions = DiskLedger.suggestions(models: models, items: items, duplicates: [identical],
                                                  staleBefore: now.addingTimeInterval(-30 * 86_400),
                                                  modifiedByPath: ["/models/Delta-30B-4bit": now.addingTimeInterval(-90 * 86_400)], now: now)
-        XCTAssertEqual(suggestions.map(\.kind), [.identical, .notUsed, .otherVersions, .chooseVersion])
-        XCTAssertEqual(suggestions.map(\.remove), [["/models/b/Alpha-7B-4bit"], ["/models/Delta-30B-4bit"], ["/models/Beta-9B-8bit"], []])
-        XCTAssertEqual(suggestions.map(\.bytes), [4 * gb, 17 * gb, 9 * gb, 2 * gb])
-        XCTAssertEqual(suggestions.map(\.name), ["Alpha-7B", "Delta-30B", "Beta-9B", "Gamma-3B"])
-        XCTAssertEqual(suggestions[0].detail, "The same weights are stored 2 times. Keeps the copy in a.")
-        XCTAssertTrue(suggestions[1].detail.hasPrefix("No use recorded here; files unchanged since "), suggestions[1].detail)
-        XCTAssertTrue(suggestions[2].detail.hasPrefix("MLX 4bit was used "), suggestions[2].detail)
-        XCTAssertTrue(suggestions[2].detail.hasSuffix(" The other version was not used recently."), suggestions[2].detail)
-        XCTAssertTrue(suggestions[3].detail.hasPrefix("2 versions, none used recently: MLX bf16 "), suggestions[3].detail)
-        XCTAssertTrue(suggestions[3].detail.hasSuffix(". Keep the one you run."), suggestions[3].detail)
+        XCTAssertEqual(suggestions.map(\.kind), [.identical, .chooseVersion, .chooseVersion])
+        XCTAssertEqual(suggestions.map(\.remove), [["/models/b/Alpha-7B-4bit"], [], []])
+        XCTAssertEqual(suggestions.map(\.bytes), [4 * gb, 5 * gb, 2 * gb])
+        XCTAssertTrue(suggestions.dropFirst().allSatisfy { !$0.detail.contains("used") })
     }
 
     // MARK: Ollama quarantine

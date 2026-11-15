@@ -11,17 +11,16 @@
 | Suggestion | Evidence |
 |---|---|
 | Identical copies | The scan found the same weights in more than one place; the copy it keeps stays |
-| Other versions | One version was used here, is serving, or you chose it; its other versions were not used within **Stale after** |
-| Choose a version | Several versions and none used; **Choose…** opens the model so you mark the one you run |
-| Not used | A model stored once, at least 1 GB, with no use here within **Stale after** and, when no use is recorded, files unchanged in that time |
+| Other versions | You chose a version to keep; review the other versions before removing them |
+| Choose a version | Several versions need review; compare their capabilities and quality before choosing |
 
-Use here means MLX Workbench served, verified or compared the model; use in Ollama or LM Studio is not recorded. Serving, preferred and in-use models are never suggested. **Review…** opens the removal review for that suggestion.
+Usage age and file modification dates never affect removal suggestions. Serving, preferred and in-use models are protected. Discovery skips a historical registered service location that no longer exists; unavailable explicit or live locations still block removal until ownership can be checked. **Review…** opens the removal review for that suggestion.
 
 The header counts every file under the scanned folders once: the total on disk, the part held by recognized models, and that part by store (folders, the Hugging Face cache and Ollama). Hard links and blobs shared between Ollama tags or cache revisions are counted once. The remainder is listed by the folders and files that hold it, largest first, with **Reveal** to open each in Finder. Those bytes belong to no model the scan recognizes; they can be unsupported model formats as well as leftovers.
 
-The table has one row per model. Versions of a model share its architecture (layer count, hidden width and attention heads) and its name without format and quantization labels, across MLX folders, GGUF files, Hugging Face cache snapshots and Ollama tags. Fine-tunes and named variants of one base model are separate rows, and embedding and classification models are never grouped with generators of the same architecture. Every column sorts. **Show** narrows the table to models stored more than once, models with no version used within **Stale after**, models with identical weights in two places, or every model (the default).
+The table has one row per model. Versions of a model share its architecture (layer count, hidden width and attention heads) and its name without format and quantization labels, across MLX folders, GGUF files, Hugging Face cache snapshots and Ollama tags. Fine-tunes and named variants of one base model are separate rows, and embedding and classification models are never grouped with generators of the same architecture. Every column sorts. **Show** narrows the table to models stored more than once, models not used recently, models with identical weights in two places, or every model (the default). **Not used recently** is an informational filter based on recorded Workbench use and **Stale after**; it does not suggest removal.
 
-Expand a row to see its versions. A version is marked **Keep** only with evidence: the one used here most recently, else one that is serving or preferred, or the one you mark with **Keep**. **Could free** is the space released by keeping that version, or the largest when none is marked, and removing the others: a file still used by a version that stays, such as an Ollama blob shared with another tag, is not counted. Serving, preferred and in-use versions show a lock and cannot be selected.
+Expand a row to see its versions. A version is marked **Keep** only with evidence: one that is serving or preferred, or the one you mark with **Keep**. **Could free** is the space released by keeping that version, or the largest when none is marked, and removing the others: a file still used by a version that stays, such as an Ollama blob shared with another tag, is not counted. Serving, preferred and in-use versions show a lock and cannot be selected.
 
 Select versions, or **Select extra versions**, then **Review removal…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
 
@@ -50,19 +49,20 @@ Folder copies that need a separate review remain visible in the headline as an i
 
 | Opportunity | Evidence |
 |---|---|
-| Stale | No recorded use for the **Stale after** period (default 60 days, **Settings → Advisors**) |
 | Superseded | A replacement with comparable reviewed task quality and no worse speed, latency, estimated memory or disk use |
 | Duplicate | The same GGUF file, or an MLX model folder with identical weights, in more than one place |
 
 **Duplicate groups** at the end of the page list every group from the latest scan, including one model kept at several quantizations (GGUF quantizations or MLX bit widths). Those groups are informational: choosing which copy to keep is yours. When one identical MLX copy is in the Hugging Face cache, that copy is kept and the other is reviewed with **Review model folder…**. Models in an Ollama store under your scan roots are included; these suggestions always keep the Ollama copy, and **Models** removes Ollama tags.
 
-Quantization bits alone never establish that one model supersedes another. Replacement chains pick a keeper within one reviewed comparison or matched conversion cohort; suggestions stay advisory and keepers are protected from stale-file advice. Intentional serving counts as use; verification and benchmark runs do not.
+Quantization bits alone never establish that one model supersedes another. Replacement chains pick a keeper within one reviewed comparison or matched conversion cohort; suggestions stay advisory and keepers remain protected.
 
 ## Review related variants
 
 **Which variants should I keep?** groups related model names for review, including
 quantizations and named tuning variants. These groups suggest candidates to
 compare; they do not prove identical weights or interchangeable behavior.
+
+**Copy model review JSON** copies the current inventory, protections and available assessed comparison evidence for review. Missing ratings or measurements remain unknown. The export does not start inference or remove models.
 
 Expand a group to see each variant's size, quantization, serving selection,
 preferred roles and current task-specific replacement evidence. **Keep for a
