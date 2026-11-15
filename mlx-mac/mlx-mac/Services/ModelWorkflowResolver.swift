@@ -10,6 +10,7 @@ enum ModelWorkflowResolver {
     static func destination(
         for source: ModelItem,
         library: LibrarySnapshot?,
+        qBits: Int = 4,
         fileManager: FileManager = .default,
         now: Date = Date()
     ) -> WorkflowDestinationDecision {
@@ -21,67 +22,24 @@ enum ModelWorkflowResolver {
             || ["clip", "mmproj"].contains(source.architecture?.lowercased() ?? "")
             || stem.contains("mmproj") || stem.contains("projector") {
             return .blocked(
-                sameDirectoryOutputURL(for: source),
+                sameDirectoryOutputURL(for: source, qBits: qBits),
                 reason: "This GGUF is a vision projector or companion file and cannot be converted as a standalone model. Select the main model GGUF or a supported Hugging Face source instead."
             )
         }
-        if let existing = library?.models.first(where: { matchesEquivalent(source: source, candidate: $0) }) {
-            return .reuseExisting(existing)
-        }
-
-        let outputURL = sameDirectoryOutputURL(for: source)
+        let outputURL = sameDirectoryOutputURL(for: source, qBits: qBits)
         let outputPath = canonicalPath(outputURL.path)
         if fileManager.fileExists(atPath: outputPath) {
             return .blocked(
                 URL(fileURLWithPath: outputPath),
-                reason: "The destination already exists and is not an equivalent model."
+                reason: "The destination already exists. Choose another precision or review the existing output."
             )
         }
         return .available(URL(fileURLWithPath: outputPath))
     }
 
-    static func matchesEquivalent(source: ModelItem, candidate: LibraryModel) -> Bool {
-        let sourcePath = canonicalPath(source.path)
-        let candidatePath = canonicalPath(candidate.item.path)
-        guard candidatePath != sourcePath,
-              URL(fileURLWithPath: candidatePath).pathExtension.lowercased() != "gguf" else {
-            return false
-        }
-
-        if let sourceKey = normalizedEvidence(source.modelKey),
-           let candidateKey = normalizedEvidence(candidate.item.modelKey ?? candidate.normalizedFamilyKey) {
-            if sourceKey == candidateKey {
-                return true
-            }
-        }
-
-        if let sourceSignature = normalizedEvidence(source.signature),
-           let candidateSignature = normalizedEvidence(candidate.item.signature) {
-            if sourceSignature == candidateSignature {
-                return true
-            }
-        }
-
-        let destinationPath = canonicalPath(sameDirectoryOutputURL(for: source).path)
-        let candidatePaths = candidate.sourcePaths + candidate.outputPaths + [candidate.item.path]
-        if candidatePaths.contains(where: { canonicalPath($0) == destinationPath }) {
-            return true
-        }
-
-        let sourceIdentity = normalizedPathIdentity(URL(fileURLWithPath: sourcePath).deletingPathExtension().lastPathComponent)
-        guard !sourceIdentity.isEmpty else { return false }
-        let sourceEvidence = candidate.sourcePaths.map(canonicalPath)
-        let outputEvidence = candidate.outputPaths.map(canonicalPath)
-        let hasSourceRelationship = sourceEvidence.contains(canonicalPath(sourcePath))
-        let hasOutputRelationship = outputEvidence.contains(canonicalPath(destinationPath))
-        guard hasSourceRelationship || hasOutputRelationship else { return false }
-        return candidatePaths.contains {
-            normalizedPathIdentity(URL(fileURLWithPath: canonicalPath($0)).lastPathComponent) == sourceIdentity
-        }
-    }
-
-    static func sameDirectoryOutputURL(for source: ModelItem) -> URL {
-        URL(fileURLWithPath: canonicalPath(source.path)).deletingPathExtension()
+    static func sameDirectoryOutputURL(for source: ModelItem, qBits: Int = 4) -> URL {
+        let url = URL(fileURLWithPath: canonicalPath(source.path)).deletingPathExtension()
+        return url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + "-MLX-\(qBits)bit")
     }
 
     private static func canonicalPath(_ path: String) -> String {
@@ -103,13 +61,4 @@ enum ModelWorkflowResolver {
         return resolved.standardizedFileURL.path
     }
 
-    private static func normalizedEvidence(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized.isEmpty ? nil : normalized
-    }
-
-    private static func normalizedPathIdentity(_ value: String) -> String {
-        value.lowercased().filter { $0.isLetter || $0.isNumber }
-    }
 }

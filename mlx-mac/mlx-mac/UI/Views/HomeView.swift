@@ -481,7 +481,7 @@ struct HomeView: View {
         case .prepare(let path):
             appHost.selectedModelPath = path
             if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) {
-                modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+                modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot, qBits: appHost.config.qBits)
             }
         case .openModel(let path):
             appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)

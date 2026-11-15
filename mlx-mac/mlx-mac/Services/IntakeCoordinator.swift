@@ -127,7 +127,7 @@ final class IntakeCoordinator: ObservableObject {
     /// The newest finished conversion of this repo at the resolved width whose output is still ready.
     static func existingConversion(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>) -> ConversionWorkflow? {
         guard resolution.verdict == .convertible else { return nil }
-        let bits = ModelWorkflowCoordinator.allowedBits(qBits, allowed: resolution.qBits)
+        let bits = qBits
         return history.sorted { $0.updatedAt > $1.updatedAt }.first { record in
             record.sourcePath == "hf://\(resolution.source.reference)" && record.destinationBits == bits &&
             record.localSourcePath.map { sourceMatches($0, resolution: resolution) } == true &&

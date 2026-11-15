@@ -17,7 +17,7 @@ final class ModelWorkflowResolverTests: XCTestCase {
             now: now
         )
 
-        XCTAssertEqual(decision, .available(URL(fileURLWithPath: "/Models/llama-3-q4")))
+        XCTAssertEqual(decision, .available(URL(fileURLWithPath: "/Models/llama-3-q4-MLX-4bit")))
     }
 
     func testCompanionCannotConvertOrReuseAnUnrelatedModelWithTheSameKey() {
@@ -44,19 +44,19 @@ final class ModelWorkflowResolverTests: XCTestCase {
         let source = makeGGUF(path: "/Models/projector/model-F16.gguf", modelKey: "model")
         XCTAssertEqual(
             ModelWorkflowResolver.destination(for: source, library: nil, fileManager: fileManager),
-            .available(URL(fileURLWithPath: "/Models/projector/model-F16"))
+            .available(URL(fileURLWithPath: "/Models/projector/model-F16-MLX-4bit"))
         )
     }
 
     func testEquivalentSiblingMLXIsReused() {
         let source = makeGGUF(path: "/Models/llama-3-q4.gguf", modelKey: "llama-3")
-        let existing = makeLibraryModel(path: "/Models/llama-3-q4", modelKey: "llama-3")
+        let existing = makeLibraryModel(path: "/Models/llama-3-q4-MLX-4bit", modelKey: "llama-3")
         let snapshot = makeSnapshot(models: [existing])
 
         XCTAssertEqual(
             ModelWorkflowResolver.destination(for: source, library: snapshot,
                                               fileManager: fileManager, now: now),
-            .reuseExisting(existing)
+            .available(URL(fileURLWithPath: "/Models/llama-3-q4-MLX-4bit"))
         )
     }
 
@@ -80,31 +80,31 @@ final class ModelWorkflowResolverTests: XCTestCase {
                 fileManager: fileManager,
                 now: now
             ),
-            .available(URL(fileURLWithPath: "/Models/llama-3-q4"))
+            .available(URL(fileURLWithPath: "/Models/llama-3-q4-MLX-4bit"))
         )
     }
 
     func testNonEquivalentExistingDestinationBlocksInsteadOfSuffixing() throws {
         let source = makeGGUF(path: "/Models/llama-3-q4.gguf", modelKey: "llama-3")
-        try fileManager.createDirectory(atPath: "/Models/llama-3-q4", withIntermediateDirectories: true)
+        try fileManager.createDirectory(atPath: "/Models/llama-3-q4-MLX-4bit", withIntermediateDirectories: true)
 
         let decision = ModelWorkflowResolver.destination(
             for: source, library: nil, fileManager: fileManager, now: now
         )
 
         guard case .blocked(let path, let reason) = decision else { return XCTFail() }
-        XCTAssertEqual(path.path, "/Models/llama-3-q4")
+        XCTAssertEqual(path.path, "/Models/llama-3-q4-MLX-4bit")
         XCTAssertTrue(reason.contains("already exists"))
     }
 
     func testMatchingSignatureReusesDespiteDifferentModelKeys() {
         let source = makeGGUF(path: "/Models/llama-3-q4.gguf", modelKey: "llama-3", signature: "signature-1")
-        let existing = makeLibraryModel(path: "/Models/llama-3-q4", modelKey: "different-key", signature: "signature-1")
+        let existing = makeLibraryModel(path: "/Models/llama-3-q4-MLX-4bit", modelKey: "different-key", signature: "signature-1")
 
         XCTAssertEqual(
             ModelWorkflowResolver.destination(for: source, library: makeSnapshot(models: [existing]),
                                               fileManager: fileManager, now: now),
-            .reuseExisting(existing)
+            .available(URL(fileURLWithPath: "/Models/llama-3-q4-MLX-4bit"))
         )
     }
 
@@ -121,7 +121,8 @@ final class ModelWorkflowResolverTests: XCTestCase {
         let existing = makeLibraryModel(path: realDirectory.appendingPathComponent("llama-3-q4").path,
                                         modelKey: nil, signature: nil)
 
-        XCTAssertTrue(ModelWorkflowResolver.matchesEquivalent(source: source, candidate: existing))
+        let decision = ModelWorkflowResolver.destination(for: source, library: makeSnapshot(models: [existing]))
+        XCTAssertEqual(decision, .available(realDirectory.appendingPathComponent("llama-3-q4-MLX-4bit")))
     }
 
     private func makeGGUF(path: String, modelKey: String?, signature: String? = nil,

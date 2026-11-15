@@ -17,14 +17,13 @@ struct ModelUpdateConversionRecipe: Codable, Equatable, Sendable {
     let modelType: String?
 
     func validate() throws {
-        guard [4, 5, 6, 8, 32].contains(qBits),
-              kind != .gguf || qBits != 32,
+        guard [2, 3, 4, 5, 6, 8, 16, 32].contains(qBits),
               kind != .repository || backend?.isEmpty == false else {
             throw ModelUpdateError.invalid("Choose a supported converter and bit width for this revision.")
         }
     }
     var title: String {
-        "\(qBits)-bit · " + (kind == .gguf ? "GGUF conversion" : (backend ?? "MLX conversion"))
+        (qBits == 32 && kind == .repository && backend != "mlx-lm" ? "Unquantized" : qBits >= 16 ? "FP\(qBits)" : "\(qBits)-bit") + " · " + (kind == .gguf ? "GGUF conversion" : (backend ?? "MLX conversion"))
     }
 }
 
