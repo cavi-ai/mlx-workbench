@@ -44,14 +44,11 @@ final class ServingUXRealUITests: XCTestCase {
         XCTAssertTrue(text("http://127.0.0.1:19082/v1", in: application).waitForExistence(timeout: 10))
         let monitor = application.buttons["Monitor"].firstMatch
         XCTAssertTrue(monitor.waitForExistence(timeout: 10)); monitor.click()
-        XCTAssertTrue(text("live endpoint", in: application).waitForExistence(timeout: 20))
+        XCTAssertTrue(text("Live endpoints", in: application).waitForExistence(timeout: 20))
         resize(width: 1380, height: 850); capture("Monitor real idle endpoints standard")
         resize(width: 1000, height: 720); capture("Monitor real idle endpoints ordinary")
-        let details = application.buttons["Endpoint details…"].firstMatch
-        XCTAssertTrue(details.waitForExistence(timeout: 10)); details.click()
         XCTAssertTrue(application.buttons["monitor-open-settings"].waitForExistence(timeout: 10))
         capture("Monitor endpoint details")
-        application.buttons["Done"].firstMatch.click()
         let compare = application.buttons["Compare"].firstMatch
         XCTAssertTrue(compare.waitForExistence(timeout: 10)); compare.click()
         XCTAssertTrue(text("No comparison output", in: application).waitForExistence(timeout: 30))
@@ -64,6 +61,37 @@ final class ServingUXRealUITests: XCTestCase {
         XCTAssertTrue(text(firstLine, in: application).exists)
         resize(width: 1380, height: 850); capture("Archived comparison failure wide")
         resize(width: 1000, height: 720); capture("Archived comparison failure ordinary")
+    }
+
+    func testMonitorMemoryOwnershipWithIdleEndpoints() throws {
+        let env = ProcessInfo.processInfo.environment
+        let application = XCUIApplication(); app = application
+        application.launchEnvironment["MLX_WORKBENCH_CONFIG"] = try XCTUnwrap(env["MLX_UX_CONFIG_PATH"])
+        application.launchEnvironment["MLX_WORKBENCH_PYTHON"] = try XCTUnwrap(env["MLX_WORKBENCH_PYTHON"])
+        application.launchEnvironment["CFFIXED_USER_HOME"] = try XCTUnwrap(env["MLX_UX_APP_HOME"])
+        application.launchEnvironment["XDG_STATE_HOME"] = try XCTUnwrap(env["MLX_UX_APP_STATE"])
+        application.launchEnvironment["XDG_CACHE_HOME"] = try XCTUnwrap(env["MLX_UX_APP_CACHE"])
+        application.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES", "-sidebar.systemExpanded", "YES"]
+        application.launch(); XCTAssertTrue(application.windows.firstMatch.waitForExistence(timeout: 30))
+        let monitor = application.buttons["Monitor"].firstMatch
+        XCTAssertTrue(monitor.waitForExistence(timeout: 20)); monitor.click()
+        let firstPID = try XCTUnwrap(env["MLX_UX_GATEWAY_PID_19081"])
+        let secondPID = try XCTUnwrap(env["MLX_UX_GATEWAY_PID_19082"])
+        let first = text(":19081", in: application), second = text(":19082", in: application)
+        XCTAssertTrue(first.waitForExistence(timeout: 30)); XCTAssertTrue(second.waitForExistence(timeout: 30))
+        second.click(); XCTAssertTrue(text("Gateway RAM · PID " + secondPID, in: application).waitForExistence(timeout: 20))
+        first.click(); XCTAssertTrue(text("Gateway RAM · PID " + firstPID, in: application).waitForExistence(timeout: 20))
+        XCTAssertTrue(text("2/2 measured", in: application).waitForExistence(timeout: 20))
+        XCTAssertFalse(text("— · 2/2 measured", in: application).exists)
+        resize(width: 1380, height: 850); capture("Monitor memory wide")
+        resize(width: 1000, height: 720); capture("Monitor memory ordinary")
+        let copy = application.buttons["monitor-copy-address"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 10)); copy.click()
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "http://127.0.0.1:19081/v1")
+        let settings = application.buttons["monitor-open-settings"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.click()
+        let tabs = application.radioGroups["serving-workspace-tabs"].firstMatch
+        XCTAssertTrue(tabs.waitForExistence(timeout: 15)); XCTAssertTrue(tabs.isHittable)
     }
 
     private func text(_ fragment: String, in app: XCUIApplication) -> XCUIElement {

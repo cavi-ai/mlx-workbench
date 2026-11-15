@@ -47,7 +47,9 @@ The endpoint list separates live endpoints, saved configurations and available m
 
 **Monitor** is a separate workspace for active model servers from the shared inventory. It shows provider, address, status, known model-process RAM, input/output tokens, active requests and the most recent response throughput. Missing measurements remain unknown. Models that need attention come first; their **Needs attention** status, here and in Serving, opens the engine's reason in place, and the selected row's details repeat it. Select a row for its API address, model ID, measurement interval, completed/failed/measured request counts and source/memory details. **Open model settings** selects that exact endpoint in Serving.
 
-Managed chat gateways report process-lifetime counters, reset when the gateway restarts. Token totals include only completed responses whose workers reported usage. Missing measurements display a dash; a reported zero stays zero. Response tokens per second includes queueing, loading and response generation, so it differs from a decoder-only benchmark. External providers without these metrics retain status and source visibility. Monitor uses the existing inventory refresh and never starts inference.
+Managed chat gateways report process-lifetime counters, reset when the gateway restarts. Monitor separates provider-reported model allocation from model process, gateway and shared host RAM. The overview counts each observed process once; coverage identifies missing readings and unknown owners. Process RSS can include shared physical pages and does not include unknown workers. Select an endpoint to see its memory owners and address alongside the table.
+
+Token totals include only completed responses whose workers reported usage. Missing measurements display a dash; a reported zero stays zero. Response tokens per second includes queueing, loading and response generation, so it differs from a decoder-only benchmark. External providers without these metrics retain status and source visibility. Monitor uses the existing inventory refresh and never starts inference.
 
 ## Inference settings
 
