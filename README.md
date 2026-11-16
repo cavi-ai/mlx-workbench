@@ -49,8 +49,8 @@ See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.m
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Models | Library, Model sources, Discover, Reclaim | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, quarantine and Trash with restore |
-| Workspaces | Use, Serving, Monitor, Compare, Prepare, Training, Studies | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token and throughput monitoring, measured comparisons in ten modes, previewed conversion with quality gate canaries, text LoRA training with evaluation, controlled studies |
+| Models | Library, Model sources, Discover, Reclaim | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
+| Workspaces | Use, Serving, Monitor, Compare, Prepare, Training, Studies, Terminal | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token, throughput and memory-owner monitoring, measured comparisons in ten modes, previewed conversion from FP32 to 2-bit with quality gate canaries, text LoRA training with evaluation, controlled studies, OpenCode or a shell in a chosen folder |
 | System | Overview, Activity, Clients, Health | Model budget, job timeline, guided client setup with connection tests and undo, runtime readiness |
 
 Served music models also generate sound effects and ambience.

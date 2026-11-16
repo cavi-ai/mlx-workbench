@@ -97,6 +97,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
   Endpoint API keys use `EndpointCredentialStore` (Keychain), with reviewed authentication changes owned by `EndpointSupervisor`.
+  `ServingMemory` keeps reported model allocations and observed process RSS as separate measurements for Monitor.
 - Use: `UseWorkspaceCoordinator`, `UseSessionStore` (`RecordArchive` on a serial I/O queue),
   `UseChatClient` and `UseImageStore`; `UseWorkspaceView` composes conversation views and the
   existing typed-task panels. `AppHost.handoffs` carries model/server selection. Chat owns
@@ -117,11 +118,14 @@ Behavior detail for each area is in the operator guide; this lists owners.
   owner-only writes and backups, content-digest rollback fences and persisted progress for partial rollback retries).
   Client adapters own credential fields; Zed keys stay in its own credential store.
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
+  `DiskLedger` builds Reclaim's per-model disk table, version groups and suggested removals.
   `ModelPurposeStore` owns durable keep reasons; `ModelFamilyReview` builds related-name review groups and identity-bound Compare handoffs.
   `ModelShowdownResults` validates recorded chat cohorts for task-specific result cards and replacement advice.
   Batch moves and quarantine-history refresh use a serial I/O queue; failed
   recovery-record writes restore the moved model or report its recovery path.
 - Studies and Training: `LabCoordinator`, `TrainingSession`.
+- Terminal: `TerminalSession` runs OpenCode or a shell in SwiftTerm's `LocalProcessTerminalView` through the
+  login shell (`-l -i`) with the app's inherited environment; Stop sends SIGHUP. `TerminalWorkspaceView` renders it.
 - Watch, notifications, setup and updates: `WatchCoordinator`,
   `AlertNotifier`, `SetupCoordinator`, `UpdateCoordinator` (checkout
   installs), `Services/ReleaseUpdater.swift` (installed builds). Model revision updates use
