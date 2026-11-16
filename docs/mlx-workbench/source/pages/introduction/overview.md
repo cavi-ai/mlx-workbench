@@ -34,7 +34,7 @@ The sidebar groups seventeen screens. **Models** rows open the Library table, fi
 | Models | **Library** | One row per local model with size, fit and state; search or paste a Hugging Face link; an inspector led by Chat, Serve and Compare |
 | Sources | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
 | | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
-| Attention | **Reclaim** | Quarantine, Trash, source cleanup and restore |
+| Attention | **Reclaim** | Disk by model, suggested removals, duplicate files, quarantine, Trash, source cleanup and restore |
 | Workspaces | **Use** | Persistent conversations, selected model servers and typed task results |
 | | **Serving** | Model APIs, authentication, inference settings, memory, media reuse and client connections |
 | | **Monitor** | Live serving status, reported token usage and response throughput |
