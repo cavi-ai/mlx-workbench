@@ -1,15 +1,23 @@
 # mlx-workbench
 
-A native macOS app for running local models on Apple Silicon. Find a model, convert it to MLX, verify it, serve it on a loopback port, compare it against alternatives and wire it into your coding tools.
+[![Release](https://img.shields.io/github/v/release/cavi-ai/mlx-workbench)](https://github.com/cavi-ai/mlx-workbench/releases/latest)
+[![Release asset downloads](https://img.shields.io/github/downloads/cavi-ai/mlx-workbench/total?label=release%20asset%20downloads)](https://github.com/cavi-ai/mlx-workbench/releases)
+[![License: MIT](https://img.shields.io/github/license/cavi-ai/mlx-workbench)](LICENSE)
 
-MLX Workbench is the desktop front end for [mlx-agent](https://github.com/cavi-ai/mlx-agent). Every operation runs through the engine's `scripts/mlx-agent … --json` command line: each change is previewed before you confirm it, launched work leaves an engine receipt, and serving binds to `127.0.0.1`.
+![Make your models audition: cartoon AI performers on a stage inside a laptop.](docs/images/mlx-workbench-hero.png)
+
+**Find the models that work for you—on your Mac.**
+
+MLX Workbench is a native Apple Silicon app for preparing, comparing and running local AI. Give models the same task, inspect their actual outputs and compare measured performance on your machine. Choose what suits your work, with your model library, conversion and serving in the same app.
+
+Compare text, images, audio, video and 3D results. Read responses side by side, switch between audio outputs on one timeline, inspect images with linked zoom or rotate a generated mesh. Then put your chosen models to work through local endpoints.
+
+<details>
+<summary>Inside Workbench</summary>
 
 ![MLX Workbench Library with the model inspector](docs/images/library.png)
 
 The native Library keeps model readiness and memory fit beside the selected model. Screenshots show illustrative inventory.
-
-<details>
-<summary>Prepare and compare models</summary>
 
 ![Prepare a local model or add one from Hugging Face](docs/images/prepare.png)
 
@@ -44,6 +52,29 @@ To build from source instead, run `make start` in the checkout after `make insta
 5. **Serving → Connect apps** sets up OpenCode, OpenClaw, Hermes, Codex or Claude Code against that endpoint, tests the connection over Chat Completions, Responses or Messages, and keeps backups with **Undo setup**.
 
 See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
+
+## Serve securely. Load just in time.
+
+Keep model endpoints on your Mac with loopback binding. Enable **Require API key** to control client access; keys are stored in Keychain. Manage the address, authentication and inference settings together in **Serving → API & security**.
+
+Saved endpoints support JIT loading through **Load on request**: the endpoint stays available while weights load for the first inference request. Concurrent cold requests share one load. Unload idle models to free memory, keep frequently used models resident, and let active streams finish before unloading.
+
+See [Serving and Monitor](docs/mlx-workbench/source/pages/workflows/run.md) for endpoint setup, API keys and residency controls.
+
+## Tune memory and acceleration
+
+- **Plan around your RAM.** Review model-fit estimates and live headroom. Configure idle unloading, a headroom reserve and a shared agent memory budget. Strata profiles add expert-memory and context controls.
+- **Reuse work where it fits.** MLX-LM offers prompt-text reuse for source-copying edits; supported Qwen vision models can reuse image features. Compatible M5 configurations also offer experimental Q4 prompt-processing acceleration.
+- **Choose the runtime for the job.** Compare one model across runtimes and settings with the same prompts, then inspect both the outputs and measured performance.
+
+| Runtime | What it brings |
+| --- | --- |
+| MLX-LM | Native text decoding and batching, with optional prompt-text reuse |
+| MLX-VLM | Vision-language inference, with repeated-image feature reuse on supported models |
+| [Strata](docs/mlx-workbench/source/pages/workflows/strata.md) | Qwen3.8-Flash-Next text serving from supported GGUF packs, with speculative decoding, expert-memory budgets and context settings |
+| [Splash](docs/mlx-workbench/source/pages/workflows/splash.md) | In-place serving of supported quantized MLX, GGUF and Strata profile weights with a matching DFlash2 draft, from **Start now** or Compare |
+
+Strata and Splash are optional installations. Splash requires an M3 or newer Mac and macOS 26.4 or later. Use [Compare](docs/mlx-workbench/source/pages/workflows/compare.md) to judge the settings on your own workload.
 
 ## What it does
 
