@@ -11,6 +11,8 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-16
 ### Added
 
 - Library: a **Type** column names each model's kind (Text, Vision, Image, Video, Music, Voice and others), and the inspector's **Inference** section lists Splash, Strata and other options with experimental ones marked; **Serve with Splash** opens Start now with Splash selected, Splash appears in the inspector and Compare lanes only for models whose family the scan reports Splash serves, and vision projector GGUF files show as **Projector** with their base model.
@@ -19,13 +21,16 @@ and is versioned independently; its pin follows mlx-agent `main`.
 - Reclaim: **Models** counts disk under the scan folders once per file, lists unrecognized space by folder, and groups versions of one model across MLX, GGUF, the Hugging Face cache and Ollama in a sortable table with exact space freed and removal of any other version, Ollama tags included; fine-tunes stay separate models, a version is kept only when serving, preferred or marked **Keep**, **Suggested removals** names identical copies and other versions to remove and why, **Compare model files** matches standalone model files by full SHA-256 and moves the copy you do not keep to Quarantine with **Put back**, **Copy model review JSON** exports inventory, protections and assessed comparison evidence, and **This Mac** shows memory, disk, processor load, swap and each loaded model's MLX cache with a reviewed **Release cache…**; Model sources columns sort.
 - Terminal: a Workspaces page launches OpenCode or a shell in a chosen folder through your login shell, inside the app, and links to OpenCode's installation guide when the shell cannot find it.
 
+### Changed
+
+- Engine: `mlx-agent` advances to 0.13.0 with an authenticated front door for local routes, Splash serving, typed task endpoints with OpenAI embeddings, one memory budget across endpoints and agent processes, serving workflows, and FP16, FP32 and 2- to 8-bit conversion.
+
 ### Fixed
 
 - Compare: lane tiles keep one size, a lane blocked for the whole run says so once, and a chat comparison with no recorded output groups models by reported error with **Details** while a mixed run keeps its available outputs.
 - Connect app: setup follows symbolic links in a client's config path and writes the real file, and **Choose Folder…** sets the folder that holds the config.
 - Serving: a model whose load failed leads the toolbar label with a **needs attention** badge and the label shortens to fit the toolbar instead of overflowing, and its **Needs attention** status in Serving and Monitor opens the engine's reason in place; the toolbar counts the models Monitor lists, the endpoint list separates live endpoints from saved configurations and links endpoints serving the same local model path, and **Start now** checks discovered running servers before preview and launch and offers **Open existing endpoint**.
 - Watch: Overview shows the last successful model update check with **Check now**, and a failed check keeps existing alerts and retries after an hour while Watch is on.
-
 
 ## [0.9.0] - 2026-11-12
 ### Added
@@ -556,7 +561,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.10.0
 [0.9.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.9.0
 [0.8.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.8.0
 [0.7.1]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.1
