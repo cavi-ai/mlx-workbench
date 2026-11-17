@@ -1,7 +1,6 @@
 # mlx-workbench
 
 [![Release](https://img.shields.io/github/v/release/cavi-ai/mlx-workbench)](https://github.com/cavi-ai/mlx-workbench/releases/latest)
-[![Release asset downloads](https://img.shields.io/github/downloads/cavi-ai/mlx-workbench/total?label=release%20asset%20downloads)](https://github.com/cavi-ai/mlx-workbench/releases)
 [![License: MIT](https://img.shields.io/github/license/cavi-ai/mlx-workbench)](LICENSE)
 
 ![Make your models audition: cartoon AI performers on a stage inside a laptop.](docs/images/mlx-workbench-hero.png)
