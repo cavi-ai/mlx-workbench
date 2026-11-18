@@ -114,7 +114,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   eligibility and execution remain engine-owned.
 - Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
   `ComparisonMediaRunner`, histories via `ComparisonHistoryWorker`),
-  `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; outputs in
+  `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; classification set
+  health via `ClassificationSetHealth`; Classify test sets via `ClassificationTestSets`; outputs in
   `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
   `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
   `ComparisonPickerViews.swift`, `CompareSheets.swift`.

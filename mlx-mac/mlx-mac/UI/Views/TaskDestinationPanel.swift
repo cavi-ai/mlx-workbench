@@ -13,6 +13,8 @@ struct TaskDestinationPanel: View {
     var initialOrigin: ServedTaskOrigin? = nil
     var onEngineSetup: (() -> Void)? = nil
     var onDestinationChange: ((ServedTaskOrigin?) async throws -> Void)? = nil
+    var promptSets: [PromptSet] = []
+    var onScoreSet: ((String) -> Void)? = nil
     @ObservedObject private var sessions: ServedTaskSessions
     @ObservedObject private var workflow: ModelWorkflowCoordinator
     @ObservedObject private var oneOff: InferenceTaskCoordinator
@@ -22,9 +24,10 @@ struct TaskDestinationPanel: View {
     @State private var reviewUncertainty = false
 
     init(appHost: AppHost, model: LibraryModel, initialOrigin: ServedTaskOrigin? = nil, onEngineSetup: (() -> Void)? = nil,
-         onDestinationChange: ((ServedTaskOrigin?) async throws -> Void)? = nil) {
+         onDestinationChange: ((ServedTaskOrigin?) async throws -> Void)? = nil,
+         promptSets: [PromptSet] = [], onScoreSet: ((String) -> Void)? = nil) {
         self.appHost = appHost; self.model = model; self.initialOrigin = initialOrigin; self.onEngineSetup = onEngineSetup
-        self.onDestinationChange = onDestinationChange
+        self.onDestinationChange = onDestinationChange; self.promptSets = promptSets; self.onScoreSet = onScoreSet
         _selectedID = State(initialValue: initialOrigin?.id ?? "local")
         _sessions = ObservedObject(wrappedValue: appHost.servedTasks)
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
@@ -75,7 +78,8 @@ struct TaskDestinationPanel: View {
             }
             if let message = error ?? sessions.error { Text(message).foregroundStyle(WorkbenchColor.failure) }
             if let coordinator {
-                InferenceTaskPanel(coordinator: coordinator, model: model, onEngineSetup: onEngineSetup)
+                InferenceTaskPanel(coordinator: coordinator, model: model, onEngineSetup: onEngineSetup,
+                                   promptSets: promptSets, onScoreSet: onScoreSet)
                     .id(selectedID).disabled(switching)
             } else if switching { ProgressView("Opening server jobs…") }
         }

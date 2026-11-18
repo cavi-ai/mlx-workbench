@@ -8,13 +8,19 @@ struct InferenceTaskPanel: View {
     @ObservedObject private var mediaCapabilities: MediaReuseCapabilities
     let model: LibraryModel
     var onEngineSetup: (() -> Void)? = nil
+    /// Compare's prompt sets; the classifier lists built-in classification sets, then saved ones.
+    var promptSets: [PromptSet] = []
+    /// Opens Compare for this model with the given prompt set selected.
+    var onScoreSet: ((String) -> Void)? = nil
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var understandingMode: UnderstandingMode = .image
     @State private var videoPreviewLoadRevision = UUID()
 
-    init(coordinator: InferenceTaskCoordinator, model: LibraryModel, onEngineSetup: (() -> Void)? = nil) {
+    init(coordinator: InferenceTaskCoordinator, model: LibraryModel, onEngineSetup: (() -> Void)? = nil,
+         promptSets: [PromptSet] = [], onScoreSet: ((String) -> Void)? = nil) {
         _coordinator = ObservedObject(wrappedValue: coordinator)
         self.model = model; self.onEngineSetup = onEngineSetup
+        self.promptSets = promptSets; self.onScoreSet = onScoreSet
         _mediaCapabilities = ObservedObject(wrappedValue: coordinator.mediaCapabilities)
     }
 
@@ -84,22 +90,46 @@ struct InferenceTaskPanel: View {
     }
 
     private var classifier: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+        let draft = coordinator.classificationDraft
+        let sets = ClassificationTestSets.sets(promptSets)
+        let selectedSet = draft.source.flatMap { source in sets.first { $0.id == source.setID } }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Classify")
+            Picker("Test set", selection: Binding(get: { selectedSet?.id ?? "" }, set: { id in
+                if let set = sets.first(where: { $0.id == id }) { coordinator.classificationDraft.load(set) }
+                else { coordinator.classificationDraft.source = nil }
+            })) {
+                ForEach(sets) { set in Text(set.origin == .builtin ? "\(set.name) · Built-in" : set.name).tag(set.id) }
+                Text("Custom").tag("")
+            }
+            .accessibilityIdentifier("task-classification-set")
+            if let selectedSet, let source = draft.source {
+                Picker("Entry", selection: Binding(get: { source.entryID }, set: { id in
+                    coordinator.classificationDraft.load(selectedSet, entryID: id)
+                })) {
+                    ForEach(selectedSet.prompts, id: \.id) { entry in Text(ClassificationTestSets.title(entry)).tag(entry.id) }
+                }
+                .accessibilityIdentifier("task-classification-entry")
+            }
+            if let onScoreSet {
+                Button("Score on this set") { if let selectedSet { onScoreSet(selectedSet.id) } }
+                    .disabled(selectedSet == nil)
+                    .help("Opens Compare with this model and set selected. Nothing runs until you start the comparison.")
+                    .accessibilityIdentifier("task-classification-score-set")
+            }
+            Text("State to classify").font(WorkbenchTypography.metadata)
             TextEditor(text: $coordinator.classificationDraft.state)
                 .frame(minHeight: 72, maxHeight: 120)
+                .accessibilityLabel("State to classify")
                 .accessibilityIdentifier("task-classification-state")
-            if let validationError = coordinator.classificationDraft.validationError,
-               coordinator.classificationDraft.state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || coordinator.classificationDraft.questions.isEmpty || Set(coordinator.classificationDraft.questions.map(\.name)).count != coordinator.classificationDraft.questions.count {
-                Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            if draft.showsValidation, let formError = draft.formError {
+                Text(formError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             ForEach($coordinator.classificationDraft.questions) { $question in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    HStack {
-                        TextField("Question name", text: $question.name).accessibilityIdentifier("task-question-\(coordinator.classificationDraft.questions.firstIndex(where: { $0.id == question.id }) ?? 0)-name")
-                        Picker("Question type", selection: $question.type) {
-                            ForEach(ClassificationQuestionType.allCases) { type in Text(type.title).tag(type) }
-                        }.frame(width: 150)
+                    TextField("Question name", text: $question.name).accessibilityIdentifier("task-question-\(coordinator.classificationDraft.questions.firstIndex(where: { $0.id == question.id }) ?? 0)-name")
+                    Picker("Question type", selection: $question.type) {
+                        ForEach(ClassificationQuestionType.allCases) { type in Text(type.title).tag(type) }
                     }
                     TextField("What should the model decide?", text: $question.instructions, axis: .vertical)
                         .lineLimit(2...4)
@@ -108,8 +138,16 @@ struct InferenceTaskPanel: View {
                     case .choice, .score:
                         ForEach(question.options.indices, id: \.self) { index in
                             HStack {
-                                TextField(question.type == .choice ? "Option label" : "Level description", text: $question.options[index])
+                                TextField(question.type == .choice ? "Option label" : "Level description", text: $question.options[index].label)
                                     .accessibilityIdentifier("task-question-\(coordinator.classificationDraft.questions.firstIndex(where: { $0.id == question.id }) ?? 0)-option-\(index)")
+                                if question.type == .choice {
+                                    TextField("Description (optional)", text: Binding(
+                                        get: { $question.wrappedValue.options.indices.contains(index) ? $question.wrappedValue.options[index].detail ?? "" : "" },
+                                        set: { value in
+                                            guard $question.wrappedValue.options.indices.contains(index) else { return }
+                                            $question.wrappedValue.options[index].detail = value.isEmpty ? nil : value
+                                        }))
+                                }
                                 if question.options.count > 2 {
                                     Button("Remove") { question.options.remove(at: index) }.buttonStyle(.borderless)
                                 }
@@ -120,7 +158,7 @@ struct InferenceTaskPanel: View {
                         TextField("False means… (optional)", text: $question.falseDescription)
                         TextField("True means… (optional)", text: $question.trueDescription)
                     }
-                    if let error = question.error { Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure) }
+                    if draft.showsValidation, let error = question.error { Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure) }
                     if coordinator.classificationDraft.questions.count > 1 {
                         Button("Remove question") { coordinator.classificationDraft.questions.removeAll { $0.id == question.id } }.buttonStyle(.borderless)
                     }

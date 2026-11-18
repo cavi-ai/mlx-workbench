@@ -31,6 +31,7 @@ struct ComparisonWorkspace: View {
             ZStack {
                 QuantView(appHost: appHost, onRouteSelection: onRouteSelection)
                     .environment(\.isRouteActive, active && !appHost.compareHostedModels)
+                    .environment(\.comparisonCoordinator, appHost.comparison)
                     .opacity(appHost.compareHostedModels ? 0 : 1)
                     .allowsHitTesting(!appHost.compareHostedModels).accessibilityHidden(appHost.compareHostedModels)
                 if visitedHosted || appHost.compareHostedModels {
