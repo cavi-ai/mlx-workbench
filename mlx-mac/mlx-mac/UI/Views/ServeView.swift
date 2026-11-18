@@ -39,7 +39,9 @@ struct ServeView: View {
     @ObservedObject private var useWorkspace: UseWorkspaceCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
+    @ObservedObject private var tailnet: TailnetSharingCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
+    @State private var tailnetServer: ServerInfo?
     @State private var mode = ServeMode.saveEndpoint
     @State private var action: EndpointChangeReview?
     @State private var authenticationReview: EndpointAuthenticationReview?
@@ -104,6 +106,7 @@ struct ServeView: View {
         _endpointTest = ObservedObject(wrappedValue: appHost.endpointTest)
         _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        _tailnet = ObservedObject(wrappedValue: appHost.tailnetSharing)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -192,6 +195,9 @@ struct ServeView: View {
         }
         .onChange(of: appHost.handoffs[.openServing], initial: true) { _, _ in focusRequestedServer() }
         .onChange(of: appHost.handoffs[.serveWithRuntime], initial: true) { _, _ in applyRequestedRuntime() }
+        .sheet(item: $tailnetServer) { server in
+            TailnetSharingWizard(server: server, coordinator: appHost.tailnetSharing)
+        }
         .sheet(isPresented: $showsSourceIssues) { sourceIssuesSheet }
         .sheet(item: $portReview) { review in portReviewSheet(review) }
         .sheet(item: gated($action)) { pending in confirmation(pending) }
@@ -408,6 +414,13 @@ struct ServeView: View {
             if let server {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            if let server, server.jit == true, UseChatClient.supports(server) {
+                if let address = tailnet.sharedAddress(port: server.port) {
+                    ServingConnectionField(title: "Tailscale URL", value: address, identifier: "serving-copy-tailnet-url", compact: true)
+                }
+                Button("Share via Tailscale…") { tailnetServer = server }
+                    .accessibilityIdentifier("serving-share-tailnet")
             }
             if case .endpoint(let slot, _, _) = row {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {

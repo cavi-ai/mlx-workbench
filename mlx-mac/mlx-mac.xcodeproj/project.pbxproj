@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A17A00000000000000000003 /* TailnetSharingWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17A00000000000000000004 /* TailnetSharingWizard.swift */; };
+		A17A00000000000000000001 /* TailnetSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17A00000000000000000002 /* TailnetSharing.swift */; };
         E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
         E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
         E71300000000000000000015 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000023; };
@@ -399,6 +401,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A17A00000000000000000004 /* TailnetSharingWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TailnetSharingWizard.swift; sourceTree = "<group>"; };
+		A17A00000000000000000002 /* TailnetSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TailnetSharing.swift; sourceTree = "<group>"; };
 		E71400000000000000000101 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TerminalSession.swift; sourceTree = "<group>"; };
 		E71400000000000000000201 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TerminalWorkspaceView.swift; sourceTree = "<group>"; };
 		E71400000000000000000301 /* TerminalSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionTests.swift; sourceTree = "<group>"; };
@@ -848,6 +852,7 @@
 				D6CA59F570734FDAA723E3E8 /* cavi-api-client-LICENSE.txt */,
 				3BD11D10A4AFB3D6AEE197F8 /* cavi-api-client.js */,
 
+				A17A00000000000000000004 /* TailnetSharingWizard.swift */,
 				B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */,
 				9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */,
 				563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */,
@@ -1011,6 +1016,7 @@
 				A31D00000000000000000005 /* SystemOneHostAdapter.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				26WQREF001 /* WebConvertQueue.swift */,
+				A17A00000000000000000002 /* TailnetSharing.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				4CB6BA6036AACD20164BB94B /* LabView.swift */,
 				4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */,
@@ -1423,6 +1429,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A17A00000000000000000001 /* TailnetSharing.swift in Sources */,
+				A17A00000000000000000003 /* TailnetSharingWizard.swift in Sources */,
 				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
 				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
 				9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */,
