@@ -304,6 +304,65 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
     }
 
+    func testOpencodePlanKeepsModelsListedAtTheWiredBaseURLAndOtherProviders() throws {
+        let before = """
+        {"provider": {
+          "mlx-local": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "http://127.0.0.1:8766/v1"},
+            "models": {"qwen3-8b-alias": {"name": "Qwen alias"}, "qwen3-8b": {"limit": {"context": 32768, "output": 4096}}}},
+          "ollama": {"options": {"baseURL": "http://127.0.0.1:11434/v1"}, "models": {"llama3": {}}}},
+         "model": "ollama/llama3"}
+        """
+        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))
+        let providers = try XCTUnwrap(parsed["provider"] as? [String: Any])
+        let models = try XCTUnwrap((providers["mlx-local"] as? [String: Any])?["models"] as? [String: Any])
+        XCTAssertEqual(models.keys.sorted(), ["qwen3-8b", "qwen3-8b-alias"])
+        XCTAssertEqual(((models["qwen3-8b"] as? [String: Any])?["limit"] as? [String: Any])?["context"] as? Int, 32768)
+        XCTAssertEqual((models["qwen3-8b-alias"] as? [String: Any])?["name"] as? String, "Qwen alias")
+        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertEqual(((providers["ollama"] as? [String: Any])?["models"] as? [String: Any])?.keys.sorted(), ["llama3"])
+
+        let moved = before.replacingOccurrences(of: "127.0.0.1:8766", with: "127.0.0.1:8765")
+        let rewired = try JSONCTolerant.parse(ClientAdapters.opencode.plan(moved, endpoint))
+        let local = (rewired["provider"] as? [String: Any])?["mlx-local"] as? [String: Any]
+        XCTAssertEqual((local?["models"] as? [String: Any])?.keys.sorted(), ["qwen3-8b"])
+        XCTAssertEqual((local?["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8766/v1")
+    }
+
+    func testOpenCodeSetupCheckReadsTheMergedGlobalConfig() async throws {
+        let home = try makeHome()
+        let folder = home.appendingPathComponent(".config/opencode", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func write(_ name: String, _ text: String) throws {
+            try text.write(to: folder.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        let serving = ServerInfo(repo: "qwen3-8b", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .noWorkbenchEntry)
+        try write("opencode.json", """
+        {"provider": {"lmstudio": {"options": {"baseURL": "http://127.0.0.1:1234/v1"}, "models": {"qwen": {}}},
+          "ollama": {"options": {"baseURL": "http://127.0.0.1:11434/v1"}}}, "model": "lmstudio/qwen"}
+        """)
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .noWorkbenchEntry)
+
+        try write("config.json", #"{"provider": {"mlx-local": {"options": {"baseURL": "http://127.0.0.1:8766/v1"}, "models": {"qwen3-8b": {}}}}}"#)
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .ready)
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: []), .notServing(port: 8766))
+        let other = ServerInfo(repo: "org/other", runtime: "mlx_lm", port: 8766, pid: 124, state: "running")
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [other]), .notServing(port: 8766))
+        let tasks = ServerInfo(repo: "qwen3-8b", runtime: "tasks", port: 8766, pid: 125, state: "running")
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [tasks]), .notServing(port: 8766))
+
+        try write("opencode.jsonc", #"{"provider": {"mlx-local": {"options": {"baseURL": "http://127.0.0.1:8765/v1"}}}}"#)
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .notServing(port: 8765))
+        let jsonc = try String(contentsOf: folder.appendingPathComponent("opencode.jsonc"), encoding: .utf8)
+        try write("opencode.jsonc", ClientAdapters.opencode.plan(jsonc, try XCTUnwrap(WireEndpoint(server: serving))))
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .ready)
+        let checked = await makeCoordinator(home: home).openCodeSetup(servers: [serving])
+        XCTAssertEqual(checked, .ready)
+
+        try write("opencode.json", "{ not json")
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .unreadable("opencode.json isn't valid JSON"))
+    }
+
     func testOpencodePlanAddsSchemaOnlyWhenMissingOrEmpty() throws {
         for before in [nil, "{\"$schema\": \"\"}"] {
             let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))

@@ -132,6 +132,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
 - Studies and Training: `LabCoordinator`, `TrainingSession`.
 - Terminal: `TerminalSession` runs OpenCode or a shell in SwiftTerm's `LocalProcessTerminalView` through the
   login shell (`-l -i`) with the app's inherited environment; Stop sends SIGHUP. `TerminalWorkspaceView` renders it.
+  Launch OpenCode first runs `OpenCodeSetupCheck` (via `WiringCoordinator.openCodeSetup`) and offers `ClientSetupWizard`.
 - Watch, notifications, setup and updates: `WatchCoordinator`,
   `AlertNotifier`, `SetupCoordinator`, `UpdateCoordinator` (checkout
   installs), `Services/ReleaseUpdater.swift` (installed builds). Model revision updates use

@@ -30,6 +30,8 @@ Write targets are these files, in their standard folder or a folder chosen with 
 
 **Terminal**, in the Workspaces sidebar group, runs OpenCode or a shell inside Workbench. Choose **OpenCode** or **Shell** and a folder, then **Launch OpenCode** or **Launch Shell**. The command runs through your login shell, so the PATH and settings from your shell configuration apply. When the login shell cannot find OpenCode, the page says so and links to its installation guide. **Stop** ends the running process; after it exits the terminal keeps its last output until the next launch. The terminal stays open while you use other pages.
 
+**Launch OpenCode** first reads serving status and OpenCode's global config: `config.json`, `opencode.json` and `opencode.jsonc` in `~/.config/opencode`, or the folder chosen for OpenCode, merged in that order with later files winning. OpenCode launches when the merged `mlx-local` provider points at a port where a running chat server serves OpenCode's selected `mlx-local` model, or, when another provider is selected, one of the models `mlx-local` lists. Otherwise the page shows **OpenCode has no Workbench models.** with the reason, **Set up OpenCode**, which opens **Connect app…** for OpenCode with the only running chat server preselected, and **Launch anyway**. When no chat server is running, the page says so and offers **Open Run** instead of setup.
+
 **Check existing setup…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable files, links that loop, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
 
 Choose a running endpoint, then **Review config…** beside one client. OpenCode, Zed and Aider can create a config even when its folder does not exist. The wiring preview lists only that client; **Confirm client wiring** performs the existing server and file checks before writing. Rollback restores a backup or moves an unchanged newly created config to Trash. Unreadable configs and links that loop require manual review. Continue’s adapter supports existing legacy JSON files; its guide covers current YAML setup, and the doctor does not create a legacy file for a new installation.
@@ -48,7 +50,7 @@ The board reads each writable client's config and draws what it points at agains
 2. **Preview client wiring** shows the exact change to each config file. The preview binds the server's identity.
 3. **Confirm client wiring** reads fresh serving status first and refuses a server that stopped, was replaced or is ambiguous. It then rechecks each file for changes since the preview, backs it up and writes it atomically.
 
-The result reports zero, partial or full outcomes per client. The opencode adapter adds opencode's `$schema` when it is missing or empty, since opencode rewrites a loaded config without one.
+The result reports zero, partial or full outcomes per client. The opencode adapter adds opencode's `$schema` when it is missing or empty, since opencode rewrites a loaded config without one. It sets the wired model as the default and keeps the models, with their settings, already listed in `mlx-local` for the same port; a different port replaces that list. Other providers are unchanged.
 
 ## API-key protected endpoints
 

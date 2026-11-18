@@ -11,14 +11,14 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+### Fixed
+- Library: **Classify** sends choice criteria as labels with descriptions, which Kev models require.
+- Terminal: **Launch OpenCode** checks OpenCode's merged global config for a Workbench provider served by a running chat server; otherwise it shows **OpenCode has no Workbench models.** with **Set up OpenCode** (or **Open Run** when nothing is serving) and **Launch anyway**. OpenCode wiring keeps the models already listed for the same port.
 ### Added
 
 - Library: **Classify** opens on the first built-in test set entry, ready to start; **Test set** lists built-in sets, then classification sets saved in Compare, then **Custom**, and **Score on this set** opens Compare with the model and set selected. Validation messages appear after an edit or a start attempt, and choice options take descriptions.
 - Compare: classification prompt sets show scored questions, options never expected, and each model's latest accuracy on the set.
 
-### Fixed
-
-- Library: **Classify** sends choice criteria as labels with descriptions, which Kev models require.
 
 ## [0.11.0] - 2026-11-18
 ### Added
