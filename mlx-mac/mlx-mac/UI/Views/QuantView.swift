@@ -273,9 +273,7 @@ struct QuantView: View {
         }
         reusedPromptSet = nil
         changeMode(to: request.mode)
-        if !modePromptSets.contains(where: { $0.id == selectedPromptSetID }) {
-            selectedPromptSetID = modePromptSets.first?.id ?? ""
-        }
+        selectedPromptSetID = request.selectedPromptSetID(in: modePromptSets, current: selectedPromptSetID)
         variantSlots = [model.item.path, nil]
         slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
         strataSettings = [:]; laneSources = [:]; laneRuntimes = [:]; settingsSearchGoal = nil

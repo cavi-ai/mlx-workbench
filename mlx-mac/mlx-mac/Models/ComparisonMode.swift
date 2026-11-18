@@ -18,11 +18,20 @@ struct ComparisonModelRequest: Identifiable, Equatable {
     let id = UUID()
     let modelPath: String
     let mode: ComparisonMode
+    /// A prompt set Compare selects on receipt; nil keeps the current selection.
+    let promptSetID: String?
 
-    init?(model: LibraryModel) {
+    init?(model: LibraryModel, promptSetID: String? = nil) {
         guard model.readiness == .ready, let mode = ComparisonMode.preferred(for: model.item) else { return nil }
         modelPath = model.item.path
         self.mode = mode
+        self.promptSetID = promptSetID
+    }
+
+    /// The requested set when `sets` lists it, else `current` when listed, else the first set.
+    func selectedPromptSetID(in sets: [PromptSet], current: String) -> String {
+        if let promptSetID, sets.contains(where: { $0.id == promptSetID }) { return promptSetID }
+        return sets.contains(where: { $0.id == current }) ? current : sets.first?.id ?? ""
     }
 
     func resolve(in models: [LibraryModel]) -> LibraryModel? {

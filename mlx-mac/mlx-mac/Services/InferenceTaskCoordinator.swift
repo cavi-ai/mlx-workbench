@@ -21,23 +21,29 @@ enum ClassificationQuestionType: String, CaseIterable, Identifiable, Sendable {
     var title: String { rawValue == "noul" ? "True or false" : rawValue.capitalized }
 }
 
+extension DecisionQuestion.Option: ExpressibleByStringLiteral {
+    init(stringLiteral label: String) { self.init(label: label) }
+}
+
 struct ClassificationQuestionDraft: Identifiable, Equatable, Sendable {
     var id = UUID()
     var name = "Question"
     var instructions = ""
     var type: ClassificationQuestionType = .choice
-    var options = ["billing", "other"]
+    /// Choice: labels with optional descriptions. Score: level descriptions, lowest first.
+    var options: [DecisionQuestion.Option] = ["billing", "other"]
     var falseDescription = ""
     var trueDescription = ""
 
     var error: String? {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Add a name and instructions." }
+        let labels = options.map { $0.label.trimmingCharacters(in: .whitespacesAndNewlines) }
         switch type {
         case .choice:
-            guard options.count >= 2, options.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }), Set(options).count == options.count else { return "Choice questions need at least two distinct option labels." }
+            guard labels.count >= 2, !labels.contains(""), Set(options.map(\.label)).count == options.count else { return "Choice questions need at least two distinct option labels." }
         case .score:
-            guard options.count >= 2, options.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return "Score questions need at least two level descriptions." }
+            guard labels.count >= 2, !labels.contains("") else { return "Score questions need at least two level descriptions." }
         case .noul: break
         }
         return nil
@@ -46,8 +52,13 @@ struct ClassificationQuestionDraft: Identifiable, Equatable, Sendable {
     var value: JSONValue {
         var fields: [String: JSONValue] = ["type": .string(type.rawValue), "instructions": .string(instructions)]
         switch type {
-        case .choice: fields["criteria"] = .array(options.map(JSONValue.string))
-        case .score: fields["criteria"] = .array(options.map(JSONValue.string))
+        case .choice:
+            // Every classification backend accepts object criteria (label to description); not every one accepts a label list.
+            fields["criteria"] = .object(Dictionary(options.map { option in
+                let detail = option.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return (option.label, detail.isEmpty ? JSONValue.null : .string(detail))
+            }, uniquingKeysWith: { first, _ in first }))
+        case .score: fields["criteria"] = .array(options.map { .string($0.label) })
         case .noul:
             let descriptions = ["false": falseDescription, "true": trueDescription].filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             if !descriptions.isEmpty { fields["criteria"] = .object(descriptions.mapValues(JSONValue.string)) }
@@ -56,15 +67,64 @@ struct ClassificationQuestionDraft: Identifiable, Equatable, Sendable {
     }
 }
 
-struct ClassificationDraft: Equatable, Sendable {
-    var state = ""
-    var questions = [ClassificationQuestionDraft()]
+extension ClassificationQuestionDraft {
+    /// A test-set question as an editable draft; its expected answer stays with the set.
+    init(_ question: DecisionQuestion) {
+        self.init(name: question.name, instructions: question.instructions,
+                  type: ClassificationQuestionType(rawValue: question.kind.rawValue) ?? .choice,
+                  options: question.kind == .noul ? [] : question.options,
+                  falseDescription: question.falseText ?? "", trueDescription: question.trueText ?? "")
+    }
+}
 
-    var validationError: String? {
+struct ClassificationDraft: Equatable, Sendable {
+    /// The test-set entry the fields were loaded from.
+    struct Source: Equatable, Sendable {
+        let setID: String
+        let entryID: String
+    }
+
+    var state = "" { didSet { if state != oldValue { edited() } } }
+    var questions = [ClassificationQuestionDraft()] { didSet { if questions != oldValue { edited() } } }
+    /// Nil for Custom: nothing was loaded from a set, or a field changed after loading.
+    var source: Source?
+    /// Validation messages show only after an edit or a start attempt.
+    var showsValidation = false
+
+    /// The first built-in classification set's first entry, so a fresh panel starts without typing.
+    static let starter: ClassificationDraft = {
+        var draft = ClassificationDraft()
+        for set in ClassificationTestSets.builtin { if draft.load(set) { break } }
+        return draft
+    }()
+
+    /// Errors in the state or the question list, before any single question's error.
+    var formError: String? {
         guard !state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the state or support request to classify." }
         guard !questions.isEmpty else { return "Add at least one question." }
         guard Set(questions.map(\.name)).count == questions.count else { return "Question names must be unique." }
-        return questions.first(where: { $0.error != nil })?.error
+        return nil
+    }
+
+    var validationError: String? { formError ?? questions.lazy.compactMap(\.error).first }
+
+    var displayedError: String? { showsValidation ? validationError : nil }
+
+    private mutating func edited() {
+        source = nil
+        showsValidation = true
+    }
+
+    /// Loads one entry of a classification test set (the first when `entryID` is nil); false leaves the draft unchanged.
+    @discardableResult
+    mutating func load(_ set: PromptSet, entryID: String? = nil) -> Bool {
+        let entry = entryID == nil ? set.prompts.first : set.prompts.first(where: { $0.id == entryID })
+        guard set.effectiveMode == .classification, let entry, let decisions = entry.decisionQuestions, !decisions.isEmpty else { return false }
+        let loaded = ClassificationDraft(state: entry.text, questions: decisions.map { ClassificationQuestionDraft($0) },
+                                         source: Source(setID: set.id, entryID: entry.id))
+        guard loaded.validationError == nil else { return false }
+        self = loaded
+        return true
     }
 
     func request(modelPath: String) throws -> TaskRequest {
@@ -89,9 +149,13 @@ struct ClassificationDraft: Equatable, Sendable {
                   let instructions = fields["instructions"]?.stringValue else { throw TaskProtocolError.invalidRequest }
             var draft = ClassificationQuestionDraft(name: name, instructions: instructions, type: type)
             switch type {
+            case .choice where fields["criteria"]?.objectValue != nil:
+                let criteria = fields["criteria"]?.objectValue ?? [:]
+                guard criteria.values.allSatisfy({ $0 == .null || $0.stringValue != nil }) else { throw TaskProtocolError.invalidRequest }
+                draft.options = criteria.keys.sorted().map { DecisionQuestion.Option(label: $0, detail: criteria[$0]?.stringValue) }
             case .choice, .score:
                 guard let labels = fields["criteria"]?.arrayValue?.compactMap(\.stringValue), labels.count == fields["criteria"]?.arrayValue?.count else { throw TaskProtocolError.invalidRequest }
-                draft.options = labels
+                draft.options = labels.map { DecisionQuestion.Option(label: $0) }
             case .noul:
                 let criteria = fields["criteria"]?.objectValue ?? [:]
                 if let value = criteria["false"]?.stringValue { draft.falseDescription = value }
@@ -104,6 +168,28 @@ struct ClassificationDraft: Equatable, Sendable {
         guard !drafts.isEmpty else { throw TaskProtocolError.invalidRequest }
         self.state = state
         self.questions = drafts
+        source = nil
+        showsValidation = false
+    }
+}
+
+/// Classification test sets offered by the inspector: built-in sets first, then saved sets.
+enum ClassificationTestSets {
+    static let builtin = (BuiltinPromptSets.all + ComparisonMediaFixtures.all)
+        .filter { $0.origin == .builtin && $0.effectiveMode == .classification }
+
+    /// `promptSets` is Compare's list: built-in and saved sets of every mode.
+    static func sets(_ promptSets: [PromptSet]) -> [PromptSet] {
+        let builtinIDs = Set(builtin.map(\.id))
+        return builtin + promptSets.filter {
+            $0.origin == .userCreated && $0.effectiveMode == .classification && !builtinIDs.contains($0.id)
+        }
+    }
+
+    /// One line naming an entry in the entry picker.
+    static func title(_ entry: PromptEntry) -> String {
+        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+        return text.count > 60 ? String(text.prefix(60)) + "…" : text
     }
 }
 
@@ -439,7 +525,7 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
 
 @MainActor
 final class InferenceTaskCoordinator: ObservableObject {
-    @Published var classificationDraft = ClassificationDraft()
+    @Published var classificationDraft = ClassificationDraft.starter
     @Published var embeddingDraft = EmbeddingTaskDraft()
     @Published var meshGenerationDraft = MeshGenerationTaskDraft()
     @Published var musicDraft = MusicTaskDraft()
@@ -548,6 +634,7 @@ final class InferenceTaskCoordinator: ObservableObject {
 
     func start(kind: TaskKind, model: LibraryModel, review: MediaReuseReview? = nil) async {
         guard canStart else { return }
+        if kind == .classification { classificationDraft.showsValidation = true }
         needsEngineSetup = false
         guard model.readiness == .ready, kind.modelTaskType != nil, model.item.task?.type == kind.modelTaskType else {
             error = "Choose a Ready model with the matching task type."

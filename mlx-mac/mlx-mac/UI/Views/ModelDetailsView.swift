@@ -52,8 +52,8 @@ struct ModelActions {
         onRouteSelection(.prepare)
     }
 
-    func compare() {
-        guard let request = ComparisonModelRequest(model: model) else { return }
+    func compare(promptSetID: String? = nil) {
+        guard let request = ComparisonModelRequest(model: model, promptSetID: promptSetID) else { return }
         appHost.handoffs.send(request, as: .compareModel)
         appHost.selectedModelPath = model.item.path
         onRouteSelection(.compare)
@@ -377,12 +377,14 @@ struct ModelDetailsView: View {
                     if UseMode.modes(for: model).first == .chat {
                         DisclosureGroup("Run a task") {
                             TaskDestinationPanel(appHost: appHost, model: model,
-                                               onEngineSetup: { onRouteSelection(.health) })
+                                               onEngineSetup: { onRouteSelection(.health) },
+                                               promptSets: comparison.promptSets, onScoreSet: { actions.compare(promptSetID: $0) })
                                 .padding(.top, WorkbenchSpacing.sm)
                         }
                     } else {
                         TaskDestinationPanel(appHost: appHost, model: model,
-                                           onEngineSetup: { onRouteSelection(.health) })
+                                           onEngineSetup: { onRouteSelection(.health) },
+                                           promptSets: comparison.promptSets, onScoreSet: { actions.compare(promptSetID: $0) })
                     }
                 }
 

@@ -1222,9 +1222,92 @@ final class InferenceTaskTests: XCTestCase {
         let request = try draft.request(modelPath: "/Models/laya")
         XCTAssertEqual(request.parameters["state"], .string("Refund request"))
         let questions = try XCTUnwrap(request.parameters["questions"]?.objectValue)
-        XCTAssertEqual(questions["route"]?.objectValue?["criteria"], .array([.string("billing"), .string("support")]))
+        // Choice criteria are an object of label to description; every classification backend accepts it.
+        XCTAssertEqual(questions["route"]?.objectValue?["criteria"], .object(["billing": .null, "support": .null]))
         XCTAssertEqual(questions["urgency"]?.objectValue?["criteria"], .array([.string("low"), .string("medium"), .string("high")]))
         XCTAssertEqual(questions["duplicate"]?.objectValue?["criteria"]?.objectValue?["true"], .string("Duplicate charge"))
+    }
+
+    @MainActor
+    func testFreshClassificationPanelLoadsFirstBuiltinSetEntryAndStartsWithoutTyping() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        let set = try XCTUnwrap((BuiltinPromptSets.all + ComparisonMediaFixtures.all).first { $0.effectiveMode == .classification })
+        let entry = try XCTUnwrap(set.prompts.first)
+        XCTAssertNil(coordinator.classificationDraft.validationError)
+        XCTAssertEqual(coordinator.classificationDraft.state, entry.text)
+        await coordinator.start(kind: .classification, model: Self.libraryModel(type: .classification))
+        let evidence = await api.startEvidence()
+        XCTAssertEqual(evidence.count, 1)
+        XCTAssertEqual(evidence.first?.parameters["state"], .string(entry.text))
+        let sent = evidence.first?.parameters["questions"]?.objectValue ?? [:]
+        XCTAssertEqual(Set(sent.keys), Set(entry.decisionQuestions?.map(\.name) ?? []))
+    }
+
+    private static let savedRoutingQuestions = [
+        DecisionQuestion(name: "team", kind: .choice, instructions: "Which team?",
+                         options: [.init(label: "billing", detail: "payments"), .init(label: "other")], expected: "billing"),
+        DecisionQuestion(name: "urgency", kind: .score, instructions: "How urgent?", options: [.init(label: "low"), .init(label: "high")]),
+        DecisionQuestion(name: "refund", kind: .noul, instructions: "Refund?", trueText: "asks for money back", falseText: "no refund"),
+    ]
+
+    private static let savedRoutingSet = PromptSet(
+        id: "saved-routing", name: "Saved routing", useCase: nil,
+        prompts: [PromptEntry(id: "first", text: "First ticket", decisionQuestions: savedRoutingQuestions),
+                  PromptEntry(id: "second", text: "Charged twice, refund please", decisionQuestions: savedRoutingQuestions)],
+        origin: .userCreated, mode: .classification)
+
+    func testClassificationTestSetsListBuiltinSetsBeforeSavedClassificationSets() {
+        let chat = PromptSet(id: "saved-chat", name: "Chat", useCase: nil, prompts: [PromptEntry(id: "p", text: "Hi")], origin: .userCreated)
+        let sets = ClassificationTestSets.sets([Self.savedRoutingSet, chat] + ComparisonMediaFixtures.all)
+        XCTAssertTrue(sets.contains { $0.id == ComparisonMediaFixtures.supportRoutingSet.id })
+        XCTAssertEqual(sets.last?.id, Self.savedRoutingSet.id)
+        XCTAssertEqual(sets.filter { $0.id == Self.savedRoutingSet.id }.count, 1)
+        XCTAssertEqual(sets.prefix { $0.origin == .builtin }.count, sets.count - 1)
+        XCTAssertTrue(sets.allSatisfy { $0.effectiveMode == .classification })
+    }
+
+    func testClassificationSetEntryLoadsAnEngineRequestAndEditingSwitchesToCustom() throws {
+        var draft = ClassificationDraft()
+        XCTAssertTrue(draft.load(Self.savedRoutingSet, entryID: "second"))
+        XCTAssertEqual(draft.source, ClassificationDraft.Source(setID: "saved-routing", entryID: "second"))
+        let request = try draft.request(modelPath: "/Models/kev")
+        XCTAssertEqual(request.parameters["state"], .string("Charged twice, refund please"))
+        let sent = try XCTUnwrap(request.parameters["questions"]?.objectValue)
+        XCTAssertEqual(sent["team"], .object(["type": .string("choice"), "instructions": .string("Which team?"),
+                                              "criteria": .object(["billing": .string("payments"), "other": .null])]))
+        XCTAssertEqual(sent["urgency"]?.objectValue?["criteria"], .array([.string("low"), .string("high")]))
+        XCTAssertEqual(sent["refund"]?.objectValue?["criteria"], .object(["true": .string("asks for money back"), "false": .string("no refund")]))
+
+        var reused = ClassificationDraft()
+        try reused.load(request)
+        XCTAssertEqual(reused.questions.first { $0.name == "team" }?.options.map(\.detail), ["payments", nil])
+        XCTAssertNil(reused.source)
+
+        draft.questions[0].instructions = "Pick a team"
+        XCTAssertNil(draft.source)
+        XCTAssertEqual(draft.state, "Charged twice, refund please")
+        XCTAssertFalse(draft.load(Self.savedRoutingSet, entryID: "missing"))
+    }
+
+    @MainActor
+    func testClassificationErrorsAppearOnlyAfterAnEditOrAStartAttempt() async throws {
+        var draft = ClassificationDraft()
+        XCTAssertNotNil(draft.validationError)
+        XCTAssertNil(draft.displayedError)
+        draft.state = "Refund please"
+        XCTAssertEqual(draft.displayedError, "Add a name and instructions.")
+
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        coordinator.classificationDraft = ClassificationDraft()
+        XCTAssertNil(coordinator.classificationDraft.displayedError)
+        await coordinator.start(kind: .classification, model: Self.libraryModel(type: .classification))
+        XCTAssertEqual(coordinator.classificationDraft.displayedError, "Describe the state or support request to classify.")
+        let evidence = await api.startEvidence()
+        XCTAssertTrue(evidence.isEmpty)
     }
 
     func testReuseRefusesUnsupportedStructuredStateWithoutReplacingDraft() throws {
