@@ -11,15 +11,17 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-11-18
 ### Added
 
 - Settings: **Duplicate serving** under Serving lists the models allowed on more than one endpoint, and **Allow a model…** or **Remove…** changes the list after a review of the exact models.
-- Serving: Splash presets set draft-row verification, reasoning effort, thinking budget, KV and cached-state precision, the persistent SSD cache and its quota, grouped by Decoding, Cache, Limits and Residency, with **Balanced**, **Agent sessions**, **Repeatable output** and **Quick answers** starting points.
+- Serving: **Save as endpoint** selects or creates a named Splash preset for a load-on-request endpoint, and a running Splash endpoint reviews a replacement preset and applies it when idle. Presets set memory and context limits, draft-row verification, reasoning effort, thinking budget, KV and cached-state precision, the persistent SSD cache and its quota, and residency, grouped by Decoding, Cache, Limits and Residency, with **Balanced**, **Agent sessions**, **Repeatable output** and **Quick answers** starting points.
 - Serving: **Share via Tailscale…** shares one running chat endpoint that requires an API key with the devices your tailnet allows, over HTTPS, after you review its address and model ID; the Tailscale address shows in Serving, Live Monitor and the menu bar, which also offers **Stop sharing**, and sharing ends when Workbench quits.
 
 ### Changed
 
-- Splash requires 1.7.0 or later.
+- Engine: `mlx-agent` advances to 0.14.0 with Splash 1.7.0 tuning, Tailscale sharing, one endpoint per model with a duplication allowlist, serving workflow stages and handoffs, shared instruction prefixes and the LTX-2.3 video backend; Splash requires 1.7.0 or later.
 
 ### Fixed
 
@@ -576,7 +578,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.11.0
 [0.10.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.10.0
 [0.9.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.9.0
 [0.8.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.8.0
