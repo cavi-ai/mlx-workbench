@@ -338,6 +338,8 @@ class AppHost {
         // the quality gate's per-signature status is the verdict source.
         self.endpoint.profileLifecycle = { profile in .verifiedProfile(try profiles.resolve(profile), api: api) }
         self.endpoint.inferenceLifecycle = { options in .live(api: api, acceleration: options) }
+        self.endpoint.splashLifecycle = { name in .live(api: api, runtime: "splash", profileName: name) }
+        self.endpoint.splashPresetLookup = { name in try await api.splashPreset(named: name) }
         profiles.suggestionSource = { [weak self] run in
             guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
             return try await comparison.requireCurrentSuggestion(run)

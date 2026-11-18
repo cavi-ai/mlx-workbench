@@ -50,6 +50,8 @@ final class EndpointSupervisor: ObservableObject {
 
     var profileLifecycle: ((ServingProfile) throws -> ServeLifecycle)?
     var inferenceLifecycle: ((LocalInferenceOptions) throws -> ServeLifecycle)?
+    var splashLifecycle: ((String) throws -> ServeLifecycle)?
+    var splashPresetLookup: ((String) async throws -> SplashPreset)?
     var generateAPIKey: () throws -> String = EndpointCredentialStore.generate
     var saveAPIKey: (String) throws -> Void = EndpointCredentialStore.save
     var removeAPIKey: (String) throws -> Void = EndpointCredentialStore.remove
@@ -140,7 +142,7 @@ final class EndpointSupervisor: ObservableObject {
         var slot = old ?? EndpointSlot(enabled: false, port: port, modelPath: modelPath)
         if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
         slot.enabled = true; slot.port = port; slot.modelPath = modelPath
-        slot.servingProfile = nil; slot.profilePreviewHash = nil
+        slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
         if let mode = loadOnRequest ?? (old == nil ? lifecycle.jitPreview != nil : nil) { slot.loadOnRequest = mode }
         if old == nil, slot.usesJIT { slot.memoryPolicy = .automatic }
         guard validate(slot, isNew: old == nil), commit(replacing: slot) else { return }
@@ -166,7 +168,7 @@ final class EndpointSupervisor: ObservableObject {
         var candidate = fleet.slots.first ?? EndpointSlot(enabled: false, port: port, modelPath: profile.modelPath)
         candidate.enabled = true; candidate.port = port; candidate.modelPath = profile.modelPath
         candidate.loadOnRequest = loadOnRequest; candidate.memoryPolicy = loadOnRequest ? .automatic : nil
-        candidate.servingProfile = profile; candidate.profilePreviewHash = nil
+        candidate.servingProfile = profile; candidate.splashPresetName = nil; candidate.profilePreviewHash = nil
         candidate.acceleration = nil; candidate.accelerationPreviewHash = nil
         guard validate(candidate, isNew: fleet.slots.isEmpty) else { return }
         let old = fleet.slots.first
@@ -203,7 +205,7 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil) async {
+    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
@@ -216,6 +218,13 @@ final class EndpointSupervisor: ObservableObject {
                                      loadOnRequest: usesJIT, memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil)
         candidate.acceleration = inference.requested ? inference : nil
         candidate.servingProfile = profile
+        if let splashPreset {
+            guard profile == nil, usesJIT, let lookup = splashPresetLookup else { lastError = "Splash presets require a load-on-request endpoint."; return }
+            do { guard try await lookup(splashPreset.name) == splashPreset else { lastError = "The preset changed. Review it again."; return } }
+            catch { lastError = AppHost.render(error); return }
+            candidate.splashPresetName = splashPreset.name
+            candidate.memoryPolicy = nil
+        }
         var savedKey: String?
         do {
             var token: String?
@@ -227,12 +236,12 @@ final class EndpointSupervisor: ObservableObject {
                 candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic
             }
             guard validate(candidate, isNew: true) else { return }
-            if inference.requested || profile != nil {
+            if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
                 let hash = try await accelerationPreviewHash(candidate)
                 guard !hash.isEmpty, fleet == before else { throw WorkflowEvidenceError.invalid("Endpoint configuration changed. Review the new endpoint again.") }
                 if inference.requested { candidate.accelerationPreviewHash = hash }
-                if profile != nil { candidate.profilePreviewHash = hash }
+                if profile != nil || splashPreset != nil { candidate.profilePreviewHash = hash }
             }
             if let token {
                 try saveAPIKey(token)
@@ -255,8 +264,11 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         guard let old = fleet.slots.first(where: { $0.id == id }) else { return }
         var candidate = old
+        if candidate.splashPresetName != nil && candidate.port != port {
+            lastError = "Review the Splash preset again before changing this endpoint port."; return
+        }
         if candidate.modelPath != modelPath {
-            candidate.servingProfile = nil; candidate.profilePreviewHash = nil
+            candidate.servingProfile = nil; candidate.splashPresetName = nil; candidate.profilePreviewHash = nil
             candidate.acceleration = nil; candidate.accelerationPreviewHash = nil
         }
         candidate.modelPath = modelPath; candidate.port = port; candidate.role = role
@@ -295,7 +307,7 @@ final class EndpointSupervisor: ObservableObject {
               passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         var slot = old
         if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
-        slot.modelPath = modelPath; slot.servingProfile = nil; slot.profilePreviewHash = nil
+        slot.modelPath = modelPath; slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
         guard commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         if old.enabled, !(await stopServing(old)) { syncShim(); return }
@@ -343,6 +355,7 @@ final class EndpointSupervisor: ObservableObject {
         for old in expected {
             guard let index = next.slots.firstIndex(where: { $0.id == old.id }) else { return false }
             next.slots[index].modelPath = modelPath
+            next.slots[index].splashPresetName = nil
             next.slots[index].acceleration = nil
             next.slots[index].accelerationPreviewHash = nil
             next.slots[index].profilePreviewHash = nil
@@ -483,6 +496,9 @@ final class EndpointSupervisor: ObservableObject {
         }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }),
               fleet.slots[index].usesJIT != enabled else { return }
+        guard enabled || fleet.slots[index].splashPresetName == nil else {
+            lastError = "Splash presets require Load on request."; return
+        }
         isUnloading = true
         defer { isUnloading = false }
         do {
@@ -553,6 +569,7 @@ final class EndpointSupervisor: ObservableObject {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Preview inference settings again.")
             }
             try await requireStoppedForInference(preview.slot)
+            if candidate.splashPresetName != nil { candidate.profilePreviewHash = hash }
             guard commit(replacing: candidate) else { return false }
             lastError = nil
             return true
@@ -582,6 +599,14 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     private func unauthenticatedLifecycle(_ slot: EndpointSlot) throws -> ServeLifecycle {
+        if let name = slot.splashPresetName {
+            guard slot.servingProfile == nil, slot.usesJIT, !slot.inferenceOptions.accelerationRequested,
+                  let factory = splashLifecycle else { throw WorkflowEvidenceError.invalid("Splash preset is unavailable for this endpoint.") }
+            let selected = try factory(name)
+            guard slot.inferenceOptions.requested else { return selected }
+            guard let configured = selected.configured else { throw WorkflowEvidenceError.invalid("Inference settings are unavailable for this preset.") }
+            return configured(slot.inferenceOptions)
+        }
         if let profile = slot.servingProfile {
             guard profile.modelPath == slot.modelPath, !slot.inferenceOptions.accelerationRequested, !slot.inferenceOptions.thinkingOff,
                   let factory = profileLifecycle else { throw WorkflowEvidenceError.invalid("Serving profile is unavailable or changed.") }
@@ -599,6 +624,89 @@ final class EndpointSupervisor: ObservableObject {
         return lifecycle
     }
 
+    private func reviewedSplashPreset(slot: EndpointSlot, preset: SplashPreset) async throws -> SplashPresetReview {
+        guard fleet.slots.contains(slot), slot.enabled, slot.usesJIT, slot.servingProfile == nil,
+              pendingStops[slot.id] == nil, let lookup = splashPresetLookup,
+              try await lookup(preset.name) == preset else {
+            throw WorkflowEvidenceError.invalid("Endpoint or preset changed. Refresh and review it again.")
+        }
+        let servers = try await statusProvider()
+        guard fleet.slots.contains(slot), let server = servers.first(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }),
+              server.runtime == "splash", server.matchesUnadaptedModel(slot.modelPath), server.apiKeySHA256 == slot.apiKeySHA256,
+              server.pid != nil, server.processStartedAt != nil, server.receipt != nil else {
+            throw WorkflowEvidenceError.invalid("The running Splash endpoint identity is unavailable or changed.")
+        }
+        guard server.activeRequests == 0 else {
+            throw WorkflowEvidenceError.invalid("Wait for active requests to finish, then review this preset again.")
+        }
+        if slot.splashPresetName != nil || slot.servingProfile != nil {
+            guard ServingProfile.matchesReceipt(server, previewHash: slot.profilePreviewHash) else {
+                throw WorkflowEvidenceError.invalid("The running endpoint does not match its reviewed settings.")
+            }
+        } else { _ = try await confirmedAccelerationHash(server, slot: slot) }
+        var candidate = slot
+        candidate.splashPresetName = preset.name
+        candidate.memoryPolicy = nil
+        let hash = try await accelerationPreviewHash(candidate)
+        guard !hash.isEmpty, fleet.slots.contains(slot) else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review again.") }
+        return SplashPresetReview(slot: slot, preset: preset, server: server, previewHash: hash)
+    }
+
+    func previewSplashPreset(slot: EndpointSlot, preset: SplashPreset) async throws -> SplashPresetReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        return try await reviewedSplashPreset(slot: slot, preset: preset)
+    }
+
+    func confirmSplashPreset(_ review: SplashPresetReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        var saved = false
+        do {
+            let fresh = try await reviewedSplashPreset(slot: review.slot, preset: review.preset)
+            guard fresh.server.sameProcess(as: review.server), fresh.previewHash == review.previewHash,
+                  let stop = lifecycle.stopObservedIfIdle else {
+                throw WorkflowEvidenceError.invalid("Endpoint generation or launch plan changed. Review again.")
+            }
+            // The engine atomically checks idleness while stopping this exact generation.
+            let latest = try await statusProvider()
+            guard fleet.slots.contains(review.slot), let live = latest.first(where: { $0.sameProcess(as: review.server) }),
+                  live.activeRequests == 0 else { throw WorkflowEvidenceError.invalid("Wait for active requests to finish, then review again.") }
+            try await stop(live)
+            guard !(try await statusProvider()).contains(where: { $0.port == review.slot.port && $0.state?.lowercased() == "running" }) else {
+                throw WorkflowEvidenceError.invalid("The previous endpoint is still running.")
+            }
+            var candidate = review.slot
+            candidate.splashPresetName = review.preset.name
+            candidate.memoryPolicy = nil
+            candidate.profilePreviewHash = review.previewHash
+            guard commit(replacing: candidate) else { return false }
+            saved = true
+            let selected = try servingLifecycle(candidate)
+            guard let start = selected.jitStart else { throw WorkflowEvidenceError.invalid("Splash JIT serving is unavailable.") }
+            try await start(candidate.modelPath, candidate.port, review.previewHash, candidate.memoryPolicy)
+            let started = try await statusProvider()
+            guard let live = started.first(where: { $0.port == candidate.port && $0.state?.lowercased() == "running" }),
+                  live.runtime == "splash", live.jit == true, live.matchesUnadaptedModel(candidate.modelPath),
+                  live.apiKeySHA256 == candidate.apiKeySHA256, live.processStartedAt != nil,
+                  ServingProfile.matchesReceipt(live, previewHash: review.previewHash) else {
+                throw WorkflowEvidenceError.invalid("The new endpoint generation could not be verified. Refresh before retrying.")
+            }
+            slotResidencies[candidate.id] = live.residencySummary
+            slotMemoryPolicies[candidate.id] = live.memoryPolicy
+            slotStates[candidate.id] = .running(modelPath: candidate.modelPath, port: candidate.port)
+            lastError = nil
+            return true
+        } catch {
+            if saved, var candidate = fleet.slots.first(where: { $0.id == review.slot.id }) {
+                candidate.enabled = false
+                _ = commit(replacing: candidate)
+            }
+            lastError = saved ? "The endpoint stopped. Review and start it to retry: \(AppHost.render(error))" : "Could not apply the Splash preset: \(AppHost.render(error))"
+            return false
+        }
+    }
+
     func previewAuthentication(slot: EndpointSlot, required: Bool) async throws -> EndpointAuthenticationReview {
         guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
         defer { activeUserOperations -= 1 }
@@ -606,7 +714,7 @@ final class EndpointSupervisor: ObservableObject {
         let token = required ? try generateAPIKey() : nil
         var candidate = slot
         candidate.apiKeySHA256 = token.map(EndpointCredentialStore.digest)
-        if required { candidate.loadOnRequest = true; candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic }
+        if required { candidate.loadOnRequest = true; if candidate.splashPresetName == nil { candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic } }
         let hash = try await accelerationPreviewHash(candidate)
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
         return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, token: token, previewHash: hash)
@@ -620,7 +728,7 @@ final class EndpointSupervisor: ObservableObject {
             try await requireStoppedForAuthentication(review.slot)
             var candidate = review.slot
             candidate.apiKeySHA256 = review.keySHA256
-            if review.keySHA256 != nil { candidate.loadOnRequest = true; candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic }
+            if review.keySHA256 != nil { candidate.loadOnRequest = true; if candidate.splashPresetName == nil { candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic } }
             let hash = try await accelerationPreviewHash(candidate)
             guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
@@ -631,7 +739,7 @@ final class EndpointSupervisor: ObservableObject {
                 try saveAPIKey(token); savedKey = review.keySHA256
             }
             if candidate.inferenceOptions.requested { candidate.accelerationPreviewHash = hash }
-            candidate.profilePreviewHash = nil
+            candidate.profilePreviewHash = candidate.splashPresetName == nil ? nil : hash
             guard validate(candidate, isNew: false), commit(replacing: candidate) else {
                 if let savedKey { try removeAPIKey(savedKey) }
                 return false
@@ -677,6 +785,9 @@ final class EndpointSupervisor: ObservableObject {
             return
         }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }), fleet.slots[index].usesJIT else { return }
+        guard fleet.slots[index].splashPresetName == nil else {
+            lastError = "Review a Splash preset to change this endpoint’s memory settings."; return
+        }
         isUnloading = true
         defer { isUnloading = false }
         var saved = false
@@ -897,7 +1008,7 @@ final class EndpointSupervisor: ObservableObject {
                     slotStates[slot.id] = .degraded(reason: AppHost.render(error))
                     return
                 }
-                if slot.servingProfile != nil && !ServingProfile.matchesReceipt(ours, previewHash: slot.profilePreviewHash) {
+                if (slot.servingProfile != nil || slot.splashPresetName != nil) && !ServingProfile.matchesReceipt(ours, previewHash: slot.profilePreviewHash) {
                     slotStates[slot.id] = .degraded(reason: "The running endpoint does not match the confirmed serving profile. Re-enable the profile."); return
                 }
                 slotResidencies[slot.id] = ours.residencySummary
@@ -966,7 +1077,10 @@ final class EndpointSupervisor: ObservableObject {
             let hash = try await preview(slot.modelPath, slot.port)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
             guard fleet.slots.contains(slot) else { return }
-            if slot.servingProfile != nil, let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) {
+            if slot.splashPresetName != nil, let reviewed = slot.profilePreviewHash, reviewed != hash {
+                throw WorkflowEvidenceError.invalid("The Splash preset changed. Review it before restarting.")
+            }
+            if (slot.servingProfile != nil || slot.splashPresetName != nil), let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) {
                 var candidate = fleet
                 candidate.slots[index].profilePreviewHash = hash
                 guard commit(candidate) else {
@@ -1114,7 +1228,7 @@ final class EndpointSupervisor: ObservableObject {
             let servers = try await statusProvider()
             if let current = servers.first(where: { $0.state?.lowercased() == "running" && $0.port == slot.port }) {
                 let matches: Bool
-                if slot.servingProfile != nil {
+                if slot.servingProfile != nil || slot.splashPresetName != nil {
                     matches = ServingProfile.matchesReceipt(current, previewHash: slot.profilePreviewHash)
                 } else {
                     matches = current.matchesUnadaptedModel(slot.modelPath)

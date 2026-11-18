@@ -112,6 +112,26 @@ final class ScanContractTests: XCTestCase {
         XCTAssertEqual(snapshot.models.first { $0.item.path == "/Models/whisper-base-MLX-4bit" }?.readiness, .needsRuntime)
     }
 
+    func testPreparedStrataCanSelectSplashPresetWithoutChangingAutomaticRuntime() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        payload["outputs"] = [[
+            "path": "/Models/Qwen3.8-Flash-Next-Strata-Q2_0", "name": "Qwen3.8-Flash-Next-Strata-Q2_0",
+            "runtime": "strata", "format": "gguf", "weight_bytes": 66_423_878_624,
+            "quantization": NSNull(), "provenance": NSNull(),
+            "task": ["type": "vision_language", "use_cases": ["vision"], "source": "registry", "confidence": "confirmed"],
+        ]]
+        let result = try WorkbenchAPI.decodeScan(payload)
+        let snapshot = ModelLibraryBuilder.build(scan: result,
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 128 * 1_024 * 1_024 * 1_024, macOSVersion: "26"), now: Date())
+        let model = try XCTUnwrap(snapshot.models.first { $0.item.path == result.outputs.first?.path })
+        XCTAssertNil(model.item.splashFamily)
+        XCTAssertTrue(ServingInferenceContext.supportsSavedSplashPreset(model: model, profile: nil))
+        let automatic = ServingInferenceContext.savedEndpointOverride(model: model, presetSelected: false, profile: nil)
+        XCTAssertEqual(ServingInferenceContext.resolve(model: model, override: automatic).runtime, "strata")
+        let selected = ServingInferenceContext.savedEndpointOverride(model: model, presetSelected: true, profile: nil)
+        XCTAssertEqual(ServingInferenceContext.resolve(model: model, override: selected).runtime, "splash")
+    }
+
     @MainActor
     func testStrataOutputKeepsItsRuntimeAndTextOnlyTask() throws {
         var payload = fixture(named: "convert-scan-valid")
@@ -191,6 +211,13 @@ final class ScanContractTests: XCTestCase {
         let result = try WorkbenchAPI.decodeScan(payload)
 
         XCTAssertEqual(result.outputs.map(\.splashFamily), ["Qwen3.8-27B", nil])
+        let snapshot = ModelLibraryBuilder.build(scan: result,
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 128 * 1_024 * 1_024 * 1_024, macOSVersion: "26"), now: Date())
+        let eligible = try XCTUnwrap(snapshot.models.first { $0.item.splashFamily != nil })
+        XCTAssertEqual(ServingInferenceContext.savedEndpointOverride(model: eligible, presetSelected: true, profile: nil), "splash")
+        XCTAssertEqual(ServingInferenceContext.savedEndpointOverride(model: eligible, presetSelected: false, profile: nil), "auto")
+        let other = try XCTUnwrap(snapshot.models.first { $0.item.path == "/Models/other" })
+        XCTAssertEqual(ServingInferenceContext.savedEndpointOverride(model: other, presetSelected: true, profile: nil), "auto")
     }
 
     func testDecodeScanCarriesDrafterFacts() throws {

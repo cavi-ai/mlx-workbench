@@ -7,6 +7,43 @@ import XCTest
 /// supervisor internals behind the single-slot shim.
 @MainActor
 final class EndpointFleetTests: XCTestCase {
+    func testSplashPresetArgumentsAndFleetReference() throws {
+        var slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/models/test", loadOnRequest: true)
+        slot.splashPresetName = "editing"
+        let decoded = try JSONDecoder().decode(EndpointSlot.self, from: JSONEncoder().encode(slot))
+        XCTAssertEqual(decoded.splashPresetName, "editing")
+        let args = WorkbenchAPI.serveArguments(model: slot.modelPath, runtime: "splash", port: slot.port,
+            receipts: "/receipts", jit: true, profileName: slot.splashPresetName)
+        XCTAssertTrue(args.contains("--profile"))
+        XCTAssertTrue(args.contains("editing"))
+        XCTAssertTrue(args.contains("/receipts"))
+    }
+
+    func testSplashPresetIncludesAllSourceSettingsAndDoesNotOverrideProfilePolicy() throws {
+        let base: [String: Any] = ["splash_max_memory_gb": 24.0, "splash_max_context_tokens": 8192,
+            "min_headroom_gb": 4.0, "idle_timeout": 300, "keep_loaded": false, "unload_under_pressure": true]
+        var changed = base
+        changed["execution_wait_seconds"] = 30
+        let first = try XCTUnwrap(SplashPreset(name: "editing", settings: base))
+        let second = try XCTUnwrap(SplashPreset(name: "editing", settings: changed))
+        XCTAssertNotEqual(first, second)
+        let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 10, keepLoaded: false, minimumHeadroomGB: 2)
+        let args = WorkbenchAPI.serveArguments(model: "/models/test", runtime: "splash", port: 8766,
+            receipts: "/receipts", jit: true, memoryPolicy: policy, profileName: "editing")
+        XCTAssertTrue(args.contains("--profile"))
+        XCTAssertFalse(args.contains("--idle-timeout"))
+        XCTAssertFalse(args.contains("--min-headroom-gb"))
+    }
+
+    func testObservedIdleStopUsesIdentityBoundEngineOption() {
+        let args = WorkbenchAPI.discoveredServiceArguments(action: "stop", port: 8766, receipts: "/receipts",
+                                                            pid: 42, processStart: "birth", onlyWhenIdle: true)
+        XCTAssertEqual(args, ["serve", "stop", "--port", "8766", "--receipts-dir", "/receipts",
+                              "--expected-pid", "42", "--expected-start", "birth", "--if-idle"])
+        XCTAssertFalse(WorkbenchAPI.discoveredServiceArguments(action: "stop", port: 8766, receipts: "/receipts",
+                                                                 pid: 42, processStart: "birth").contains("--if-idle"))
+    }
+
     func testAuthenticationReferenceIsNotTheCredentialAndRequiresJIT() throws {
         let token = "mlxw_" + String(repeating: "a", count: 64)
         let digest = EndpointCredentialStore.digest(token)

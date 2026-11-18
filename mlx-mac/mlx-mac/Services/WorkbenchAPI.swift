@@ -630,7 +630,15 @@ actor WorkbenchAPI {
         }
     }
 
-    func changeDiscoveredService(_ expected: ServerInfo, action: String, policy: EndpointMemoryPolicy? = nil) async throws {
+    static func discoveredServiceArguments(action: String, port: Int, receipts: String, pid: Int,
+                                           processStart: String, onlyWhenIdle: Bool = false) -> [String] {
+        var args = ["serve", action, "--port", String(port), "--receipts-dir", receipts,
+                    "--expected-pid", String(pid), "--expected-start", processStart]
+        if onlyWhenIdle { args.append("--if-idle") }
+        return args
+    }
+
+    func changeDiscoveredService(_ expected: ServerInfo, action: String, policy: EndpointMemoryPolicy? = nil, onlyWhenIdle: Bool = false) async throws {
         guard ["stop", "unload", "policy", "reclaim-cache"].contains(action), let port = expected.port, (1...65535).contains(port),
               let pid = expected.pid, pid > 0, let start = expected.processStartedAt, !start.isEmpty,
               let root = expected.receiptsDirectory, root.hasPrefix("/"),
@@ -646,20 +654,25 @@ actor WorkbenchAPI {
               live.modelIdentity == expected.modelIdentity, live.runtime == expected.runtime, live.state == "running" else {
             throw WorkflowEvidenceError.invalid("The serving process changed. Refresh and review it again.")
         }
+        if onlyWhenIdle {
+            guard action == "stop", live.jit == true, live.activeRequests == 0, live.sameProcess(as: expected) else {
+                throw WorkflowEvidenceError.invalid("Endpoint generation or activity changed. Refresh and review again.")
+            }
+        }
         if action == "unload", live.jit != true || live.activeRequests != 0 {
             throw WorkflowEvidenceError.invalid("Finish active requests before unloading this model.")
         }
         if action == "reclaim-cache", live.jit != true || live.activeRequests != 0 || live.allocatorCache?.canRelease != true {
             throw WorkflowEvidenceError.invalid("This model's cache cannot be released now. Finish active requests and refresh.")
         }
-        var argv = ["serve", action, "--port", String(port), "--receipts-dir", root,
-                    "--expected-pid", String(pid), "--expected-start", start]
+        var argv = Self.discoveredServiceArguments(action: action, port: port, receipts: root, pid: pid,
+                                                   processStart: start, onlyWhenIdle: onlyWhenIdle)
         if action == "policy" {
             guard live.jit == true, let policy, policy.isValid else { throw WorkflowEvidenceError.invalid("Review a valid load-on-request memory policy.") }
             argv += policy.arguments
             if policy.modelMemoryBudgetGB == nil, live.memoryPolicy?.modelMemoryBudgetGB != nil { argv.append("--clear-memory-budget") }
         }
-        _ = try await raw(argv, timeout: 20)
+        _ = try await raw(argv, timeout: onlyWhenIdle ? 25 : 20)
         let after = try await discoverServingServices()
         guard after.errors["engine:" + root] == nil else { throw WorkflowEvidenceError.invalid("The service action could not be confirmed. Refresh serving status.") }
         let remaining = after.servers.first { $0.receiptsDirectory == root && $0.port == port && $0.state == "running" }
@@ -947,11 +960,15 @@ actor WorkbenchAPI {
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                                previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil) -> [String] {
+                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
-        if jit { args += ["--jit"] + (memoryPolicy?.arguments ?? []) }
+        if let profileName { args += ["--profile", profileName] }
+        if jit {
+            args.append("--jit")
+            if profileName == nil { args += memoryPolicy?.arguments ?? [] }
+        }
         if m5Prefill { args += ["--m5-prefill"] }
         if promptLookup { args += ["--prompt-lookup"] }
         if visionCache { args += ["--vision-cache"] }
@@ -972,7 +989,7 @@ actor WorkbenchAPI {
             throw WorkflowEvidenceError.invalid("Local acceleration cannot be combined with a Strata serving profile.")
         }
         let capturedAgent = agentPath
-        let runtime = slot.servingProfile == nil ? "auto" : "strata"
+        let runtime = slot.splashPresetName != nil ? "splash" : (slot.servingProfile == nil ? "auto" : "strata")
         let options = slot.servingProfile?.options
         let preview: [String: Any]
         if let profile = slot.servingProfile {
@@ -981,14 +998,14 @@ actor WorkbenchAPI {
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
                 jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, thinkingOff: slot.inferenceOptions.thinkingOff, maximumTokens: slot.inferenceOptions.maximumTokens,
-                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions)
+                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions)
+            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName)
         if let options { args += options.arguments }
         if slot.inferenceOptions.thinkingOff { args += ["--thinking", "off"] }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
@@ -997,9 +1014,9 @@ actor WorkbenchAPI {
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
                       thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                      apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil) async throws -> [String: Any] {
+                      apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults, profileName: profileName)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -1028,15 +1045,42 @@ actor WorkbenchAPI {
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
                     thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                    apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil) async throws -> [String: Any] {
+                    apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults, profileName: profileName)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
             argv += strataOptions.arguments
         }
         return try await raw(argv, timeout: timeout)
+    }
+
+    func splashPresets() async throws -> [SplashPreset] {
+        let data = try await raw(["serve", "profile", "list", "--receipts-dir", receiptDirectory])
+        guard let profiles = data["profiles"] as? [String: [String: Any]] else {
+            throw WorkflowEvidenceError.invalid("Serving presets are unavailable.")
+        }
+        return profiles.compactMap { SplashPreset(name: $0.key, settings: $0.value) }.sorted { $0.name < $1.name }
+    }
+
+    func splashPreset(named name: String) async throws -> SplashPreset {
+        let data = try await raw(["serve", "profile", "show", name, "--receipts-dir", receiptDirectory])
+        guard let settings = data["settings"] as? [String: Any], let profile = SplashPreset(name: name, settings: settings) else {
+            throw WorkflowEvidenceError.invalid("This preset does not contain Splash settings.")
+        }
+        return profile
+    }
+
+    func saveSplashPreset(_ preset: SplashPreset, replace: Bool = false) async throws {
+        var argv = ["serve", "profile", "save", preset.name, "--receipts-dir", receiptDirectory,
+                    "--min-headroom-gb", String(preset.headroomGB), "--idle-timeout", String(preset.idleSeconds)]
+        if let memory = preset.memoryGB { argv += ["--splash-max-memory-gb", String(memory)] }
+        if let context = preset.contextTokens { argv += ["--splash-max-context", String(context)] }
+        if preset.keepLoaded { argv.append("--keep-loaded") }
+        argv.append(preset.unloadUnderPressure ? "--unload-under-pressure" : "--no-unload-under-pressure")
+        if replace { argv.append("--replace") }
+        _ = try await raw(argv)
     }
 
     func serveStop(port: Int) async throws -> [String: Any] {
