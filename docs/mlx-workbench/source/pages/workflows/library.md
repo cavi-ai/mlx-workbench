@@ -238,6 +238,10 @@ recorded results remain readable. Result and audio files are checked before
 display, playback or export. Missing or changed outputs show an error and do
 not trigger generation.
 
+Video and 3D tasks that another client started with conditioning inputs (an
+image or audio for video; view images or a guide mesh for 3D) open with their
+results and list those inputs. **Reuse** is unavailable for them.
+
 **Result JSON** expands the complete recorded payload. **Export result** saves
 verified result data and metrics while omitting request, source-path and artifact
 references; **Export WAV** saves a separately verified audio output.

@@ -39,7 +39,7 @@ the model being inspected.
 2. **Save as endpoint** keeps a stable loopback port. Review the port, authentication, residency and inference settings, then confirm. **Start now** offers a temporary server with a runtime preview before confirmation.
 3. Select an endpoint to work in **API & security**, **Inference**, **Memory** or **Connect apps**. Its start/stop and prompt actions stay above these sections.
 
-When a discovered endpoint already serves the selected model, **Open existing endpoint** takes you to its settings. The endpoint keeps its existing configuration.
+When a discovered endpoint already serves the selected model, **Open existing endpoint** takes you to its settings. The endpoint keeps its existing configuration. If the engine refuses a start because the model already has an endpoint, the message names that endpoint's address, runtime, state and whether it requires an API key.
 
 The endpoint list separates live endpoints, saved configurations and available models from other apps. Each saved configuration shows its current status. The list shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Connection failures are behind **Connection issues** and do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 

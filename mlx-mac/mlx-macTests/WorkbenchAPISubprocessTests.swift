@@ -872,6 +872,26 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         }
     }
 
+    func testServeStartDuplicateRefusalNamesExistingEndpoint() async throws {
+        func service(_ origin: String) -> [String: Any] {
+            ["origin": origin, "api_base": origin + "/v1", "service_id": String(repeating: "ab12", count: 16),
+             "runtime": "mlx_lm", "state": "ready", "auth_required": true]
+        }
+        let agent = try FixtureAgent(duplicateServeRefusal: [service("http://127.0.0.1:18015"), service("http://203.0.113.5:18016")])
+        defer { agent.remove() }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        do {
+            _ = try await api.serveStart(repo: "org/model", runtime: "auto", port: nil, previewHash: "h")
+            XCTFail("Expected the duplicate refusal to propagate")
+        } catch let error as BridgeError {
+            XCTAssertEqual(error.code, "model_already_served")
+            let text = error.errorDescription ?? ""
+            XCTAssertTrue(text.contains("http://127.0.0.1:18015/v1 (mlx_lm, ready, API key required)"), text)
+            XCTAssertFalse(text.contains("203.0.113.5"), "An endpoint outside loopback is never named: \(text)")
+            XCTAssertTrue(text.contains("Check its state and use the compatible endpoint with your authorized key."), text)
+        }
+    }
+
     func testConvertPreviewUnwrapsPlanEnvelope() async throws {
         // mlx-agent ≥ 0.5.x wraps previews in {plan, requires_confirmation}.
         let agent = try FixtureAgent(
@@ -1370,6 +1390,36 @@ private final class FixtureAgent {
         let script = """
         import json
         print(json.dumps({"status": "error", "error": {"code": "fixture_media_failure", "message": "Media failed"}}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    /// Answers every call with the engine's duplicate-endpoint refusal envelope and exit status 2.
+    convenience init(duplicateServeRefusal services: [[String: Any]]) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let envelope: [String: Any] = [
+            "operation": "serve-start",
+            "status": "error",
+            "data": ["existing_services": services],
+            "warnings": [] as [Any],
+            "error": [
+                "code": "model_already_served",
+                "message": "This model already has a service.",
+                "remediation": "Check its state and use the compatible endpoint with your authorized key.",
+                "retryable": false,
+            ] as [String: Any],
+            "schema_version": "1.0",
+            "generated_at": "2026-01-01T00:00:00+00:00",
+        ]
+        let encoded = try JSONSerialization.data(withJSONObject: envelope).base64EncodedString()
+        let script = """
+        import base64
+        import sys
+
+        print(base64.b64decode("\(encoded)").decode("utf-8"))
+        sys.exit(2)
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }

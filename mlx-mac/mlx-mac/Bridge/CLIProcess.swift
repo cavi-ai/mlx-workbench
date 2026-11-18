@@ -399,12 +399,38 @@ struct CLIProcess {
             return (envelope["data"] as? [String: Any]) ?? [:]
         }
         if let error = envelope["error"] as? [String: Any] {
+            let code = error["code"] as? String ?? "skill_failed"
+            var message = error["message"] as? String ?? "The agent reported an error."
+            if code == "model_already_served",
+               let endpoints = Self.existingEndpoints(envelope["data"] as? [String: Any]) {
+                message += " " + endpoints
+            }
             throw BridgeError.remote(
-                code: error["code"] as? String ?? "skill_failed",
-                message: error["message"] as? String ?? "The agent reported an error.",
+                code: code,
+                message: message,
                 remediation: error["remediation"] as? String ?? "Inspect the agent output and retry."
             )
         }
         throw BridgeError.skillFailed
+    }
+
+    /// Names the loopback endpoints a duplicate-serving refusal reports. Entries outside the
+    /// engine's endpoint contract are skipped, so no other address reaches the message.
+    private static func existingEndpoints(_ data: [String: Any]?) -> String? {
+        let runtimes: Set<String> = ["tasks", "mlx_lm", "mlx-vlm", "strata", "splash"]
+        let states: Set<String> = ["ready", "starting", "unknown"]
+        let prefix = "http://127.0.0.1:"
+        let names = ((data?["existing_services"] as? [[String: Any]]) ?? []).prefix(4).compactMap { service -> String? in
+            guard let origin = service["origin"] as? String, origin.hasPrefix(prefix),
+                  let port = Int(origin.dropFirst(prefix.count)), (1...65535).contains(port),
+                  origin == prefix + String(port),
+                  let base = service["api_base"] as? String, base == origin + "/v1",
+                  let runtime = service["runtime"] as? String, runtimes.contains(runtime),
+                  let state = service["state"] as? String, states.contains(state),
+                  let auth = service["auth_required"] as? Bool else { return nil }
+            return "\(base) (\(runtime), \(state), \(auth ? "API key required" : "no API key"))"
+        }
+        guard !names.isEmpty else { return nil }
+        return (names.count == 1 ? "Existing endpoint: " : "Existing endpoints: ") + names.joined(separator: "; ") + "."
     }
 }
