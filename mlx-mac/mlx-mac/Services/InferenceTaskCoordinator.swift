@@ -713,7 +713,15 @@ final class InferenceTaskCoordinator: ObservableObject {
                 }
                 output = try await TaskArtifactVerifier.verifyVideo(reference: reference, taskID: id, root: artifactRoot)
             }
-            if response.task.kind == .transcribe || response.task.kind == .imageUnderstanding || response.task.kind == .meshGeneration {
+            if let recorded = response.task.inputArtifacts {
+                guard recorded.isValid(for: response.task.kind),
+                      let returned = payload?.objectValue?["input_artifacts"],
+                      let named = try? JSONDecoder().decode(TaskInputArtifacts.self, from: JSONEncoder().encode(returned)),
+                      named == recorded else { throw TaskArtifactVerificationError.invalidReference }
+                if let image = recorded.imagePath {
+                    input = try await TaskArtifactVerifier.verifyImage(reference: image, taskID: id, root: artifactRoot)
+                }
+            } else if response.task.kind == .transcribe || response.task.kind == .imageUnderstanding || response.task.kind == .meshGeneration {
                 guard let recorded = response.task.inputArtifact,
                       let returned = payload?.objectValue?["input_artifact"],
                       let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned)),
@@ -755,6 +763,10 @@ final class InferenceTaskCoordinator: ObservableObject {
         guard model.readiness == .ready, model.item.task?.type == record.kind.modelTaskType,
               model.item.path == record.modelPath else {
             error = "Reuse requires a Ready model with the same task type. The saved result remains available."
+            return
+        }
+        guard record.inputArtifacts == nil else {
+            error = "Reuse is unavailable for tasks with conditioning inputs. The saved result remains available."
             return
         }
         do {

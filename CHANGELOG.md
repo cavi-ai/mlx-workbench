@@ -11,6 +11,10 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+### Fixed
+
+- Serving: a start refused because the model already has an endpoint names that endpoint's address, runtime, state and whether it requires an API key.
+- Library: video and 3D tasks recorded with conditioning inputs open in Recent tasks with their results and list those inputs.
 
 ## [0.10.0] - 2026-11-16
 ### Added

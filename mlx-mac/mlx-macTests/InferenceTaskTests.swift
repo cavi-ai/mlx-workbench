@@ -793,6 +793,91 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(customizedRequest.parameters["seed"], .number(42))
     }
 
+    func testConditionedMeshRecordIsSupported() throws {
+        let id = "11111111-1111-4111-8111-111111111131"
+        let request = TaskArtifactReference(path: "/tasks/artifacts/\(id)/request.json", sha256: String(repeating: "a", count: 64), bytes: 100)
+        func reference(_ name: String) -> [String: Any] {
+            ["path": "/tasks/artifacts/\(id)/\(name)", "sha256": String(repeating: "b", count: 64), "bytes": 32]
+        }
+        let named: [String: Any] = ["image_path": reference("input-0.png"),
+                                    "views": [reference("input-1.png"), reference("input-2.png")],
+                                    "guide": reference("input-3.glb")]
+        let record = try Self.taskRecordV3(id: id, kind: "mesh_generation", modelPath: "/Models/mesh", request: request, inputs: named)
+        XCTAssertEqual(record.schema, "task-run/3")
+        XCTAssertTrue(record.isSupported)
+        XCTAssertEqual(record.inputArtifacts?.summary, "input image, 2 view images, guide mesh")
+        var withoutImage = named
+        withoutImage.removeValue(forKey: "image_path")
+        XCTAssertFalse(try Self.taskRecordV3(id: id, kind: "mesh_generation", modelPath: "/Models/mesh", request: request, inputs: withoutImage).isSupported)
+        XCTAssertFalse(try Self.taskRecordV3(id: id, kind: "video_generation", modelPath: "/Models/mesh", request: request, inputs: named).isSupported)
+    }
+
+    func testConditionedVideoRecordIsSupported() throws {
+        let id = "11111111-1111-4111-8111-111111111141"
+        let request = TaskArtifactReference(path: "/tasks/artifacts/\(id)/request.json", sha256: String(repeating: "a", count: 64), bytes: 100)
+        func reference(_ name: String) -> [String: Any] {
+            ["path": "/tasks/artifacts/\(id)/\(name)", "sha256": String(repeating: "b", count: 64), "bytes": 32]
+        }
+        let named: [String: Any] = ["image": reference("input-0.png"), "audio": reference("input-1.wav")]
+        let record = try Self.taskRecordV3(id: id, kind: "video_generation", modelPath: "/Models/video", request: request, inputs: named)
+        XCTAssertEqual(record.schema, "task-run/3")
+        XCTAssertTrue(record.isSupported)
+        XCTAssertEqual(record.inputArtifacts?.summary, "image, audio")
+        XCTAssertFalse(try Self.taskRecordV3(id: id, kind: "mesh_generation", modelPath: "/Models/video", request: request, inputs: named).isSupported)
+        XCTAssertFalse(try Self.taskRecordV3(id: id, kind: "image_generation", modelPath: "/Models/video", request: request, inputs: named).isSupported)
+    }
+
+    @MainActor
+    func testConditionedMeshHistoryOpensWithNamedInputsAndRefusesReuse() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let model = Self.libraryModel(type: .meshGeneration)
+        let requestData = try JSONSerialization.data(withJSONObject: [
+            "schema": "task-request/2", "kind": "mesh_generation", "model_path": model.item.path,
+            "parameters": ["image_path": "/Inputs/front.png", "views": ["/Inputs/side.png"], "guide": "/Inputs/guide.glb"],
+        ] as [String: Any])
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let image = try Self.pngData()
+        let mesh = Self.meshGLB()
+        let front = fixture.reference(try fixture.write("input-0.png", data: image), data: image)
+        let side = fixture.reference(try fixture.write("input-1.png", data: image), data: image)
+        let guide = fixture.reference(try fixture.write("input-2.glb", data: mesh), data: mesh)
+        let output = fixture.reference(try fixture.write("output.glb", data: mesh), data: mesh)
+        func object(_ reference: TaskArtifactReference) -> [String: Any] {
+            ["path": reference.path, "sha256": reference.sha256, "bytes": reference.bytes]
+        }
+        let named: [String: Any] = ["image_path": object(front), "views": [object(side)], "guide": object(guide)]
+        let record = try Self.taskRecordV3(id: fixture.taskID, kind: "mesh_generation", modelPath: model.item.path,
+                                          request: fixture.reference(requestURL, data: requestData), inputs: named)
+        func response(named: [String: Any], file: String) throws -> TaskResultResponse {
+            let payload = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: [
+                "schema": "mesh/1", "output_artifact": object(output), "input_artifacts": named,
+            ] as [String: Any]))
+            let data = try JSONEncoder().encode(payload)
+            return TaskResultResponse(task: record, artifact: fixture.reference(try fixture.write(file, data: data), data: data), inline: true, result: payload)
+        }
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record],
+                                       resultResponse: try response(named: named, file: "result.json"))
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        await coordinator.refreshRecent()
+        await coordinator.inspect(id: record.id)
+        XCTAssertNil(coordinator.readError)
+        XCTAssertEqual(coordinator.verifiedInput?.reference, front)
+        XCTAssertEqual(coordinator.verifiedOutput?.mesh?.indices, [0, 1, 2])
+        await coordinator.reuse(id: record.id, for: model)
+        XCTAssertEqual(coordinator.error, "Reuse is unavailable for tasks with conditioning inputs. The saved result remains available.")
+        XCTAssertEqual(coordinator.meshGenerationDraft.imagePath, "")
+
+        var changed = named
+        changed.removeValue(forKey: "guide")
+        let tampered = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record],
+                                            resultResponse: try response(named: changed, file: "changed.json"))
+        let refusing = InferenceTaskCoordinator(api: tampered, artifactRoot: fixture.root)
+        await refusing.inspect(id: record.id)
+        XCTAssertNotNil(refusing.readError, "A result naming other inputs than its record must not open")
+        XCTAssertNil(refusing.verifiedOutput)
+    }
+
     @MainActor
     func testCoordinatorAcceptsV2VideoTaskRecords() async throws {
         let requestArtifact = TaskArtifactReference(path: "/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json",
@@ -1688,6 +1773,15 @@ final class InferenceTaskTests: XCTestCase {
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
         object["schema"] = "task-run/2"
         object["input_artifact"] = input.map { ["path": $0.path, "sha256": $0.sha256, "bytes": $0.bytes] as [String: Any] } ?? NSNull()
+        return try JSONDecoder().decode(TaskRecord.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    private static func taskRecordV3(id: String, kind: String, modelPath: String, request: TaskArtifactReference,
+                                     inputs: [String: Any]) throws -> TaskRecord {
+        let base = try taskRecord(id: id, kind: kind, state: "succeeded", modelPath: modelPath, request: request)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+        object["schema"] = "task-run/3"
+        object["input_artifacts"] = inputs
         return try JSONDecoder().decode(TaskRecord.self, from: JSONSerialization.data(withJSONObject: object))
     }
 

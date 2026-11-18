@@ -331,6 +331,42 @@ struct TaskArtifactReference: Codable, Equatable, Sendable {
     let bytes: Int
 }
 
+/// The named conditioning inputs of a `task-run/3` record.
+struct TaskInputArtifacts: Codable, Equatable, Sendable {
+    let image: TaskArtifactReference?
+    let audio: TaskArtifactReference?
+    let imagePath: TaskArtifactReference?
+    let views: [TaskArtifactReference]?
+    let guide: TaskArtifactReference?
+
+    enum CodingKeys: String, CodingKey {
+        case image, audio, views, guide
+        case imagePath = "image_path"
+    }
+
+    /// Mesh tasks name a source image with optional views and guide; video tasks name an image, audio or both.
+    func isValid(for kind: TaskKind) -> Bool {
+        switch kind {
+        case .meshGeneration:
+            imagePath != nil && image == nil && audio == nil && (views.map { (1...15).contains($0.count) } ?? true)
+        case .videoGeneration:
+            imagePath == nil && views == nil && guide == nil
+        default: false
+        }
+    }
+
+    /// The inputs in engine order, for display.
+    var summary: String {
+        var names: [String] = []
+        if image != nil { names.append("image") }
+        if audio != nil { names.append("audio") }
+        if imagePath != nil { names.append("input image") }
+        if let views { names.append(views.count == 1 ? "1 view image" : "\(views.count) view images") }
+        if guide != nil { names.append("guide mesh") }
+        return names.joined(separator: ", ")
+    }
+}
+
 struct TaskErrorDetail: Codable, Equatable, Sendable {
     let code: String
     let message: String
@@ -376,6 +412,7 @@ struct TaskRecord: Codable, Equatable, Sendable {
     let execution: TaskProcessReference?
     let executionUnresolved: Bool
     let inputArtifact: TaskArtifactReference?
+    let inputArtifacts: TaskInputArtifacts?
 
     var isSupported: Bool {
         switch (schema, kind) {
@@ -383,7 +420,9 @@ struct TaskRecord: Codable, Equatable, Sendable {
              ("task-run/2", .transcribe), ("task-run/2", .speak),
              ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding),
              ("task-run/2", .videoGeneration), ("task-run/2", .videoUnderstanding),
-             ("task-run/2", .embedding), ("task-run/2", .meshGeneration): state.isSupported
+             ("task-run/2", .embedding), ("task-run/2", .meshGeneration): state.isSupported && inputArtifacts == nil
+        case ("task-run/3", .videoGeneration), ("task-run/3", .meshGeneration):
+            state.isSupported && inputArtifact == nil && inputArtifacts?.isValid(for: kind) == true
         default: false
         }
     }
@@ -391,6 +430,7 @@ struct TaskRecord: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case schema, id, kind, state, identity, request, result, error, supervisor, execution
         case inputArtifact = "input_artifact"
+        case inputArtifacts = "input_artifacts"
         case modelPath = "model_path"
         case createdAt = "created_at"
         case startedAt = "started_at"

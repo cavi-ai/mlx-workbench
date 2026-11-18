@@ -587,6 +587,10 @@ struct RecentTaskList: View {
                 Text("Engine \(task.identity.engineVersion ?? "unknown") · \(task.identity.backend ?? "backend unknown") \(task.identity.backendVersion ?? "") · Python \(task.identity.pythonVersion ?? "unknown")")
                     .font(WorkbenchTypography.secondary).textSelection(.enabled)
                 if let taskError = task.error { InlineMessage(kind: .warning, text: "\(taskError.message) · \(taskError.remediation)") }
+                if let inputs = task.inputArtifacts {
+                    Text("Conditioning inputs: \(inputs.summary)").font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        .accessibilityIdentifier("task-conditioning-inputs")
+                }
                 if task.kind == .classification,
                    let raw = coordinator.verifiedResult?.json {
                     ClassificationTaskAnswerSummary(projection: TaskResultProjection(raw: raw))
@@ -799,6 +803,7 @@ struct RecentTaskList: View {
         guard model.readiness == .ready else { return "Reuse requires a Ready model." }
         guard Quarantine.resolve(model.item.path) == Quarantine.resolve(task.modelPath) else { return "Select the model recorded for this task." }
         guard model.item.task?.type == task.kind.modelTaskType else { return "The selected model does not support this task type." }
+        guard task.inputArtifacts == nil else { return "Reuse is unavailable for tasks with conditioning inputs." }
         return nil
     }
 }
