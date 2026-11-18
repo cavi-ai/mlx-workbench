@@ -179,10 +179,16 @@ enum ClientAdapters {
             config["$schema"] = "https://opencode.ai/config.json"
         }
         var provider = (config["provider"] as? [String: Any]) ?? [:]
+        // Models already listed at this endpoint's port stay selectable; another port serves other models.
+        let existing = provider[providerID] as? [String: Any]
+        let existingURL = (existing?["options"] as? [String: Any])?["baseURL"] as? String
+        let samePort = existingURL.flatMap(ClientEndpointURL.port(of:)).map { $0 == ClientEndpointURL.port(of: endpoint.baseURL) } ?? false
+        var models = samePort ? (existing?["models"] as? [String: Any]) ?? [:] : [:]
+        if models[endpoint.modelName] == nil { models[endpoint.modelName] = [String: Any]() }
         provider[providerID] = [
             "npm": "@ai-sdk/openai-compatible",
             "options": ["baseURL": endpoint.baseURL, "apiKey": "workbench"],
-            "models": [endpoint.modelName: [String: Any]()],
+            "models": models,
         ]
         config["provider"] = provider
         config["model"] = "\(providerID)/\(endpoint.modelName)"
@@ -390,5 +396,71 @@ enum ClientConfigFile {
         guard let data = fileManager.contents(atPath: path) else { return status(.unreadable("Couldn't be read")) }
         guard let text = String(data: data, encoding: .utf8) else { return status(.unreadable("Isn't UTF-8 text")) }
         return status(adapter.read(text))
+    }
+}
+
+// MARK: - OpenCode setup check
+
+/// Whether OpenCode's global config lists a model that a running Workbench chat server serves.
+enum OpenCodeSetupCheck {
+    enum Result: Equatable, Sendable {
+        case ready
+        case noWorkbenchEntry
+        /// The Workbench entry's port has no running chat server serving a model the entry lists.
+        case notServing(port: Int)
+        case unreadable(String)
+    }
+
+    /// OpenCode's global config files in load order; a later file wins on conflicting keys.
+    static let fileNames = ["config.json", "opencode.json", "opencode.jsonc"]
+
+    static func run(home: URL, directory: String? = nil, servers: [ServerInfo]) -> Result {
+        result(reading(home: home, directory: directory), servers: servers)
+    }
+
+    /// The files in the folder setup writes to, deep-merged in load order and read like the file setup writes.
+    static func reading(home: URL, directory: String? = nil, fileManager: FileManager = .default) -> ClientConfigReading {
+        let adapter = ClientAdapters.opencode
+        guard let path = adapter.configPath(home: home, directory: directory) else { return .fileAbsent }
+        let folder = (path as NSString).deletingLastPathComponent
+        var merged: [String: Any] = [:]
+        var found = false
+        for name in fileNames {
+            let file = (folder as NSString).appendingPathComponent(name)
+            guard fileManager.fileExists(atPath: file) else { continue }
+            guard let size = (try? fileManager.attributesOfItem(atPath: file))?[.size] as? Int, size <= ClientConfigFile.sizeLimit,
+                  let data = fileManager.contents(atPath: file), let text = String(data: data, encoding: .utf8) else {
+                return .unreadable("\(name) couldn't be read")
+            }
+            found = true
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            guard let object = try? JSONCTolerant.parse(text) else { return .unreadable("\(name) isn't valid JSON") }
+            merged = merge(merged, object)
+        }
+        guard found else { return .fileAbsent }
+        guard let text = try? JSONCTolerant.serialize(merged) else { return .unreadable("Couldn't be read") }
+        return adapter.read(text)
+    }
+
+    /// An entry is ready when exactly one running chat server on its port serves a model it lists.
+    static func result(_ reading: ClientConfigReading, servers: [ServerInfo]) -> Result {
+        let chat = servers.filter { WireEndpoint(server: $0) != nil }
+        switch reading {
+        case .fileAbsent, .noWorkbenchEntry:
+            return .noWorkbenchEntry
+        case .unreadable(let reason):
+            return .unreadable(reason)
+        case .entries(let entries), .notDefault(let entries):
+            let matches = entries.compactMap { ClientEndpointMatch.match($0, servers: chat) }
+            if matches.contains(where: { if case .live = $0 { return true }; return false }) { return .ready }
+            return matches.first.map { .notServing(port: $0.port) } ?? .noWorkbenchEntry
+        }
+    }
+
+    private static func merge(_ base: [String: Any], _ overlay: [String: Any]) -> [String: Any] {
+        base.merging(overlay) { old, new in
+            guard let old = old as? [String: Any], let new = new as? [String: Any] else { return new }
+            return merge(old, new)
+        }
     }
 }

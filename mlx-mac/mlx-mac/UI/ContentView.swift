@@ -176,7 +176,7 @@ struct ContentView: View {
         case .settings:
             SettingsView(appHost: appHost, onRouteSelection: navigate)
         case .terminal:
-            TerminalWorkspaceView()
+            TerminalWorkspaceView(appHost: appHost, onRouteSelection: navigate)
         }
     }
 

@@ -11,6 +11,9 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+### Fixed
+
+- Terminal: **Launch OpenCode** checks OpenCode's merged global config for a Workbench provider served by a running chat server; otherwise it shows **OpenCode has no Workbench models.** with **Set up OpenCode** (or **Open Run** when nothing is serving) and **Launch anyway**. OpenCode wiring keeps the models already listed for the same port.
 
 ## [0.11.0] - 2026-11-18
 ### Added

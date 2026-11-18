@@ -84,6 +84,13 @@ final class WiringCoordinator: ObservableObject {
     /// The config folder chosen for a client; nil uses its standard location.
     func configDirectory(for clientID: String) -> String? { locations.directory(for: clientID) }
 
+    /// OpenCode's global config, read off the main actor from the folder setup writes to, checked against `servers`.
+    func openCodeSetup(servers: [ServerInfo]) async -> OpenCodeSetupCheck.Result {
+        let home = home, directory = locations.directory(for: ClientAdapters.opencode.clientID)
+        let reading = await Task.detached(priority: .utility) { OpenCodeSetupCheck.reading(home: home, directory: directory) }.value
+        return OpenCodeSetupCheck.result(reading, servers: servers)
+    }
+
     /// Choose a client's config folder, or nil for its standard location; a pending review is discarded.
     func setConfigDirectory(_ path: String?, for clientID: String) {
         guard !isApplying, !isCheckingServer else { return }
