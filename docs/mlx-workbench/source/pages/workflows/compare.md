@@ -65,6 +65,8 @@ Each entry is a **State**, the text to classify, with up to 32 typed questions:
 
 Leave **Expected answer** at **Not scored** to record a question's answer without grading it. Start with the built-in **Support routing** set: six support tickets with department and refund expectations, and urgency where the ticket states it.
 
+Under each classification set in the prompt set list, Compare shows the number of states, how many questions have an expected answer, and one line per model that completed a run of that set with its latest share of expected answers matched and its run count. Warnings name questions with no expected answer, choice options and score levels that are never the expected answer, and a set where at least two models all matched every expected answer, which means the set does not separate them.
+
 A choice answer is the model's chosen label. A score answer is the most likely level; the reported expected level is shown beside it. A true-or-false answer is true when its reported probability is 0.5 or higher. The lane metric pools every scored question across prompts. Each answer shows its probability, and wrong answers show the probability given to the expected one. Probabilities are the models' reported values; Compare never recalibrates them. Each lane keeps the returned answers as JSON.
 
 ### Media reuse settings

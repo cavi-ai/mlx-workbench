@@ -90,7 +90,7 @@ target. The inspector also holds:
 - **Measured performance**: throughput and first-token latency aggregated from past comparisons. Classification models list their completed classification comparisons, newest first: the prompt set, when it ran, the share of expected answers this model matched and every other lane's share, including System One models from Hosted & mixed runs. **Review** opens a local run in Compare.
 - **Generate image**, for ready image-generation models: enter a prompt and use the displayed defaults, or adjust dimensions, steps and seed in **Advanced options**. Completed output is retained with its task and can be inspected or exported as a verified PNG.
 - **Understand image**, for ready vision-language models: choose a local image and ask a question. The engine retains a verified input copy with the task; the result shows the full answer and input image.
-- **Classify**, for ready classification models: a state description and questions with choice, score or probability answers.
+- **Classify**, for ready classification models: a test set and entry, or a custom state description and questions with choice, score or probability answers. A fresh panel opens on the first built-in set's first entry, so **Start** runs without typing. **Score on this set** opens Compare with this model and the chosen set selected, without starting a run.
 - **Generate music**, for ready music models: caption, optional lyrics, duration, steps and seed, with playback of completed audio.
 - **Transcribe audio** and **Speak text**, for ready speech models: transcription from a selected local audio file, or text-to-speech with optional voice, speed and language settings.
 
@@ -134,10 +134,16 @@ explicit preparation and confirmation step. Your task inputs stay in the form; t
 selecting a compatible engine. Passing a model's verification check does not
 establish that an older engine supports durable tasks for that model.
 
-For **Classify**, describe the **State** and add at least one question with
-instructions. Choice questions use two or more ordered labels; score questions
+For **Classify**, **Test set** lists the built-in classification sets first,
+then classification prompt sets saved in Compare, then **Custom**. **Entry**
+loads one prompt's state and questions, including choice option descriptions;
+expected answers stay with the set. Editing any field switches the set to
+**Custom** and keeps the values. For a custom request, describe the **State to
+classify** and add at least one question with instructions. Choice questions
+use two or more labels, each with an optional description; score questions
 use two or more ordered level descriptions. A probability question (`noul`)
-can include descriptions of its false and true outcomes. Results show the
+can include descriptions of its false and true outcomes. Validation messages
+appear after an edit or a start attempt. Results show the
 model's returned answers, probabilities and score legend when available.
 Missing fields remain unavailable. These are model predictions, without
 ground-truth checks or an automatic quality verdict. To grade models against

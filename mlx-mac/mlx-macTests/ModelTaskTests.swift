@@ -154,6 +154,22 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertNil(request.resolve(in: [changed]))
     }
 
+    func testScoreOnSetHandoffSelectsThatSetInCompare() throws {
+        let model = comparisonModel(.classification)
+        let builtin = ComparisonMediaFixtures.supportRoutingSet
+        let saved = PromptSet(id: "saved-routing", name: "Saved routing", useCase: nil, prompts: builtin.prompts,
+                              origin: .userCreated, mode: .classification)
+        let request = try XCTUnwrap(ComparisonModelRequest(model: model, promptSetID: saved.id))
+        XCTAssertEqual(request.mode, .classification)
+        XCTAssertEqual(request.promptSetID, saved.id)
+        XCTAssertEqual(request.selectedPromptSetID(in: [builtin, saved], current: builtin.id), saved.id)
+        let plain = try XCTUnwrap(ComparisonModelRequest(model: model))
+        XCTAssertNil(plain.promptSetID)
+        XCTAssertEqual(plain.selectedPromptSetID(in: [builtin, saved], current: saved.id), saved.id)
+        let missing = try XCTUnwrap(ComparisonModelRequest(model: model, promptSetID: "deleted-set"))
+        XCTAssertEqual(missing.selectedPromptSetID(in: [builtin, saved], current: "gone"), builtin.id)
+    }
+
     @MainActor
     func testLibraryHandoffUpdatesAnAlreadyMountedComparison() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-handoff-\(UUID().uuidString)")

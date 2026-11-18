@@ -67,6 +67,7 @@ struct ComparisonPromptSetPanel: View {
     let onSelect: (String) -> Void
     @State var query = ""
     @FocusState private var searchFocused: Bool
+    @Environment(\.comparisonCoordinator) private var comparison
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -109,6 +110,9 @@ struct ComparisonPromptSetPanel: View {
                             }
                             .buttonStyle(.plain).help(set.name)
                             .accessibilityAddTraits(selection == set.id ? [.isSelected] : [])
+                            if set.effectiveMode == .classification, let comparison {
+                                ClassificationSetHealthView(set: set, comparison: comparison)
+                            }
                         }
                     }
                 }
@@ -116,6 +120,42 @@ struct ComparisonPromptSetPanel: View {
         }
         .padding(WorkbenchSpacing.md).frame(width: 400)
         .onAppear { searchFocused = true }
+    }
+}
+
+private struct ComparisonCoordinatorKey: EnvironmentKey {
+    static let defaultValue: ComparisonCoordinator? = nil
+}
+
+extension EnvironmentValues {
+    var comparisonCoordinator: ComparisonCoordinator? {
+        get { self[ComparisonCoordinatorKey.self] }
+        set { self[ComparisonCoordinatorKey.self] = newValue }
+    }
+}
+
+/// One summary line, the set's warnings and each model's latest accuracy on the set.
+struct ClassificationSetHealthView: View {
+    let set: PromptSet
+    @ObservedObject var comparison: ComparisonCoordinator
+
+    var body: some View {
+        let health = ClassificationSetHealth(set: set, runs: comparison.runs) {
+            ComparePresentation.displayName(for: $0, models: [])
+        }
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(health.summary).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ForEach(health.warnings, id: \.self) { warning in
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+            }
+            ForEach(health.models) { model in
+                Text("\(model.name): \(model.accuracy.map { "\(Int(($0 * 100).rounded()))% matched" } ?? "unscored") (\(model.correct) of \(model.scored)), \(model.runs) \(model.runs == 1 ? "run" : "runs")")
+                    .font(WorkbenchTypography.metadata).lineLimit(1).truncationMode(.middle)
+            }
+        }
+        .padding(.horizontal, WorkbenchSpacing.sm)
+        .accessibilityElement(children: .combine)
     }
 }
 
