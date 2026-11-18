@@ -24,7 +24,7 @@ Splash 1.6 serves the Qwen3.8-27B, Qwen3.6-35B-A3B, Qwen3.5-122B-A10B and Qwen3.
 
 The Library scan asks Splash's engine which family each quantized MLX model's configuration describes, and offers Splash only for those it serves. In the Library, select such a model or a Strata profile and choose **Serve with Splash** under **Inference**; Run opens **Start now** with **Text · Splash** selected. From **Serving** directly, choose **Start now** and set **Runtime** to **Text · Splash**. Then select **Preview serve**. The preview checks the launcher, its version, the model and the draft, and the launch configuration lists the Splash version and served model ID. Confirm to start; startup waits up to 15 minutes for the model to load.
 
-**Skip reasoning** sets the default reasoning effort to none. Output length belongs to the client. Splash does not load on request: it serves from **Start now**, and releases idle weights itself. Saved endpoints keep their automatic runtime.
+**Skip reasoning** sets the default reasoning effort to none. Output length belongs to the client. For a compatible model, **Save as endpoint** can select or create a named Splash preset and use **Load on request**. Presets are saved by the engine and can set memory and context limits, minimum headroom, idle timeout and residency. The endpoint reviews those settings before launch. For a running Splash endpoint, review a replacement preset and retry when the endpoint is idle; active requests are not interrupted by this action. If the gateway started before the engine update, wait for active requests to finish and restart it before applying a preset.
 
 ## Compare runtimes
 

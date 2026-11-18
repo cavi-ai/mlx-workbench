@@ -122,6 +122,49 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
     }
 }
 
+/// A saved engine profile, scoped to the active receipt directory.
+struct SplashPreset: Equatable, Identifiable {
+    let name: String
+    let memoryGB: Double?
+    let contextTokens: Int?
+    let headroomGB: Double
+    let idleSeconds: Int
+    let keepLoaded: Bool
+    let unloadUnderPressure: Bool
+    /// Complete engine settings bind the selection and review to the same source.
+    let sourceSettings: Data
+    var id: String { name }
+
+    init?(name: String, settings: [String: Any]) {
+        guard (settings["splash_max_memory_gb"] != nil || settings["splash_max_context_tokens"] != nil),
+              let headroom = (settings["min_headroom_gb"] as? NSNumber)?.doubleValue,
+              let idle = settings["idle_timeout"] as? Int, let keep = settings["keep_loaded"] as? Bool,
+              let pressure = settings["unload_under_pressure"] as? Bool,
+              let canonical = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys]) else { return nil }
+        self.name = name
+        self.memoryGB = (settings["splash_max_memory_gb"] as? NSNumber)?.doubleValue
+        self.contextTokens = settings["splash_max_context_tokens"] as? Int
+        self.headroomGB = headroom; self.idleSeconds = idle; self.keepLoaded = keep; self.unloadUnderPressure = pressure
+        self.sourceSettings = canonical
+    }
+
+    var summary: String {
+        let memory = memoryGB.map { String(format: "%.1f GB memory", $0) } ?? "Default memory"
+        let context = contextTokens.map { "\($0.formatted()) context" } ?? "Default context"
+        let idle = keepLoaded ? "Keep loaded" : (idleSeconds == 0 ? "No idle unload" : "Idle \(idleSeconds) s")
+        return "\(memory) · \(context) · Reserve \(headroomGB.formatted()) GB · \(idle)"
+    }
+
+}
+
+struct SplashPresetReview: Identifiable {
+    let id = UUID()
+    let slot: EndpointSlot
+    let preset: SplashPreset
+    let server: ServerInfo
+    let previewHash: String
+}
+
 /// One supervised endpoint: a model on its own stable loopback port.
 /// `role == nil` is first-class — an unassigned stable port, exactly like
 /// the original single endpoint.
@@ -135,6 +178,8 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var loadOnRequest: Bool?
     var memoryPolicy: EndpointMemoryPolicy?
     var servingProfile: ServingProfile? = nil
+    /// Name of a receipt-scoped engine Splash profile.
+    var splashPresetName: String? = nil
     var profilePreviewHash: String? = nil
     /// Existing fleet files use this storage key for local inference settings.
     var acceleration: LocalInferenceOptions? = nil
@@ -221,6 +266,9 @@ extension EndpointFleetConfig {
             }
             if let reason = slot.inferenceOptions.validationError {
                 throw EndpointFleetValidation.invalidInference(slot.id, reason)
+            }
+            if slot.splashPresetName != nil && (!slot.usesJIT || slot.servingProfile != nil || slot.inferenceOptions.accelerationRequested) {
+                throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
             }
             if slot.servingProfile != nil && (slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)

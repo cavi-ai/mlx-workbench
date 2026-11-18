@@ -5,6 +5,56 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testSplashPresetRefusesBusyUnknownAndStaleGeneration() async throws {
+        let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let world = SplashPresetWorld(root: home)
+        var slot = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/splash", loadOnRequest: true)
+        slot.apiKeySHA256 = world.digest
+        let store = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { world.status() },
+            store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")), fleetStore: store)
+        let preset = try XCTUnwrap(SplashPreset(name: "editing", settings: ["splash_max_memory_gb": 24.0,
+            "min_headroom_gb": 4.0, "idle_timeout": 300, "keep_loaded": false, "unload_under_pressure": true]))
+        supervisor.splashLifecycle = { _ in world.lifecycle }
+        supervisor.splashPresetLookup = { _ in preset }
+        for active: Int? in [nil, 1] {
+            world.setActive(active)
+            do { _ = try await supervisor.previewSplashPreset(slot: slot, preset: preset); XCTFail("Activity must block review") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("active requests")) }
+        }
+        world.setActive(0)
+        let review = try await supervisor.previewSplashPreset(slot: slot, preset: preset)
+        world.replaceGeneration()
+        let accepted = await supervisor.confirmSplashPreset(review)
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(world.stopCount, 0)
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+    }
+
+    func testSplashPresetHandoverUsesIdleStopAndReviewedReceipt() async throws {
+        let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let world = SplashPresetWorld(root: home)
+        var slot = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/splash", loadOnRequest: true)
+        slot.apiKeySHA256 = world.digest
+        let store = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { world.status() },
+            store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")), fleetStore: store)
+        let preset = try XCTUnwrap(SplashPreset(name: "editing", settings: ["splash_max_memory_gb": 24.0,
+            "min_headroom_gb": 4.0, "idle_timeout": 300, "keep_loaded": false, "unload_under_pressure": true]))
+        supervisor.splashLifecycle = { _ in world.lifecycle }
+        supervisor.splashPresetLookup = { _ in preset }
+        let review = try await supervisor.previewSplashPreset(slot: slot, preset: preset)
+        let accepted = await supervisor.confirmSplashPreset(review)
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(world.stopCount, 1); XCTAssertEqual(world.startCount, 1)
+        XCTAssertEqual(supervisor.fleet.slots.first?.splashPresetName, "editing")
+        XCTAssertEqual(supervisor.fleet.slots.first?.apiKeySHA256, world.digest)
+        XCTAssertNil(supervisor.fleet.slots.first?.memoryPolicy)
+        XCTAssertEqual(supervisor.fleet.slots.first?.profilePreviewHash, "splash-reviewed")
+    }
+
     func testServingInferenceFlagsAndDecodingSurvivePersistence() throws {
         let input = Data(#"{"m5Prefill":false,"promptLookup":false,"visionCache":false,"thinkingOff":true,"maximumTokens":2048}"#.utf8)
         let options = try JSONDecoder().decode(LocalInferenceOptions.self, from: input)
@@ -1651,5 +1701,44 @@ private final class RevisionStopFenceWorld: @unchecked Sendable {
                 XCTFail("The reused port must not match the selected process")
             }
         })
+    }
+}
+
+private final class SplashPresetWorld: @unchecked Sendable {
+    let root: URL
+    let digest = String(repeating: "a", count: 64)
+    private let lock = NSLock()
+    private var active: Int? = 0
+    private var generation = 1
+    private var running = true
+    private var stops = 0
+    private var starts = 0
+    init(root: URL) { self.root = root }
+    var stopCount: Int { lock.withLock { stops } }
+    var startCount: Int { lock.withLock { starts } }
+    func setActive(_ value: Int?) { lock.withLock { active = value } }
+    func replaceGeneration() { lock.withLock { generation += 1 } }
+    func status() -> [ServerInfo] {
+        lock.withLock {
+            guard running else { return [] }
+            return [ServerInfo(path: "/Models/splash", runtime: "splash", port: 8925, pid: generation, state: "running",
+                startedAt: "started", receipt: root.appendingPathComponent("receipt.json").path, jit: true,
+                modelState: "loaded", activeRequests: active, processStartedAt: "birth-\(generation)", apiKeySHA256: digest)]
+        }
+    }
+    var lifecycle: ServeLifecycle {
+        ServeLifecycle(preview: { _, _ in "splash-reviewed" }, start: { _, _, _ in }, stop: { _ in XCTFail("Unsafe stop must not run") },
+            stopObservedIfIdle: { expected in
+                try self.lock.withLock {
+                    guard self.running, self.generation == expected.pid, self.active == 0 else { throw WorkflowEvidenceError.invalid("busy") }
+                    self.running = false; self.stops += 1
+                }
+            }, jitPreview: { _, _, _ in "splash-reviewed" }, jitStart: { path, port, hash, _ in
+                try self.lock.withLock {
+                    self.generation += 1; self.running = true; self.starts += 1
+                    try JSONSerialization.data(withJSONObject: ["pid": self.generation, "port": port, "path": path, "preview_hash": hash])
+                        .write(to: self.root.appendingPathComponent("receipt.json"))
+                }
+            }, authenticated: { _ in self.lifecycle })
     }
 }

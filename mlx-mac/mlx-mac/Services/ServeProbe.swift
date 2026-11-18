@@ -342,6 +342,7 @@ struct ServeLifecycle: Sendable {
     var start: @Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> Void
     var stop: @Sendable (_ port: Int) async throws -> Void
     var stopObserved: (@Sendable (ServerInfo) async throws -> Void)? = nil
+    var stopObservedIfIdle: (@Sendable (ServerInfo) async throws -> Void)? = nil
     var jitPreview: (@Sendable (_ modelPath: String, _ port: Int, _ policy: EndpointMemoryPolicy?) async throws -> String)? = nil
     var jitStart: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String, _ policy: EndpointMemoryPolicy?) async throws -> Void)? = nil
     var unload: (@Sendable (_ port: Int, _ expectedPID: Int) async throws -> Void)? = nil
@@ -356,30 +357,31 @@ extension ServeLifecycle {
     /// Production lifecycle: the agent selects the declared loader from local model metadata.
     /// `thinkingOff` serves with the chat template's reasoning switched off (canary verification).
     static func live(api: WorkbenchAPI, runtime: String = "auto", strataOptions: StrataComparisonOptions? = nil,
-                     thinkingOff: Bool = false, acceleration: LocalInferenceOptions = .init(), apiKeySHA256: String? = nil) -> ServeLifecycle {
+                     thinkingOff: Bool = false, acceleration: LocalInferenceOptions = .init(), apiKeySHA256: String? = nil, profileName: String? = nil) -> ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration, profileName: profileName)
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
                     timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime), strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration, profileName: profileName)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
             },
             stopObserved: { server in try await api.changeDiscoveredService(server, action: "stop") },
+            stopObservedIfIdle: { server in try await api.changeDiscoveredService(server, action: "stop", onlyWhenIdle: true) },
             jitPreview: { modelPath, port, policy in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration, profileName: profileName)
                 return response.string("preview_hash") ?? ""
             },
             jitStart: { modelPath, port, hash, policy in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration, profileName: profileName)
             },
             unload: { port, pid in
                 _ = try await api.serveUnload(port: port, expectedPID: pid)
@@ -389,19 +391,19 @@ extension ServeLifecycle {
             },
             reviewedPreview: { modelPath, port in
                 let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration, profileName: profileName)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             },
             startWithReceipt: { path, port, hash in
                 let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
                     timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime), strataOptions: strataOptions,
-                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration)
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache, apiKeySHA256: apiKeySHA256, requestDefaults: acceleration, profileName: profileName)
                 return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             },
             authenticated: { digest in .live(api: api, runtime: runtime, strataOptions: strataOptions,
-                thinkingOff: thinkingOff, acceleration: acceleration, apiKeySHA256: digest) },
+                thinkingOff: thinkingOff, acceleration: acceleration, apiKeySHA256: digest, profileName: profileName) },
             configured: { options in .live(api: api, runtime: runtime, strataOptions: strataOptions,
-                thinkingOff: thinkingOff, acceleration: options, apiKeySHA256: apiKeySHA256) }
+                thinkingOff: thinkingOff, acceleration: options, apiKeySHA256: apiKeySHA256, profileName: profileName) }
         )
     }
 }

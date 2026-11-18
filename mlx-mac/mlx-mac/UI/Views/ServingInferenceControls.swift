@@ -16,6 +16,16 @@ struct ServingInferenceContext: Equatable {
         }
     }
 
+    static func supportsSavedSplashPreset(model: LibraryModel?, profile: ServingProfile?) -> Bool {
+        guard let model, profile == nil else { return false }
+        return model.item.servingRuntime == "strata" || model.item.splashFamily != nil
+    }
+
+    static func savedEndpointOverride(model: LibraryModel?, presetSelected: Bool, profile: ServingProfile?) -> String {
+        guard presetSelected, supportsSavedSplashPreset(model: model, profile: profile) else { return "auto" }
+        return "splash"
+    }
+
     var isText: Bool { runtime == "mlx_lm" }
     var isVision: Bool { runtime == "mlx-vlm" }
     var isStrata: Bool { runtime == "strata" }

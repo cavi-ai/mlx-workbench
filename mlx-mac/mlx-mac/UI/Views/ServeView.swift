@@ -56,6 +56,11 @@ struct ServeView: View {
     @State private var openingExistingEndpoint = false
     @State private var keepModelLoaded = false
     @State private var requireAPIKey = false
+    @State private var splashPresets: [SplashPreset] = []
+    @State private var selectedSplashPresetName = ""
+    @State private var showingSplashEditor = false
+    @State private var splashPresetSlot: EndpointSlot?
+    @State private var splashPresetError: String?
     @State private var endpointPortError: String?
     @State private var expandedDetails: Set<String> = []
     @State private var revealedModelPath: String?
@@ -225,7 +230,22 @@ struct ServeView: View {
         .sheet(item: $memoryReviewSlot) { slot in
             EndpointMemoryReviewSheet(slot: slot, endpoint: endpoint, api: appHost.api)
         }
-        .task { await modelWorkflow.refreshServers() }
+        .sheet(isPresented: $showingSplashEditor) {
+            SplashPresetEditor(api: appHost.api) { preset in
+                await loadSplashPresets()
+                selectedSplashPresetName = preset.name
+            }
+        }
+        .sheet(item: $splashPresetSlot) { slot in
+            SplashPresetApplySheet(slot: slot, endpoint: endpoint, api: appHost.api)
+        }
+        .task { await modelWorkflow.refreshServers(); await loadSplashPresets() }
+        .onChange(of: selectedSplashPresetName) { _, name in
+            if !name.isEmpty { newSlotLoadOnRequest = true }
+            inferenceOptions = inferenceContext.normalized(inferenceOptions)
+            modelWorkflow.invalidateServePreview()
+        }
+        .onChange(of: selectedModel?.item.path) { _, _ in selectedSplashPresetName = "" }
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
         .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
         .onChange(of: isRouteActive) { _, active in
@@ -785,14 +805,39 @@ struct ServeView: View {
         }
     }
 
+    private func loadSplashPresets() async {
+        do { splashPresets = try await appHost.api.splashPresets(); splashPresetError = nil }
+        catch { splashPresetError = AppHost.render(error) }
+    }
+
+    private var selectedSplashPreset: SplashPreset? {
+        splashPresets.first { $0.name == selectedSplashPresetName }
+    }
+
     private var inferenceContext: ServingInferenceContext {
-        ServingInferenceContext.resolve(model: selectedModel, override: mode == .startNow ? runtime : "auto", profile: modelWorkflow.servingProfile, chip: appHost.hardwareProfile.chip)
+        let selectedRuntime = mode == .startNow ? runtime : ServingInferenceContext.savedEndpointOverride(model: selectedModel, presetSelected: selectedSplashPreset != nil, profile: modelWorkflow.servingProfile)
+        return ServingInferenceContext.resolve(model: selectedModel, override: selectedRuntime, profile: modelWorkflow.servingProfile, chip: appHost.hardwareProfile.chip)
     }
 
     @ViewBuilder
     private var inferenceSettings: some View {
         ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest)
             .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
+        if mode == .saveEndpoint && ServingInferenceContext.supportsSavedSplashPreset(model: selectedModel, profile: modelWorkflow.servingProfile) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack {
+                    Picker("Splash preset", selection: $selectedSplashPresetName) {
+                        Text("Default settings").tag("")
+                        ForEach(splashPresets) { preset in Text(preset.name).tag(preset.name) }
+                    }
+                    Button("New preset…") { showingSplashEditor = true }
+                }
+                if let preset = selectedSplashPreset {
+                    Text(preset.summary).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+                if let splashPresetError { InlineMessage(kind: .warning, text: splashPresetError) }
+            }
+        }
         if inferenceContext.isStrata {
             ServingProfileControls(profiles: appHost.servingProfiles, workflow: modelWorkflow, endpoint: endpoint,
                 modelPath: shownPath, onCompare: { setup in
@@ -1050,6 +1095,10 @@ struct ServeView: View {
             if slot.usesJIT {
                 Button("Memory management…") { workspaceTab = .memory }
             }
+            if server?.runtime == "splash" || slot.splashPresetName != nil {
+                Button("Splash presets…") { splashPresetSlot = slot }
+                    .disabled(endpoint.pendingStops[slot.id] != nil)
+            }
             Button("Inference settings…") { inferenceSlot = slot }
                 .disabled(endpoint.pendingStops[slot.id] != nil)
                 .help("Review inference settings. Stop the endpoint before changing them.")
@@ -1106,6 +1155,10 @@ struct ServeView: View {
         let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
         return
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                if slot.splashPresetName != nil {
+                    Text("Memory settings come from the selected Splash preset. Review another preset to change them.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
                 HStack {
                     Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
                         Text("Never").tag(0)
@@ -1166,7 +1219,7 @@ struct ServeView: View {
             }
             .padding(.top, WorkbenchSpacing.sm)
             .controlSize(.small)
-            .disabled(endpoint.isUnloading)
+            .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
     }
 
     private func memoryBinding<Value>(_ slot: EndpointSlot, _ keyPath: WritableKeyPath<EndpointMemoryPolicy, Value>) -> Binding<Value> {
@@ -1254,7 +1307,7 @@ struct ServeView: View {
 
     private func prepareAddEndpoint() {
         switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: newSlotRole,
-                                 loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey, inference: inferenceOptions, profile: modelWorkflow.servingProfile) {
+                                 loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey, inference: inferenceOptions, profile: modelWorkflow.servingProfile, splashPreset: inferenceContext.isSplash ? selectedSplashPreset : nil) {
         case .noModel: return
         case .portRejected(let message): endpointPortError = message
         case .review(let review): endpointPortError = nil; action = review
@@ -1280,9 +1333,13 @@ struct ServeView: View {
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
             }
+            if !pending.remove, let name = pending.slot?.splashPresetName {
+                Text("Splash preset: \(name)").font(WorkbenchTypography.secondary)
+            }
             if !pending.remove, pending.slot == nil {
                 Text(pending.inference.summary).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 if let profile = pending.profile { Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary) }
+                if let preset = pending.splashPreset { Text("Splash preset: \(preset.name) · \(preset.summary)").font(WorkbenchTypography.secondary) }
             }
             if pending.unverified { InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.") }
             if let warning = pending.memoryWarning { InlineMessage(kind: .warning, text: warning) }
@@ -1457,6 +1514,7 @@ struct EndpointChangeReview: Identifiable {
     let remove: Bool
     var inference = LocalInferenceOptions()
     var profile: ServingProfile? = nil
+    var splashPreset: SplashPreset? = nil
 }
 
 /// Reviews endpoint changes and rechecks them against current state when confirmed.
@@ -1478,9 +1536,10 @@ struct EndpointChanges {
     }
 
     func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: UseCase?, loadOnRequest: Bool,
-                   keepLoaded: Bool, requireKey: Bool, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil) -> AddOutcome {
+                   keepLoaded: Bool, requireKey: Bool, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) -> AddOutcome {
         guard let model else { return .noModel }
         if let error = inference.validationError { return .portRejected(error) }
+        if splashPreset != nil && (!loadOnRequest || profile != nil) { return .portRejected("Splash presets require a load-on-request endpoint.") }
         if let profile, !profile.hasPassedVerification || profile.modelPath != model.item.path {
             return .portRejected("Verify the selected serving profile for this model before adding the endpoint.")
         }
@@ -1491,7 +1550,7 @@ struct EndpointChanges {
         }
         return .review(EndpointChangeReview(model: model, slot: nil, port: port, role: role, loadOnRequest: loadOnRequest,
             keepLoaded: keepLoaded, requireKey: requireKey, memoryWarning: memoryWarning(for: model.item.path),
-            unverified: !appHost.isModelVerified(model.item.path), remove: false, inference: inference, profile: profile))
+            unverified: !appHost.isModelVerified(model.item.path), remove: false, inference: inference, profile: profile, splashPreset: splashPreset))
     }
 
     func review(slot: EndpointSlot, remove: Bool) -> EndpointChangeReview {
@@ -1549,7 +1608,7 @@ struct EndpointChanges {
                     loadOnRequest: review.loadOnRequest,
                     memoryPolicy: review.loadOnRequest ? EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: review.keepLoaded,
                         minimumHeadroomGB: 2, releaseAfterRequest: !review.keepLoaded) : nil,
-                    requireAPIKey: review.requireKey, inference: review.inference, profile: review.profile)
+                    requireAPIKey: review.requireKey, inference: review.inference, profile: review.profile, splashPreset: review.splashPreset)
             }
         }
         return nil
@@ -1658,5 +1717,110 @@ private struct EndpointInferenceEditor: View {
                     }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
                 }
             }
+    }
+}
+
+
+private struct SplashPresetEditor: View {
+    let api: WorkbenchAPI
+    let saved: (SplashPreset) async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var memory = ""
+    @State private var context = ""
+    @State private var headroom = "2"
+    @State private var idle = "300"
+    @State private var keepLoaded = false
+    @State private var pressure = true
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("New Splash preset").font(WorkbenchTypography.cardTitle)
+            TextField("Name", text: $name)
+            TextField("Maximum memory in GB (optional)", text: $memory)
+            TextField("Maximum context tokens (optional)", text: $context)
+            TextField("Headroom reserve in GB", text: $headroom)
+            TextField("Idle timeout in seconds", text: $idle)
+            Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in if value { pressure = false } }
+            Toggle("Unload under memory pressure", isOn: $pressure).disabled(keepLoaded)
+            if let error { InlineMessage(kind: .warning, text: error) }
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Save preset") { Task { await save() } }.buttonStyle(.workbenchPrimary).disabled(busy)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 440)
+    }
+
+    private func save() async {
+        guard let reserve = Double(headroom), let seconds = Int(idle),
+              memory.isEmpty || Double(memory) != nil, context.isEmpty || Int(context) != nil,
+              !memory.isEmpty || !context.isEmpty else {
+            error = "Enter a memory or context limit, a headroom reserve, and an idle timeout."; return
+        }
+        var values: [String: Any] = ["min_headroom_gb": reserve, "idle_timeout": seconds,
+                                     "keep_loaded": keepLoaded, "unload_under_pressure": pressure]
+        if let value = Double(memory) { values["splash_max_memory_gb"] = value }
+        if let value = Int(context) { values["splash_max_context_tokens"] = value }
+        guard let preset = SplashPreset(name: name, settings: values) else { error = "Review the preset values."; return }
+        busy = true
+        defer { busy = false }
+        do { try await api.saveSplashPreset(preset); await saved(preset); dismiss() }
+        catch { self.error = AppHost.render(error) }
+    }
+}
+
+private struct SplashPresetApplySheet: View {
+    let slot: EndpointSlot
+    @ObservedObject var endpoint: EndpointSupervisor
+    let api: WorkbenchAPI
+    @Environment(\.dismiss) private var dismiss
+    @State private var presets: [SplashPreset] = []
+    @State private var selected = ""
+    @State private var review: SplashPresetReview?
+    @State private var error: String?
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Splash preset").font(WorkbenchTypography.cardTitle)
+            Text("Endpoint on port \(slot.port)")
+            Picker("Preset", selection: $selected) {
+                Text("Choose a preset").tag("")
+                ForEach(presets) { preset in Text(preset.name).tag(preset.name) }
+            }.onChange(of: selected) { _, _ in review = nil }
+            if let preset = presets.first(where: { $0.name == selected }) {
+                Text(preset.summary).font(WorkbenchTypography.secondary)
+            }
+            if review != nil {
+                Text("The endpoint will restart with these settings. Requests must be idle when you confirm.")
+                    .font(WorkbenchTypography.secondary)
+            }
+            if let error { InlineMessage(kind: .warning, text: error) }
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                if let review {
+                    Button("Apply preset") {
+                        Task { busy = true; if await endpoint.confirmSplashPreset(review) { dismiss() } else { error = endpoint.lastError }; busy = false }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy)
+                } else {
+                    Button("Review change") { Task { await prepare() } }.buttonStyle(.workbenchPrimary).disabled(busy || selected.isEmpty)
+                }
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
+        .task {
+            do { presets = try await api.splashPresets(); selected = slot.splashPresetName ?? "" }
+            catch { self.error = AppHost.render(error) }
+        }
+    }
+
+    private func prepare() async {
+        guard let preset = presets.first(where: { $0.name == selected }) else { return }
+        busy = true; defer { busy = false }
+        do { review = try await endpoint.previewSplashPreset(slot: slot, preset: preset); error = nil }
+        catch { self.error = AppHost.render(error) }
     }
 }
