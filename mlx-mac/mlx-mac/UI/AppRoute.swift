@@ -26,8 +26,11 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case sources = "sources"
     case terminal = "terminal"
 
+    /// Sidebar sections, in display order.
     enum Group: String, CaseIterable, Hashable {
         case models = "Models"
+        case sources = "Sources"
+        case attention = "Attention"
         case workspaces = "Workspaces"
         case system = "System"
         case settings = "Settings"
@@ -65,28 +68,33 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         Self.allCases.firstIndex(of: self) ?? 0
     }
 
-    /// Sidebar order within each group; independent of the enum case order,
-    /// which stays fixed for `order` and mount order.
+    /// The one sidebar order: `AppSidebar` renders it and ⌘1…⌘9 follow it.
+    /// Independent of the enum case order, which stays fixed for `order` and mount order.
     private static let sidebarOrder: [Group: [AppRoute]] = [
-        .models: [.library, .sources, .discover, .prepare, .reclaim],
-        .workspaces: [.use, .compare, .run, .monitor, .training, .studies, .terminal],
+        .models: [.library],
+        .sources: [.sources, .discover],
+        .attention: [.reclaim],
+        .workspaces: [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal],
         .system: [.overview, .activity, .clientSetup, .health],
         .settings: [.settings],
     ]
 
-    /// Grouped projection for sidebars and command menus. Routes come from
-    /// `AppRoute.allCases` through an ordered list per group, so legacy
-    /// destinations never appear.
+    /// Pages of one sidebar section, in order; legacy destinations never appear.
+    static func routes(in group: Group) -> [AppRoute] {
+        (sidebarOrder[group] ?? []).filter { $0.group == group && $0.navigationDestination == $0 }
+    }
+
+    /// Grouped projection of the sidebar, section by section.
     static var grouped: [(group: Group, routes: [AppRoute])] {
-        Group.allCases.map { group in
-            (group: group, routes: (sidebarOrder[group] ?? []).filter { $0.group == group && $0.navigationDestination == $0 })
-        }
+        Group.allCases.map { (group: $0, routes: routes(in: $0)) }
     }
 
     var group: Group {
         switch self {
-        case .library, .sources, .discover, .prepare, .reclaim, .lmStudio, .adopt: return .models
-        case .use, .compare, .run, .monitor, .training, .studies, .terminal: return .workspaces
+        case .library, .lmStudio: return .models
+        case .sources, .discover, .adopt: return .sources
+        case .reclaim: return .attention
+        case .use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal: return .workspaces
         case .overview, .activity, .clientSetup, .health: return .system
         case .settings: return .settings
         }

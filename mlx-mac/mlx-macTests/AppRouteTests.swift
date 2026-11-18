@@ -19,18 +19,27 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
-        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [5, 7, 4, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Sources", "Attention", "Workspaces", "System", "Settings"])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [1, 2, 1, 8, 4, 1])
     }
 
     func testSidebarGroupsFollowTheModelFirstOrder() {
         let grouped = AppRoute.grouped
-        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(grouped[0].routes, [.library, .sources, .discover, .prepare, .reclaim])
-        XCTAssertEqual(grouped[1].routes, [.use, .compare, .run, .monitor, .training, .studies, .terminal])
-        XCTAssertEqual(grouped[2].routes, [.overview, .activity, .clientSetup, .health])
-        XCTAssertEqual(grouped[3].routes, [.settings])
+        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Sources", "Attention", "Workspaces", "System", "Settings"])
+        XCTAssertEqual(grouped.map(\.routes), [
+            [.library], [.sources, .discover], [.reclaim],
+            [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal],
+            [.overview, .activity, .clientSetup, .health], [.settings],
+        ])
     }
+
+    func testCollapsedSidebarSectionShowsItsPagesCount() {
+        let badges: [AppRoute: String] = [.overview: "3", .health: "2", .reclaim: "12 GB"]
+        XCTAssertEqual(AppSidebar.headerBadge(for: .system, expanded: false, badges: badges), "5")
+        XCTAssertNil(AppSidebar.headerBadge(for: .system, expanded: true, badges: badges))
+        XCTAssertNil(AppSidebar.headerBadge(for: .workspaces, expanded: false, badges: badges))
+    }
+
 
     func testUnknownOrMissingSelectionOpensLibraryAndValidIDsWin() {
         XCTAssertEqual(AppRoute(rawID: nil), .library)
@@ -73,13 +82,10 @@ final class AppRouteTests: XCTestCase {
 
     func testCommandNumberShortcutsFollowTheSidebarOrder() {
         XCTAssertEqual(ContentView.shortcutRoutes, [
-            .library, .discover, .prepare, .reclaim, .use, .compare, .run, .activity, .health, .settings,
+            .library, .sources, .discover, .reclaim, .use, .run, .monitor, .compare, .prepare, .settings,
         ])
-        XCTAssertEqual(Set(ContentView.shortcutRoutes).count, ContentView.shortcutRoutes.count)
         let sidebarOrder = AppRoute.grouped.flatMap(\.routes)
-        let positions = ContentView.shortcutRoutes.compactMap { sidebarOrder.firstIndex(of: $0) }
-        XCTAssertEqual(positions.count, ContentView.shortcutRoutes.count)
-        XCTAssertEqual(positions, positions.sorted())
+        XCTAssertEqual(Array(ContentView.shortcutRoutes.prefix(9)), Array(sidebarOrder.prefix(9)))
     }
 
     func testOnlyPrepareAndRunCarryAToolbarSubtitle() {
@@ -123,21 +129,21 @@ final class AppRouteTests: XCTestCase {
             (.overview, "System", "Overview", "house"),
             (.library, "Models", "Library", "books.vertical"),
             (.use, "Workspaces", "Use", "bubble.left.and.bubble.right"),
-            (.prepare, "Models", "Prepare", "shippingbox"),
+            (.prepare, "Workspaces", "Prepare", "shippingbox"),
             (.compare, "Workspaces", "Compare", "chart.bar"),
             (.run, "Workspaces", "Serving", "server.rack"),
             (.activity, "System", "Activity", "clock.arrow.circlepath"),
-            (.reclaim, "Models", "Reclaim", "square.3.layers.3d"),
+            (.reclaim, "Attention", "Reclaim", "square.3.layers.3d"),
             (.clientSetup, "System", "Clients", "arrow.triangle.branch"),
             (.health, "System", "Health", "stethoscope"),
-            (.discover, "Models", "Discover", "magnifyingglass"),
+            (.discover, "Sources", "Discover", "magnifyingglass"),
             (.lmStudio, "Models", "LM Studio", "square.and.arrow.down"),
             (.studies, "Workspaces", "Studies", "square.split.2x1"),
             (.training, "Workspaces", "Training", "sparkles"),
-            (.adopt, "Models", "Adopt", "hand.tap"),
+            (.adopt, "Sources", "Adopt", "hand.tap"),
             (.settings, "Settings", "Settings", "gearshape"),
             (.monitor, "Workspaces", "Monitor", "waveform.path.ecg"),
-            (.sources, "Models", "Model sources", "externaldrive.connected.to.line.below"),
+            (.sources, "Sources", "Model sources", "externaldrive.connected.to.line.below"),
             (.terminal, "Workspaces", "Terminal", "apple.terminal")
         ]
 

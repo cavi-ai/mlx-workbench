@@ -1077,6 +1077,7 @@ actor WorkbenchAPI {
                     "--min-headroom-gb", String(preset.headroomGB), "--idle-timeout", String(preset.idleSeconds)]
         if let memory = preset.memoryGB { argv += ["--splash-max-memory-gb", String(memory)] }
         if let context = preset.contextTokens { argv += ["--splash-max-context", String(context)] }
+        argv += preset.tuning.arguments
         if preset.keepLoaded { argv.append("--keep-loaded") }
         argv.append(preset.unloadUnderPressure ? "--unload-under-pressure" : "--no-unload-under-pressure")
         if replace { argv.append("--replace") }

@@ -34,6 +34,34 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(recorder.values[2].argv, ["serve", "tailnet", "stop", "--expected-share-id", "id"])
     }
 
+    func testSplashTuningPresetIsListedAndSavedWithEveryTuningOption() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            guard argv.contains("list") else { return ["saved": true] }
+            return ["profiles": ["agents": [
+                "min_headroom_gb": 2.0, "idle_timeout": 300, "keep_loaded": false, "unload_under_pressure": true,
+                "splash_verify_rows": "all", "splash_cached_states": "exact", "splash_kv_format": "bf16",
+                "splash_reasoning_effort": "low", "splash_thinking_token_budget": 1024,
+                "splash_persistent_cache": true, "splash_max_cache_disk_gb": 8.5,
+            ] as [String: Any]]]
+        })
+        let presets = try await api.splashPresets()
+        let preset = try XCTUnwrap(presets.first)
+        XCTAssertEqual(preset.name, "agents")
+        try await api.saveSplashPreset(preset, replace: true)
+        let saved = try XCTUnwrap(recorder.values.last).argv
+        XCTAssertEqual(Array(saved.prefix(4)), ["serve", "profile", "save", "agents"])
+        for pair in [["--splash-verify-rows", "all"], ["--splash-cached-states", "exact"], ["--splash-kv-format", "bf16"],
+                     ["--splash-reasoning-effort", "low"], ["--splash-thinking-budget", "1024"],
+                     ["--splash-max-cache-disk-gb", "8.5"]] {
+            XCTAssertNotNil(saved.firstRange(of: pair), pair.joined(separator: " "))
+        }
+        XCTAssertTrue(saved.contains("--splash-persistent-cache"))
+        XCTAssertTrue(saved.contains("--replace"))
+        XCTAssertFalse(saved.contains("--splash-max-memory-gb"))
+    }
+
     @MainActor
     func testTailnetRequiresKeyBeforePreview() async {
         let recorder = AgentCallRecorder()
