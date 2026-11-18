@@ -6,6 +6,7 @@ struct ServingMonitorView: View {
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var workflow: ModelWorkflowCoordinator
+    @ObservedObject private var tailnet: TailnetSharingCoordinator
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var selection: String?
@@ -16,6 +17,7 @@ struct ServingMonitorView: View {
         _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _tailnet = ObservedObject(wrappedValue: appHost.tailnetSharing)
     }
     private var rows: [ServingRow] {
         ServingWorkspacePresentation.attentionFirst(
@@ -205,6 +207,9 @@ struct ServingMonitorView: View {
             }
             if let url = ServingWorkspacePresentation.baseURL(row) {
                 ServingConnectionField(title: "Address", value: url, identifier: "monitor-copy-address", compact: true)
+            }
+            if let address = tailnet.sharedAddress(port: ServingWorkspacePresentation.server(row)?.port) {
+                ServingConnectionField(title: "Tailscale address", value: address, identifier: "monitor-copy-tailnet-address", compact: true)
             }
             let memory = memoryRow(row)
             if let value = memory.reportedBytes { LabeledContent("Provider model allocation", value: bytes(value)) }

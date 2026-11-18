@@ -98,6 +98,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
   Endpoint API keys use `EndpointCredentialStore` (Keychain), with reviewed authentication changes owned by `EndpointSupervisor`.
   `ServingMemory` keeps reported model allocations and observed process RSS as separate measurements for Monitor.
+  `TailnetSharingCoordinator` (`Services/TailnetSharing.swift`) owns the one Tailscale share through
+  `mlx-agent serve tailnet`: preview, hash-confirmed start as an app-owned child with `--watch-parent`, status and stop.
+  `TailnetSharingWizard` presents it; Serving, Monitor and the menu bar read its shared address.
 - Use: `UseWorkspaceCoordinator`, `UseSessionStore` (`RecordArchive` on a serial I/O queue),
   `UseChatClient` and `UseImageStore`; `UseWorkspaceView` composes conversation views and the
   existing typed-task panels. `AppHost.handoffs` carries model/server selection. Chat owns

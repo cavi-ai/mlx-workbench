@@ -5,6 +5,113 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testTailnetModelListCommandRequiresCanonicalHTTPSURL() {
+        let command = TailnetSharingWizard.modelListCommand(apiBase: "https://node.tailnet.ts.net:8443/v1")
+        XCTAssertNotNil(command)
+        XCTAssertTrue(command?.contains("curl --config -") == true)
+        XCTAssertFalse(command?.contains("curl -H") == true)
+        for invalid in ["http://node.tailnet.ts.net:8443/v1", "https://node.tailnet.ts.net/v1",
+                        "https://node.tailnet.ts.net:8443/v1?x=1", "https://user@node.tailnet.ts.net:8443/v1",
+                        "https://node.tailnet.ts.net:8443/v1/", "https://node.tailnet.ts.net:8443/v1;echo"] {
+            XCTAssertNil(TailnetSharingWizard.modelListCommand(apiBase: invalid), invalid)
+        }
+    }
+
+    func testTailnetArgumentsBindPreviewConfirmationAndStop() async throws {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            if argv.contains("--confirm") { return ["state": "sharing"] }
+            if argv.contains("start") { return ["state": "ready", "preview_hash": "hash", "endpoint_port": 9000, "https_port": 8443] }
+            return ["state": "off"]
+        })
+        _ = try await api.tailnetPreview(port: 9000, httpsPort: 8443, receipts: "/state/root")
+        _ = try await api.tailnetStart(port: 9000, httpsPort: 8443, receipts: "/state/root", hash: "hash", shareID: "id")
+        _ = try await api.tailnetStop(shareID: "id")
+        XCTAssertEqual(recorder.values[0].argv, ["serve", "tailnet", "start", "--port", "9000", "--https-port", "8443", "--receipts-dir", "/state/root"])
+        XCTAssertEqual(recorder.values[1].argv, recorder.values[0].argv + ["--confirm", "--preview-hash", "hash", "--share-id", "id", "--watch-parent"])
+        XCTAssertEqual(recorder.values[1].timeout, .infinity)
+        XCTAssertEqual(recorder.values[2].argv, ["serve", "tailnet", "stop", "--expected-share-id", "id"])
+    }
+
+    @MainActor
+    func testTailnetRequiresKeyBeforePreview() async {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["state": "off"]
+        })
+        let coordinator = TailnetSharingCoordinator(api: api)
+        await coordinator.check(server: ServerInfo(port: 9000), httpsPort: 8443)
+        XCTAssertNil(coordinator.status)
+        XCTAssertTrue(coordinator.error?.contains("does not require an API key") == true)
+        XCTAssertEqual(recorder.values.map(\.argv), [["serve", "tailnet", "status"]])
+    }
+
+    @MainActor
+    func testTailnetOtherSessionRemainsReadOnly() async {
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in
+            recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+            return ["state": "sharing", "endpoint_port": 9001, "share_id": "other"]
+        })
+        let coordinator = TailnetSharingCoordinator(api: api)
+        await coordinator.check(server: ServerInfo(port: 9000, apiKeySHA256: "key"), httpsPort: 8443)
+        XCTAssertFalse(coordinator.ownsSession)
+        XCTAssertNotNil(coordinator.error)
+        await coordinator.stop()
+        XCTAssertEqual(recorder.values.map(\.argv), [["serve", "tailnet", "status"]])
+    }
+
+    @MainActor
+    func testTailnetPreviewFailureOffersRetry() async {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            if argv.contains("status") { return ["state": "off"] }
+            throw BridgeError.remote(code: "tailscale_dns_required", message: "MagicDNS required", remediation: "Enable MagicDNS")
+        })
+        let coordinator = TailnetSharingCoordinator(api: api)
+        await coordinator.check(server: ServerInfo(port: 9000, apiKeySHA256: "key"), httpsPort: 8443)
+        XCTAssertNil(coordinator.status)
+        XCTAssertEqual(coordinator.errorCode, "tailscale_dns_required")
+        XCTAssertTrue(coordinator.error?.contains("Enable MagicDNS") == true)
+        XCTAssertFalse(coordinator.busy)
+    }
+
+    @MainActor
+    func testTailnetStopAcceptsExpectedProcessExit() async {
+        let fixture = TailnetStopFixture()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            try fixture.call(argv)
+        })
+        let coordinator = TailnetSharingCoordinator(api: api)
+        let server = ServerInfo(port: 9000, receiptsDirectory: "/state", apiKeySHA256: "key")
+        await coordinator.check(server: server, httpsPort: 8443)
+        await coordinator.start(server: server)
+        XCTAssertTrue(coordinator.ownsSession)
+        await coordinator.stop()
+        XCTAssertEqual(coordinator.status?.state, "off")
+        XCTAssertNil(coordinator.error)
+        XCTAssertFalse(coordinator.ownsSession)
+    }
+
+    @MainActor
+    func testTailnetSharedAddressFollowsTheOwnedSession() async {
+        let fixture = TailnetStopFixture()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            try fixture.call(argv)
+        })
+        let coordinator = TailnetSharingCoordinator(api: api)
+        let server = ServerInfo(port: 9000, receiptsDirectory: "/state", apiKeySHA256: "key")
+        await coordinator.check(server: server, httpsPort: 8443)
+        XCTAssertNil(coordinator.sharedAddress(port: 9000))
+        await coordinator.start(server: server)
+        XCTAssertEqual(coordinator.sharedAddress(port: 9000), "https://node:8443/v1")
+        XCTAssertNil(coordinator.sharedAddress(port: 9001))
+        XCTAssertNil(coordinator.sharedAddress(port: nil))
+        await coordinator.stop()
+        XCTAssertNil(coordinator.sharedAddress(port: 9000))
+    }
+
     func testAgentBudgetDecodesEnginePolicyAndPreservesTheMemoryUnits() async throws {
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
             XCTAssertEqual(argv, ["serve", "budget"])
@@ -1578,5 +1685,34 @@ private final class FixtureAgent {
 
     func remove() {
         try? FileManager.default.removeItem(at: root)
+    }
+}
+
+private final class TailnetStopFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let release = DispatchSemaphore(value: 0)
+    private var shareID: String?
+    private var stopped = false
+    func call(_ argv: [String]) throws -> [String: Any] {
+        if argv.contains("--confirm") {
+            lock.lock(); shareID = argv[argv.firstIndex(of: "--share-id")! + 1]; lock.unlock()
+            _ = release.wait(timeout: .now() + 10)
+            return ["state": "off"]
+        }
+        if argv.contains("stop") {
+            lock.lock(); stopped = true; lock.unlock()
+            release.signal()
+            Thread.sleep(forTimeInterval: 0.2)
+            return ["state": "off"]
+        }
+        if argv.contains("status") {
+            lock.lock(); let id = shareID; let isStopped = stopped; lock.unlock()
+            if let id, !isStopped {
+                return ["state": "sharing", "endpoint_port": 9000, "https_port": 8443, "share_id": id,
+                        "api_base": "https://node:8443/v1", "model_id": "model"]
+            }
+            return ["state": "off"]
+        }
+        return ["state": "ready", "endpoint_port": 9000, "https_port": 8443, "preview_hash": "hash", "api_base": "https://node:8443/v1", "model_id": "model"]
     }
 }

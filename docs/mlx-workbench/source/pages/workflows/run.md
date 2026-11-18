@@ -45,6 +45,14 @@ The endpoint list separates live endpoints, saved configurations and available m
 
 **API & security** contains the base URL, model ID, port and API-key controls. Copy the URL or model ID directly. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
 
+## Share a chat endpoint with Tailscale
+
+For a running managed chat endpoint that requires an API key, select **API & security → Share via Tailscale…**. The wizard checks for Tailscale 1.104.2 or later, MagicDNS, and HTTPS. Tailnet grants or ACLs control reachability. Client requests also require the endpoint's API key. Enabling HTTPS can publish the device's DNS name in a certificate transparency log.
+
+Review the model and HTTPS address, then choose **Start sharing**. Copy the API URL and model ID to a permitted device. To confirm that device can connect, use the model-list command under **Test from another device** and copy the API key separately. If the HTTPS port is occupied, choose another port and check again. If the endpoint has no key, select an already protected endpoint or create an eligible one in Endpoint setup.
+
+Sharing lasts while Workbench runs, including after you close the wizard. While it is on, the endpoint shows its Tailscale address in Serving and Live Monitor, and its menu bar entry adds **Copy Tailscale URL** and **Stop sharing**. **Stop sharing** keeps the local endpoint and its credentials in place.
+
 ## Live Monitor
 
 **Monitor** is a separate workspace for active model servers from the shared inventory. It shows provider, address, status, known model-process RAM, input/output tokens, active requests and the most recent response throughput. Missing measurements remain unknown. Models that need attention come first; their **Needs attention** status, here and in Serving, opens the engine's reason in place, and the selected row's details repeat it. Select a row for its API address, model ID, measurement interval, completed/failed/measured request counts and source/memory details. **Open model settings** selects that exact endpoint in Serving.
