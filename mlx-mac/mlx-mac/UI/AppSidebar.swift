@@ -101,8 +101,12 @@ struct AppSidebar: View {
     @AppStorage("sidebar.workspacesExpanded") private var workspacesExpanded = true
     @AppStorage("sidebar.systemExpanded") private var systemExpanded = false
 
-    private static let workspaceRoutes: [AppRoute] = [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal]
-    private static let systemRoutes: [AppRoute] = [.overview, .activity, .clientSetup, .health]
+    /// A collapsed section totals its pages' counts, so a count on a hidden row stays visible.
+    static func headerBadge(for group: AppRoute.Group, expanded: Bool, badges: [AppRoute: String]) -> String? {
+        guard !expanded else { return nil }
+        let total = AppRoute.routes(in: group).compactMap { badges[$0].flatMap { Int($0) } }.reduce(0, +)
+        return total > 0 ? "\(total)" : nil
+    }
 
     private var selection: Binding<SidebarItem> {
         Binding(
@@ -129,32 +133,50 @@ struct AppSidebar: View {
 
     var body: some View {
         List(selection: selection) {
-            Section("Models") {
+            Section(AppRoute.Group.models.rawValue) {
                 filterRow(.all, title: "All models", symbol: AppRoute.library.symbolName)
                     .accessibilityLabel(AppRoute.library.label)
                 ForEach(ModelCategory.allCases.filter { count(.category($0)) > 0 }) { category in
                     filterRow(.category(category), title: category.title, symbol: category.symbolName)
                 }
             }
-            Section("Sources") {
-                routeRows([.sources, .discover])
+            Section(AppRoute.Group.sources.rawValue) {
+                routeRows(AppRoute.routes(in: .sources))
             }
-            Section("Attention") {
+            Section(AppRoute.Group.attention.rawValue) {
                 filterRow(.needsConversion, title: "Needs converting", symbol: "arrow.triangle.2.circlepath")
-                routeRows([.reclaim])
+                routeRows(AppRoute.routes(in: .attention))
             }
-            Section("Workspaces", isExpanded: $workspacesExpanded) {
-                routeRows(Self.workspaceRoutes)
+            Section(isExpanded: $workspacesExpanded) {
+                routeRows(AppRoute.routes(in: .workspaces))
+            } header: {
+                sectionHeader(.workspaces, expanded: workspacesExpanded)
             }
-            Section("System", isExpanded: $systemExpanded) {
-                routeRows(Self.systemRoutes)
+            Section(isExpanded: $systemExpanded) {
+                routeRows(AppRoute.routes(in: .system))
+            } header: {
+                sectionHeader(.system, expanded: systemExpanded)
             }
             Section {
-                routeRows([.settings])
+                routeRows(AppRoute.routes(in: .settings))
             }
         }
         .listStyle(.sidebar)
         .accessibilityLabel("Workbench navigation")
+    }
+
+    private func sectionHeader(_ group: AppRoute.Group, expanded: Bool) -> some View {
+        HStack {
+            Text(group.rawValue)
+            if let total = Self.headerBadge(for: group, expanded: expanded, badges: badges) {
+                Spacer()
+                Text(verbatim: total)
+                    .monospacedDigit()
+                    .padding(.horizontal, WorkbenchSpacing.xs)
+                    .background(Capsule().fill(.quaternary))
+                    .accessibilityLabel("\(total) in \(group.rawValue)")
+            }
+        }
     }
 
     private func filterRow(_ filter: LibrarySidebarFilter, title: String, symbol: String) -> some View {

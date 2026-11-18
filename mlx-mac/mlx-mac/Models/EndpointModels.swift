@@ -123,6 +123,107 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
 }
 
 /// A saved engine profile, scoped to the active receipt directory.
+/// Splash tuning a saved preset carries; nil leaves Splash's own default.
+struct SplashTuning: Equatable {
+    var verifyRows: String?
+    var cachedStates: String?
+    var kvFormat: String?
+    var reasoningEffort: String?
+    var thinkingBudget: Int?
+    var persistentCache: Bool?
+    var maxCacheDiskGB: Double?
+
+    static let efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+    init(verifyRows: String? = nil, cachedStates: String? = nil, kvFormat: String? = nil, reasoningEffort: String? = nil,
+         thinkingBudget: Int? = nil, persistentCache: Bool? = nil, maxCacheDiskGB: Double? = nil) {
+        self.verifyRows = verifyRows; self.cachedStates = cachedStates; self.kvFormat = kvFormat
+        self.reasoningEffort = reasoningEffort; self.thinkingBudget = thinkingBudget
+        self.persistentCache = persistentCache; self.maxCacheDiskGB = maxCacheDiskGB
+    }
+
+    init(settings: [String: Any]) {
+        self.init(verifyRows: settings["splash_verify_rows"] as? String,
+                  cachedStates: settings["splash_cached_states"] as? String,
+                  kvFormat: settings["splash_kv_format"] as? String,
+                  reasoningEffort: settings["splash_reasoning_effort"] as? String,
+                  thinkingBudget: settings["splash_thinking_token_budget"] as? Int,
+                  persistentCache: settings["splash_persistent_cache"] as? Bool,
+                  maxCacheDiskGB: (settings["splash_max_cache_disk_gb"] as? NSNumber)?.doubleValue)
+    }
+
+    /// Engine profile settings for the values set.
+    var settings: [String: Any] {
+        let values: [String: Any?] = [
+            "splash_verify_rows": verifyRows, "splash_cached_states": cachedStates, "splash_kv_format": kvFormat,
+            "splash_reasoning_effort": reasoningEffort, "splash_thinking_token_budget": thinkingBudget,
+            "splash_persistent_cache": persistentCache, "splash_max_cache_disk_gb": maxCacheDiskGB,
+        ]
+        return values.compactMapValues { $0 }
+    }
+
+    /// `serve profile save` options for the values set.
+    var arguments: [String] {
+        var argv: [String] = []
+        if let verifyRows { argv += ["--splash-verify-rows", verifyRows] }
+        if let cachedStates { argv += ["--splash-cached-states", cachedStates] }
+        if let kvFormat { argv += ["--splash-kv-format", kvFormat] }
+        if let reasoningEffort { argv += ["--splash-reasoning-effort", reasoningEffort] }
+        if let thinkingBudget { argv += ["--splash-thinking-budget", String(thinkingBudget)] }
+        if let persistentCache { argv.append(persistentCache ? "--splash-persistent-cache" : "--no-splash-persistent-cache") }
+        if let maxCacheDiskGB { argv += ["--splash-max-cache-disk-gb", String(maxCacheDiskGB)] }
+        return argv
+    }
+
+    /// A value Splash or the engine would refuse, named before saving.
+    var problem: String? {
+        if let thinkingBudget, !(0...1_010_000).contains(thinkingBudget) { return "The thinking budget is 0 to 1,010,000 tokens." }
+        if let maxCacheDiskGB, !(0...4096).contains(maxCacheDiskGB) { return "The SSD cache quota is 0 to 4,096 GB." }
+        if persistentCache == true && maxCacheDiskGB == 0 { return "The persistent cache needs an SSD cache quota above 0." }
+        return nil
+    }
+
+    var summaryParts: [String] {
+        var parts: [String] = []
+        if let verifyRows { parts.append(verifyRows == "all" ? "Every draft row verified" : "Adaptive verification") }
+        if let reasoningEffort { parts.append(reasoningEffort == "none" ? "Thinking off" : "Effort \(reasoningEffort)") }
+        if let thinkingBudget { parts.append("Thinking ≤ \(thinkingBudget.formatted()) tokens") }
+        if let kvFormat { parts.append("KV \(kvFormat)") }
+        if let cachedStates { parts.append("States \(cachedStates)") }
+        if persistentCache == true { parts.append("Persistent SSD cache") }
+        if let maxCacheDiskGB { parts.append(maxCacheDiskGB == 0 ? "SSD cache off" : "SSD cache \(maxCacheDiskGB.formatted()) GB") }
+        return parts
+    }
+
+    /// Starting points the preset editor offers; each fills the tuning, which stays editable.
+    enum StartingPoint: String, CaseIterable, Identifiable {
+        case balanced = "Balanced"
+        case agentSessions = "Agent sessions"
+        case repeatable = "Repeatable output"
+        case quickAnswers = "Quick answers"
+
+        var id: String { rawValue }
+
+        var tuning: SplashTuning {
+            switch self {
+            case .balanced: return SplashTuning()
+            case .agentSessions: return SplashTuning(persistentCache: true)
+            case .repeatable: return SplashTuning(verifyRows: "all", cachedStates: "exact")
+            case .quickAnswers: return SplashTuning(reasoningEffort: "none")
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .balanced: return "Splash defaults: adaptive verification, int8 caches, and each request sets its own effort."
+            case .agentSessions: return "Keeps the SSD prompt cache across restarts, so long agent prefixes resume warm."
+            case .repeatable: return "Verifies every draft row and keeps cached states exact, so greedy and seeded outputs repeat."
+            case .quickAnswers: return "Turns thinking off for every request."
+            }
+        }
+    }
+}
+
 struct SplashPreset: Equatable, Identifiable {
     let name: String
     let memoryGB: Double?
@@ -131,12 +232,13 @@ struct SplashPreset: Equatable, Identifiable {
     let idleSeconds: Int
     let keepLoaded: Bool
     let unloadUnderPressure: Bool
+    let tuning: SplashTuning
     /// Complete engine settings bind the selection and review to the same source.
     let sourceSettings: Data
     var id: String { name }
 
     init?(name: String, settings: [String: Any]) {
-        guard (settings["splash_max_memory_gb"] != nil || settings["splash_max_context_tokens"] != nil),
+        guard settings.keys.contains(where: { $0.hasPrefix("splash_") }),
               let headroom = (settings["min_headroom_gb"] as? NSNumber)?.doubleValue,
               let idle = settings["idle_timeout"] as? Int, let keep = settings["keep_loaded"] as? Bool,
               let pressure = settings["unload_under_pressure"] as? Bool,
@@ -145,6 +247,7 @@ struct SplashPreset: Equatable, Identifiable {
         self.memoryGB = (settings["splash_max_memory_gb"] as? NSNumber)?.doubleValue
         self.contextTokens = settings["splash_max_context_tokens"] as? Int
         self.headroomGB = headroom; self.idleSeconds = idle; self.keepLoaded = keep; self.unloadUnderPressure = pressure
+        self.tuning = SplashTuning(settings: settings)
         self.sourceSettings = canonical
     }
 
@@ -152,7 +255,7 @@ struct SplashPreset: Equatable, Identifiable {
         let memory = memoryGB.map { String(format: "%.1f GB memory", $0) } ?? "Default memory"
         let context = contextTokens.map { "\($0.formatted()) context" } ?? "Default context"
         let idle = keepLoaded ? "Keep loaded" : (idleSeconds == 0 ? "No idle unload" : "Idle \(idleSeconds) s")
-        return "\(memory) · \(context) · Reserve \(headroomGB.formatted()) GB · \(idle)"
+        return ([memory, context] + tuning.summaryParts + ["Reserve \(headroomGB.formatted()) GB", idle]).joined(separator: " · ")
     }
 
 }

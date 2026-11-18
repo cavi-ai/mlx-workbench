@@ -14,10 +14,16 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ### Added
 
 - Settings: **Duplicate serving** under Serving lists the models allowed on more than one endpoint, and **Allow a model…** or **Remove…** changes the list after a review of the exact models.
+- Serving: Splash presets set draft-row verification, reasoning effort, thinking budget, KV and cached-state precision, the persistent SSD cache and its quota, grouped by Decoding, Cache, Limits and Residency, with **Balanced**, **Agent sessions**, **Repeatable output** and **Quick answers** starting points.
 - Serving: **Share via Tailscale…** shares one running chat endpoint that requires an API key with the devices your tailnet allows, over HTTPS, after you review its address and model ID; the Tailscale address shows in Serving, Live Monitor and the menu bar, which also offers **Stop sharing**, and sharing ends when Workbench quits.
+
+### Changed
+
+- Splash requires 1.7.0 or later.
 
 ### Fixed
 
+- Navigation: ⌘1 through ⌘9 follow the sidebar order, and a collapsed sidebar group shows its pages' counts, so Watch alerts stay visible while System is collapsed.
 - Serving: a start refused because the model already has an endpoint names that endpoint's address, runtime, state and whether it requires an API key.
 - Library: video and 3D tasks recorded with conditioning inputs open in Recent tasks with their results and list those inputs.
 

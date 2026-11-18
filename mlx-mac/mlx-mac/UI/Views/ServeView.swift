@@ -1726,6 +1726,10 @@ private struct SplashPresetEditor: View {
     let saved: (SplashPreset) async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var start = SplashTuning.StartingPoint.balanced
+    @State private var tuning = SplashTuning()
+    @State private var thinkingBudget = ""
+    @State private var cacheQuota = ""
     @State private var memory = ""
     @State private var context = ""
     @State private var headroom = "2"
@@ -1738,33 +1742,77 @@ private struct SplashPresetEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("New Splash preset").font(WorkbenchTypography.cardTitle)
-            TextField("Name", text: $name)
-            TextField("Maximum memory in GB (optional)", text: $memory)
-            TextField("Maximum context tokens (optional)", text: $context)
-            TextField("Headroom reserve in GB", text: $headroom)
-            TextField("Idle timeout in seconds", text: $idle)
-            Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in if value { pressure = false } }
-            Toggle("Unload under memory pressure", isOn: $pressure).disabled(keepLoaded)
+            Form {
+                Section {
+                    TextField("Name", text: $name)
+                    Picker("Start from", selection: $start) {
+                        ForEach(SplashTuning.StartingPoint.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .onChange(of: start) { _, point in tuning = point.tuning; thinkingBudget = ""; cacheQuota = "" }
+                    Text(start.detail).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                Section("Decoding") {
+                    choice("Verify draft rows", $tuning.verifyRows, [("auto", "Adaptive, faster"), ("all", "Every row, repeatable")])
+                    Picker("Reasoning effort", selection: $tuning.reasoningEffort) {
+                        Text("Each request sets it").tag(String?.none)
+                        ForEach(SplashTuning.efforts, id: \.self) { effort in
+                            Text(effort == "none" ? "None, thinking off" : effort.capitalized).tag(String?.some(effort))
+                        }
+                    }
+                    TextField("Thinking budget in tokens (optional)", text: $thinkingBudget)
+                }
+                Section("Cache") {
+                    choice("KV cache", $tuning.kvFormat, [("int8", "int8, half the memory"), ("bf16", "bf16, full precision")])
+                    choice("Cached states", $tuning.cachedStates, [("int8", "int8 codes"), ("exact", "Exact")])
+                    Toggle("Keep the SSD cache across restarts", isOn: Binding(
+                        get: { tuning.persistentCache == true }, set: { tuning.persistentCache = $0 ? true : nil }))
+                    TextField("SSD cache quota in GB (optional, 0 turns it off)", text: $cacheQuota)
+                }
+                Section("Limits") {
+                    TextField("Maximum memory in GB (optional)", text: $memory)
+                    TextField("Maximum context tokens (optional)", text: $context)
+                }
+                Section("Residency") {
+                    TextField("Headroom reserve in GB", text: $headroom)
+                    TextField("Idle timeout in seconds", text: $idle)
+                    Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in if value { pressure = false } }
+                    Toggle("Unload under memory pressure", isOn: $pressure).disabled(keepLoaded)
+                }
+            }.formStyle(.grouped)
             if let error { InlineMessage(kind: .warning, text: error) }
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Save preset") { Task { await save() } }.buttonStyle(.workbenchPrimary).disabled(busy)
             }
-        }.padding(WorkbenchSpacing.lg).frame(width: 440)
+        }.padding(WorkbenchSpacing.lg).frame(width: 540, height: 640)
+    }
+
+    private func choice(_ title: String, _ selection: Binding<String?>, _ options: [(value: String, label: String)]) -> some View {
+        Picker(title, selection: selection) {
+            Text("Splash default").tag(String?.none)
+            ForEach(options, id: \.value) { option in Text(option.label).tag(String?.some(option.value)) }
+        }
     }
 
     private func save() async {
         guard let reserve = Double(headroom), let seconds = Int(idle),
               memory.isEmpty || Double(memory) != nil, context.isEmpty || Int(context) != nil,
-              !memory.isEmpty || !context.isEmpty else {
-            error = "Enter a memory or context limit, a headroom reserve, and an idle timeout."; return
+              thinkingBudget.isEmpty || Int(thinkingBudget) != nil, cacheQuota.isEmpty || Double(cacheQuota) != nil else {
+            error = "Enter numbers for the values you set, a headroom reserve, and an idle timeout."; return
         }
+        var chosen = tuning
+        chosen.thinkingBudget = Int(thinkingBudget)
+        chosen.maxCacheDiskGB = Double(cacheQuota)
+        if let problem = chosen.problem { error = problem; return }
         var values: [String: Any] = ["min_headroom_gb": reserve, "idle_timeout": seconds,
                                      "keep_loaded": keepLoaded, "unload_under_pressure": pressure]
         if let value = Double(memory) { values["splash_max_memory_gb"] = value }
         if let value = Int(context) { values["splash_max_context_tokens"] = value }
-        guard let preset = SplashPreset(name: name, settings: values) else { error = "Review the preset values."; return }
+        values.merge(chosen.settings) { _, tuned in tuned }
+        guard let preset = SplashPreset(name: name, settings: values) else {
+            error = "Set a limit or a Splash setting; with none, choose Default settings instead."; return
+        }
         busy = true
         defer { busy = false }
         do { try await api.saveSplashPreset(preset); await saved(preset); dismiss() }
