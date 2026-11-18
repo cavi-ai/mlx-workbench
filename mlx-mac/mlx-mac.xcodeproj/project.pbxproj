@@ -433,9 +433,13 @@
 		SIVMODF1 /* ServingInventoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryModels.swift; path = Models/ServingInventoryModels.swift; sourceTree = "<group>"; };
 		SMEMF001 /* ServingMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingMemory.swift; path = Models/ServingMemory.swift; sourceTree = "<group>"; };
 		A31D00000000000000000001 /* CompareMeshPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/CompareMeshPreview.swift; sourceTree = "<group>"; };
+		B7C100000000000000000001 /* ClassificationSetHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ClassificationSetHealth.swift; sourceTree = "<group>"; };
+		B7C100000000000000000002 /* ClassificationSetHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100000000000000000001 /* ClassificationSetHealth.swift */; };
+		B7C100000000000000000004 /* ClassificationSetHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100000000000000000003 /* ClassificationSetHealthTests.swift */; };
 		A31D00000000000000000003 /* DecisionComparison.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/DecisionComparison.swift; sourceTree = "<group>"; };
 		A31D00000000000000000005 /* SystemOneHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SystemOneHostAdapter.swift; sourceTree = "<group>"; };
 		A31D00000000000000000007 /* CompareDecisionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/CompareDecisionViews.swift; sourceTree = "<group>"; };
+		B7C100000000000000000003 /* ClassificationSetHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassificationSetHealthTests.swift; sourceTree = "<group>"; };
 		A31D00000000000000000009 /* DecisionComparisonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionComparisonTests.swift; sourceTree = "<group>"; };
 		9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointTestTests.swift; sourceTree = "<group>"; };
 		704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/EndpointTestSheet.swift; sourceTree = "<group>"; };
@@ -933,6 +937,7 @@
 				24FREF047 /* ComparisonModels.swift */,
 				27ABCD100000000000000027 /* ComparisonMode.swift */,
 				A31D00000000000000000003 /* DecisionComparison.swift */,
+				B7C100000000000000000001 /* ClassificationSetHealth.swift */,
 				24FREF048 /* JSONStore.swift */,
 				24FREF049 /* ComparisonCoordinator.swift */,
 				27ABCD10000000000000002A /* ComparisonMediaFixtures.swift */,
@@ -1161,6 +1166,7 @@
 				24FREF045 /* ServeProbeTests.swift */,
 				9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */,
 				A31D00000000000000000009 /* DecisionComparisonTests.swift */,
+				B7C100000000000000000003 /* ClassificationSetHealthTests.swift */,
 				24FREF046 /* VerificationCoordinatorTests.swift */,
 				24FREF069 /* HFRepoIDTests.swift */,
 				5A1E5E770000000000000033 /* RouteHandoffsTests.swift */,
@@ -1504,6 +1510,7 @@
 				24BBLD000012 /* x */,
 				A31D00000000000000000002 /* CompareMeshPreview.swift in Sources */,
 				A31D00000000000000000004 /* DecisionComparison.swift in Sources */,
+				B7C100000000000000000002 /* ClassificationSetHealth.swift in Sources */,
 				A31D00000000000000000006 /* SystemOneHostAdapter.swift in Sources */,
 				A31D00000000000000000008 /* CompareDecisionViews.swift in Sources */,
 				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
@@ -1727,6 +1734,7 @@
 				24BBLD047 /* ServeProbeTests.swift in Sources */,
 				97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */,
 				A31D0000000000000000000A /* DecisionComparisonTests.swift in Sources */,
+				B7C100000000000000000004 /* ClassificationSetHealthTests.swift in Sources */,
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				5A1E5E770000000000000034 /* RouteHandoffsTests.swift in Sources */,
