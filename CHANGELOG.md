@@ -13,6 +13,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ## [Unreleased]
 ### Added
 
+- Settings: **Duplicate serving** under Serving lists the models allowed on more than one endpoint, and **Allow a model…** or **Remove…** changes the list after a review of the exact models.
 - Serving: **Share via Tailscale…** shares one running chat endpoint that requires an API key with the devices your tailnet allows, over HTTPS, after you review its address and model ID; the Tailscale address shows in Serving, Live Monitor and the menu bar, which also offers **Stop sharing**, and sharing ends when Workbench quits.
 
 ### Fixed

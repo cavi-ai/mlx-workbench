@@ -136,6 +136,83 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         } catch {}
     }
 
+    @MainActor
+    func testDuplicationPolicyChangeIsPreviewedThenSavedByTheEngine() async throws {
+        let engine = DuplicationPolicyFixture(saved: ["/models/a"])
+        let coordinator = DuplicationPolicyCoordinator(api: WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture",
+            command: { _, argv, _, _ in try engine.call(argv) }))
+        await coordinator.load()
+        XCTAssertEqual(coordinator.allowlist, ["/models/a"])
+
+        await coordinator.propose(adding: "/link/b")
+        let review = try XCTUnwrap(coordinator.review)
+        XCTAssertEqual(review.current, ["/models/a"])
+        XCTAssertEqual(review.proposed, ["/models/a", "/models/b"])
+        XCTAssertEqual(engine.allowlist, ["/models/a"], "A preview saves nothing")
+        XCTAssertEqual(DuplicationPolicyPresentation.reviewMessage(review, models: []),
+            "Allow on more than one endpoint:\nb · /models/b\n\nApplies to endpoints started after this change. API keys and memory admission stay in effect.")
+
+        await coordinator.confirm(review)
+        XCTAssertEqual(engine.allowlist, ["/models/a", "/models/b"])
+        XCTAssertEqual(coordinator.allowlist, ["/models/a", "/models/b"])
+        XCTAssertNil(coordinator.review)
+        XCTAssertNil(coordinator.error)
+    }
+
+    @MainActor
+    func testDuplicationPolicyConfirmRefusesAPolicyChangedAfterReview() async throws {
+        let engine = DuplicationPolicyFixture()
+        let coordinator = DuplicationPolicyCoordinator(api: WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture",
+            command: { _, argv, _, _ in try engine.call(argv) }))
+        await coordinator.propose(adding: "/models/a")
+        let review = try XCTUnwrap(coordinator.review)
+
+        engine.replace(["/models/z"])
+        await coordinator.confirm(review)
+        XCTAssertEqual(engine.allowlist, ["/models/z"], "A stale review must not replace the policy")
+        XCTAssertEqual(coordinator.allowlist, ["/models/z"])
+        XCTAssertEqual(coordinator.error, "The policy changed after this review. Review the change again.")
+    }
+
+    @MainActor
+    func testDuplicationPolicyRemovingTheLastModelClearsThePolicy() async throws {
+        let engine = DuplicationPolicyFixture(saved: ["/models/a"])
+        let coordinator = DuplicationPolicyCoordinator(api: WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture",
+            command: { _, argv, _, _ in try engine.call(argv) }))
+        await coordinator.propose(removing: "/models/a")
+        let review = try XCTUnwrap(coordinator.review)
+        XCTAssertEqual(review.removed, ["/models/a"])
+
+        await coordinator.confirm(review)
+        XCTAssertEqual(engine.allowlist, [])
+        XCTAssertEqual(engine.calls.last, ["serve", "duplication-policy", "--clear", "--confirm"])
+        XCTAssertEqual(coordinator.allowlist, [])
+    }
+
+    @MainActor
+    func testDuplicationPolicyReportsAnAlreadyAllowedModelWithoutAReview() async {
+        let engine = DuplicationPolicyFixture(saved: ["/models/a"])
+        let coordinator = DuplicationPolicyCoordinator(api: WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture",
+            command: { _, argv, _, _ in try engine.call(argv) }))
+        await coordinator.propose(adding: "/link/a")
+        XCTAssertNil(coordinator.review)
+        XCTAssertEqual(coordinator.error, "The policy already matches this choice.")
+        XCTAssertEqual(engine.allowlist, ["/models/a"])
+    }
+
+    func testDuplicationPolicyRejectsInexactModelsBeforeTheEngine() async {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
+            XCTFail("An inexact model must fail before any engine call")
+            return [:]
+        })
+        for models in [["/models/*"], ["models/a"], ["/models/a", "/models/a"]] {
+            do {
+                _ = try await api.confirmDuplicationPolicy(models: models)
+                XCTFail("\(models) is not a list of exact local models")
+            } catch {}
+        }
+    }
+
     func testPreparedGGUFPreviewKeepsSourceProjectorAndFetchEvidenceAsArgvTokens() async throws {
         let recorder = AgentCallRecorder()
         let preparation = updatePreparation(kind: .gguf)
@@ -1325,6 +1402,39 @@ private final class AgentCallRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return stages.contains(stage)
+    }
+}
+
+/// The engine's duplication policy: reads return the saved allowlist, selections resolve and sort, only `--confirm` saves.
+private final class DuplicationPolicyFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var saved: [String]
+    private var seen: [[String]] = []
+
+    init(saved: [String] = []) { self.saved = saved }
+
+    var allowlist: [String] { lock.lock(); defer { lock.unlock() }; return saved }
+    var calls: [[String]] { lock.lock(); defer { lock.unlock() }; return seen }
+
+    /// Another process replaces the policy.
+    func replace(_ models: [String]) { lock.lock(); saved = models; lock.unlock() }
+
+    func call(_ argv: [String]) throws -> [String: Any] {
+        lock.lock()
+        defer { lock.unlock() }
+        seen.append(argv)
+        guard Array(argv.prefix(2)) == ["serve", "duplication-policy"] else { throw BridgeError.skillOutputUnreadable }
+        let options = Array(argv.dropFirst(2))
+        guard options.contains("--allow-model") || options.contains("--clear") else {
+            return ["schema_version": 1, "duplicate_model_allowlist": saved]
+        }
+        let selected = options.indices.filter { options[$0] == "--allow-model" }.map { options[$0 + 1] }
+        let resolved = Set(selected.map { $0.replacingOccurrences(of: "/link/", with: "/models/") }).sorted()
+        guard options.contains("--confirm") else {
+            return ["schema_version": 1, "duplicate_model_allowlist": resolved, "status": "preview"]
+        }
+        saved = resolved
+        return ["schema_version": 1, "duplicate_model_allowlist": resolved]
     }
 }
 

@@ -41,6 +41,8 @@ the model being inspected.
 
 When a discovered endpoint already serves the selected model, **Open existing endpoint** takes you to its settings. The endpoint keeps its existing configuration. If the engine refuses a start because the model already has an endpoint, the message names that endpoint's address, runtime, state and whether it requires an API key.
 
+To run one model on more than one endpoint, open **Settings → Serving → Duplicate serving** and choose **Allow a model…**. Workbench shows the exact model the engine will allow; **Confirm** saves it. **Remove…** returns a model to one endpoint. A change applies to endpoints started after it, and API keys and memory admission stay in effect.
+
 The endpoint list separates live endpoints, saved configurations and available models from other apps. Each saved configuration shows its current status. The list shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Connection failures are behind **Connection issues** and do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 
 **API & security** contains the base URL, model ID, port and API-key controls. Copy the URL or model ID directly. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
