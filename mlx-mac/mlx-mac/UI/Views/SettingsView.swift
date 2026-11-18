@@ -75,6 +75,7 @@ struct SettingsView: View {
     let appHost: AppHost
     @ObservedObject private var updater: UpdateCoordinator
     @StateObject private var engineDetection = SettingsEngineDetection()
+    @StateObject private var duplication: DuplicationPolicyCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     private let probe: SettingsDirectoryProbe
     private let onRouteSelection: (AppRoute) -> Void
@@ -86,6 +87,7 @@ struct SettingsView: View {
     ) {
         self.appHost = appHost
         _updater = ObservedObject(wrappedValue: appHost.updater)
+        _duplication = StateObject(wrappedValue: DuplicationPolicyCoordinator(api: appHost.api))
         self.probe = probe
         self.onRouteSelection = onRouteSelection
         _mlxAgentPath = State(initialValue: appHost.config.mlxAgentPath)
@@ -156,6 +158,10 @@ struct SettingsView: View {
         .onAppear { loadFromConfig() }
         .task(id: probeKey) { await runProbe() }
         .task(id: appHost.config.mlxAgentPath) { await refreshAgentBudget() }
+        .task(id: appHost.config.mlxAgentPath) {
+            guard !WorkbenchStatePaths.isHostedUnitTest() else { return }
+            await duplication.load()
+        }
         .task { await refreshLocalAudio(loadPreference: true) }
         .onChange(of: isRouteActive) { _, active in
             if !active, engineDetection.isDetecting { engineDetection.cancel() }
@@ -401,6 +407,10 @@ struct SettingsView: View {
                             .textSelection(.enabled)
                     }
                 }
+            }
+            SettingsSeparator()
+            SettingsRow(label: "Duplicate serving", hint: "Models allowed on more than one endpoint at a time. Every other model keeps one endpoint.", stacked: layout.stacksRows) {
+                DuplicationPolicyEditor(appHost: appHost, coordinator: duplication)
             }
         } footer: {
             Text("Manage loopback servers and each endpoint's port in Run.")
@@ -1026,6 +1036,55 @@ struct SettingsRow<Control: View>: View {
         }
         .padding(.vertical, WorkbenchSize.Settings.rowVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The duplicate-serving allowlist: each change opens the engine's preview before it is saved.
+struct DuplicationPolicyEditor: View {
+    let appHost: AppHost
+    @ObservedObject var coordinator: DuplicationPolicyCoordinator
+
+    var body: some View {
+        let models = appHost.librarySnapshot?.models ?? []
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if let allowlist = coordinator.allowlist {
+                if allowlist.isEmpty {
+                    Text("No model is allowed on more than one endpoint.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                ForEach(allowlist, id: \.self) { path in
+                    HStack {
+                        Text(MenuBarPresentation.modelName(path, models: models)).help(path)
+                        Button("Remove…") { Task { await coordinator.propose(removing: path) } }
+                            .disabled(coordinator.busy)
+                    }
+                }
+            }
+            HStack {
+                Menu("Allow a model…") {
+                    ForEach(DuplicationPolicyPresentation.choices(models)) { choice in
+                        Button(choice.name) { Task { await coordinator.propose(adding: choice.path) } }
+                    }
+                }
+                .fixedSize()
+                .disabled(coordinator.busy || coordinator.allowlist == nil)
+                .accessibilityIdentifier("duplication-allow-model")
+                Button("Refresh") { Task { await coordinator.load() } }.disabled(coordinator.busy)
+                if coordinator.busy { ProgressView().controlSize(.small) }
+            }
+            if let error = coordinator.error {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+                    .textSelection(.enabled)
+            }
+        }
+        .confirmationDialog("Change duplicate serving?", isPresented: Binding(
+            get: { coordinator.review != nil }, set: { if !$0 { coordinator.cancelReview() } }
+        ), titleVisibility: .visible, presenting: coordinator.review) { review in
+            Button("Confirm") { Task { await coordinator.confirm(review) } }
+            Button("Cancel", role: .cancel) { coordinator.cancelReview() }
+        } message: { review in
+            Text(DuplicationPolicyPresentation.reviewMessage(review, models: models))
+        }
     }
 }
 

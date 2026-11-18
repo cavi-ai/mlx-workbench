@@ -11,6 +11,10 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+### Added
+
+- Settings: **Duplicate serving** under Serving lists the models allowed on more than one endpoint, and **Allow a model…** or **Remove…** changes the list after a review of the exact models.
+
 ### Fixed
 
 - Serving: a start refused because the model already has an endpoint names that endpoint's address, runtime, state and whether it requires an API key.

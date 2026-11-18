@@ -96,6 +96,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   JIT gateway, memory policy, source-bound acceleration settings), transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
+  `DuplicationPolicyCoordinator` (`Services/DuplicationPolicy.swift`) edits the duplicate-serving allowlist from Settings
+  through `mlx-agent serve duplication-policy`: read, preview, second read, confirm.
   Endpoint API keys use `EndpointCredentialStore` (Keychain), with reviewed authentication changes owned by `EndpointSupervisor`.
   `ServingMemory` keeps reported model allocations and observed process RSS as separate measurements for Monitor.
 - Use: `UseWorkspaceCoordinator`, `UseSessionStore` (`RecordArchive` on a serial I/O queue),
