@@ -11,6 +11,10 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+### Added
+
+- Serving: **Share via Tailscale…** shares one running chat endpoint that requires an API key with the devices your tailnet allows, over HTTPS, after you review its address and model ID; the Tailscale address shows in Serving, Live Monitor and the menu bar, which also offers **Stop sharing**, and sharing ends when Workbench quits.
+
 ### Fixed
 
 - Serving: a start refused because the model already has an endpoint names that endpoint's address, runtime, state and whether it requires an API key.

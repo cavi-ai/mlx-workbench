@@ -14,6 +14,7 @@ struct MenuBarView: View {
     @ObservedObject private var servedTasks: ServedTaskSessions
     @ObservedObject private var useWorkspace: UseWorkspaceCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
+    @ObservedObject private var tailnet: TailnetSharingCoordinator
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
 
     init(appHost: AppHost) {
@@ -24,6 +25,7 @@ struct MenuBarView: View {
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
+        _tailnet = ObservedObject(wrappedValue: appHost.tailnetSharing)
     }
 
     var body: some View {
@@ -65,6 +67,7 @@ struct MenuBarView: View {
                             .disabled(inventory.isChanging || !inventory.mayChange(service))
                     }
                     Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
+                    tailnetItems(port: slot.port)
                     if let connection = ServedModelsSelection.connection(slot: slot, state: endpoint.slotStates[slot.id], servers: workflow.servers) {
                         Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) }
                     }
@@ -85,6 +88,7 @@ struct MenuBarView: View {
                     if let port = server.port {
                         Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(port)/v1") }
                     }
+                    tailnetItems(port: server.port)
                     Button("Copy model ID") { ServedModelsSelection.copy(server.modelIdentity) }
                 case .service(let service):
                     Text(service.statusText)
@@ -138,6 +142,16 @@ struct MenuBarView: View {
             .first
         guard let tps = match?.tokensPerSecond else { return nil }
         return String(format: "%.1f tok/s measured", tps)
+    }
+
+    /// The Tailscale address and stop action for the endpoint this app shares on `port`.
+    @ViewBuilder
+    private func tailnetItems(port: Int?) -> some View {
+        if let address = tailnet.sharedAddress(port: port) {
+            Text("Shared via Tailscale")
+            Button("Copy Tailscale URL") { ServedModelsSelection.copy(address) }
+            Button("Stop sharing") { Task { await tailnet.stop() } }.disabled(tailnet.busy)
+        }
     }
 
     private func openManager(rowID: String? = nil) {
