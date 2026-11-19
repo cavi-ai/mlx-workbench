@@ -44,6 +44,29 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(folders.first { $0.path == "/Models/managed" }?.uses, ["MLX", "Managed downloads & conversions"])
     }
 
+    func testModelSourcesGroupOnlyMatchingOllamaDigestsAcrossAddresses() {
+        func row(_ address: String, _ digest: String?, provider: ModelHostProvider = .ollama, modelID: String = "tag:latest") -> ServingRow {
+            let host = ModelHost(name: address, provider: provider, baseURL: address)
+            let model = HostedModel(hostID: host.id, modelID: modelID, name: modelID, digest: digest)
+            let snapshot = ServingInventorySnapshot.make(engine: [], hosts: [HostInventory(host: host, models: [model], capturedAt: Date())],
+                                                         managedReceipts: "/receipts", capturedAt: Date())
+            return .service(snapshot.services[0])
+        }
+        let original = [row("http://127.0.0.1:1", "abc"), row("http://127.0.0.1:2", "abc"),
+                        row("http://127.0.0.1:3", "different"), row("http://127.0.0.1:4", nil),
+                        row("http://127.0.0.1:5", "", provider: .ollama),
+                        row("http://127.0.0.1:6", "abc", provider: .openAICompatible),
+                        row("http://127.0.0.1:7", "abc", modelID: "other:latest")]
+        let result = ModelSourceRow.rows(original, models: [], sortOrder: [])
+        XCTAssertEqual(result.count, 6)
+        let group = result.first { $0.members.count == 2 }
+        XCTAssertEqual(Set(group?.members.map(\.id) ?? []), Set(original.prefix(2).map(\.id)))
+        XCTAssertEqual(Set(group?.members.compactMap { ServingWorkspacePresentation.baseURL($0) } ?? []),
+                       Set(["http://127.0.0.1:1/v1", "http://127.0.0.1:2/v1"]))
+        XCTAssertEqual(group?.state, "2 connections")
+        XCTAssertEqual(Set(result.flatMap(\.members).map(\.id)), Set(original.map(\.id)))
+    }
+
     func testInspectorEvidenceRendersLabeledRowsInsteadOfKeyValueText() {
         let home = NSHomeDirectory()
         let rows = ModelDetailsPresentation.evidenceRows(["path=\(home)/.models/a", "quant_bits=4", "signature=abc", "free text"])

@@ -305,9 +305,9 @@ Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embe
 
 ## Model sources
 
-**Model sources → Server models** lists model inventories across saved and detected local providers. Filter by provider or model, sort by any column, inspect the API address and state, and use **Add provider…** to connect another server. **Connections** edits existing connections. Refresh reads inventory without loading or downloading weights. Connection issues stay in a disclosure; stale observations are labeled as last seen.
+**Model sources → Server models** lists model inventories across saved and detected local providers. Search, filter by provider, and use Sort to order the catalog by model, provider, or status. Select a model to inspect each connection’s state and API address, and copy the address from its details. In a narrow window, choose **Connection details** to open the inspector. Use **Add provider** to connect another server and **Connections** to edit existing connections. Refresh reads inventory without loading or downloading weights. Matching Ollama tags with the same reported digest appear once, with each connection listed in the details. Connection issues appear in the toolbar; stale observations are labeled as last seen.
 
-**Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Reclaim, and **Manage model folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
+**Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Reclaim, and **Manage folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
 
 ## LM Studio files
 

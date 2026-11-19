@@ -398,16 +398,17 @@ final class DiskLedgerTests: XCTestCase {
 
     func testModelSourceColumnsSortByWhatTheyShow() {
         let servers = [
-            ServerInfo(path: "/models/zeta", port: 1, pid: 10, state: "running", modelState: "loaded", receiptsDirectory: "/receipts"),
+            ServerInfo(path: "/models/zeta", port: 1, pid: 10, state: "running", modelState: "unloaded", receiptsDirectory: "/receipts"),
             ServerInfo(path: "/models/alpha", port: 2, pid: 20, state: "running", modelState: "loaded", receiptsDirectory: "/receipts"),
         ]
         let snapshot = ServingInventorySnapshot.make(engine: servers, hosts: [], managedReceipts: "/receipts", capturedAt: Date())
         let rows = ServingRows.build(slots: [], servers: servers, snapshot: snapshot)
         let byModel = ModelSourceRow.rows(rows, models: [], sortOrder: [KeyPathComparator(\ModelSourceRow.model)])
-        let byAddress = ModelSourceRow.rows(rows, models: [], sortOrder: [KeyPathComparator(\ModelSourceRow.address)])
+        let byState = ModelSourceRow.rows(rows, models: [], sortOrder: [KeyPathComparator(\ModelSourceRow.state)])
         XCTAssertEqual(byModel.map(\.model), byModel.map(\.model).sorted())
-        XCTAssertEqual(byAddress.map(\.address), byAddress.map(\.address).sorted())
-        XCTAssertNotEqual(byModel.map(\.id), byAddress.map(\.id), "zeta serves on the lower port")
+        XCTAssertEqual(byModel.map(\.model), ["alpha", "zeta"])
+        XCTAssertEqual(byState.map(\.state), ["Available · unloaded", "Loaded"])
+        XCTAssertNotEqual(byModel.map(\.id), byState.map(\.id))
     }
 
     // MARK: Fixtures
