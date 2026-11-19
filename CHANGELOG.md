@@ -13,6 +13,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 ## [Unreleased]
 ### Fixed
 - Library: **Classify** sends choice criteria as labels with descriptions, which Kev models require.
+- Library: the inspector fits its 320 pt minimum column without clipping; a task model's panel sits under its actions, music settings wrap, and the empty-caption hint is muted until typing starts.
 - Terminal: **Launch OpenCode** checks OpenCode's merged global config for a Workbench provider served by a running chat server; otherwise it shows **OpenCode has no Workbench models.** with **Set up OpenCode** (or **Open Run** when nothing is serving) and **Launch anyway**. OpenCode wiring keeps the models already listed for the same port.
 ### Added
 
