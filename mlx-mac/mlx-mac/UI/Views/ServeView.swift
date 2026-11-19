@@ -1760,7 +1760,11 @@ private struct SplashPresetEditor: View {
                     Picker("Start from", selection: $start) {
                         ForEach(SplashTuning.StartingPoint.allCases) { Text($0.rawValue).tag($0) }
                     }
-                    .onChange(of: start) { _, point in tuning = point.tuning; thinkingBudget = ""; cacheQuota = "" }
+                    .onChange(of: start) { _, point in
+                        tuning = point.tuning
+                        thinkingBudget = point.tuning.thinkingBudget.map(String.init) ?? ""
+                        cacheQuota = ""
+                    }
                     Text(start.detail).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 Section("Decoding") {

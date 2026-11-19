@@ -30,6 +30,7 @@ struct ServingMonitorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             let summary = ServingMemory.summary(rows.map(memoryRow))
+            MonitorHeadroomFact(resources: appHost.resources)
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
                     overviewFacts(summary)
@@ -42,20 +43,18 @@ struct ServingMonitorView: View {
                 }
             }
             GeometryReader { geometry in
-                if geometry.size.width >= 1050 {
+                if geometry.size.width >= 800 {
                     HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
                         monitorTable.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        inspector.frame(width: 320).frame(maxHeight: .infinity)
+                        inspector.frame(width: max(300, geometry.size.width * 0.42)).frame(maxHeight: .infinity)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         monitorTable.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        inspector.frame(height: min(230, max(150, geometry.size.height * 0.4)))
+                        inspector.frame(height: max(200, geometry.size.height * 0.55))
                     }
                 }
             }
-            Text("Tokens cover completed requests with reported usage, since each gateway started. Response tok/s includes waiting, loading and generation. A dash means the provider has not reported a measurement.")
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
         }
         .padding(WorkbenchSpacing.lg)
         .task(id: isRouteActive) {
@@ -78,37 +77,19 @@ struct ServingMonitorView: View {
                             .help(ServingWorkspacePresentation.baseURL(row) ?? "Address unavailable")
                     }}
                 }.width(min: 110, ideal: 160)
-                TableColumn("Status") { row in
+                TableColumn("Status / memory") { row in
                     let full = ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
-                    MonitorTableCell { selected in
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
-                        if let active = ServingWorkspacePresentation.server(row)?.activeRequests {
-                            Text("\(active) active").font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
-                        }
-                    }}
-                }.width(85)
-                TableColumn("Memory") { row in
                     let display = memoryDisplay(memoryRow(row))
                     MonitorTableCell { selected in
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                            Text(display.amount).monospacedDigit()
-                            Text(display.origin).font(WorkbenchTypography.metadata).foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                            ServingStatusLabel(row: row, states: endpoint.slotStates, text: shortStatus(full)).help(full)
+                            Text(display.amount == "—" ? "Memory unknown" : "\(display.amount) · \(display.origin)")
+                                .font(WorkbenchTypography.metadata).monospacedDigit()
+                                .foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
                         }
                     }
-                }.width(100)
-                TableColumn("Tokens in / out") { row in
-                    let input = telemetry(row)?.inputTokens, output = telemetry(row)?.outputTokens
-                    MonitorTableCell { _ in
-                        Text(compactToken(input) + " / " + compactToken(output)).monospacedDigit()
-                            .help("Input: " + token(input) + " · Output: " + token(output))
-                    }
-                }.width(85)
-                TableColumn("Tok/s") { row in
-                    MonitorTableCell { _ in
-                        Text(telemetry(row)?.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—").monospacedDigit().help("Response tokens per second includes waiting, loading and generation.")
-                    }
-                }.width(65)
+                }.width(min: 125, ideal: 170)
+
             }
             .alternatingRowBackgrounds(.disabled)
             .accessibilityIdentifier("serving-monitor-table")
@@ -164,7 +145,6 @@ struct ServingMonitorView: View {
             }
         }.help("Unique observed process RSS may share physical pages and excludes unknown workers. Provider allocations are separate.")
             .accessibilityIdentifier("monitor-memory-summary")
-        MonitorHeadroomFact(resources: appHost.resources)
     }
     @ViewBuilder
     private var overviewControls: some View {
@@ -190,11 +170,12 @@ struct ServingMonitorView: View {
         return ServingTelemetry(raw: ServingWorkspacePresentation.server(row)?.inferenceTelemetry)
     }
     private func token(_ count: Int?) -> String { count.map { $0.formatted() } ?? "—" }
-    private func compactToken(_ count: Int?) -> String { count.map { $0.formatted(.number.notation(.compactName)) } ?? "—" }
     private func details(_ row: ServingRow) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.emphasis)
                 .fixedSize(horizontal: false, vertical: true)
+            Text(ServingWorkspacePresentation.provider(row) + " · " + ServingWorkspacePresentation.status(row, states: endpoint.slotStates))
+                .foregroundStyle(WorkbenchColor.muted)
             Button("Open model settings") {
                 appHost.handoffs.send(ServingFocusRequest(rowID: row.id), as: .openServing)
                 onRouteSelection(.run)
@@ -211,16 +192,21 @@ struct ServingMonitorView: View {
             if let address = tailnet.sharedAddress(port: ServingWorkspacePresentation.server(row)?.port) {
                 ServingConnectionField(title: "Tailscale address", value: address, identifier: "monitor-copy-tailnet-address", compact: true)
             }
-            let memory = memoryRow(row)
-            if let value = memory.reportedBytes { LabeledContent("Provider model allocation", value: bytes(value)) }
-            if let pid = memory.modelPID { LabeledContent("Model process RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
-            if let pid = memory.gatewayPID { LabeledContent("Gateway RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
-            if let pid = memory.hostPID { LabeledContent("Shared host RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
-            if memory.unknownOwnership { Text("Model process ownership not reported").foregroundStyle(WorkbenchColor.muted) }
-            if let captured = inventory.processMemoryCapturedAt { Text("Process memory read \(captured.formatted(date: .omitted, time: .standard))").foregroundStyle(WorkbenchColor.muted) }
-            Text("Model ID: " + ServingWorkspacePresentation.modelID(row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            ServingSiblingEndpoints(row: row, rows: rows) { selection = $0 }
+            if let active = ServingWorkspacePresentation.server(row)?.activeRequests {
+                LabeledContent("Active requests", value: active.formatted())
+            }
             if let metrics = telemetry(row) {
+                Divider()
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                        responseMetric(metrics)
+                        gatewayMetrics(metrics)
+                    }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        responseMetric(metrics)
+                        gatewayMetrics(metrics)
+                    }
+                }
                 Text("\(metrics.completedRequests.formatted()) completed · \(metrics.failedRequests.formatted()) failed · \(metrics.measuredRequests.formatted()) with token usage")
                 if let start = ServingTelemetry.date(metrics.startedAt), let captured = ServingTelemetry.date(metrics.capturedAt) {
                     Text("Gateway started \(start.formatted(date: .abbreviated, time: .standard)) · Status read \(captured.formatted(date: .omitted, time: .standard))")
@@ -229,27 +215,75 @@ struct ServingMonitorView: View {
                     Text("Last response: \(String(format: "%.2f", seconds)) s · \(last.outcome)")
                 }
             } else { Text("This provider does not report gateway token metrics.") }
-            if let service = ServingWorkspacePresentation.service(row) {
-                DisclosureGroup("Memory & source") { ServingServiceDetails(service: service, inventory: inventory) }
+            ServingSiblingEndpoints(row: row, rows: rows) { selection = $0 }
+            DisclosureGroup("Memory & source") {
+                let memory = memoryRow(row)
+                if let value = memory.reportedBytes { LabeledContent("Provider model allocation", value: bytes(value)) }
+                if let pid = memory.modelPID { LabeledContent("Model process RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
+                if let pid = memory.gatewayPID { LabeledContent("Gateway RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
+                if let pid = memory.hostPID { LabeledContent("Shared host RAM · PID \(pid)", value: bytes(memory.readings[pid])) }
+                if memory.unknownOwnership { Text("Model process ownership not reported").foregroundStyle(WorkbenchColor.muted) }
+                if let captured = inventory.processMemoryCapturedAt { Text("Process memory read \(captured.formatted(date: .omitted, time: .standard))").foregroundStyle(WorkbenchColor.muted) }
+                Text("Model ID: " + ServingWorkspacePresentation.modelID(row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if let service = ServingWorkspacePresentation.service(row) {
+                    ServingServiceDetails(service: service, inventory: inventory)
+                }
             }
+
         }.font(WorkbenchTypography.secondary).padding(WorkbenchSpacing.md)
             .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
     }
+    private func responseMetric(_ metrics: ServingTelemetry) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("Last response").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            Text(metrics.lastRequest?.outputTokensPerSecond.map { String(format: "%.1f", $0) } ?? "—")
+                .font(WorkbenchTypography.display)
+            Text("output tok/s").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+        }.help("Response speed includes waiting, loading and generation. A dash means no measurement was reported.")
+    }
+    private func gatewayMetrics(_ metrics: ServingTelemetry) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("Gateway totals").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                metricValue("Input tokens", token(metrics.inputTokens))
+                metricValue("Output tokens", token(metrics.outputTokens))
+            }
+            Text("Since gateway start").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+        }.help("Totals cover completed requests with reported usage. A dash means no measurement was reported.")
+    }
+    private func metricValue(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(value).font(WorkbenchTypography.section).monospacedDigit()
+            Text(label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+        }
+    }
+
 }
 
 private struct MonitorHeadroomFact: View {
     @ObservedObject var resources: SystemResourceMonitor
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("System headroom").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
-            if let memory = resources.memory {
-                Text(String(format: "~%.1f GB available", Double(memory.availableBytes) / 1e9))
-                    .font(WorkbenchTypography.emphasis).monospacedDigit()
-                    .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
+            if let memory = resources.memory, memory.totalBytes > 0 {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(String(format: "~%.1f GB available", Double(memory.availableBytes) / 1e9))
+                        .font(WorkbenchTypography.hero)
+                        .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
+                    Spacer()
+                    Text(String(format: "%.1f GB total", Double(memory.totalBytes) / 1e9))
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).monospacedDigit()
+                }
+                ProgressView(value: Double(memory.availableBytes), total: Double(memory.totalBytes))
+                    .accessibilityLabel("Available system memory")
+                    .accessibilityValue(String(format: "%.1f of %.1f GB", Double(memory.availableBytes) / 1e9, Double(memory.totalBytes) / 1e9))
             } else {
-                Text("Unavailable").font(WorkbenchTypography.emphasis).foregroundStyle(WorkbenchColor.muted)
+                Text("Unavailable").font(WorkbenchTypography.title).foregroundStyle(WorkbenchColor.muted)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(WorkbenchSpacing.md)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
     }
 }
 

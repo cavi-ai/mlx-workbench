@@ -69,5 +69,7 @@ recorded job to inspect, play or export its verified output. A missing model doe
 not remove recorded results. [Local inference tasks](library.md#local-inference-tasks)
 describes cancellation, input reuse and unconfirmed-submission recovery.
 
-History appears beside the work at wide sizes. At smaller sizes, **Work sessions**
-opens it separately so the message editor and Send or Stop action remain visible.
+In wide conversations, model and connection controls appear beside the transcript.
+**Work sessions** opens conversation history separately. Model tasks keep history
+beside the work at wide sizes; at smaller sizes, **Work sessions** opens it
+separately so the task controls remain visible.

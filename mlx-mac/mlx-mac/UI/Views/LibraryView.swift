@@ -93,8 +93,15 @@ private struct LibraryEmptyView: View {
 }
 
 enum LibraryInspectorPresentation {
+    private static let navigatorAndSidebarAllowance: CGFloat = 790
+
     static func usesColumn(in viewport: CGSize) -> Bool {
         viewport.width >= WorkbenchSize.Library.inspectorWindowMinimum
+    }
+
+    static func idealWidth(in viewport: CGSize) -> CGFloat {
+        min(WorkbenchSize.Library.inspectorMaximum,
+            max(WorkbenchSize.Library.inspectorMinimum, viewport.width - navigatorAndSidebarAllowance))
     }
 
     static func sheetSize(in viewport: CGSize) -> CGSize {
@@ -518,7 +525,9 @@ struct LibraryView: View {
     /// The fit context the rows sort by. Follows the monitor's context
     /// picker only; memory readings never reach the Library body.
     @State private var contextTokens = FitAdvisor.defaultContextTokens
-    @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.list.rawValue
+    @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
+    @AppStorage("library.viewAsTable") private var viewAsTable = false
+    @AppStorage("library.showDetails") private var showDetails = true
     @FocusState private var searchFocused: Bool
     @AppStorage(LibrarySidebarFilter.storageKey) private var sidebarFilterRaw = ""
     @Environment(\.isRouteActive) private var isRouteActive
@@ -560,7 +569,7 @@ struct LibraryView: View {
     /// A pasted Hugging Face link is an intake request, not a filter.
     private var searchIsLink: Bool { IntakeCoordinator.looksLikeHFLink(search) }
 
-    private var groupMode: LibraryGroupMode { LibraryGroupMode(rawValue: groupModeRaw) ?? .list }
+    private var groupMode: LibraryGroupMode { LibraryGroupMode(rawValue: groupModeRaw) ?? .family }
 
     private var rows: [LibraryRow] {
         switch groupMode {
@@ -588,16 +597,9 @@ struct LibraryView: View {
         return LibraryPresentation.quantizationOptions(in: snapshot)
     }
 
-    /// The inspector belongs to this route only; a mounted-but-hidden Library
-    /// must not keep a trailing column open over another tab.
-    private var inspectorBinding: Binding<Bool> {
-        Binding(
-            get: { showInspector && isRouteActive && usesInspectorColumn },
-            set: { showInspector = $0 }
-        )
-    }
-
     private var usesInspectorColumn: Bool { LibraryInspectorPresentation.usesColumn(in: viewport) }
+
+    private var inspectorIdealWidth: CGFloat { LibraryInspectorPresentation.idealWidth(in: viewport) }
 
     private var inspectorSheetBinding: Binding<Bool> {
         Binding(get: { showInspector && isRouteActive && !usesInspectorColumn && reclaim.libraryTrashPlan == nil },
@@ -605,34 +607,41 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-            if let errors = appHost.scanResult?.rootErrors, !errors.isEmpty {
-                DisclosureGroup(errors.count == 1 ? "1 model folder could not be scanned" : "\(errors.count) model folders could not be scanned") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        ForEach(errors, id: \.path) { error in
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                                Text(error.path).font(WorkbenchTypography.compactValue)
-                                Text(error.message).font(WorkbenchTypography.secondary)
-                            }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        Button("Review model folders in Settings") { onRouteSelection(.settings) }
-                            .buttonStyle(.borderless)
-                    }.padding(.top, WorkbenchSpacing.xs)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                searchBar
+                if let errors = appHost.scanResult?.rootErrors, !errors.isEmpty {
+                    DisclosureGroup(errors.count == 1 ? "1 model folder could not be scanned" : "\(errors.count) model folders could not be scanned") {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            ForEach(errors, id: \.path) { error in
+                                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                    Text(error.path).font(WorkbenchTypography.compactValue)
+                                    Text(error.message).font(WorkbenchTypography.secondary)
+                                }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            Button("Review model folders in Settings") { onRouteSelection(.settings) }
+                                .buttonStyle(.borderless)
+                        }.padding(.top, WorkbenchSpacing.xs)
+                    }
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    .padding(.horizontal, WorkbenchSpacing.pageInset)
+                    .padding(.top, sourceSelection == nil ? WorkbenchSpacing.pageInset : 0)
+                    .padding(.bottom, WorkbenchSpacing.xs)
+                    .accessibilityIdentifier("library-root-errors")
                 }
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
-                .padding(.horizontal, WorkbenchSpacing.pageInset)
-                .padding(.top, sourceSelection == nil ? WorkbenchSpacing.pageInset : 0)
-                .padding(.bottom, WorkbenchSpacing.xs)
-                .accessibilityIdentifier("library-root-errors")
+                if let revealError {
+                    InlineMessage(kind: .warning, text: revealError,
+                        action: (title: "Dismiss", perform: { self.revealError = nil }))
+                        .padding([.horizontal, .top], WorkbenchSpacing.pageInset)
+                        .accessibilityIdentifier("library-reveal-error")
+                }
+                content
             }
-            if let revealError {
-                InlineMessage(kind: .warning, text: revealError,
-                    action: (title: "Dismiss", perform: { self.revealError = nil }))
-                    .padding([.horizontal, .top], WorkbenchSpacing.pageInset)
-                    .accessibilityIdentifier("library-reveal-error")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if showInspector && selection != nil && isRouteActive && usesInspectorColumn {
+                Divider()
+                inspector.frame(width: inspectorIdealWidth).frame(maxHeight: .infinity)
             }
-            content
         }
             .sheet(isPresented: Binding(get: { reclaim.libraryTrashPlan != nil && isRouteActive }, set: { if !$0 { reclaim.cancelLibraryTrash() } })) {
                 if let plan = reclaim.libraryTrashPlan {
@@ -666,16 +675,6 @@ struct LibraryView: View {
             } message: {
                 Text(trashError ?? "")
             }
-            .libraryInspector(isPresented: inspectorBinding) {
-                inspector
-                    // Long values wrap; their single-line width never widens the column.
-                    .frame(minWidth: 0, idealWidth: WorkbenchSize.Library.inspectorIdeal, maxWidth: .infinity)
-                    .inspectorColumnWidth(
-                        min: WorkbenchSize.Library.inspectorMinimum,
-                        ideal: WorkbenchSize.Library.inspectorIdeal,
-                        max: WorkbenchSize.Library.inspectorMaximum
-                    )
-            }
             .sheet(isPresented: inspectorSheetBinding) {
                 let size = LibraryInspectorPresentation.sheetSize(in: viewport)
                 VStack(spacing: 0) {
@@ -695,7 +694,7 @@ struct LibraryView: View {
                 LibraryRecentTasks(appHost: appHost, model: selectedModel)
             }
             .onChange(of: usesInspectorColumn) { _, isWide in
-                if !isWide { showInspector = false }
+                showInspector = isWide && showDetails
             }
             .onChange(of: isRouteActive) { _, isActive in
                 if !isActive, !usesInspectorColumn { showInspector = false }
@@ -703,6 +702,7 @@ struct LibraryView: View {
             .onReceive(appHost.resources.$contextTokens.removeDuplicates()) { contextTokens = $0 }
             .toolbar { libraryToolbar }
             .onAppear {
+                showInspector = usesInspectorColumn && showDetails
                 if appHost.librarySnapshot == nil, !appHost.isScanning {
                     appHost.requestRescan()
                 }
@@ -740,6 +740,7 @@ struct LibraryView: View {
                 selection = path
                 appHost.selectedModelPath = path
                 showInspector = true
+                if usesInspectorColumn { showDetails = true }
             }
     }
 
@@ -766,7 +767,7 @@ struct LibraryView: View {
                         onClearFilters: { readinessFilter = nil; quantizationFilter = nil }
                     )
                 } else {
-                    table
+                    if viewAsTable { table } else { modelList }
                 }
                 Divider()
                 footer(LibraryPresentation.summary(for: snapshot, familyCount: Set(snapshot.models.map(ComparePresentation.familyLabel)).count))
@@ -852,12 +853,51 @@ struct LibraryView: View {
 
     // MARK: - Table
 
+    private var modelList: some View {
+        List(selection: Binding(get: { selection }, set: {
+            selection = $0
+            if !usesInspectorColumn { showInspector = $0 != nil }
+        })) {
+            OutlineGroup(rows, children: \.children) { row in
+                HStack {
+                    LibraryNameCell(row: row, isSelected: selection == row.id, plain: groupMode == .list)
+                    Spacer(minLength: WorkbenchSpacing.xs)
+                    if row.isLeaf {
+                        LibraryTypeCell(row: row)
+                        LibraryReadinessCell(row: row, verification: appHost.verification, inventory: appHost.servingInventory)
+                    }
+                }
+                .tag(row.id)
+            }
+        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .contextMenu(forSelectionType: LibraryRow.ID.self) { ids in
+            if let model = contextModel(for: ids.first) {
+                contextMenuItems(for: ModelActions(appHost: appHost, model: model, onRouteSelection: onRouteSelection))
+            }
+        } primaryAction: { ids in
+            if contextModel(for: ids.first) != nil {
+                showInspector = true
+                if usesInspectorColumn { showDetails = true }
+            }
+        }
+        .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
+        .copyable(selectedModel.map { [$0.item.path] } ?? [])
+        .onKeyPress(.return) {
+            guard selectedModel != nil else { return .ignored }
+            showInspector = true
+            if usesInspectorColumn { showDetails = true }
+            return .handled
+        }
+    }
+
     private var table: some View {
         let largestLeafBytes = LibraryTablePresentation.largestLeafBytes(in: rows)
         let isList = groupMode == .list
         return Table(of: LibraryRow.self, selection: Binding(get: { selection }, set: {
             selection = $0
-            showInspector = $0 != nil
+            if !usesInspectorColumn { showInspector = $0 != nil }
         }), sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
             TableColumn("Name", value: \.name) { row in
                 LibraryNameCell(row: row, isSelected: selection == row.id, showsInlineStatus: !tier.showsStatus, plain: isList)
@@ -917,6 +957,7 @@ struct LibraryView: View {
             tableRows(rows)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
+        .accessibilityIdentifier("library-table")
         .scrollContentBackground(.hidden)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             tier = LibraryColumnTier.resolve(width: width, previous: tier)
@@ -931,6 +972,7 @@ struct LibraryView: View {
         } primaryAction: { ids in
             if contextModel(for: ids.first) != nil {
                 showInspector = true
+                if usesInspectorColumn { showDetails = true }
             }
         }
         .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
@@ -938,6 +980,7 @@ struct LibraryView: View {
         .onKeyPress(.return) {
             guard selectedModel != nil else { return .ignored }
             showInspector = true
+            if usesInspectorColumn { showDetails = true }
             return .handled
         }
     }
@@ -1025,7 +1068,7 @@ struct LibraryView: View {
                     appHost.handoffs.send(ServingFocusRequest(), as: .openServing)
                     onRouteSelection(.run)
                 }
-                ModelDetailsView(appHost: appHost, model: selectedModel, onRouteSelection: onRouteSelection)
+                ModelDetailsView(appHost: appHost, model: selectedModel, prominentTitle: usesInspectorColumn, onRouteSelection: onRouteSelection)
             }
             .accessibilityIdentifier("library-model-inspector")
         } else if let family = selectedFamily {
@@ -1048,6 +1091,8 @@ struct LibraryView: View {
             }
             ToolbarItem(placement: .automatic) {
                 Menu {
+                    Toggle("View as table", isOn: $viewAsTable)
+                    Divider()
                     Picker("Group by", selection: $groupModeRaw) {
                         ForEach(LibraryGroupMode.allCases) { mode in
                             Text(mode.title).tag(mode.rawValue)
@@ -1069,6 +1114,7 @@ struct LibraryView: View {
                     Label("View options", systemImage: readinessFilter == nil && quantizationFilter == nil
                           ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 }
+                .accessibilityIdentifier("library-view-options")
                 .help("Group the Library and filter by readiness or quantization")
             }
             ToolbarItem(placement: .primaryAction) {
@@ -1090,6 +1136,7 @@ struct LibraryView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showInspector.toggle()
+                    if usesInspectorColumn { showDetails = showInspector }
                 } label: {
                     Label("Inspector", systemImage: "sidebar.trailing")
                 }
@@ -1146,23 +1193,9 @@ struct LibraryView: View {
             currentPath: appHost.selectedModelPath
         )
         appHost.selectedModelPath = candidate
-        if !hadSelection, candidate != nil, usesInspectorColumn { showInspector = true }
+        if !hadSelection, candidate != nil, usesInspectorColumn, showDetails { showInspector = true }
         if selection == nil || LibraryTablePresentation.modelPath(forSelection: selection) != candidate {
             selection = candidate
-        }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func libraryInspector<Inspector: View>(
-        isPresented: Binding<Bool>,
-        @ViewBuilder content: () -> Inspector
-    ) -> some View {
-        if isPresented.wrappedValue {
-            self.inspector(isPresented: isPresented) { content() }
-        } else {
-            self
         }
     }
 }
