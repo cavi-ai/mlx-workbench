@@ -64,6 +64,14 @@ def _validate_preset(preset, allow_missing_id=False):
             "Preset fields do not match the schema.",
             "Recreate the preset from the Serve tab.",
         )
+    if not allow_missing_id:
+        preset_id = preset.get("id")
+        if not isinstance(preset_id, str) or not preset_id.strip():
+            raise PresetError(
+                "invalid_preset",
+                "Preset id must be a non-empty string.",
+                "Recreate the preset from the Serve tab.",
+            )
     name = preset["name"]
     model = preset["model"]
     if not isinstance(name, str) or not name.strip() or len(name) > 80:
@@ -99,7 +107,7 @@ def _validate_preset(preset, allow_missing_id=False):
         )
 
 
-def _validated_presets(payload):
+def _validated_presets(payload, strict=False):
     if not isinstance(payload, dict) or set(payload) != {"schema_version", "presets"}:
         raise PresetError(
             "presets_invalid",
@@ -114,7 +122,36 @@ def _validated_presets(payload):
         )
     if not isinstance(payload["presets"], list):
         raise PresetError("presets_invalid", "presets must be a list.", "Fix the file.")
-    return [dict(preset) for preset in payload["presets"]]
+    validated = []
+    seen_ids = set()
+    for entry in payload["presets"]:
+        if not isinstance(entry, dict):
+            if strict:
+                raise PresetError(
+                    "invalid_preset",
+                    "A preset must be an object.",
+                    "Retry from the Serve tab.",
+                )
+            continue
+        candidate = dict(entry) if strict else {k: entry[k] for k in PRESET_FIELDS if k in entry}
+        try:
+            _validate_preset(candidate)
+        except PresetError:
+            if strict:
+                raise
+            continue
+        preset_id = candidate["id"]
+        if preset_id in seen_ids:
+            if strict:
+                raise PresetError(
+                    "invalid_preset",
+                    "Duplicate preset id {0}.".format(preset_id),
+                    "Remove the duplicate preset.",
+                )
+            continue
+        seen_ids.add(preset_id)
+        validated.append(candidate)
+    return validated
 
 
 class PresetStore:
@@ -129,22 +166,25 @@ class PresetStore:
             return []
         try:
             return _validated_presets(json.loads(self.path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             return []
 
     def save(self, presets):
+        validated = _validated_presets(
+            {
+                "schema_version": PRESETS_SCHEMA_VERSION,
+                "presets": presets,
+            },
+            strict=True,
+        )
         payload = {
             "schema_version": PRESETS_SCHEMA_VERSION,
-            "presets": presets,
+            "presets": validated,
         }
-        _validated_presets({
-            "schema_version": PRESETS_SCHEMA_VERSION,
-            "presets": [dict(p) for p in presets],
-        })
         write_text_atomic(
             self.path, json.dumps(payload, indent=2, sort_keys=True) + "\n"
         )
-        return presets
+        return validated
 
 
 class PresetBook:

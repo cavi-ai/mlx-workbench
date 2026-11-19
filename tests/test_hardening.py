@@ -279,6 +279,56 @@ class ServePresetTests(unittest.TestCase):
                 with self.assertRaises(self.sp.PresetError):
                     self.book.upsert(**fields)
 
+    def test_load_drops_malformed_entries_and_strips_unknown_fields(self):
+        path = self.sp.presets_path(self.config_dir / "config.json")
+        valid = {
+            "id": "sp-1",
+            "name": "Coder",
+            "model": "mlx-community/Qwen3-8B-4bit",
+            "model_kind": "repo",
+            "runtime": "mlx_lm",
+            "port": 8766,
+            "max_tokens": 4096,
+            "adapter_path": None,
+        }
+        payload = {
+            "schema_version": self.sp.PRESETS_SCHEMA_VERSION,
+            "presets": [
+                42,
+                {"id": "sp-missing", "name": "Incomplete"},
+                {**valid, "extra_injected": "drop-me"},
+                {**valid, "name": "Duplicate ID"},
+                {**valid, "id": "   ", "name": "Blank ID"},
+                {**valid, "id": "sp-bad-port", "port": True},
+            ],
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        loaded = self.book.list()
+        self.assertEqual(loaded, [valid])
+
+    def test_store_save_rejects_invalid_presets(self):
+        store = self.sp.PresetStore(self.sp.presets_path(self.config_dir / "config.json"))
+        valid = {
+            "id": "sp-1",
+            "name": "Coder",
+            "model": "mlx-community/Qwen3-8B-4bit",
+            "model_kind": "repo",
+            "runtime": "mlx_lm",
+            "port": 8766,
+            "max_tokens": 4096,
+            "adapter_path": None,
+        }
+        for bad in (
+            [123],
+            [{**valid, "extra": "nope"}],
+            [{**valid, "id": ""}],
+            [{**valid, "port": True}],
+            [valid, dict(valid)],
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(self.sp.PresetError):
+                    store.save(bad)
+
 
 
 
