@@ -458,7 +458,7 @@ struct LibraryNameCell: View {
                 subline
             }
         }
-        .padding(.vertical, plain ? WorkbenchSpacing.xxs : WorkbenchSpacing.xs)
+        .padding(.vertical, WorkbenchSpacing.xxs)
     }
 
     @ViewBuilder
@@ -466,7 +466,7 @@ struct LibraryNameCell: View {
         if showsInlineStatus, let readiness = row.readiness, readiness != .ready {
             LibraryStatusLabel(readiness: readiness)
                 .font(WorkbenchTypography.secondary)
-        } else if !plain, !row.subline.isEmpty {
+        } else if !plain, row.isFamily, !row.subline.isEmpty {
             Text(row.subline)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted)

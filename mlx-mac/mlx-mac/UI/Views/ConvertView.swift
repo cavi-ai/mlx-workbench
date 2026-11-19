@@ -519,6 +519,7 @@ struct PrepareActionPlan: Equatable {
 struct ConvertView: View {
     let appHost: AppHost
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.isRouteActive) private var isRouteActive
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var reclaim: ReclaimCoordinator
     @ObservedObject private var verification: VerificationCoordinator
@@ -615,22 +616,15 @@ struct ConvertView: View {
         .onChange(of: modelWorkflow.workflow.id, initial: true) { _, _ in
             if let bits = modelWorkflow.workflow.destinationBits, presentation.bitWidths.contains(bits) { qBits = bits }
         }
-        .task(id: modelWorkflow.workflow.jobReceipt) {
-            await sampleProgress()
-            while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard !Task.isCancelled else { return }
+        .task(id: isRouteActive && (modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running)) {
+            guard isRouteActive && (modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running) else { return }
+            for _ in 0..<ActivityPoll.maximumTicks {
                 await sampleProgress()
-            }
-            await sampleProgress()
-        }
-        .task(id: modelWorkflow.workflow.state) {
-            while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard !Task.isCancelled else { return }
-                await appHost.refreshWorkflowStatus()
+                do { try await Task.sleep(for: ActivityPoll.interval) } catch { return }
+                do { try await appHost.refreshConversionStatus() } catch { return }
             }
         }
+
     }
 
     private var currentJob: Job? {

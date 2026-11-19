@@ -44,6 +44,78 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
             capturedAt: capturedAt)
     }
 
+    func testRemovalUsesFreshEngineAndLocalHostOwnership() async throws {
+        let host = hostInventory()
+        var engineReads = 0
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
+            engineReads += 1
+            return ServingEngineSnapshot(servers: [self.server()])
+        }, fetchHosts: { _ in ServingHostSnapshot(inventories: [host]) }, readMemory: { _ in [:] })
+        let paths = try await coordinator.pathsForRemoval()
+        XCTAssertEqual(engineReads, 1)
+        XCTAssertTrue(paths.contains("/models/model"))
+        XCTAssertTrue(paths.contains("org/model"))
+    }
+
+    func testRemovalNamesUnavailableSourcesAndFailsClosed() throws {
+        let host = hostInventory()
+        let key = "host:" + host.host.id.uuidString
+        let hosts = ServingHostSnapshot(inventories: [host], errors: [key: "Connection failed"])
+        XCTAssertThrowsError(try ServingInventoryCoordinator.pathsForRemoval(
+            engine: ServingEngineSnapshot(servers: []), engineError: nil, hosts: hosts, managedReceipts: managedReceipts)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Local host"))
+            XCTAssertTrue(error.localizedDescription.contains("Connection failed"))
+            XCTAssertTrue(error.localizedDescription.contains("Serving"))
+        }
+        XCTAssertThrowsError(try ServingInventoryCoordinator.pathsForRemoval(
+            engine: ServingEngineSnapshot(servers: [], errors: ["engine:receipts": "Unreadable"]),
+            engineError: nil, hosts: ServingHostSnapshot(), managedReceipts: managedReceipts))
+        XCTAssertThrowsError(try ServingInventoryCoordinator.pathsForRemoval(
+            engine: ServingEngineSnapshot(servers: [], supportsDiscovery: false),
+            engineError: nil, hosts: ServingHostSnapshot(), managedReceipts: managedReceipts))
+    }
+
+    func testCancelledRefreshCannotReusePriorOwnership() async throws {
+        let gate = InventoryTestGate()
+        let entered = expectation(description: "second engine read")
+        var reads = 0
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
+            reads += 1
+            if reads == 2 { entered.fulfill(); await gate.wait() }
+            return ServingEngineSnapshot(servers: [self.server()])
+        }, readMemory: { _ in [:] })
+        _ = try await coordinator.pathsForRemoval()
+        let retry = Task { try await coordinator.pathsForRemoval() }
+        await fulfillment(of: [entered], timeout: 2)
+        coordinator.stopMonitoring()
+        gate.open()
+        do { _ = try await retry.value; XCTFail("Interrupted ownership refresh must refuse removal") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("interrupted")) }
+    }
+
+    func testRemovalUsesTheHostResultItAwaited() async throws {
+        let gate = InventoryTestGate()
+        let strictRead = expectation(description: "strict host read")
+        let cachedRead = expectation(description: "cached host read")
+        let host = hostInventory()
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
+            await gate.wait()
+            return ServingEngineSnapshot(servers: [])
+        }, fetchHosts: { refresh in
+            if refresh { strictRead.fulfill(); return ServingHostSnapshot(inventories: [host]) }
+            cachedRead.fulfill()
+            return ServingHostSnapshot(errors: ["local-listeners": "Cached read unavailable"])
+        }, readMemory: { _ in [:] })
+        let removal = Task { try await coordinator.pathsForRemoval() }
+        await fulfillment(of: [strictRead], timeout: 2)
+        let displayRefresh = Task { await coordinator.refresh() }
+        await fulfillment(of: [cachedRead], timeout: 2)
+        gate.open()
+        let paths = try await removal.value
+        await displayRefresh.value
+        XCTAssertTrue(paths.contains("org/model"))
+    }
+
     func testConcurrentEngineRefreshesShareOneInFlightRead() async {
         let entered = expectation(description: "engine read entered")
         let secondCachedRead = expectation(description: "second refresh reads cached hosts")

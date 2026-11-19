@@ -79,7 +79,8 @@ struct DuplicatesView: View {
             .accessibilityIdentifier("reclaim-tab")
             switch tab {
             case .models:
-                ReclaimDiskPanel(appHost: appHost, reclaim: reclaim, usage: usage, onOpenQuarantine: { tab = .cleanup })
+                ReclaimDiskPanel(appHost: appHost, reclaim: reclaim, usage: usage,
+                                 onOpenQuarantine: { tab = .cleanup }, onOpenServing: { onRouteSelection(.run) })
             case .cleanup:
                 cleanup
             }

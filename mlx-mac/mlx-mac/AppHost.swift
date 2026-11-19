@@ -6,6 +6,8 @@ import Observation
 @MainActor
 @Observable
 class AppHost {
+    private var conversionStatusReadOwner = false
+
     var config: Config = Config.defaults(ggufRoots: [])
     var agentHealth: AgentHealth = .notConfigured
     var runtimeReport: RuntimeReport
@@ -413,11 +415,7 @@ class AppHost {
                 throw ReclaimError.ownershipUnavailable("Saved model purposes are unavailable or changing. Resolve that state before removing models.")
             }
             guard let self else { throw ReclaimError.ownershipUnavailable("Serving inventory is unavailable.") }
-            await self.servingInventory.refresh(refreshHosts: true)
-            guard self.servingInventory.snapshot.sourceErrors.isEmpty else {
-                throw ReclaimError.ownershipUnavailable("Resolve serving inventory errors before removing models.")
-            }
-            return try await api.servingPathsForRemoval() + self.servingInventory.snapshot.services.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
+            return try await self.servingInventory.pathsForRemoval()
         }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
         // HF-cache reclaim rides the authoritative doctor prune flow.
@@ -579,6 +577,19 @@ class AppHost {
             await modelWorkflow.refreshOperationalStatus()
         }
         await finishCompletionReconciliationIfNeeded()
+    }
+
+    /// One targeted status read shared by the visible Activity and Prepare routes.
+    @discardableResult
+    func refreshConversionStatus() async throws -> Bool {
+        guard !conversionStatusReadOwner else { return false }
+        conversionStatusReadOwner = true
+        defer { conversionStatusReadOwner = false }
+        let jobs = try await api.convertStatus(timeout: 30, cancellable: true)
+        try Task.checkCancellation()
+        // Reconciliation owns completion scanning once a status read succeeds.
+        await Task { await refreshWorkflowStatus(jobs: jobs) }.value
+        return true
     }
 
     /// New downloads share one managed root; existing provider caches stay in place.

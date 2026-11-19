@@ -316,7 +316,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let host = await makeHost(statusError: TestError.offline)
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
 
-        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [])
+        await host.modelWorkflow.reconcile(snapshot: nil)
 
         await MainActor.run {
             XCTAssertEqual(host.modelWorkflow.workflow.state, .running)
@@ -329,7 +329,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let host = await makeHost(jobs: [completedJob])
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
 
-        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [])
+        await host.modelWorkflow.reconcile(snapshot: nil)
 
         await MainActor.run {
             XCTAssertEqual(host.modelWorkflow.workflow.state, .running)
@@ -344,7 +344,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let host = await makeHost(jobs: [doneJob])
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
 
-        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [])
+        await host.modelWorkflow.reconcile(snapshot: nil)
 
         await MainActor.run {
             XCTAssertEqual(host.modelWorkflow.workflow.state, .running)

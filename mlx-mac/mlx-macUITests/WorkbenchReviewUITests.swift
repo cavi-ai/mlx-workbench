@@ -695,6 +695,16 @@ final class WorkbenchReviewUITests: XCTestCase {
         button.click()
     }
 
+    private func filterNeedsConversion() {
+        app.menuButtons["Filter"].click()
+        let readiness = app.menuItems["Readiness"].firstMatch
+        XCTAssertTrue(readiness.waitForExistence(timeout: 5))
+        readiness.hover()
+        let option = app.menuItems["Needs Conversion"].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.click()
+    }
+
     private func selectRadioOption(_ label: String, in group: String) {
         let option = app.radioGroups[group].firstMatch.radioButtons[label]
         XCTAssertTrue(option.waitForExistence(timeout: 10))
@@ -843,14 +853,29 @@ final class WorkbenchReviewUITests: XCTestCase {
                                    "name": "Existing model", "bytes": 1024, "status": "ready", "outputs": [],
                                    "readable": true, "architecture": "llama", "quantization": "Q4_K_M",
                                    "model_key": "existing"]
-        try JSONSerialization.data(withJSONObject: ["models": [model], "outputs": [], "pending": [],
-            "duplicates": [], "totals": ["gguf": 1, "pending": 0, "converted": 0, "unreadable": 0,
+        try JSONSerialization.data(withJSONObject: ["models": [], "outputs": [model], "pending": [],
+            "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 1, "unreadable": 0,
                                           "bytes": 1024, "reclaimable_bytes": 0]])
             .write(to: root.appendingPathComponent("scan-result.json"))
         app.buttons["Scan again"].click()
         XCTAssertTrue(text(containing: "Existing model").waitForExistence(timeout: 20))
-        app.popUpButtons["Readiness"].click()
-        app.menuItems["Needs Conversion"].click()
+        for width in [CGFloat(740), 1400] {
+            resizeWindow(width: width, height: 720)
+            if width == 1400 { XCTAssertGreaterThanOrEqual(app.windows.firstMatch.frame.width, 1100) }
+            for control in [app.popUpButtons["library-source"].firstMatch,
+                            app.textFields["library-search"].firstMatch, app.buttons["library-add"].firstMatch] {
+                XCTAssertTrue(control.isHittable, control.identifier)
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(control.frame), control.identifier)
+            }
+            capture(width == 740 ? "Library-toolbar-compact" : "Library-toolbar-wide")
+        }
+        text(containing: "Existing model").click()
+        app.buttons["Inspector"].click()
+        XCTAssertTrue(app.descendants(matching: .any)["More actions for Existing model"].firstMatch.waitForExistence(timeout: 5))
+        capture("Library-inspector-wide")
+        app.buttons["Inspector"].click()
+        resizeWindow(width: 1050, height: 720)
+        filterNeedsConversion()
         XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10))
         XCTAssertFalse(addModel.exists)
         capture("Library-filtered-recovery")
@@ -2629,13 +2654,20 @@ final class WorkbenchReviewUITests: XCTestCase {
             "outputPath": target, "completedModelPath": target, "state": "completed", "serveState": "idle",
             "createdAt": Date().timeIntervalSinceReferenceDate, "updatedAt": Date().timeIntervalSinceReferenceDate]
         try JSONSerialization.data(withJSONObject: [workflow]).write(to: support.appendingPathComponent("model-workflows.json"))
-        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        launch(appearance: "Dark", route: "models", isolatedHome: true, expandedSystem: true)
         XCTAssertTrue(text(containing: "Target image model").waitForExistence(timeout: 15))
-        app.popUpButtons["Readiness"].click(); app.menuItems["Needs Conversion"].click()
+        filterNeedsConversion()
         XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10))
         for attempt in 0..<2 {
             select("Activity")
-            let open = app.buttons["Open in Library"].firstMatch
+            if attempt == 0 {
+                XCTAssertTrue(text(containing: "source.gguf").waitForExistence(timeout: 15))
+                capture("Activity-conversion-timeline")
+            }
+            let moreActions = app.menuButtons.matching(NSPredicate(format: "label == %@", "More actions for source.gguf")).firstMatch
+            XCTAssertTrue(moreActions.waitForExistence(timeout: 15))
+            moreActions.click()
+            let open = app.menuItems["Open in Library"].firstMatch
             guard open.waitForExistence(timeout: 15) else {
                 let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
                 screenshot.name = "Activity-open-in-library-not-hittable-\(attempt)"
@@ -2649,17 +2681,7 @@ final class WorkbenchReviewUITests: XCTestCase {
                 return
             }
             XCTAssertTrue(open.isEnabled, app.debugDescription)
-            let window = app.windows.firstMatch
-            let frame = open.frame
-            XCTAssertTrue(frame.midX.isFinite && frame.midY.isFinite && frame.width > 0 && frame.height > 0)
-            XCTAssertTrue(window.frame.contains(frame), "Open in Library must be inside the visible window: \(frame)")
-            if waitForHittability(open, timeout: 10) {
-                open.click()
-            } else {
-                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                    dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY
-                )).click()
-            }
+            open.click()
             let inspector = app.sheets.firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 10), "Explicit reveals must open the requested inspector")
             NSPasteboard.general.clearContents()
@@ -2673,8 +2695,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(inspector.waitForNonExistence(timeout: 10))
             XCTAssertFalse(app.buttons["Clear filters"].exists)
         }
-        app.popUpButtons["Readiness"].click(); app.menuItems["Needs Conversion"].click()
-        select("Overview"); select("Library")
+        filterNeedsConversion()
+        select("Overview"); app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10), "Ordinary navigation must preserve filters after the intent is consumed")
         XCTAssertFalse(app.sheets.firstMatch.exists)
     }
@@ -2708,7 +2730,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let original = try JSONSerialization.data(withJSONObject: [job])
         try original.write(to: file)
         try Data().write(to: root.appendingPathComponent("fail-training-status"))
-        launch(appearance: "Dark", isolatedHome: true)
+        launch(appearance: "Dark", route: "activity", isolatedHome: true, expandedSystem: true)
         select("Activity")
         let retry = app.buttons["Retry status"].firstMatch
         XCTAssertTrue(retry.waitForExistence(timeout: 15))
@@ -4987,6 +5009,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     func testReclaimSuggestionActionsAlignAtWideAndNarrowWidths() throws {
         launch(appearance: "Dark", route: "duplicates", isolatedHome: true)
         select("Reclaim")
+        app.radioButtons["Quarantine & cleanup"].click()
         let analyze = app.buttons["Analyze"]
         let review = app.buttons["Review model folder…"]
         let cache = app.buttons["Check HF cache"]

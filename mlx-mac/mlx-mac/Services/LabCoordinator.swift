@@ -100,16 +100,16 @@ final class LabCoordinator: ObservableObject {
         isRefreshing = true
         defer { if revision == refreshRevision { isRefreshing = false } }
         do {
-            let nextSnapshot = try await api.labWorkspace(request: LabRequest(operation: "snapshot"), store: workspace, reviewer: reviewerID)
+            let nextSnapshot = try await api.labWorkspace(request: LabRequest(operation: "snapshot"), store: workspace, reviewer: reviewerID, timeout: 30)
             guard revision == refreshRevision else { return }
-            let response = try await api.labWorkspace(request: LabRequest(operation: "study-list"), store: workspace, reviewer: reviewerID)
+            let response = try await api.labWorkspace(request: LabRequest(operation: "study-list"), store: workspace, reviewer: reviewerID, timeout: 30)
             guard revision == refreshRevision else { return }
             snapshot = nextSnapshot
             studies = response.studies?.compactMap(LabStudyRow.init(value:)) ?? []
             error = nil
         }
         catch {
-            guard revision == refreshRevision, !(error is CancellationError) else { return }
+            guard revision == refreshRevision, !Task.isCancelled, !(error is CancellationError) else { return }
             self.error = AppHost.render(error)
         }
     }

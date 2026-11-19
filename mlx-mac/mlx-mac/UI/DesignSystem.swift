@@ -211,7 +211,7 @@ extension WorkbenchSize {
         static let rowSymbol: CGFloat = 18
 
         static let inspectorMinimum: CGFloat = 320
-        static let inspectorIdeal: CGFloat = 360
+        static let inspectorIdeal: CGFloat = 440
         static let inspectorMaximum: CGFloat = 720
         static let inspectorWindowMinimum: CGFloat = 1100
         static let inspectorSheetWidth: CGFloat = 560
@@ -230,7 +230,7 @@ extension WorkbenchSize {
         static let fitsMinimum: CGFloat = 64
         static let fitsIdeal: CGFloat = 148
         static let fitsMaximum: CGFloat = 180
-        static let typeMinimum: CGFloat = 72
+        static let typeMinimum: CGFloat = 112
         static let typeIdeal: CGFloat = 112
         static let typeMaximum: CGFloat = 148
         static let quantMinimum: CGFloat = 56

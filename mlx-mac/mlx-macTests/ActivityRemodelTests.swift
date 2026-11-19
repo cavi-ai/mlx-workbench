@@ -176,18 +176,18 @@ final class ActivityRemodelTests: XCTestCase {
             window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
             defer { window.close() }
             let calls = root.appendingPathComponent("calls.jsonl")
+            let expected = ["training-status", "convert-status", "serve-status", "queue-snapshot", "study-snapshot"]
+                + (scenario == "unavailable" ? [] : ["study-study-list"])
+            var operations: [String] = []
             for _ in 0..<150 {
-                if (try? String(contentsOf: calls, encoding: .utf8).contains("serve-status")) == true { break }
+                let lines = (try? String(contentsOf: calls, encoding: .utf8))?.split(separator: "\n") ?? []
+                operations = lines.compactMap { line in
+                    (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["operation"] as? String
+                }
+                if Set(expected).isSubset(of: Set(operations)) { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
-            try await Task.sleep(for: .milliseconds(200))
-            let rows = try String(contentsOf: calls, encoding: .utf8).split(separator: "\n").map {
-                try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
-            }
-            let operations = rows.compactMap { $0["operation"] as? String }
-            XCTAssertTrue(operations.contains("serve-status"))
-            XCTAssertTrue(Set(operations).isSubset(of: ["training-status", "convert-status", "serve-status", "queue-snapshot", "study-snapshot", "study-study-list"]))
-            XCTAssertLessThan(try XCTUnwrap(operations.firstIndex(of: "training-status")), try XCTUnwrap(operations.firstIndex(of: "convert-status")))
+            XCTAssertEqual(operations.sorted(), expected.sorted())
             XCTAssertEqual(app.modelWorkflow.history.map(\.id), records.map(\.id))
             host.layoutSubtreeIfNeeded()
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
@@ -304,6 +304,36 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertEqual(terminal, 0)
     }
 
+    func testEmptyAuthoritativeStatusDoesNotReadAgain() async {
+        let counter = Counter()
+        let host = makeHost(counter: counter, jobs: [])
+        await host.refreshWorkflowStatus(jobs: [])
+        XCTAssertEqual(counter.count("convertStatus"), 0)
+        XCTAssertEqual(counter.count("serveStatus"), 0)
+    }
+
+    func testConversionReadFailurePreservesWorkflowAndDoesNotReadOtherDomains() async {
+        let counter = Counter()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/agent", command: { _, argv, _, _ in
+            counter.hit(argv.prefix(2).joined(separator: " "))
+            throw CancellationError()
+        })
+        let host = AppHost(config: Config.defaults(),
+                           modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }),
+                           workbenchAPI: api)
+        let record = Fixture.workflow(state: .running, receipt: "r1")
+        host.modelWorkflow.restore(record)
+        do {
+            _ = try await host.refreshConversionStatus()
+            XCTFail("Expected the read to fail")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(host.modelWorkflow.workflow, record)
+        XCTAssertEqual(counter.count("convert status"), 1)
+        XCTAssertEqual(counter.count("serve status"), 0)
+        XCTAssertEqual(counter.count("lab queue"), 0)
+        XCTAssertEqual(counter.count("lora status"), 0)
+    }
+
     func testDoneJobForRunningRecordBeginsVerificationExactlyOnce() async {
         let counter = Counter()
         let jobs = [job("r1", "done")]
@@ -321,20 +351,16 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertEqual(counter.count("scan"), 1)
     }
 
-    func testActivityViewSourceReachesStatusOnlyThroughRefreshAndNeverOnActivation() throws {
+    func testActivityPollingUsesVisibleRouteAndBoundedConversionReads() throws {
         let source = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("mlx-mac/UI/Views/JobsView.swift")
-        let file = try String(contentsOf: source, encoding: .utf8)
-        let text = try XCTUnwrap(file.components(separatedBy: "struct LogSheet").first)
-        let calls = text.components(separatedBy: "refreshWorkflowStatus").count - 1
-        XCTAssertEqual(calls, 2, "both branches of refresh() and nothing else")
-        let refreshBody = try XCTUnwrap(text.range(of: "private func refresh() async {"))
-        let lastCall = try XCTUnwrap(text.range(of: "refreshWorkflowStatus", options: .backwards))
-        XCTAssertTrue(refreshBody.lowerBound < lastCall.lowerBound)
-        XCTAssertFalse(text.contains("onChange(of: isRouteActive"))
-        XCTAssertFalse(text.contains(".onAppear"))
-        XCTAssertFalse(text.contains("lastKnownJobs"))
+        let text = try String(contentsOf: source, encoding: .utf8)
+        XCTAssertTrue(text.contains(".task(id: isRouteActive && !inFlight.isEmpty && statusError == nil)"))
+        XCTAssertTrue(text.contains("ActivityPoll.maximumTicks"))
+        XCTAssertTrue(text.contains("try await appHost.refreshConversionStatus()"))
+        XCTAssertEqual(ActivityPoll.interval, .seconds(5))
+        XCTAssertEqual(ActivityPoll.maximumTicks, 120)
     }
 
     func testActivityViewAnchorsTopWithoutScrollingCode() throws {
@@ -365,11 +391,11 @@ final class ActivityRemodelTests: XCTestCase {
         coordinator.restore(verifying)
         XCTAssertEqual(
             ActivityPoll.inFlightIDs(workflow: coordinator.workflow, history: coordinator.history),
-            [running.id, verifying.id]
+            [running.id]
         )
 
         await coordinator.dismiss(recordID: running.id)
-        XCTAssertEqual(ActivityPoll.inFlightIDs(workflow: coordinator.workflow, history: coordinator.history), [verifying.id])
+        XCTAssertEqual(ActivityPoll.inFlightIDs(workflow: coordinator.workflow, history: coordinator.history), [])
     }
 
     func testCurrentWorkflowNotYetInHistoryKeysThePoll() {

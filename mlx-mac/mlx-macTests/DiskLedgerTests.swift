@@ -394,6 +394,42 @@ final class DiskLedgerTests: XCTestCase {
         XCTAssertEqual(Set(coordinator.quarantined.map(\.kind)), [nil, .mlxDirectory, .ollamaModel])
     }
 
+    @MainActor
+    func testCopyRemovalStopsWhenServingOwnershipBecomesUnavailable() async throws {
+        let root = try makeRoot().resolvingSymlinksInPath()
+        let quarantine = root.appendingPathComponent("quarantine")
+        let files = [root.appendingPathComponent("one.gguf"), root.appendingPathComponent("two.gguf")]
+        for file in files { try Data([1]).write(to: file) }
+        let items = files.map { file in
+            StoredModel(path: file.path, kind: "gguf", format: "gguf", name: file.lastPathComponent,
+                        modelKey: nil, root: root.path, store: "folder", bytes: 1,
+                        files: [StoredFile(id: file.path, path: file.path, bytes: 1)])
+        }
+        let coordinator = ReclaimCoordinator()
+        coordinator.ggufRoots = { [root.path] }
+        coordinator.quarantineDir = { quarantine.path }
+        coordinator.servingModelPaths = { [] }
+        await coordinator.previewCopies(Set(files.map(\.path)), items: items)
+        XCTAssertEqual(coordinator.copyPlan?.actionable.count, 2)
+        var calls = 0
+        coordinator.servingModelPaths = {
+            calls += 1
+            throw ReclaimError.servingOwnershipUnavailable("Local source unavailable")
+        }
+        await coordinator.confirmCopies()
+        XCTAssertEqual(calls, 1)
+        XCTAssertTrue(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        XCTAssertEqual(coordinator.copyMoves.count, 1)
+        XCTAssertNil(coordinator.lastError)
+        guard case .serving? = coordinator.copyError else { return XCTFail("Expected a serving ownership error") }
+        coordinator.servingModelPaths = { [] }
+        await coordinator.previewCopies(Set(files.map(\.path)), items: items)
+        coordinator.servingModelPaths = nil
+        await coordinator.confirmCopies()
+        XCTAssertTrue(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        guard case .serving? = coordinator.copyError else { return XCTFail("Missing ownership check must refuse removal") }
+    }
+
     // MARK: Model sources
 
     func testModelSourceColumnsSortByWhatTheyShow() {
