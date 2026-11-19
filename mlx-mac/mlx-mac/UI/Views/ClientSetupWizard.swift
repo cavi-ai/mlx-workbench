@@ -9,12 +9,13 @@ struct ClientSetupWizard: View {
     @Environment(\.dismiss) private var dismiss
     @State private var operation: Task<Void, Never>?
 
-    init(appHost: AppHost, client: ServingClient = .opencode, server: ServerInfo? = nil,
+    init(appHost: AppHost, client: ServingClient = .opencode, server: ServerInfo? = nil, prefersFrontDoor: Bool = false,
          onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost; self.onRouteSelection = onRouteSelection
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
         _session = StateObject(wrappedValue: ClientSetupSession(wiring: appHost.wiring, client: client, server: server,
-            servers: { try await appHost.api.serveStatus() }))
+            prefersFrontDoor: prefersFrontDoor, servers: { try await appHost.api.serveStatus() },
+            frontDoor: { await appHost.frontDoor.refresh(); return appHost.frontDoor.endpoint }))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -65,13 +66,17 @@ struct ClientSetupWizard: View {
                 }
                 if !found { Text("You can save the connection now and install the app later.").font(WorkbenchTypography.secondary) }
             }
-            if session.servers.isEmpty {
+            if session.servers.isEmpty && (session.frontDoor == nil || session.client != .opencode) {
                 Text("Start a chat or vision-language endpoint in Serving, then return to connect your app.")
                     .font(WorkbenchTypography.secondary)
                 Button("Open Serving") { dismiss(); onRouteSelection(.run) }
             } else {
                 Picker("Model endpoint", selection: Binding(get: { session.selectedID }, set: { session.choose(serverID: $0) })) {
                     Text("Choose a running endpoint").tag(String?.none)
+                    if session.client == .opencode, let door = session.frontDoor {
+                        Text("Front door · \(door.models.count) models · :" + String(ClientEndpointURL.port(of: door.baseURL) ?? 0))
+                            .tag(Optional(ClientSetupSession.frontDoorID))
+                    }
                     ForEach(session.servers) { server in
                         Text(server.modelIdentity + " · :" + String(server.port ?? 0)).tag(Optional(server.id))
                     }
@@ -102,7 +107,19 @@ struct ClientSetupWizard: View {
         }
     }
     @ViewBuilder private var identity: some View {
-        if let server = session.selected, let endpoint = WireEndpoint(server: server) {
+        if let door = session.selectedFrontDoor {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                if session.stage != .choose { Text(session.client.title).font(WorkbenchTypography.emphasis) }
+                Text(door.baseURL).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                    .accessibilityIdentifier("connect-app-reviewed-url")
+                Text("Every model the front door routes, default \(door.modelName)").font(WorkbenchTypography.secondary)
+                Text(door.models.joined(separator: " · ")).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    .foregroundStyle(WorkbenchColor.muted).accessibilityIdentifier("connect-app-reviewed-model")
+                Label("Front door key · supplied automatically to this app", systemImage: "lock.shield")
+                    .font(WorkbenchTypography.secondary)
+            }.padding(WorkbenchSpacing.md).frame(maxWidth: .infinity, alignment: .leading)
+                .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+        } else if let server = session.selected, let endpoint = WireEndpoint(server: server) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 if session.stage != .choose { Text(session.client.title).font(WorkbenchTypography.emphasis) }
                 Text(endpoint.baseURL).font(WorkbenchTypography.compactValue).textSelection(.enabled)
@@ -125,7 +142,7 @@ struct ClientSetupWizard: View {
                 Text("The file will be reformatted. Comments may be removed; unrelated setting values are retained.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
             }
-            if session.selected?.apiKeySHA256 != nil {
+            if session.selected?.apiKeySHA256 != nil || session.selectedFrontDoor != nil {
                 Text("The inference key is written to this app’s configuration, readable only by your macOS user. The review masks key values.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }

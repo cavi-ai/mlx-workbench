@@ -324,7 +324,7 @@ final class EndpointSupervisor: ObservableObject {
         guard commit(candidate) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         if slot.enabled, !(await stopServing(slot)) { syncShim(); return }
-        if let key = slot.apiKeySHA256, !fleet.slots.contains(where: { $0.apiKeySHA256 == key }) {
+        if let key = slot.apiKeySHA256, !keyInUse(key) {
             do { try removeAPIKey(key) } catch { lastError = AppHost.render(error) }
         }
         slotStates.removeValue(forKey: id)
@@ -707,13 +707,45 @@ final class EndpointSupervisor: ObservableObject {
         }
     }
 
-    func previewAuthentication(slot: EndpointSlot, required: Bool) async throws -> EndpointAuthenticationReview {
+    /// Keep the front door's port; its shared key is created once and kept while the fleet records it.
+    func configureFrontDoor(port: Int) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        var candidate = fleet
+        var created: String?
+        do {
+            if let existing = fleet.frontDoor {
+                candidate.frontDoor = FrontDoorSettings(port: port, apiKeySHA256: existing.apiKeySHA256)
+            } else {
+                let token = try generateAPIKey()
+                created = token
+                candidate.frontDoor = FrontDoorSettings(port: port, apiKeySHA256: EndpointCredentialStore.digest(token))
+            }
+            try candidate.validated()
+            if let created { try saveAPIKey(created) }
+        } catch { lastError = AppHost.render(error); return false }
+        guard commit(candidate) else {
+            if let created { try? removeAPIKey(EndpointCredentialStore.digest(created)) }
+            return false
+        }
+        return true
+    }
+
+    private func keyInUse(_ digest: String) -> Bool {
+        fleet.frontDoor?.apiKeySHA256 == digest || fleet.slots.contains { $0.apiKeySHA256 == digest }
+    }
+
+    /// `frontDoorKey` uses the front door's shared key instead of creating one for this endpoint.
+    func previewAuthentication(slot: EndpointSlot, required: Bool, frontDoorKey: Bool = false) async throws -> EndpointAuthenticationReview {
         guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
         defer { activeUserOperations -= 1 }
         try await requireStoppedForAuthentication(slot)
-        let token = required ? try generateAPIKey() : nil
+        guard !frontDoorKey || (required && fleet.frontDoor != nil) else {
+            throw WorkflowEvidenceError.invalid("Set up the front door in Settings before using its key.")
+        }
+        let token = required && !frontDoorKey ? try generateAPIKey() : nil
         var candidate = slot
-        candidate.apiKeySHA256 = token.map(EndpointCredentialStore.digest)
+        candidate.apiKeySHA256 = frontDoorKey ? fleet.frontDoor?.apiKeySHA256 : token.map(EndpointCredentialStore.digest)
         if required { candidate.loadOnRequest = true; if candidate.splashPresetName == nil { candidate.memoryPolicy = candidate.memoryPolicy ?? .automatic } }
         let hash = try await accelerationPreviewHash(candidate)
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
@@ -737,6 +769,8 @@ final class EndpointSupervisor: ObservableObject {
             if let token = review.token {
                 guard EndpointCredentialStore.digest(token) == review.keySHA256 else { throw WorkflowEvidenceError.invalid("The API key review changed.") }
                 try saveAPIKey(token); savedKey = review.keySHA256
+            } else if let shared = review.keySHA256, fleet.frontDoor?.apiKeySHA256 != shared {
+                throw WorkflowEvidenceError.invalid("The front door key changed. Review authentication again.")
             }
             if candidate.inferenceOptions.requested { candidate.accelerationPreviewHash = hash }
             candidate.profilePreviewHash = candidate.splashPresetName == nil ? nil : hash
@@ -744,7 +778,7 @@ final class EndpointSupervisor: ObservableObject {
                 if let savedKey { try removeAPIKey(savedKey) }
                 return false
             }
-            if let old = review.slot.apiKeySHA256, !fleet.slots.contains(where: { $0.apiKeySHA256 == old }) {
+            if let old = review.slot.apiKeySHA256, !keyInUse(old) {
                 do { try removeAPIKey(old) }
                 catch {
                     lastError = "Authentication was saved, but the previous unused key could not be removed from Keychain."
@@ -1165,7 +1199,7 @@ final class EndpointSupervisor: ObservableObject {
         do {
             var proposed = fleet.slots.filter { $0.id != candidate.id }
             proposed.append(candidate)
-            try EndpointFleetConfig(slots: proposed, installedAtLogin: fleet.installedAtLogin).validated()
+            try EndpointFleetConfig(slots: proposed, installedAtLogin: fleet.installedAtLogin, frontDoor: fleet.frontDoor).validated()
             return true
         } catch {
             lastError = AppHost.render(error)

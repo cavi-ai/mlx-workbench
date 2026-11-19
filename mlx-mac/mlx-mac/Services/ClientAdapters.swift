@@ -184,7 +184,7 @@ enum ClientAdapters {
         let existingURL = (existing?["options"] as? [String: Any])?["baseURL"] as? String
         let samePort = existingURL.flatMap(ClientEndpointURL.port(of:)).map { $0 == ClientEndpointURL.port(of: endpoint.baseURL) } ?? false
         var models = samePort ? (existing?["models"] as? [String: Any]) ?? [:] : [:]
-        if models[endpoint.modelName] == nil { models[endpoint.modelName] = [String: Any]() }
+        for name in endpoint.models + [endpoint.modelName] where models[name] == nil { models[name] = [String: Any]() }
         provider[providerID] = [
             "npm": "@ai-sdk/openai-compatible",
             "options": ["baseURL": endpoint.baseURL, "apiKey": "workbench"],
@@ -414,8 +414,8 @@ enum OpenCodeSetupCheck {
     /// OpenCode's global config files in load order; a later file wins on conflicting keys.
     static let fileNames = ["config.json", "opencode.json", "opencode.jsonc"]
 
-    static func run(home: URL, directory: String? = nil, servers: [ServerInfo]) -> Result {
-        result(reading(home: home, directory: directory), servers: servers)
+    static func run(home: URL, directory: String? = nil, servers: [ServerInfo], frontDoor: WireEndpoint? = nil) -> Result {
+        result(reading(home: home, directory: directory), servers: servers, frontDoor: frontDoor)
     }
 
     /// The files in the folder setup writes to, deep-merged in load order and read like the file setup writes.
@@ -442,8 +442,9 @@ enum OpenCodeSetupCheck {
         return adapter.read(text)
     }
 
-    /// An entry is ready when exactly one running chat server on its port serves a model it lists.
-    static func result(_ reading: ClientConfigReading, servers: [ServerInfo]) -> Result {
+    /// An entry is ready when exactly one running chat server on its port serves a model it lists,
+    /// or when it points at the running front door, which routes a model it lists.
+    static func result(_ reading: ClientConfigReading, servers: [ServerInfo], frontDoor: WireEndpoint? = nil) -> Result {
         let chat = servers.filter { WireEndpoint(server: $0) != nil }
         switch reading {
         case .fileAbsent, .noWorkbenchEntry:
@@ -451,6 +452,9 @@ enum OpenCodeSetupCheck {
         case .unreadable(let reason):
             return .unreadable(reason)
         case .entries(let entries), .notDefault(let entries):
+            if let frontDoor, let port = ClientEndpointURL.port(of: frontDoor.baseURL), entries.contains(where: { entry in
+                ClientEndpointURL.port(of: entry.baseURL) == port && entry.models.contains(where: frontDoor.models.contains)
+            }) { return .ready }
             let matches = entries.compactMap { ClientEndpointMatch.match($0, servers: chat) }
             if matches.contains(where: { if case .live = $0 { return true }; return false }) { return .ready }
             return matches.first.map { .notServing(port: $0.port) } ?? .noWorkbenchEntry

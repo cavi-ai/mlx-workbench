@@ -21,7 +21,7 @@ be saved.
 | `use-sessions.json.sqlite` | Conversation text, partial replies, drafts, server identities and task workspace selections; navigation loads summaries |
 | `use-defaults.json` | Request defaults and the selected work session |
 | `serving-profiles.json` | Saved serving profiles and their verification |
-| `endpoint-fleet.json` | Always-on endpoints and their memory policies |
+| `endpoint-fleet.json` | Always-on endpoints and their memory policies; the front door port and key digest |
 | `task-endpoints.json` | Typed task endpoint origins, verified job identities and unresolved-submission blocks; contains no API keys or model weights |
 | `recommendation-preferences.json` | Preferred model per use case |
 | `usage-stamps.json` | When each model was last served, verified or benchmarked |

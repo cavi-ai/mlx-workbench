@@ -60,7 +60,7 @@ struct TerminalWorkspaceView: View {
         .onChange(of: harnessRaw) { _, _ in setupNotice = nil }
         .sheet(isPresented: $showsSetup, onDismiss: { setupNotice = nil }) {
             ClientSetupWizard(appHost: appHost, client: .opencode, server: setupNotice?.server,
-                              onRouteSelection: onRouteSelection)
+                              prefersFrontDoor: setupNotice?.frontDoor == true, onRouteSelection: onRouteSelection)
         }
     }
 
@@ -95,7 +95,8 @@ struct TerminalWorkspaceView: View {
             .accessibilityIdentifier("terminal-launch")
     }
 
-    /// OpenCode launches directly only when its global config lists a model a running Workbench chat server serves.
+    /// OpenCode launches directly only when its global config lists a model a running Workbench chat server
+    /// or the app's front door serves.
     private func launch() {
         setupNotice = nil
         let target = folder
@@ -106,10 +107,13 @@ struct TerminalWorkspaceView: View {
             let notice: SetupNotice?
             do {
                 let servers = try await appHost.api.serveStatus()
-                notice = Self.setupNotice(await appHost.wiring.openCodeSetup(servers: servers), servers: servers)
+                await appHost.frontDoor.refresh()
+                let frontDoor = appHost.frontDoor.endpoint
+                notice = Self.setupNotice(await appHost.wiring.openCodeSetup(servers: servers, frontDoor: frontDoor),
+                                          servers: servers, frontDoor: frontDoor != nil)
             } catch {
                 notice = SetupNotice(text: "Server status is unavailable, so OpenCode's Workbench models were not checked.",
-                                     server: nil, serverRunning: true)
+                                     server: nil, serverRunning: true, frontDoor: false)
             }
             if let notice { setupNotice = notice } else { session.launch(.opencode, in: target) }
         }
@@ -120,9 +124,11 @@ struct TerminalWorkspaceView: View {
         /// Preselected in setup: the only running chat server.
         let server: ServerInfo?
         let serverRunning: Bool
+        /// Preselected in setup: the running front door, which lists every routed model.
+        let frontDoor: Bool
     }
 
-    private static func setupNotice(_ result: OpenCodeSetupCheck.Result, servers: [ServerInfo]) -> SetupNotice? {
+    private static func setupNotice(_ result: OpenCodeSetupCheck.Result, servers: [ServerInfo], frontDoor: Bool) -> SetupNotice? {
         let chat = servers.filter { WireEndpoint(server: $0) != nil }
         let detail: String
         switch result {
@@ -131,9 +137,10 @@ struct TerminalWorkspaceView: View {
         case .notServing(let port): detail = "Its Workbench provider points at port \(port), where no running chat server serves its model."
         case .unreadable(let reason): detail = "Its config needs review: \(reason)."
         }
-        let stopped = chat.isEmpty ? " No chat server is running; start one in Run." : ""
+        let stopped = chat.isEmpty && !frontDoor ? " No chat server is running; start one in Run." : ""
         return SetupNotice(text: "OpenCode has no Workbench models. \(detail)\(stopped)",
-                           server: chat.count == 1 ? chat[0] : nil, serverRunning: !chat.isEmpty)
+                           server: !frontDoor && chat.count == 1 ? chat[0] : nil, serverRunning: frontDoor || !chat.isEmpty,
+                           frontDoor: frontDoor)
     }
 
     private func setupBar(_ notice: SetupNotice) -> some View {

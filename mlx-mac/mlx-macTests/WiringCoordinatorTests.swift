@@ -363,6 +363,33 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .unreadable("opencode.json isn't valid JSON"))
     }
 
+    func testOpencodePlanListsEveryFrontDoorModelWithTheChosenDefault() throws {
+        let token = "mlxw_" + String(repeating: "f", count: 64)
+        let door = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "qwen3-8b",
+                                apiKeySHA256: EndpointCredentialStore.digest(token), models: ["gemma-3", "org/coder", "qwen3-8b"])
+        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.authenticatedPlan(nil, door, key: token))
+        let local = try XCTUnwrap((parsed["provider"] as? [String: Any])?["mlx-local"] as? [String: Any])
+        XCTAssertEqual((local["models"] as? [String: Any])?.keys.sorted(), ["gemma-3", "org/coder", "qwen3-8b"])
+        XCTAssertEqual((local["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8939/v1")
+        XCTAssertEqual((local["options"] as? [String: Any])?["apiKey"] as? String, token)
+        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+    }
+
+    func testOpenCodeSetupCheckIsReadyThroughTheRunningFrontDoor() throws {
+        let home = try makeHome()
+        let folder = home.appendingPathComponent(".config/opencode", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try #"{"provider": {"mlx-local": {"options": {"baseURL": "http://127.0.0.1:8939/v1"}, "models": {"org/coder": {}}}}, "model": "mlx-local/org/coder"}"#
+            .write(to: folder.appendingPathComponent("opencode.jsonc"), atomically: true, encoding: .utf8)
+        let door = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3",
+                                apiKeySHA256: String(repeating: "a", count: 64), models: ["gemma-3", "org/coder"])
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [], frontDoor: door), .ready)
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: []), .notServing(port: 8939))
+        let other = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3",
+                                 apiKeySHA256: String(repeating: "a", count: 64), models: ["gemma-3"])
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [], frontDoor: other), .notServing(port: 8939))
+    }
+
     func testOpencodePlanAddsSchemaOnlyWhenMissingOrEmpty() throws {
         for before in [nil, "{\"$schema\": \"\"}"] {
             let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))

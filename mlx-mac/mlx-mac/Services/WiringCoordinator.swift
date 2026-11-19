@@ -74,8 +74,11 @@ final class WiringCoordinator: ObservableObject {
     private var previewedEndpoint: WireEndpoint?
     private var previewedServer: ServerInfo?
 
+    /// The app-owned front door captured with a front door preview.
+    private var previewedFrontDoor: WireEndpoint?
+
     /// The endpoint captured with the server-backed preview, independent of current selection.
-    var reviewedEndpoint: WireEndpoint? { previewedServer.flatMap { WireEndpoint(server: $0) } }
+    var reviewedEndpoint: WireEndpoint? { previewedServer.flatMap { WireEndpoint(server: $0) } ?? previewedFrontDoor }
 
     var setupClients: [ClientInstallation] {
         adapters.compactMap { $0.configurationInstallation(home: home, directory: locations.directory(for: $0.clientID)) }
@@ -85,10 +88,67 @@ final class WiringCoordinator: ObservableObject {
     func configDirectory(for clientID: String) -> String? { locations.directory(for: clientID) }
 
     /// OpenCode's global config, read off the main actor from the folder setup writes to, checked against `servers`.
-    func openCodeSetup(servers: [ServerInfo]) async -> OpenCodeSetupCheck.Result {
+    func openCodeSetup(servers: [ServerInfo], frontDoor: WireEndpoint? = nil) async -> OpenCodeSetupCheck.Result {
         let home = home, directory = locations.directory(for: ClientAdapters.opencode.clientID)
         let reading = await Task.detached(priority: .utility) { OpenCodeSetupCheck.reading(home: home, directory: directory) }.value
-        return OpenCodeSetupCheck.result(reading, servers: servers)
+        return OpenCodeSetupCheck.result(reading, servers: servers, frontDoor: frontDoor)
+    }
+
+    /// Preview setup for the app-owned front door; its key is read from Keychain like an endpoint's.
+    func preview(frontDoor endpoint: WireEndpoint, clientIDs: Set<String>) async {
+        guard !isCheckingServer, !isApplying else { return }
+        guard endpoint.apiKeySHA256 != nil else {
+            invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return
+        }
+        isCheckingServer = true
+        defer { isCheckingServer = false }
+        do {
+            let key = try await inferenceKey(for: endpoint)
+            try Task.checkCancellation()
+            buildPreview(endpoint: endpoint, clientIDs: clientIDs, key: key)
+            previewedFrontDoor = endpoint
+        } catch {
+            invalidateServerPreview()
+            lastError = Task.isCancelled ? nil : WiringError.credentialUnavailable.errorDescription
+        }
+    }
+
+    func previewMatches(frontDoor: WireEndpoint?) -> Bool {
+        frontDoor != nil && previewedFrontDoor == frontDoor && previewHash != nil && !plans.isEmpty
+    }
+
+    /// Read the front door again immediately before the existing config-write boundary.
+    func confirm(frontDoor endpoint: WireEndpoint, previewHash hash: String,
+                 current: @MainActor () async -> WireEndpoint?) async -> WiringTransaction? {
+        guard !isCheckingServer, !isApplying else { return nil }
+        guard previewedFrontDoor == endpoint, previewHash == hash else {
+            lastError = WiringError.previewHashMismatch.errorDescription; return nil
+        }
+        isCheckingServer = true
+        defer { isCheckingServer = false }
+        do {
+            _ = try await inferenceKey(for: endpoint)
+            try Task.checkCancellation()
+            guard await current() == endpoint, previewedFrontDoor == endpoint, previewHash == hash else {
+                invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return nil
+            }
+            return applyPreview(endpoint: endpoint, previewHash: hash)
+        } catch {
+            invalidateServerPreview()
+            lastError = Task.isCancelled ? nil : AppHost.render(error)
+            return nil
+        }
+    }
+
+    /// The front door key for a connection test, read only while the front door is unchanged.
+    func inferenceKey(frontDoor endpoint: WireEndpoint, current: @MainActor () async -> WireEndpoint?) async throws -> String {
+        guard !isApplying, !isCheckingServer, endpoint.apiKeySHA256 != nil else { throw WiringError.credentialUnavailable }
+        isCheckingServer = true
+        defer { isCheckingServer = false }
+        let key = try await inferenceKey(for: endpoint)
+        guard await current() == endpoint else { throw WiringError.serverChanged }
+        guard let key else { throw WiringError.credentialUnavailable }
+        return key
     }
 
     /// Choose a client's config folder, or nil for its standard location; a pending review is discarded.
@@ -191,7 +251,7 @@ final class WiringCoordinator: ObservableObject {
     }
 
     private func buildPreview(endpoint: WireEndpoint, clientIDs: Set<String>?, key: String?) {
-        previewedServer = nil
+        previewedServer = nil; previewedFrontDoor = nil
         detect()
         lastError = nil
         let targets: [ClientInstallation]
@@ -318,7 +378,7 @@ final class WiringCoordinator: ObservableObject {
     }
 
     private func invalidateServerPreview() {
-        previewedServer = nil; previewedEndpoint = nil; previewedPlans = []; plans = []; previewHash = nil
+        previewedServer = nil; previewedFrontDoor = nil; previewedEndpoint = nil; previewedPlans = []; plans = []; previewHash = nil
     }
 
     /// Apply the frozen plans. Per-client drift (file changed since preview)
@@ -591,7 +651,7 @@ final class WiringCoordinator: ObservableObject {
     // MARK: - Hashing and summaries
 
     static func hash(plans: [ClientEditPlan], endpoint: WireEndpoint) -> String {
-        var canonical = "endpoint:\(endpoint.baseURL)|\(endpoint.modelName)|\(endpoint.apiKeySHA256 ?? "")\n"
+        var canonical = "endpoint:\(endpoint.baseURL)|\(endpoint.modelName)|\(endpoint.apiKeySHA256 ?? "")|\(endpoint.models.joined(separator: ","))\n"
         for plan in plans.sorted(by: { $0.clientID < $1.clientID }) {
             canonical += "plan:\(plan.clientID)|\(plan.configPath)|\(plan.after)\n"
         }

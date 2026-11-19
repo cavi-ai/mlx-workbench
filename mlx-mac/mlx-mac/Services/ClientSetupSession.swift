@@ -9,6 +9,10 @@ struct ClientConnectionResult: Equatable, Sendable {
 enum ClientConnectionTest {
     static func run(client: ServingClient, server: ServerInfo, token: String?, http: HostHTTPClient = .init()) async throws -> ClientConnectionResult {
         guard let endpoint = WireEndpoint(server: server), !client.requiresGateway || server.jit == true else { throw HostHTTPError.invalidResponse }
+        return try await run(client: client, endpoint: endpoint, token: token, http: http)
+    }
+
+    static func run(client: ServingClient, endpoint: WireEndpoint, token: String?, http: HostHTTPClient = .init()) async throws -> ClientConnectionResult {
         let baseURL = String(endpoint.baseURL.dropLast(3))
         let prompt = "Reply with the word CONNECTED."
         var body: [String: Any] = ["model": endpoint.modelName, "stream": false]
@@ -61,18 +65,27 @@ final class ClientSetupSession: ObservableObject {
     @Published private(set) var appFound: Bool?
     @Published private(set) var receipt: ClientEditReceipt?
     @Published private(set) var transactionID: UUID?
+    /// The app-owned front door while it routes at least one chat model; offered for OpenCode.
+    @Published private(set) var frontDoor: WireEndpoint?
+    static let frontDoorID = "front-door"
     private let wiring: WiringCoordinator
     private let readServers: () async throws -> [ServerInfo]
+    private let readFrontDoor: @MainActor () async -> WireEndpoint?
     private let testConnection: (ServingClient, ServerInfo, String?) async throws -> ClientConnectionResult
+    private let testFrontDoor: (ServingClient, WireEndpoint, String?) async throws -> ClientConnectionResult
     private let detect: (ServingClient) async -> Bool
     private var reviewed: ServerInfo?
+    private var reviewedFrontDoor: WireEndpoint?
     private var hash: String?
     private var activeTask: Task<Void, Never>?
     private var initialServer: ServerInfo?
+    private var prefersFrontDoor: Bool
 
-    init(wiring: WiringCoordinator, client: ServingClient = .opencode, server: ServerInfo? = nil,
+    init(wiring: WiringCoordinator, client: ServingClient = .opencode, server: ServerInfo? = nil, prefersFrontDoor: Bool = false,
          servers: @escaping () async throws -> [ServerInfo],
+         frontDoor: @escaping @MainActor () async -> WireEndpoint? = { nil },
          test: @escaping (ServingClient, ServerInfo, String?) async throws -> ClientConnectionResult = { try await ClientConnectionTest.run(client: $0, server: $1, token: $2) },
+         testFrontDoor: @escaping (ServingClient, WireEndpoint, String?) async throws -> ClientConnectionResult = { try await ClientConnectionTest.run(client: $0, endpoint: $1, token: $2) },
          detect: @escaping (ServingClient) async -> Bool = { client in
              await WorkbenchIO.perform {
                  var environment = ProcessInfo.processInfo.environment
@@ -81,11 +94,13 @@ final class ClientSetupSession: ObservableObject {
                  return WorkbenchPython.resolveOnPath(client.rawValue == "claude" ? "claude" : client.rawValue, environment: environment, fileManager: .default) != nil
              }
          }) {
-        self.wiring = wiring; self.client = client; self.initialServer = server
-        readServers = servers; testConnection = test; self.detect = detect
+        self.wiring = wiring; self.client = client; self.initialServer = server; self.prefersFrontDoor = prefersFrontDoor
+        readServers = servers; readFrontDoor = frontDoor; testConnection = test; self.testFrontDoor = testFrontDoor; self.detect = detect
     }
     var selected: ServerInfo? { servers.first { $0.id == selectedID } }
-    var supported: Bool { selected.map { !client.requiresGateway || $0.jit == true } ?? false }
+    /// The front door is the chosen target: OpenCode lists every model it routes.
+    var selectedFrontDoor: WireEndpoint? { client == .opencode && selectedID == Self.frontDoorID ? frontDoor : nil }
+    var supported: Bool { selectedFrontDoor != nil || (selected.map { !client.requiresGateway || $0.jit == true } ?? false) }
     var plan: ClientEditPlan? { wiring.plans.first { $0.clientID == client.rawValue } }
     /// Where setup writes this client's config, at its real location.
     var configPath: String? { wiring.setupClients.first { $0.clientID == client.rawValue }?.configPath }
@@ -104,17 +119,23 @@ final class ClientSetupSession: ObservableObject {
         do {
             servers = try await readServers().filter { WireEndpoint(server: $0) != nil }
             try Task.checkCancellation()
+            frontDoor = await readFrontDoor()
+            if prefersFrontDoor, client == .opencode, frontDoor != nil {
+                selectedID = Self.frontDoorID; initialServer = nil
+            } else if selectedID == Self.frontDoorID, selectedFrontDoor == nil { selectedID = servers.first?.id }
+            prefersFrontDoor = false
             if let expected = initialServer {
                 selectedID = servers.first { $0.sameProcess(as: expected) }?.id
                 if selectedID == nil { error = "This endpoint changed or stopped. Choose a running endpoint." }
                 initialServer = nil
-            } else if selectedID == nil { selectedID = servers.first?.id }
+            } else if selectedID == nil { selectedID = servers.first?.id ?? (client == .opencode && frontDoor != nil ? Self.frontDoorID : nil) }
             appFound = await detect(client)
         } catch { self.error = AppHost.render(error) }
     }
     func choose(client: ServingClient) {
         guard !busy else { return }
         self.client = client; reset(); appFound = nil
+        if selectedID == Self.frontDoorID, client != .opencode { selectedID = servers.first?.id }
         activeTask = Task { [weak self] in
             guard let self else { return }
             let found = await detect(client)
@@ -123,7 +144,7 @@ final class ClientSetupSession: ObservableObject {
     }
     func choose(serverID: String?) { guard !busy else { return }; selectedID = serverID; reset() }
     func back() { guard !busy else { return }; reset() }
-    private func reset() { stage = .choose; error = nil; result = nil; reviewed = nil; hash = nil; receipt = nil; transactionID = nil }
+    private func reset() { stage = .choose; error = nil; result = nil; reviewed = nil; reviewedFrontDoor = nil; hash = nil; receipt = nil; transactionID = nil }
     var canUndo: Bool {
         wiring.transactions.contains { $0.id == transactionID && !$0.receipts.isEmpty && $0.rolledBackAt == nil }
     }
@@ -135,7 +156,9 @@ final class ClientSetupSession: ObservableObject {
     }
 
     func preview() async {
-        guard !busy, supported, let selected else { return }
+        guard !busy, supported else { return }
+        if let door = selectedFrontDoor { return await preview(frontDoor: door) }
+        guard let selected else { return }
         busy = true; error = nil; defer { busy = false }
         do {
             _ = try await current(selected)
@@ -146,10 +169,31 @@ final class ClientSetupSession: ObservableObject {
             self.hash = hash; reviewed = selected; stage = .review
         } catch { self.error = AppHost.render(error) }
     }
-    func apply() async {
-        guard !busy, let reviewed, let hash else { return }
+    private func preview(frontDoor door: WireEndpoint) async {
         busy = true; error = nil; defer { busy = false }
-        let transaction = await wiring.confirm(server: reviewed, previewHash: hash, currentServers: readServers)
+        do {
+            guard let current = await readFrontDoor(), current.baseURL == door.baseURL,
+                  current.apiKeySHA256 == door.apiKeySHA256 else { throw changedFrontDoor() }
+            frontDoor = current
+            await wiring.preview(frontDoor: current, clientIDs: [client.rawValue])
+            guard wiring.previewMatches(frontDoor: current), wiring.plans.count == 1, let hash = wiring.previewHash else {
+                throw WorkflowEvidenceError.invalid(wiring.lastError ?? "Setup could not be prepared. Review this client’s configuration.")
+            }
+            self.hash = hash; reviewedFrontDoor = current; stage = .review
+        } catch { self.error = AppHost.render(error) }
+    }
+    func apply() async {
+        guard !busy, let hash else { return }
+        if let door = reviewedFrontDoor {
+            busy = true; error = nil; defer { busy = false }
+            finish(await wiring.confirm(frontDoor: door, previewHash: hash, current: readFrontDoor))
+            return
+        }
+        guard let reviewed else { return }
+        busy = true; error = nil; defer { busy = false }
+        finish(await wiring.confirm(server: reviewed, previewHash: hash, currentServers: readServers))
+    }
+    private func finish(_ transaction: WiringTransaction?) {
         guard let transaction, transaction.failures.isEmpty, transaction.receipts.count == 1,
               let receipt = transaction.receipts.first, receipt.clientID == client.rawValue else {
             error = wiring.lastError ?? "The configuration was not applied. Review setup again."; return
@@ -158,6 +202,7 @@ final class ClientSetupSession: ObservableObject {
         if let failure = wiring.persistenceError { error = failure }
     }
     func test() async {
+        if let door = reviewedFrontDoor { return await test(frontDoor: door) }
         guard !busy, stage == .saved, let reviewed, let receipt, let endpoint = WireEndpoint(server: reviewed) else { return }
         busy = true; error = nil; result = nil; defer { busy = false }
         do {
@@ -170,6 +215,22 @@ final class ClientSetupSession: ObservableObject {
             guard await wiring.matchesAppliedConfig(receipt, endpoint: endpoint) else { throw changedConfig() }
             result = response
         } catch { self.error = error is CancellationError ? "Connection test stopped." : AppHost.render(error) }
+    }
+    private func test(frontDoor door: WireEndpoint) async {
+        guard !busy, stage == .saved, let receipt else { return }
+        busy = true; error = nil; result = nil; defer { busy = false }
+        do {
+            guard await wiring.matchesAppliedConfig(receipt, endpoint: door) else { throw changedConfig() }
+            let key = try await wiring.inferenceKey(frontDoor: door, current: readFrontDoor)
+            let response = try await testFrontDoor(client, door, key)
+            try Task.checkCancellation()
+            guard await readFrontDoor() == door else { throw changedFrontDoor() }
+            guard await wiring.matchesAppliedConfig(receipt, endpoint: door) else { throw changedConfig() }
+            result = response
+        } catch { self.error = error is CancellationError ? "Connection test stopped." : AppHost.render(error) }
+    }
+    private func changedFrontDoor() -> WorkflowEvidenceError {
+        .invalid("The front door changed or stopped. Refresh and review setup again.")
     }
     private func current(_ expected: ServerInfo) async throws -> [ServerInfo] {
         let latest = try await readServers()

@@ -103,6 +103,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `TailnetSharingCoordinator` (`Services/TailnetSharing.swift`) owns the one Tailscale share through
   `mlx-agent serve tailnet`: preview, hash-confirmed start as an app-owned child with `--watch-parent`, status and stop.
   `TailnetSharingWizard` presents it; Serving, Monitor and the menu bar read its shared address.
+  `FrontDoorCoordinator` (`Services/FrontDoor.swift`) owns one `mlx-agent serve front-door` child (`--watch-parent`) on the
+  fleet's `frontDoor` port and shared key; `EndpointSupervisor` creates that key once and offers it in the authentication review.
+  `FrontDoorEditor` (Settings → Serving) presents it; `ClientSetupSession` offers it to OpenCode as one address for every routed model.
 - Use: `UseWorkspaceCoordinator`, `UseSessionStore` (`RecordArchive` on a serial I/O queue),
   `UseChatClient` and `UseImageStore`; `UseWorkspaceView` composes conversation views and the
   existing typed-task panels. `AppHost.handoffs` carries model/server selection. Chat owns
