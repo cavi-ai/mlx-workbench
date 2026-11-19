@@ -83,14 +83,20 @@ enum ModelFamilyReview {
         return String(decoding: try encoder.encode(payload), as: UTF8.self)
     }
 
-    private static func familyHint(_ model: LibraryModel) -> String {
-        let name = NSString(string: model.displayName).lastPathComponent.lowercased()
+    static func namedCohort(_ model: LibraryModel) -> String? { namedCohort(name: model.displayName) }
+
+    static func namedCohort(name input: String) -> String? {
+        let name = NSString(string: input).lastPathComponent.lowercased()
         // Keep model generation, size and MoE active size distinct; tuning labels stay on each row.
         let pattern = #"^(.+?)[-_ ](\d+(?:\.\d+)?[bm](?:[-_ ]a\d+(?:\.\d+)?[bm])?)(?=$|[-_. ])"#
         if let range = name.range(of: pattern, options: .regularExpression) {
             return String(name[range]).replacingOccurrences(of: "_", with: "-").replacingOccurrences(of: " ", with: "-")
         }
-        return model.normalizedFamilyKey
+        return nil
+    }
+
+    private static func familyHint(_ model: LibraryModel) -> String {
+        namedCohort(model) ?? model.normalizedFamilyKey
     }
 
     static func reasons(for model: LibraryModel, purpose: ModelPurpose?, preferredRoles: [UseCase],
