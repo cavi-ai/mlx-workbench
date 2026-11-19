@@ -94,7 +94,7 @@ enum ServingInventoryPresentation {
     }
 
     static func resourceSelection(for service: ServingServiceObservation) -> HostResourceSelection? {
-        guard let host = service.host, let model = service.hostedModel else { return nil }
+        guard let host = service.host, let model = service.hostedModel, !model.isCloudModel else { return nil }
         switch host.provider.adapter.releaseScope {
         case .host: return HostResourceSelection()
         case .model: return HostResourceSelection(modelID: model.modelID)
