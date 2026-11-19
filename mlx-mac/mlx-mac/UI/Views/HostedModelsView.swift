@@ -175,8 +175,8 @@ struct HostedModelsView: View {
             .frame(minHeight: 300, idealHeight: 390)
             .accessibilityIdentifier("hosted-model-table")
             if rows.isEmpty { Label("No models match this inventory or filter.", systemImage: "line.3.horizontal.decrease.circle").foregroundStyle(WorkbenchColor.muted) }
-            if let running = inventory.runningModels {
-                DisclosureGroup("Reported running models (\(running.count))") {
+            if inventory.runningModels != nil {
+                DisclosureGroup("Reported running models (\(inventory.reportedLoadedModels.count))") {
                     HostedRunningModelsView(models: inventory.reportedLoadedModels)
                 }.accessibilityIdentifier("host-running-models")
             }
@@ -219,7 +219,7 @@ struct HostedModelsView: View {
                     .help("Review activity before requesting cleanup of all cached ComfyUI models.")
             case .model, .instance:
                 let byInstance = host.provider.adapter.releaseScope == .instance
-                if let model = selectedModel, model.isLoaded == true {
+                if let model = selectedModel, !model.isCloudModel, model.isLoaded == true {
                     let instances = model.loadedInstanceIDs ?? []
                     let instance = instances.count == 1 ? instances.first : selectedInstanceID.flatMap { instances.contains($0) ? $0 : nil }
                     HStack {
@@ -249,6 +249,7 @@ struct HostedModelsView: View {
     }
 
     static func state(_ model: HostedModel) -> String {
+        if model.isCloudModel { return "Cloud" }
         switch model.isLoaded { case true: return "Loaded"; case false: return "Available"; case nil: return "Load unknown" }
     }
     static func bytes(_ count: Int64?) -> String { count.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Unknown" }
@@ -330,9 +331,10 @@ struct HostedModelDetailsView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text(model.modelID).font(WorkbenchTypography.compactValue).textSelection(.enabled)
             Text("Family: \(model.family ?? "Unknown") · Format: \(model.format ?? "Unknown")")
-            Text("Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")")
+            Text(model.isCloudModel ? "Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")" : "Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")")
                 .accessibilityIdentifier("host-model-context")
-            Text("Reported model memory: \(HostedModelsView.bytes(model.memoryBytes))")
+            if model.isCloudModel { Text("Cloud model") }
+            else { Text("Reported model memory: \(HostedModelsView.bytes(model.memoryBytes))") }
             Text("Capabilities: \(model.capabilities.map { $0.isEmpty ? "None reported" : $0.joined(separator: ", ") } ?? "Unknown")")
                 .accessibilityIdentifier("host-model-capabilities")
             if let digest = model.digest { Text("Digest: \(digest)").font(WorkbenchTypography.compactValue).textSelection(.enabled) }

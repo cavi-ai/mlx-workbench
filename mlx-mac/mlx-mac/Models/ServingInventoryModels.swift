@@ -55,7 +55,7 @@ struct ServingServiceObservation: Identifiable, Equatable {
             return residency == .loaded && server.state == "running" && server.jit == true && server.activeRequests == 0 &&
                 (server.pid.map { $0 > 0 && $0 <= Int(Int32.max) } ?? false) && server.processStartedAt != nil && server.receiptsDirectory != nil
         }
-        guard let host, let model = hostedModel else { return false }
+        guard let host, let model = hostedModel, !model.isCloudModel else { return false }
         switch host.provider.adapter.releaseScope {
         case .model: return model.isLoaded == true
         case .instance: return model.isLoaded == true && model.loadedInstanceIDs?.count == 1
@@ -157,12 +157,13 @@ struct ServingInventorySnapshot: Equatable {
             for model in models {
                 let id = "host:\(url.absoluteString):\(host.provider.rawValue):\(model.modelID):\(model.digest ?? "")"
                 guard seen.insert(id).inserted else { continue }
-                let residency: ServingResidency = model.isLoaded.map { $0 ? .loaded : .unloaded } ?? .unknown
+                let cloud = model.isCloudModel
+                let residency: ServingResidency = cloud ? .unknown : (model.isLoaded.map { $0 ? .loaded : .unloaded } ?? .unknown)
                 rows.append(ServingServiceObservation(
                     id: id, sourceID: "host:" + host.id.uuidString, providerName: host.name,
                     modelID: model.modelID, modelPath: nil, baseURL: url.absoluteString + ([.comfyUI, .systemOne].contains(host.provider) ? "" : "/v1"), runtime: host.provider.rawValue,
-                    residency: residency, isLocal: local, isWorkbenchManaged: false, modelProcessID: nil,
-                    reportedMemoryBytes: model.memoryBytes, server: nil, host: host, hostedModel: model,
+                    residency: residency, isLocal: local && !cloud, isWorkbenchManaged: false, modelProcessID: nil,
+                    reportedMemoryBytes: cloud ? nil : model.memoryBytes, server: nil, host: host, hostedModel: model,
                     capturedAt: inventory.capturedAt, hostProcessID: hostProcessIDs[host.id]))
             }
         }

@@ -79,6 +79,9 @@ struct HostedModel: Codable, Equatable, Identifiable, Sendable {
     var category: String? = nil
     var loadedInstanceIDs: [String]? = nil
     var detailsCapturedAt: Date? = nil
+    /// True only when the provider reports remote execution metadata.
+    var isCloud: Bool? = nil
+    var isCloudModel: Bool { isCloud == true }
     var id: String { hostID.uuidString + "/" + modelID }
 }
 
@@ -95,17 +98,18 @@ struct HostInventory: Codable, Equatable, Sendable {
     var deviceMemory: HostDeviceMemorySnapshot? = nil
 
     var reportedLoadedModels: [HostedModel] {
-        (runningModels ?? models.filter { $0.isLoaded == true })
+        (runningModels ?? models.filter { $0.isLoaded == true }).filter { !$0.isCloudModel }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     var loadedStateSummary: String {
         if let runningModels {
-            let count = runningModels.count
+            let count = runningModels.filter { !$0.isCloudModel }.count
             return "\(count) \(count == 1 ? "model" : "models") reported loaded"
         }
-        let unknown = models.filter { $0.isLoaded == nil }.count
-        guard !models.isEmpty, unknown != models.count else { return "Loaded state unknown" }
+        let localModels = models.filter { !$0.isCloudModel }
+        let unknown = localModels.filter { $0.isLoaded == nil }.count
+        guard !localModels.isEmpty, unknown != localModels.count else { return "Loaded state unknown" }
         let loaded = reportedLoadedModels.count
         let summary = "\(loaded) \(loaded == 1 ? "model" : "models") reported loaded"
         return unknown > 0 ? summary + " · \(unknown) unknown" : summary
@@ -187,6 +191,7 @@ struct HostResourcePreview: Identifiable, Equatable, Sendable {
         host == other.host && selection == other.selection
             && model?.modelID == other.model?.modelID && model?.name == other.model?.name
             && model?.digest == other.model?.digest && model?.isLoaded == other.model?.isLoaded
+            && model?.isCloudModel == other.model?.isCloudModel
             && model?.contextLength == other.model?.contextLength && model?.quantization == other.model?.quantization
             && activity.matches(other.activity)
     }

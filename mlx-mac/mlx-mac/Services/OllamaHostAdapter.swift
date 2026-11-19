@@ -18,7 +18,7 @@ struct OllamaHostAdapter: ModelHostAdapter {
                 hostID: host.id, modelID: id, name: id, digest: HostReader.text(tag["digest"]),
                 family: HostReader.text(details["family"]), parameters: HostReader.text(details["parameter_size"]),
                 quantization: HostReader.text(details["quantization_level"]), format: HostReader.text(details["format"]),
-                sizeBytes: HostReader.integer(tag["size"])
+                sizeBytes: Self.isCloud(tag) ? nil : HostReader.integer(tag["size"]), isCloud: Self.isCloud(tag) ? true : nil
             )
         }
         try HostReader.validateIDs(models)
@@ -32,13 +32,29 @@ struct OllamaHostAdapter: ModelHostAdapter {
                 return HostedModel(hostID: host.id, modelID: id, name: id, digest: HostReader.text(record["digest"]),
                     family: HostReader.text(details["family"]), parameters: HostReader.text(details["parameter_size"]),
                     quantization: HostReader.text(details["quantization_level"]), format: HostReader.text(details["format"]),
-                    isLoaded: true, contextLength: HostReader.int(record["context_length"]), memoryBytes: HostReader.integer(record["size_vram"]))
+                    isLoaded: true, contextLength: HostReader.int(record["context_length"]), memoryBytes: HostReader.integer(record["size_vram"]), isCloud: Self.isCloud(record) ? true : nil)
             }
             try HostReader.validateIDs(observed)
-            runningModels = observed
+            func matchesIdentity(_ lhs: HostedModel, _ rhs: HostedModel) -> Bool {
+                guard lhs.modelID == rhs.modelID, let digest = lhs.digest, !digest.isEmpty else { return false }
+                return digest == rhs.digest
+            }
+            let cloudTags = models.filter(\.isCloudModel)
+            let cloudRunning = observed.filter(\.isCloudModel)
+            runningModels = observed.map { model in
+                var model = model
+                if model.isCloudModel || cloudTags.contains(where: { matchesIdentity($0, model) }) {
+                    model.isCloud = true; model.isLoaded = nil; model.memoryBytes = nil; model.contextLength = nil; model.sizeBytes = nil
+                }
+                return model
+            }
             for index in models.indices {
+                if models[index].isCloudModel || cloudRunning.contains(where: { matchesIdentity($0, models[index]) }) {
+                    models[index].isCloud = true; models[index].isLoaded = nil; models[index].memoryBytes = nil; models[index].contextLength = nil; models[index].sizeBytes = nil
+                    continue
+                }
                 let match = observed.first { $0.modelID == models[index].modelID }
-                if let match {
+                if let match, !match.isCloudModel {
                     if let digest = models[index].digest, let runningDigest = match.digest {
                         models[index].isLoaded = digest == runningDigest
                         if digest == runningDigest {
@@ -65,6 +81,13 @@ struct OllamaHostAdapter: ModelHostAdapter {
         return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, warnings: warnings, runningModels: runningModels)
     }
 
+    private static func isCloud(_ record: [String: Any]) -> Bool {
+        [record["remote_host"], record["remote_model"]].contains { value in
+            guard let value = value as? String else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     func details(of model: HostedModel, from reader: HostReader) async throws -> HostModelDetails {
         let body = try JSONSerialization.data(withJSONObject: ["model": model.modelID, "verbose": false])
         guard let response = try HostReader.json(try await reader.data("api/show", method: "POST", body: body)) as? [String: Any] else {
@@ -89,11 +112,11 @@ struct OllamaHostAdapter: ModelHostAdapter {
     }
 
     func validateRelease(of model: HostedModel, selection: HostResourceSelection) throws {
-        guard HostResourceSelection.isValidID(model.digest) else { throw HostResourceError.unavailableSelection }
+        guard !model.isCloudModel, HostResourceSelection.isValidID(model.digest) else { throw HostResourceError.unavailableSelection }
     }
 
     func releaseRequest(for preview: HostResourcePreview) throws -> HostReleaseRequest {
-        guard let model = preview.model else { throw HostResourceError.unavailableSelection }
+        guard let model = preview.model, !model.isCloudModel else { throw HostResourceError.unavailableSelection }
         return try HostReleaseRequest(path: "api/generate", payload: ["model": model.modelID, "keep_alive": 0, "stream": false])
     }
 

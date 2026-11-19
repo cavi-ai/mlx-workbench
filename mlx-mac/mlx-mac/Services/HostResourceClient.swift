@@ -54,7 +54,7 @@ struct HostResourceClient: Sendable {
     }
 
     private static func validateModel(_ model: HostedModel, host: ModelHost, selection: HostResourceSelection) throws {
-        guard model.hostID == host.id, model.modelID == selection.modelID, model.isLoaded == true else {
+        guard !model.isCloudModel, model.hostID == host.id, model.modelID == selection.modelID, model.isLoaded == true else {
             throw HostResourceError.unavailableSelection
         }
         try host.provider.adapter.validateRelease(of: model, selection: selection)

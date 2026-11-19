@@ -313,6 +313,36 @@ final class ModelHostClientTests: XCTestCase {
         XCTAssertTrue(requests.values.allSatisfy { $0.httpMethod == "GET" })
     }
 
+    func testOllamaSeparatesReportedCloudModelsFromLocalMemory() async throws {
+        let (client, _) = client(responses: [
+            "/api/tags": .json(#"{"models":[{"name":"remote","digest":"same","size":293,"remote_host":"https://provider.example"},{"name":"local-cloud:latest","digest":"local","remote_host":"  "},{"name":"cloud-tag","digest":"new","remote_model":"cloud"},{"name":"local-tag","digest":"new"}]}"#),
+            "/api/ps": .json(#"{"models":[{"name":"remote","digest":"same","size_vram":99},{"name":"local-cloud:latest","digest":"local","size_vram":12},{"name":"cloud-tag","digest":"old","size_vram":55},{"name":"local-tag","digest":"old","remote_model":"cloud","size_vram":77}]}"#),
+            "/api/version": .json(#"{"version":"1"}"#)
+        ])
+        let inventory = try await client.inventory(host: host(.ollama))
+        XCTAssertEqual(inventory.models.map(\.isCloudModel), [true, false, true, false])
+        XCTAssertEqual(inventory.runningModels?.map(\.isCloudModel), [true, false, false, true])
+        XCTAssertEqual(Set(inventory.reportedLoadedModels.map(\.modelID)), Set(["local-cloud:latest", "cloud-tag"]))
+        XCTAssertNil(inventory.models[0].isLoaded)
+        XCTAssertNil(inventory.models[0].sizeBytes)
+        XCTAssertNil(inventory.runningModels?[0].memoryBytes)
+        XCTAssertEqual(inventory.runningModels?[2].memoryBytes, 55)
+        XCTAssertEqual(HostedModelsView.state(inventory.models[0]), "Cloud")
+        XCTAssertEqual(inventory.models[1].memoryBytes, 12)
+        let snapshot = ServingInventorySnapshot.make(engine: [], hosts: [inventory], managedReceipts: "/receipts", capturedAt: Date())
+        let cloud = snapshot.services.filter { $0.hostedModel?.isCloudModel == true }
+        XCTAssertEqual(cloud.count, 3)
+        XCTAssertTrue(cloud.allSatisfy { !$0.isLocal && !$0.canUnload && $0.reportedMemoryBytes == nil })
+        XCTAssertTrue(cloud.allSatisfy { ServingInventoryPresentation.resourceSelection(for: $0) == nil })
+        let local = ServingRows.build(slots: [], servers: [], snapshot: snapshot)
+        XCTAssertEqual(Set(local.map { ServingWorkspacePresentation.modelID($0) }), Set(["local-cloud:latest", "cloud-tag", "local-tag"]))
+        XCTAssertThrowsError(try OllamaHostAdapter().validateRelease(of: inventory.models[0], selection: HostResourceSelection(modelID: "remote")))
+        let old = try JSONDecoder().decode(HostedModel.self, from: Data(#"{"hostID":"00000000-0000-0000-0000-000000000001","modelID":"legacy","name":"legacy"}"#.utf8))
+        XCTAssertFalse(old.isCloudModel)
+        let unavailable = HostInventory(host: inventory.host, models: [inventory.models[0]], capturedAt: Date())
+        XCTAssertEqual(unavailable.loadedStateSummary, "Loaded state unknown")
+    }
+
     func testOllamaOptionalFailurePreservesUnknownLoadedState() async throws {
         let (client, _) = client(responses: ["/api/tags": .json(#"{"models":[{"name":"alpha"}]}"#)])
         let inventory = try await client.inventory(host: host(.ollama))
@@ -706,7 +736,9 @@ final class ModelHostClientTests: XCTestCase {
         let activity = HostActivity(state: .unknown, detail: "Unknown")
         let validModel = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true)
         let wrongHostModel = HostedModel(hostID: UUID(), modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true)
+        let cloudModel = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true, isCloud: true)
         let previews = [
+            HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha"), model: cloudModel, activity: activity),
             HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha"), model: wrongHostModel, activity: activity),
             HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "other"), model: validModel, activity: activity),
             HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha", instanceID: "unexpected"), model: validModel, activity: activity),
