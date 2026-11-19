@@ -79,8 +79,10 @@ eligibility when Run or a task previews the work.
 
 In wide windows, the first selected model opens the inspector beside the table.
 In compact windows, selecting a model opens its details in a sheet. Use
-**Inspector** in the toolbar or ⌥⌘I to hide or show details. A vision-language
-model's image task folds under **Run a task**. Expand **Model details** for paths,
+**Inspector** in the toolbar or ⌥⌘I to hide or show details. A ready task model's
+panel sits directly under **Use**, **Serve** and **Compare**, ahead of **Memory**,
+**Measured** and **Inference**; each inference option reads name, description, then
+its action. A vision-language model's image task folds under **Run a task**. Expand **Model details** for paths,
 runtime and other technical facts, including a speculative-decoding drafter's
 target. The inspector also holds:
 

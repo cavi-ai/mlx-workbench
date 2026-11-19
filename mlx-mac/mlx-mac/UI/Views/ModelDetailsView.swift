@@ -354,6 +354,7 @@ struct ModelDetailsView: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 header
                 actionStack
+                if showsTaskPanel, UseMode.modes(for: model).first != .chat { taskPanel }
                 LibraryInspectorFit(
                     resources: appHost.resources,
                     reserveGB: appHost.config.fitReserveGB,
@@ -371,20 +372,10 @@ struct ModelDetailsView: View {
                     InlineMessage(kind: .warning, text: error)
                 }
 
-                if model.readiness == .ready, let taskType = model.item.task?.type,
-                   [.classification, .embedding, .meshGeneration, .musicGeneration, .speechToText, .textToSpeech, .imageGeneration, .visionLanguage, .videoGeneration].contains(taskType) {
-                    // A chat model's tasks are secondary to Chat; a task model's panel is its main use.
-                    if UseMode.modes(for: model).first == .chat {
-                        DisclosureGroup("Run a task") {
-                            TaskDestinationPanel(appHost: appHost, model: model,
-                                               onEngineSetup: { onRouteSelection(.health) },
-                                               promptSets: comparison.promptSets, onScoreSet: { actions.compare(promptSetID: $0) })
-                                .padding(.top, WorkbenchSpacing.sm)
-                        }
-                    } else {
-                        TaskDestinationPanel(appHost: appHost, model: model,
-                                           onEngineSetup: { onRouteSelection(.health) },
-                                           promptSets: comparison.promptSets, onScoreSet: { actions.compare(promptSetID: $0) })
+                // A chat model's tasks are secondary to Chat; a task model's panel sits right under its main action.
+                if showsTaskPanel, UseMode.modes(for: model).first == .chat {
+                    DisclosureGroup("Run a task") {
+                        taskPanel.padding(.top, WorkbenchSpacing.sm)
                     }
                 }
 
@@ -415,6 +406,17 @@ struct ModelDetailsView: View {
             .padding(WorkbenchSpacing.lg)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var showsTaskPanel: Bool {
+        guard model.readiness == .ready, let taskType = model.item.task?.type else { return false }
+        return [.classification, .embedding, .meshGeneration, .musicGeneration, .speechToText, .textToSpeech, .imageGeneration, .visionLanguage, .videoGeneration].contains(taskType)
+    }
+
+    private var taskPanel: some View {
+        TaskDestinationPanel(appHost: appHost, model: model,
+                             onEngineSetup: { onRouteSelection(.health) },
+                             promptSets: comparison.promptSets, onScoreSet: { actions.compare(promptSetID: $0) })
     }
 
     private var header: some View {
@@ -555,14 +557,18 @@ struct ModelDetailsView: View {
             Text("Inference").font(WorkbenchTypography.cardTitle)
             ForEach(options) { option in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-                        Text(option.title).font(WorkbenchTypography.emphasis)
-                        if option.experimental {
-                            Label("Experimental", systemImage: "flask")
-                                .font(WorkbenchTypography.secondary)
-                                .foregroundStyle(WorkbenchColor.muted)
-                        }
-                        Spacer(minLength: WorkbenchSpacing.xs)
+                    Text(option.title).font(WorkbenchTypography.emphasis)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if option.experimental {
+                        Label("Experimental", systemImage: "flask")
+                            .font(WorkbenchTypography.metadata)
+                            .foregroundStyle(WorkbenchColor.muted)
+                    }
+                    Text(option.detail)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         switch option.place {
                         case .run(let runtime?) where actions.canServe:
                             Button(runtime == "splash" ? "Serve with Splash" : "Serve") { actions.run(runtime: runtime) }
@@ -578,13 +584,11 @@ struct ModelDetailsView: View {
                             EmptyView()
                         }
                     }
-                    Text(option.detail)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, WorkbenchSpacing.xxs)
                 }
             }
         }
+        .padding(.top, WorkbenchSpacing.xs)
     }
 
     private var measuredSection: some View {

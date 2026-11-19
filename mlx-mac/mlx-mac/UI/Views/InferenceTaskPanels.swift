@@ -186,22 +186,27 @@ struct InferenceTaskPanel: View {
             if coordinator.musicDraft.purpose == .music {
                 TextField("Lyrics (leave blank for instrumental)", text: $coordinator.musicDraft.lyrics, axis: .vertical).lineLimit(2...5)
             }
-            HStack {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("Duration · s").font(WorkbenchTypography.metadata)
-                    TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number)
-                }.frame(width: 145)
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("Steps").font(WorkbenchTypography.metadata)
-                    TextField("Steps", value: $coordinator.musicDraft.steps, format: .number)
-                }.frame(width: 90)
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("Seed").font(WorkbenchTypography.metadata)
-                    TextField("Seed", value: $coordinator.musicDraft.seed, format: .number)
-                }.frame(width: 120)
+            let durationField = VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Text("Duration · s").font(WorkbenchTypography.metadata)
+                TextField("Duration (seconds)", value: $coordinator.musicDraft.duration, format: .number)
+            }
+            let stepsField = VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Text("Steps").font(WorkbenchTypography.metadata)
+                TextField("Steps", value: $coordinator.musicDraft.steps, format: .number)
+            }
+            let seedField = VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Text("Seed").font(WorkbenchTypography.metadata)
+                TextField("Seed", value: $coordinator.musicDraft.seed, format: .number)
+            }
+            Grid(alignment: .leading, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.sm) {
+                GridRow { durationField; stepsField }
+                GridRow { seedField.gridCellColumns(2) }
             }
             if let validationError = coordinator.musicDraft.validationError {
-                Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+                // Neutral until the user has typed something; Start stays blocked either way.
+                let untouched = coordinator.musicDraft.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                Text(validationError).font(WorkbenchTypography.secondary)
+                    .foregroundStyle(untouched ? WorkbenchColor.muted : WorkbenchColor.failure)
             }
             taskActions(kind: .musicGeneration)
         }
@@ -558,19 +563,19 @@ struct RecentTaskList: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack {
                 SectionTitle(text: "Recent tasks")
-                Spacer()
+                Spacer(minLength: WorkbenchSpacing.xs)
                 Button("Refresh") { Task { await coordinator.refreshRecent() } }
             }
             if let readError = coordinator.readError {
-                HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         Text("Could not refresh task history: \(readError)")
+                            .fixedSize(horizontal: false, vertical: true)
                         if let known = visibleSelectedTask {
                             Text("Showing last known status: \(known.state.wireValue.capitalized).")
                                 .font(WorkbenchTypography.secondary)
                         }
                     }
-                    Spacer()
                     Button("Retry") {
                         if let selected = visibleSelectedTask {
                             Task {
