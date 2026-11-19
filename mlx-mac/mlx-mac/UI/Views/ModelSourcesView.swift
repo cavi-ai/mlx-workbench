@@ -60,6 +60,7 @@ private struct ModelSourceListRow: View {
             .background {
                 if selected {
                     WorkbenchColor.canvas.overlay(WorkbenchColor.surface)
+                        .padding(.horizontal, -WorkbenchSpacing.sm)
                         .overlay(alignment: .leading) { Rectangle().fill(WorkbenchColor.accent).frame(width: 3) }
                 }
             }
