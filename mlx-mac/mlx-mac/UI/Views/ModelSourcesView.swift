@@ -1,22 +1,41 @@
 import SwiftUI
 
-/// A server model row with the text each column shows, so every column sorts.
+/// A catalog entry retains each connection's original observation and actions.
 struct ModelSourceRow: Identifiable {
-    let row: ServingRow
+    struct GroupKey: Hashable { let modelID: String; let digest: String }
+    let members: [ServingRow]
     let model: String
     let provider: String
     let state: String
-    let address: String
-    var id: String { row.id }
-
+    var id: String { members.map(\.id).sorted().first ?? "" }
+    var row: ServingRow { members[0] }
     static let defaultSortOrder = [KeyPathComparator(\ModelSourceRow.model)]
 
     static func rows(_ rows: [ServingRow], models: [LibraryModel], sortOrder: [KeyPathComparator<ModelSourceRow>]) -> [ModelSourceRow] {
-        rows.map { row in
+        var groups: [[ServingRow]] = []
+        var keys: [GroupKey: [Int]] = [:]
+        for row in rows {
             let service = ServingWorkspacePresentation.service(row)
-            return ModelSourceRow(row: row, model: ServingWorkspacePresentation.name(row, models: models),
-                                  provider: service?.providerName ?? "MLX Workbench", state: service?.statusText ?? "",
-                                  address: ServingWorkspacePresentation.baseURL(row) ?? "Not reported")
+            if case .service = row, let service, service.host?.provider == .ollama,
+               let digest = service.hostedModel?.digest, !digest.isEmpty,
+               let address = service.baseURL, !address.isEmpty {
+                let key = GroupKey(modelID: service.modelID, digest: digest)
+                if let index = keys[key]?.first(where: { index in
+                    !groups[index].contains { ServingWorkspacePresentation.baseURL($0) == address }
+                }) {
+                    groups[index].append(row)
+                } else {
+                    keys[key, default: []].append(groups.count)
+                    groups.append([row])
+                }
+            } else { groups.append([row]) }
+        }
+        return groups.map { members in
+            let first = members[0]
+            let service = ServingWorkspacePresentation.service(first)
+            return ModelSourceRow(members: members, model: ServingWorkspacePresentation.name(first, models: models),
+                                  provider: service?.host?.provider == .ollama ? "Ollama" : (service?.providerName ?? "MLX Workbench"),
+                                  state: members.count > 1 ? "\(members.count) connections" : (service?.statusText ?? ServingWorkspacePresentation.status(first)))
         }.sorted(using: sortOrder.isEmpty ? defaultSortOrder : sortOrder)
     }
 }
@@ -43,7 +62,10 @@ enum ModelSourcesPresentation {
         ServingRows.build(slots: slots, servers: servers, snapshot: snapshot).filter { row in
             let service = ServingWorkspacePresentation.service(row)
             guard service?.modelID != "__inventory__" else { return false }
-            if let sourceID, service?.sourceID != sourceID { return false }
+            if let sourceID {
+                if sourceID == "provider:ollama" { if service?.host?.provider != .ollama { return false } }
+                else if service?.sourceID != sourceID { return false }
+            }
             return query.isEmpty || [ServingWorkspacePresentation.modelID(row), service?.name ?? "", service?.providerName ?? "MLX Workbench"]
                 .contains { $0.localizedCaseInsensitiveContains(query) }
         }
@@ -77,27 +99,25 @@ struct ModelSourcesView: View {
         ModelSourcesPresentation.rows(slots: endpoint.fleet.slots, servers: workflow.servers,
                                       snapshot: inventory.snapshot, sourceID: sourceID, query: query)
     }
-    private var selected: ServingRow? { rows.first { $0.id == selectedID } }
+    private var catalog: [ModelSourceRow] { ModelSourceRow.rows(rows, models: appHost.librarySnapshot?.models ?? [], sortOrder: sortOrder) }
     private var sourceChoices: [(id: String, title: String)] {
         var titles: [String: String] = [:]
         for service in inventory.snapshot.services {
-            titles[service.sourceID] = service.providerName + (service.host.map { " · " + $0.baseURL } ?? "")
+            if service.host?.provider == .ollama { titles["provider:ollama"] = "Ollama" }
+            else { titles[service.sourceID] = service.providerName + (service.host.map { " · " + $0.baseURL } ?? "") }
         }
         return titles.map { (id: $0.key, title: $0.value) }.sorted { $0.title < $1.title }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+        let catalog = catalog
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             ViewThatFits(in: .horizontal) {
-                HStack { introduction; Spacer(); connectionActions }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { introduction; connectionActions }
+                HStack { workspacePicker; Spacer(); connectionActions }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { workspacePicker; connectionActions }
             }
-            Picker("Show", selection: $foldersSelected) {
-                Text("Server models").tag(false)
-                Text("Model folders").tag(true)
-            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 400)
             if foldersSelected { folders }
-            else { serverModels }
+            else { serverModels(catalog) }
         }
         .padding(WorkbenchSpacing.lg)
         .sheet(item: $editor) { host in
@@ -105,7 +125,7 @@ struct ModelSourcesView: View {
                 Task { await inventory.refresh(refreshHosts: true) }
             })
         }
-        .onChange(of: rows.map(\.id), initial: true) { _, ids in
+        .onChange(of: catalog.map(\.id), initial: true) { _, ids in
             if selectedID == nil || !ids.contains(selectedID ?? "") { selectedID = ids.first }
         }
         .onChange(of: sourceChoices.map(\.id)) { _, ids in
@@ -113,12 +133,11 @@ struct ModelSourcesView: View {
         }
     }
 
-    private var introduction: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            Text("Models across your Mac").font(WorkbenchTypography.cardTitle)
-            Text("Connect local providers and reuse the model files you already have.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-        }
+    private var workspacePicker: some View {
+        Picker("Show", selection: $foldersSelected) {
+            Text("Server models").tag(false)
+            Text("Model folders").tag(true)
+        }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 400)
     }
     private var connectionActions: some View {
         HStack {
@@ -137,44 +156,33 @@ struct ModelSourcesView: View {
         }
     }
 
-    private var serverModels: some View {
+    private func serverModels(_ catalog: [ModelSourceRow]) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             ViewThatFits(in: .horizontal) {
                 HStack { filters; Spacer(); refresh }
                 VStack(alignment: .leading) { filters; refresh }
             }
-            Table(ModelSourceRow.rows(rows, models: appHost.librarySnapshot?.models ?? [], sortOrder: sortOrder),
-                  selection: $selectedID, sortOrder: $sortOrder) {
-                TableColumn("Model", value: \.model) { source in
-                    Text(source.model).lineLimit(1).truncationMode(.middle)
-                }.width(min: 150, ideal: 240)
-                TableColumn("Provider", value: \.provider) { source in
-                    Text(source.provider)
-                }.width(min: 100, ideal: 145)
-                TableColumn("State", value: \.state) { source in
-                    ServingStatusLabel(row: source.row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(source.row)?.statusText)
-                }.width(min: 110, ideal: 160)
-                TableColumn("API address", value: \.address) { source in
-                    Text(source.address).lineLimit(1).truncationMode(.middle)
-                }.width(min: 150, ideal: 240)
-            }.alternatingRowBackgrounds(.disabled).accessibilityIdentifier("sources-model-table")
-                .overlay {
-                    if rows.isEmpty {
-                        ContentUnavailableView("No models reported", systemImage: "server.rack",
-                            description: Text("Refresh local providers, add a connection, or browse registered files in Library."))
+            GeometryReader { geometry in
+                if geometry.size.width >= 720 {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                        catalogTable(catalog).frame(width: geometry.size.width - min(360, max(280, geometry.size.width * 0.34)) - WorkbenchSpacing.md)
+                        detailPane(catalog.first { $0.id == selectedID }).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    VStack(spacing: WorkbenchSpacing.md) {
+                        catalogTable(catalog).frame(maxHeight: .infinity)
+                        detailPane(catalog.first { $0.id == selectedID }).frame(height: min(230, geometry.size.height * 0.38))
                     }
                 }
-            if let selected { modelDetails(selected) }
+            }
             if !inventory.snapshot.sourceErrors.isEmpty {
                 DisclosureGroup("\(inventory.snapshot.sourceErrors.count) connection issue\(inventory.snapshot.sourceErrors.count == 1 ? "" : "s")") {
                     ForEach(inventory.snapshot.sourceErrors.keys.sorted(), id: \.self) { key in
-                        Text((sourceChoices.first { $0.id == key }?.title ?? "Local discovery") + ": " + (inventory.snapshot.sourceErrors[key] ?? ""))
+                        Text((inventory.snapshot.services.first { $0.sourceID == key }.map { $0.providerName + ($0.host.map { " · " + $0.baseURL } ?? "") } ?? "Local discovery") + ": " + (inventory.snapshot.sourceErrors[key] ?? ""))
                             .font(WorkbenchTypography.secondary).textSelection(.enabled)
                     }
                 }.font(WorkbenchTypography.secondary)
             }
-            Text("Inventories include loaded and available models. Provider entries can share the same weights; they are not counted as separate disk usage.")
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
         }
     }
     private var filters: some View {
@@ -193,35 +201,85 @@ struct ModelSourcesView: View {
         } label: { Label(inventory.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise") }
             .disabled(inventory.isRefreshing).accessibilityIdentifier("sources-refresh")
     }
+    private func catalogTable(_ catalog: [ModelSourceRow]) -> some View {
+        Table(catalog, selection: $selectedID, sortOrder: $sortOrder) {
+            TableColumn("Model", value: \.model) { source in
+                Text(source.model).lineLimit(1).truncationMode(.middle).accessibilityIdentifier("sources-model-cell")
+            }.width(min: 150, ideal: 260)
+            TableColumn("Provider", value: \.provider) { source in Text(source.provider).lineLimit(1) }
+                .width(min: 90, ideal: 120)
+            TableColumn("Status", value: \.state) { source in
+                if source.members.count > 1 { Text(source.state).foregroundStyle(WorkbenchColor.muted) }
+                else { ServingStatusLabel(row: source.row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(source.row)?.statusText) }
+            }.width(min: 120, ideal: 160)
+        }.alternatingRowBackgrounds(.disabled).accessibilityIdentifier("sources-model-table")
+            .overlay {
+                if rows.isEmpty {
+                    ContentUnavailableView("No models reported", systemImage: "server.rack",
+                        description: Text("Refresh local providers, add a connection, or browse registered files in Library."))
+                }
+            }
+    }
+    private func detailPane(_ selected: ModelSourceRow?) -> some View {
+        ScrollView {
+            if let selected {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Text(selected.model).font(WorkbenchTypography.cardTitle).textSelection(.enabled)
+                    if ServingWorkspacePresentation.modelID(selected.row) != selected.model {
+                        Text(ServingWorkspacePresentation.modelID(selected.row)).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    }
+                    Text(selected.members.count == 1 ? "Connection" : "\(selected.members.count) connections")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    ForEach(selected.members) { row in modelDetails(row) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Select a model to inspect its connections.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.padding(WorkbenchSpacing.md)
+            .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+    }
     private func modelDetails(_ row: ServingRow) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text(ServingWorkspacePresentation.modelID(row)).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    Text(ServingWorkspacePresentation.provider(row)).font(WorkbenchTypography.emphasis)
+                    Spacer()
+                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(row)?.statusText)
+                }
+                VStack(alignment: .leading) {
+                    Text(ServingWorkspacePresentation.provider(row)).font(WorkbenchTypography.emphasis)
+                    ServingStatusLabel(row: row, states: endpoint.slotStates, text: ServingWorkspacePresentation.service(row)?.statusText)
+                }
+            }
+            if let address = ServingWorkspacePresentation.baseURL(row) {
+                Text(address).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+            }
             if let path = ServingWorkspacePresentation.service(row)?.modelPath ?? ServingWorkspacePresentation.server(row)?.path {
                 Text("Model files: " + path).font(WorkbenchTypography.secondary).textSelection(.enabled)
-            } else {
-                Text("This provider has not reported a model folder. Registered caches are listed in Model folders.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-            HStack {
-                if let host = ServingWorkspacePresentation.service(row)?.host {
-                    Button("Connection settings…") { editor = host }.disabled(hosts.resourceBusy)
-                    if hosts.hosts.contains(host) {
-                        Button("Open provider inventory") {
-                            appHost.handoffs.send(HostedModelsRequest(host: host), as: .openHostedModels)
-                            onRouteSelection(.library)
+            if ServingWorkspacePresentation.service(row)?.host != nil || ServingWorkspacePresentation.server(row) != nil {
+                Menu("Actions") {
+                    if let host = ServingWorkspacePresentation.service(row)?.host {
+                        Button("Connection settings…") { editor = host }.disabled(hosts.resourceBusy)
+                        if hosts.hosts.contains(host) {
+                            Button("Open provider inventory") {
+                                appHost.handoffs.send(HostedModelsRequest(host: host), as: .openHostedModels)
+                                onRouteSelection(.library)
+                            }
+                        }
+                    }
+                    if ServingWorkspacePresentation.server(row) != nil {
+                        Button("Open model settings") {
+                            appHost.handoffs.send(ServingFocusRequest(rowID: row.id), as: .openServing)
+                            onRouteSelection(.run)
                         }
                     }
                 }
-                if ServingWorkspacePresentation.server(row) != nil {
-                    Button("Open model settings") {
-                        appHost.handoffs.send(ServingFocusRequest(rowID: row.id), as: .openServing)
-                        onRouteSelection(.run)
-                    }
-                }
             }
-        }.padding(WorkbenchSpacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+            Divider()
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var folders: some View {
         ScrollView {

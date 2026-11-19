@@ -4691,11 +4691,14 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: ["path": "org/Alternate-text"])
             .write(to: secondRoot.appendingPathComponent("chat-endpoint.json"))
-        let first = try HostedUIFixture(root: root), second = try HostedUIFixture(root: secondRoot)
-        let firstPort = try first.start(), secondPort = try second.start()
-        defer { first.stop(); second.stop() }
+        let twinRoot = root.appendingPathComponent("twin-provider")
+        try FileManager.default.createDirectory(at: twinRoot, withIntermediateDirectories: true)
+        let first = try HostedUIFixture(root: root), second = try HostedUIFixture(root: secondRoot), twin = try HostedUIFixture(root: twinRoot)
+        let firstPort = try first.start(), secondPort = try second.start(), twinPort = try twin.start()
+        defer { first.stop(); second.stop(); twin.stop() }
         let providers: [[String: Any]] = [
             ["id": UUID().uuidString, "name": "Ollama", "provider": "ollama", "baseURL": "http://127.0.0.1:\(firstPort)"],
+            ["id": UUID().uuidString, "name": "Ollama twin", "provider": "ollama", "baseURL": "http://127.0.0.1:\(twinPort)"],
             ["id": UUID().uuidString, "name": "Other local server", "provider": "openAICompatible", "baseURL": "http://127.0.0.1:\(secondPort)"]]
         let support = root.appendingPathComponent("Library/Application Support/mlx-workbench")
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
@@ -4712,9 +4715,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.buttons["sources-refresh"].click()
         XCTAssertTrue(text(containing: "fixture-model:latest").waitForExistence(timeout: 15))
         XCTAssertTrue(text(containing: "Alternate-text").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "2 connections").waitForExistence(timeout: 15))
+        let catalogTag = app.staticTexts.matching(identifier: "sources-model-cell").matching(NSPredicate(format: "value == %@ OR label == %@", "fixture-model:latest", "fixture-model:latest"))
+        XCTAssertEqual(catalogTag.count, 1)
+        catalogTag.firstMatch.click()
+        XCTAssertTrue(text(containing: "http://127.0.0.1:\(firstPort)").waitForExistence(timeout: 5))
+        XCTAssertTrue(text(containing: "http://127.0.0.1:\(twinPort)").exists)
+        XCTAssertTrue(text(containing: "2 connections").exists)
         XCTAssertTrue(app.popUpButtons["sources-provider-picker"].exists)
         XCTAssertTrue(app.buttons["sources-add-provider"].isHittable)
         capture("Model-sources-all-providers")
+        resizeWindow(width: 740, height: 680)
+        XCTAssertTrue(text(containing: "http://127.0.0.1:\(firstPort)").exists)
+        capture("Model-sources-narrow")
+        resizeWindow(width: 1260, height: 840)
         app.buttons["sources-add-provider"].click()
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
