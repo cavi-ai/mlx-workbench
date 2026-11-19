@@ -152,6 +152,53 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(saved.count, 1)
     }
 
+    func testFrontDoorKeyIsCreatedOnceSharedByEndpointsAndKeptWhenTheyLeave() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = EndpointSlot(enabled: false, port: 8930, modelPath: "/Models/a", loadOnRequest: true)
+        let second = EndpointSlot(enabled: false, port: 8931, modelPath: "/Models/b", loadOnRequest: true)
+        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: [first, second], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
+        let token = "mlxw_" + String(repeating: "e", count: 64)
+        let digest = EndpointCredentialStore.digest(token)
+        var saved: [String] = [], removed: [String] = []
+        supervisor.generateAPIKey = { token }
+        supervisor.saveAPIKey = { saved.append($0) }
+        supervisor.removeAPIKey = { removed.append($0) }
+
+        let created = await supervisor.configureFrontDoor(port: 8939)
+        XCTAssertTrue(created, supervisor.lastError ?? "")
+        XCTAssertEqual(supervisor.fleet.frontDoor, FrontDoorSettings(port: 8939, apiKeySHA256: digest))
+        supervisor.generateAPIKey = { XCTFail("The front door key is created once"); return "" }
+        let moved = await supervisor.configureFrontDoor(port: 8938)
+        XCTAssertTrue(moved, supervisor.lastError ?? "")
+        let taken = await supervisor.configureFrontDoor(port: 8930)
+        XCTAssertFalse(taken)
+        XCTAssertEqual(supervisor.fleet.frontDoor, FrontDoorSettings(port: 8938, apiKeySHA256: digest))
+        XCTAssertEqual(saved, [token])
+
+        for id in [first.id, second.id] {
+            let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == id })
+            let review = try await supervisor.previewAuthentication(slot: slot, required: true, frontDoorKey: true)
+            XCTAssertNil(review.token)
+            let confirmed = await supervisor.confirmAuthentication(review)
+            XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        }
+        XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [digest, digest])
+        for id in [first.id, second.id] {
+            let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == id })
+            let review = try await supervisor.previewAuthentication(slot: slot, required: false)
+            let confirmed = await supervisor.confirmAuthentication(review)
+            XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        }
+        XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [nil, nil])
+        XCTAssertEqual(saved, [token])
+        XCTAssertTrue(removed.isEmpty)
+        XCTAssertEqual(try store.load().first?.frontDoor, FrontDoorSettings(port: 8938, apiKeySHA256: digest))
+    }
+
     func testAuthenticationChangesRefuseAnEnabledEndpoint() async throws {
         let (supervisor, _) = makeSupervisor()
         await supervisor.enable(modelPath: "/Models/old", port: 8921, loadOnRequest: false)

@@ -412,6 +412,10 @@ struct SettingsView: View {
             SettingsRow(label: "Duplicate serving", hint: "Models allowed on more than one endpoint at a time. Every other model keeps one endpoint.", stacked: layout.stacksRows) {
                 DuplicationPolicyEditor(appHost: appHost, coordinator: duplication)
             }
+            SettingsSeparator()
+            SettingsRow(label: "Front door", hint: "One authenticated loopback address that routes to every running endpoint using the front door key, by model name.", stacked: layout.stacksRows) {
+                FrontDoorEditor(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+            }
         } footer: {
             Text("Manage loopback servers and each endpoint's port in Run.")
         }

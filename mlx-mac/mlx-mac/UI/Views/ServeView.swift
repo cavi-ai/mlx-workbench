@@ -464,6 +464,16 @@ struct ServeView: View {
                                 Button("Reset key…") { prepareAuthentication(slot, required: true) }.disabled(slot.enabled || endpoint.isChanging)
                             }
                         }
+                        if let door = endpoint.fleet.frontDoor {
+                            if slot.apiKeySHA256 == door.apiKeySHA256 {
+                                Text("Uses the front door key · routed at 127.0.0.1:\(String(door.port)) while the front door runs.")
+                                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            } else {
+                                Button("Use front door key…") { prepareAuthentication(slot, required: true, frontDoorKey: true) }
+                                    .disabled(slot.enabled || endpoint.isChanging)
+                                    .accessibilityIdentifier("serving-use-front-door-key")
+                            }
+                        }
                         if slot.enabled {
                             Text("Stop the server to change its port or authentication. Existing settings remain visible here.")
                                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -1359,19 +1369,21 @@ struct ServeView: View {
         actionError = await changes.confirm(pending, holdForOverride: fleetHold.hold)
     }
 
-    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool) {
+    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool, frontDoorKey: Bool = false) {
         Task {
-            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required) }
+            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required, frontDoorKey: frontDoorKey) }
             catch { actionError = AppHost.render(error) }
         }
     }
 
     private func authenticationConfirmation(_ review: EndpointAuthenticationReview) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text(review.keySHA256 == nil ? "Disable API key authentication?" : "Require a new API key?")
+        let sharesFrontDoorKey = review.token == nil && review.keySHA256 != nil
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text(review.keySHA256 == nil ? "Disable API key authentication?" : sharesFrontDoorKey ? "Use the front door key?" : "Require a new API key?")
                 .font(WorkbenchTypography.cardTitle)
             Text("Endpoint: 127.0.0.1:\(review.slot.port)").textSelection(.enabled)
             Text(review.keySHA256 == nil ? "Any local client will be able to use this endpoint after you start it."
+                 : sharesFrontDoorKey ? "Clients holding the front door key can use this endpoint directly or through the front door. Previous keys stop working."
                  : "Only clients holding the new key can use this endpoint. Copy the key after saving and configure it in each client. Previous keys stop working.")
             Text("The endpoint stays stopped. Model files stay in place.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)

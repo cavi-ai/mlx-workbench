@@ -302,10 +302,17 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// The front door's loopback port and the shared key digest its routes verify.
+struct FrontDoorSettings: Codable, Equatable, Sendable {
+    var port: Int
+    var apiKeySHA256: String
+}
+
 struct EndpointFleetConfig: Codable, Equatable, Sendable {
     var slots: [EndpointSlot]
     /// Whether the login LaunchAgent (boot persistence) is installed.
     var installedAtLogin: Bool
+    var frontDoor: FrontDoorSettings? = nil
 
     static let maxSlots = 4
 
@@ -325,6 +332,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case invalidInference(UUID, String)
     case incompatibleAcceleration(UUID)
     case invalidAuthentication(UUID)
+    case invalidFrontDoorKey
 }
 
 extension EndpointFleetValidation: LocalizedError {
@@ -346,6 +354,8 @@ extension EndpointFleetValidation: LocalizedError {
             return "Strata profiles use their own decoding controls. Output length and request defaults can be set separately."
         case .invalidAuthentication:
             return "API key authentication requires Load on request and a valid credential reference."
+        case .invalidFrontDoorKey:
+            return "The front door needs a valid credential reference."
         }
     }
 }
@@ -387,6 +397,13 @@ extension EndpointFleetConfig {
                 guard seenRoles.insert(role).inserted else {
                     throw EndpointFleetValidation.duplicateRole(role)
                 }
+            }
+        }
+        if let frontDoor {
+            guard (1...65535).contains(frontDoor.port) else { throw EndpointFleetValidation.invalidPort(frontDoor.port) }
+            guard !seenPorts.contains(frontDoor.port) else { throw EndpointFleetValidation.duplicatePort(frontDoor.port) }
+            guard frontDoor.apiKeySHA256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                throw EndpointFleetValidation.invalidFrontDoorKey
             }
         }
         return self

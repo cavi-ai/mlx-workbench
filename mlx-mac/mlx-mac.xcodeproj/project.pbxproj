@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		A17A00000000000000000003 /* TailnetSharingWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17A00000000000000000004 /* TailnetSharingWizard.swift */; };
 		A17A00000000000000000001 /* TailnetSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17A00000000000000000002 /* TailnetSharing.swift */; };
+		FD0D00000000000000000001 /* FrontDoor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000002 /* FrontDoor.swift */; };
+		FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000006 /* FrontDoorEditor.swift */; };
         E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
         E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
         E71300000000000000000015 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000023; };
@@ -403,6 +405,8 @@
 /* Begin PBXFileReference section */
 		A17A00000000000000000004 /* TailnetSharingWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TailnetSharingWizard.swift; sourceTree = "<group>"; };
 		A17A00000000000000000002 /* TailnetSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TailnetSharing.swift; sourceTree = "<group>"; };
+		FD0D00000000000000000002 /* FrontDoor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/FrontDoor.swift; sourceTree = "<group>"; };
+		FD0D00000000000000000006 /* FrontDoorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/FrontDoorEditor.swift; sourceTree = "<group>"; };
 		E71400000000000000000101 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TerminalSession.swift; sourceTree = "<group>"; };
 		E71400000000000000000201 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TerminalWorkspaceView.swift; sourceTree = "<group>"; };
 		E71400000000000000000301 /* TerminalSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionTests.swift; sourceTree = "<group>"; };
@@ -436,10 +440,12 @@
 		B7C100000000000000000001 /* ClassificationSetHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ClassificationSetHealth.swift; sourceTree = "<group>"; };
 		B7C100000000000000000002 /* ClassificationSetHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100000000000000000001 /* ClassificationSetHealth.swift */; };
 		B7C100000000000000000004 /* ClassificationSetHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100000000000000000003 /* ClassificationSetHealthTests.swift */; };
+		FD0D00000000000000000004 /* FrontDoorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000003 /* FrontDoorTests.swift */; };
 		A31D00000000000000000003 /* DecisionComparison.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/DecisionComparison.swift; sourceTree = "<group>"; };
 		A31D00000000000000000005 /* SystemOneHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SystemOneHostAdapter.swift; sourceTree = "<group>"; };
 		A31D00000000000000000007 /* CompareDecisionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/CompareDecisionViews.swift; sourceTree = "<group>"; };
 		B7C100000000000000000003 /* ClassificationSetHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassificationSetHealthTests.swift; sourceTree = "<group>"; };
+		FD0D00000000000000000003 /* FrontDoorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrontDoorTests.swift; sourceTree = "<group>"; };
 		A31D00000000000000000009 /* DecisionComparisonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionComparisonTests.swift; sourceTree = "<group>"; };
 		9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointTestTests.swift; sourceTree = "<group>"; };
 		704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/EndpointTestSheet.swift; sourceTree = "<group>"; };
@@ -857,6 +863,7 @@
 				3BD11D10A4AFB3D6AEE197F8 /* cavi-api-client.js */,
 
 				A17A00000000000000000004 /* TailnetSharingWizard.swift */,
+				FD0D00000000000000000006 /* FrontDoorEditor.swift */,
 				B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */,
 				9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */,
 				563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */,
@@ -1022,6 +1029,7 @@
 				24FREF065 /* PromptHistoryImport.swift */,
 				26WQREF001 /* WebConvertQueue.swift */,
 				A17A00000000000000000002 /* TailnetSharing.swift */,
+				FD0D00000000000000000002 /* FrontDoor.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				4CB6BA6036AACD20164BB94B /* LabView.swift */,
 				4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */,
@@ -1167,6 +1175,7 @@
 				9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */,
 				A31D00000000000000000009 /* DecisionComparisonTests.swift */,
 				B7C100000000000000000003 /* ClassificationSetHealthTests.swift */,
+				FD0D00000000000000000003 /* FrontDoorTests.swift */,
 				24FREF046 /* VerificationCoordinatorTests.swift */,
 				24FREF069 /* HFRepoIDTests.swift */,
 				5A1E5E770000000000000033 /* RouteHandoffsTests.swift */,
@@ -1437,6 +1446,8 @@
 			files = (
 				A17A00000000000000000001 /* TailnetSharing.swift in Sources */,
 				A17A00000000000000000003 /* TailnetSharingWizard.swift in Sources */,
+				FD0D00000000000000000001 /* FrontDoor.swift in Sources */,
+				FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */,
 				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
 				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
 				9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */,
@@ -1735,6 +1746,7 @@
 				97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */,
 				A31D0000000000000000000A /* DecisionComparisonTests.swift in Sources */,
 				B7C100000000000000000004 /* ClassificationSetHealthTests.swift in Sources */,
+				FD0D00000000000000000004 /* FrontDoorTests.swift in Sources */,
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				5A1E5E770000000000000034 /* RouteHandoffsTests.swift in Sources */,

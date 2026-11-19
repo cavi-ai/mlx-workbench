@@ -82,6 +82,7 @@ class AppHost {
     let inferenceTasks: InferenceTaskCoordinator
     let endpointTest: EndpointTestCoordinator
     let tailnetSharing: TailnetSharingCoordinator
+    let frontDoor: FrontDoorCoordinator
 
     private let configModule: ConfigModule
     private let cli: CLIProcess
@@ -162,6 +163,7 @@ class AppHost {
         self.inferenceTasks = inferenceTasks ?? InferenceTaskCoordinator(api: api, artifactRoot: api.taskArtifactsRoot)
         self.endpointTest = endpointTest ?? EndpointTestCoordinator(client: .live(api: api))
         self.tailnetSharing = TailnetSharingCoordinator(api: api)
+        self.frontDoor = FrontDoorCoordinator(api: api)
         self.lab = LabCoordinator(api: api)
         self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
         let profiles = ServingProfileCoordinator(store: JSONStore(fileURL: JSONStore<ServingProfile>.defaultFileURL("serving-profiles.json")),

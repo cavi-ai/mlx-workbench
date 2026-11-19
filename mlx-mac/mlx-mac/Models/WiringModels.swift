@@ -13,11 +13,14 @@ struct WireEndpoint: Equatable, Sendable {
     let baseURL: String        // e.g. http://127.0.0.1:8766/v1
     let modelName: String
     let apiKeySHA256: String?
+    /// Every model this address routes by name; `modelName` is the default.
+    let models: [String]
 
-    init(baseURL: String, modelName: String, apiKeySHA256: String? = nil) {
+    init(baseURL: String, modelName: String, apiKeySHA256: String? = nil, models: [String]? = nil) {
         self.baseURL = baseURL
         self.modelName = modelName
         self.apiKeySHA256 = apiKeySHA256
+        self.models = models ?? [modelName]
     }
 
     init?(server: ServerInfo) {

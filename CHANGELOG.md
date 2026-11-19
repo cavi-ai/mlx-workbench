@@ -18,6 +18,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 - Library: **Classify** opens on the first built-in test set entry, ready to start; **Test set** lists built-in sets, then classification sets saved in Compare, then **Custom**, and **Score on this set** opens Compare with the model and set selected. Validation messages appear after an edit or a start attempt, and choice options take descriptions.
 - Compare: classification prompt sets show scored questions, options never expected, and each model's latest accuracy on the set.
+- Serving: **Settings → Serving → Front door** runs `mlx-agent serve front-door` on one loopback port with a shared Keychain key; **Use front door key…** adds a stopped endpoint, and **Connect app…** wires OpenCode to the front door with every routed model.
 
 
 ## [0.11.0] - 2026-11-18

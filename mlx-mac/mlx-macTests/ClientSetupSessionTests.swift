@@ -127,6 +127,41 @@ final class ClientSetupSessionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: secondPath)), secondBytes)
     }
 
+    func testOpenCodeSetupThroughTheFrontDoorWritesEveryRoutedModel() async throws {
+        let home = try temporaryHome(), wiring = coordinator(home)
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        var door: WireEndpoint? = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3",
+                                               apiKeySHA256: digest, models: ["gemma-3", "org/coder"])
+        var tested: [String] = []
+        let session = ClientSetupSession(wiring: wiring, client: .opencode, prefersFrontDoor: true, servers: { [] },
+            frontDoor: { door }, testFrontDoor: { [key] _, endpoint, token in
+                tested.append("\(endpoint.baseURL) \(token == key)")
+                return ClientConnectionResult(protocolName: "Chat Completions", answer: "CONNECTED")
+            }, detect: { _ in true })
+        await session.load()
+        XCTAssertEqual(session.selectedFrontDoor, door)
+        await session.preview()
+        XCTAssertEqual(session.stage, .review, session.error ?? "")
+        await session.apply()
+        XCTAssertEqual(session.stage, .saved, session.error ?? "")
+        let receipt = try XCTUnwrap(session.receipt)
+        let config = try JSONCTolerant.parse(String(contentsOfFile: receipt.configPath, encoding: .utf8))
+        let local = try XCTUnwrap((config["provider"] as? [String: Any])?["mlx-local"] as? [String: Any])
+        XCTAssertEqual((local["models"] as? [String: Any])?.keys.sorted(), ["gemma-3", "org/coder"])
+        XCTAssertEqual((local["options"] as? [String: Any])?["apiKey"] as? String, key)
+        XCTAssertEqual(config["model"] as? String, "mlx-local/gemma-3")
+        await session.test()
+        XCTAssertEqual(session.result?.answer, "CONNECTED", session.error ?? "")
+        XCTAssertEqual(tested, ["http://127.0.0.1:8939/v1 true"])
+
+        session.back(); await session.preview()
+        XCTAssertEqual(session.stage, .review, session.error ?? "")
+        door = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3", apiKeySHA256: digest, models: ["gemma-3"])
+        await session.apply()
+        XCTAssertEqual(session.stage, .review)
+        XCTAssertTrue(session.error?.contains("stopped or changed") == true, session.error ?? "")
+    }
+
     func testTOMLAndYAMLMultilineSecretsAreMasked() {
         let source = "experimental_bearer_token = \"\"\"\nprivate-first\nprivate-second\n\"\"\"\napi_key: |\n  another-private-key\nmodel: safe"
         let redacted = SecretRedaction.redact(source)
