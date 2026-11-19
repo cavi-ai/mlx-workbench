@@ -108,7 +108,6 @@ struct HostInventory: Codable, Equatable, Sendable {
             return "\(count) \(count == 1 ? "model" : "models") reported loaded"
         }
         let localModels = models.filter { !$0.isCloudModel }
-        if localModels.isEmpty { return "0 models reported loaded" }
         let unknown = localModels.filter { $0.isLoaded == nil }.count
         guard !localModels.isEmpty, unknown != localModels.count else { return "Loaded state unknown" }
         let loaded = reportedLoadedModels.count

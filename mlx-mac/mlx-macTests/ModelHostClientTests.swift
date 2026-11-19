@@ -339,6 +339,8 @@ final class ModelHostClientTests: XCTestCase {
         XCTAssertThrowsError(try OllamaHostAdapter().validateRelease(of: inventory.models[0], selection: HostResourceSelection(modelID: "remote")))
         let old = try JSONDecoder().decode(HostedModel.self, from: Data(#"{"hostID":"00000000-0000-0000-0000-000000000001","modelID":"legacy","name":"legacy"}"#.utf8))
         XCTAssertFalse(old.isCloudModel)
+        let unavailable = HostInventory(host: inventory.host, models: [inventory.models[0]], capturedAt: Date())
+        XCTAssertEqual(unavailable.loadedStateSummary, "Loaded state unknown")
     }
 
     func testOllamaOptionalFailurePreservesUnknownLoadedState() async throws {
@@ -734,7 +736,9 @@ final class ModelHostClientTests: XCTestCase {
         let activity = HostActivity(state: .unknown, detail: "Unknown")
         let validModel = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true)
         let wrongHostModel = HostedModel(hostID: UUID(), modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true)
+        let cloudModel = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true, isCloud: true)
         let previews = [
+            HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha"), model: cloudModel, activity: activity),
             HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha"), model: wrongHostModel, activity: activity),
             HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "other"), model: validModel, activity: activity),
             HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha", instanceID: "unexpected"), model: validModel, activity: activity),
