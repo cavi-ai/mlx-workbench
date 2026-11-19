@@ -16,6 +16,31 @@ final class PrepareRemodelTests: XCTestCase {
         .running, .completed, .verifying, .verified, .verificationFailed, .failed,
     ]
 
+    func testAlternativesPrioritizeLinkedReadyModelsAndExcludeUnrelatedItems() {
+        func item(_ path: String, _ name: String, status: String = "ready", key: String? = nil,
+                  outputs: [String] = [], companion: Bool = false, draft: ModelDraft? = nil) -> LibraryModel {
+            LibraryModel(item: ModelItem(path: path, name: name, bytes: 100, modifiedAt: nil, shard: nil,
+                modelKey: key, architecture: "qwen35", quantization: "q4", parameters: "27B", structure: nil,
+                signature: nil, companion: companion, readable: true, status: status, outputs: outputs,
+                tensorCount: nil, error: nil, draft: draft))
+        }
+        let source = item("/source.gguf", "Qwen3.8-27B-Source", status: "pending", outputs: ["/linked"])
+        let linked = item("/linked", "Unrelated linked output")
+        let related = item("/related", "Qwen3.8-27B-Other")
+        let other = item("/other", "Other-27B-Model")
+        let pending = item("/pending", "Qwen3.8-27B-Pending", status: "pending")
+        let companion = item("/companion", "Qwen3.8-27B-Vision", companion: true)
+        let drafter = item("/drafter", "Qwen3.8-27B-Drafter", draft: ModelDraft(port: nil, target: "target", blockSize: nil))
+        let result = PrepareAlternatives.find(source: source, models: [source, related, other, pending, companion, drafter, linked, linked])
+        XCTAssertEqual(result.map(\.id), ["/linked", "/related"])
+        XCTAssertEqual(result.map(\.linked), [true, false])
+        XCTAssertTrue(PrepareAlternatives.find(source: nil, models: [linked]).isEmpty)
+        XCTAssertEqual(PrepareAlternatives.find(source: nil, repoID: "org/Qwen3.8-27B-Instruct", models: [related, other]).map(\.id), ["/related"])
+        let noCohort = item("/a", "Unknown", status: "pending", key: "qwen35")
+        let broadArchitecture = item("/b", "Other", key: "qwen35")
+        XCTAssertTrue(PrepareAlternatives.find(source: noCohort, models: [broadArchitecture]).isEmpty)
+    }
+
     func testFloatPrecisionLabelsAreExplicit() {
         XCTAssertEqual(PrepareTile(bits: 16, size: .unknown).widthLabel, "FP16")
         XCTAssertEqual(PrepareTile(bits: 32, size: .unknown).widthLabel, "FP32")

@@ -17,6 +17,7 @@ struct PrepareWorkflowPresentation: Equatable {
     let errorMessage: String?
     let hasPreviewHash: Bool
     let sourceRepo: String?
+    let localSourcePath: String?
     let subfolder: String?
     /// The bit widths the source converts to; a port can allow fewer than 4 and 8.
     let bitWidths: [Int]
@@ -40,6 +41,7 @@ struct PrepareWorkflowPresentation: Equatable {
         errorMessage = workflow.errorMessage
         hasPreviewHash = !(workflow.previewHash?.isEmpty ?? true)
         sourceRepo = workflow.sourceRepo
+        localSourcePath = workflow.localSourcePath
         subfolder = workflow.subfolder
         bitWidths = (workflow.allowedBits ?? [4, 8]).sorted()
         capabilitiesKnown = workflow.allowedBits != nil
@@ -150,7 +152,7 @@ extension PrepareWorkflowPresentation {
     /// The Library model for a GGUF source; repo sources have none before conversion.
     func sourceModel(in snapshot: LibrarySnapshot?) -> LibraryModel? {
         guard !sourcePath.isEmpty else { return nil }
-        return snapshot?.models.first { $0.item.path == sourcePath }
+        return snapshot?.models.first { $0.item.path == sourcePath || (localSourcePath != nil && $0.item.path == localSourcePath) }
     }
 
     /// The Library model for the converted output, once the Library lists it.
@@ -166,6 +168,37 @@ extension PrepareWorkflowPresentation {
     func actualBytes(outputModel: LibraryModel?) -> Int64? {
         guard hasConvertedOutput, let bytes = outputModel?.item.bytes, bytes > 0 else { return nil }
         return bytes
+    }
+}
+
+struct PrepareAlternative: Identifiable {
+    let model: LibraryModel
+    let linked: Bool
+    var id: String { model.item.path }
+}
+
+enum PrepareAlternatives {
+    static func find(source: LibraryModel?, repoID: String? = nil, models: [LibraryModel]) -> [PrepareAlternative] {
+        guard source != nil || repoID != nil else { return [] }
+        let linkedPaths = Set((source?.outputPaths ?? []) + (source?.item.outputs ?? []))
+        let cohort = source.flatMap { ModelFamilyReview.namedCohort($0) } ?? repoID.flatMap { ModelFamilyReview.namedCohort(name: $0) }
+        let sourceKey = source?.item.modelKey?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let key = sourceKey.flatMap { $0.isEmpty || $0 == source?.item.architecture?.lowercased() ? nil : $0 }
+        let candidates = models.compactMap { model -> PrepareAlternative? in
+            guard model.item.path != source?.item.path, model.readiness == .ready, model.item.readable != false,
+                  !model.item.isCompanion, model.item.draft == nil else { return nil }
+            let linked = linkedPaths.contains(model.item.path)
+            let candidateKey = model.item.modelKey?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let related = (cohort != nil && cohort == ModelFamilyReview.namedCohort(model)) || (key != nil && key == candidateKey && candidateKey != model.item.architecture?.lowercased())
+            guard linked || related else { return nil }
+            return PrepareAlternative(model: model, linked: linked)
+        }.sorted {
+            if $0.linked != $1.linked { return $0.linked }
+            let order = $0.model.displayName.localizedStandardCompare($1.model.displayName)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+        var seen = Set<String>()
+        return Array(candidates.filter { seen.insert($0.id).inserted }.prefix(4))
     }
 }
 
@@ -557,8 +590,8 @@ struct ConvertView: View {
                     notices
                 } else {
                     transformSurface
-                    actionRow
-                    pipeline
+                    if presentation.state.isInFlight || presentation.hasConvertedOutput || presentation.state == .verificationFailed { pipeline }
+                    else { notices }
                     if let agentReadiness {
                         DetailGrid(rows: [DetailRow("Agent tools", agentReadiness.summary, prose: true)])
                     }
@@ -656,78 +689,59 @@ struct ConvertView: View {
     // MARK: Transform header and tiles
 
     private var transformSurface: some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                transformHeader
-                if !presentation.destinationPath.isEmpty {
-                    Text(presentation.destinationNote)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(presentation.destinationNote)
-                }
-                Text("Output precision")
-                    .font(WorkbenchTypography.label)
-                    .foregroundStyle(WorkbenchColor.muted)
-                Text("Full precision changes storage format; it cannot restore information lost from a quantized source.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+            sourceEndpoint
+            alternatives
+            Divider()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                Text("Output precision").font(WorkbenchTypography.section)
                 if !presentation.capabilitiesKnown {
-                    Text("This engine did not report supported formats. Update the engine for more choices.")
+                    Text("The engine did not report supported formats. Showing legacy 4 and 8-bit choices.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 if presentation.bitWidths.isEmpty {
-                    Text("This source has no available conversion format.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                } else if presentation.capabilitiesKnown && presentation.bitWidths.count < 8 {
-                    Text(sourceModel?.item.draft?.port == "deepseek_v4_dspark"
-                         ? "DSpark retains MXFP4 experts, so full-precision output is unavailable."
-                         : "Unavailable formats are not supported by this source's converter.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                }
-                tiles
+                    Text("This source has no available conversion format.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                } else { tiles }
                 if presentation.state == .readyToConfirm || presentation.isBlockedDestination {
                     Button("Change precision") { modelWorkflow.changePrecision() }
                 }
-                let previewing = presentation.state == .previewingConversion
-                if presentation.showsSourceCleanupChoice {
-                    let note = sourceCleanupIsPossible
-                        ? "Keeps failed or unverified sources, active models, other cache revisions and shared weights."
-                        : "The original stays: it is outside the model folders in Settings."
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        Toggle("Move original source to Trash after verification",
-                               isOn: sourceCleanupIsPossible ? $reclaimSource : .constant(false))
-                            .disabled(!sourceCleanupIsPossible || previewing)
-                        Text(note)
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.muted)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .help(note)
-                    }
+            }
+            Divider()
+            destinationEndpoint
+            if presentation.showsSourceCleanupChoice {
+                let note = sourceCleanupIsPossible
+                    ? "Keeps failed or unverified sources, active models, other cache revisions and shared weights."
+                    : "The original stays: it is outside the model folders in Settings."
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Toggle("Move original source to Trash after verification", isOn: sourceCleanupIsPossible ? $reclaimSource : .constant(false))
+                        .disabled(!sourceCleanupIsPossible || presentation.state == .previewingConversion)
+                    Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).help(note)
                 }
             }
+            actionRow
         }
     }
 
-    private var transformHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
-                sourceEndpoint.frame(minWidth: WorkbenchSize.Prepare.endpointMinimum, idealWidth: WorkbenchSize.Prepare.endpointMinimum, maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "arrow.right")
-                    .font(WorkbenchTypography.section)
-                    .foregroundStyle(WorkbenchColor.muted)
-                    .frame(width: WorkbenchSize.Prepare.arrow)
-                    .accessibilityHidden(true)
-                destinationEndpoint.frame(minWidth: WorkbenchSize.Prepare.endpointMinimum, idealWidth: WorkbenchSize.Prepare.endpointMinimum, maxWidth: .infinity, alignment: .leading)
-            }
+    @ViewBuilder private var alternatives: some View {
+        let matches = PrepareAlternatives.find(source: sourceModel, repoID: presentation.repoID, models: appHost.librarySnapshot?.models ?? [])
+        if !matches.isEmpty {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                sourceEndpoint
-                Image(systemName: "arrow.down")
-                    .font(WorkbenchTypography.section)
-                    .foregroundStyle(WorkbenchColor.muted)
-                    .accessibilityHidden(true)
-                destinationEndpoint
+                Text("Already in your library").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                ForEach(matches) { match in
+                    HStack(alignment: .center, spacing: WorkbenchSpacing.md) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            Text(match.model.displayName).lineLimit(2).truncationMode(.middle)
+                            let detail = [match.linked ? "Linked output" : "Related model", match.model.item.quantization,
+                                          match.model.item.bytes > 0 ? LibraryTablePresentation.byteCount(match.model.item.bytes) : nil].compactMap { $0 }.joined(separator: " · ")
+                            Text(detail).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        }
+                        Spacer(minLength: WorkbenchSpacing.sm)
+                        Button("Open in Library") {
+                            appHost.handoffs.send(LibraryRevealRequest(modelPath: match.model.item.path), as: .revealModel)
+                            onRouteSelection(.library)
+                        }.accessibilityIdentifier("prepare-alternative-\(match.model.item.path)")
+                    }
+                }
             }
         }
     }
@@ -736,63 +750,26 @@ struct ConvertView: View {
         let symbol = (outputModel ?? sourceModel)?.item.task?.type.symbolName ?? ModelTaskType.other.symbolName
         let size = sourceModel.map(\.item.bytes).flatMap { $0 > 0 ? LibraryTablePresentation.byteCount($0) : nil }
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("Source").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
             Label {
-                Text(presentation.displayName)
-                    .font(WorkbenchTypography.section)
-                    .foregroundStyle(WorkbenchColor.ink)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-            } icon: {
-                Image(systemName: symbol)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(WorkbenchColor.muted)
-            }
-            if presentation.isRepoSource {
-                if presentation.sourceDisplay == presentation.displayName {
-                    Text("Hugging Face repo")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                } else {
-                    pathLine(presentation.sourceDisplay)
-                }
-            } else {
-                pathLine(presentation.sourcePath)
-            }
-            if let size {
-                Text(size)
-                    .font(WorkbenchTypography.secondaryTabular)
-                    .foregroundStyle(WorkbenchColor.muted)
-            }
+                Text(presentation.displayName).font(WorkbenchTypography.section)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            } icon: { Image(systemName: symbol).foregroundStyle(WorkbenchColor.muted) }
+            if let size { Text(size).font(WorkbenchTypography.secondaryTabular).foregroundStyle(WorkbenchColor.muted) }
+            pathLine(presentation.sourceDisplay)
         }
     }
 
     private var destinationEndpoint: some View {
-        let path = presentation.destinationPath
-        let bits = presentation.destinationBits ?? qBits
-        let size = presentation.size(forBits: bits, actualBytes: presentation.actualBytes(outputModel: outputModel))
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            if path.isEmpty {
-                Text("Destination will be calculated from the selected source.")
-                    .font(WorkbenchTypography.body)
-                    .foregroundStyle(WorkbenchColor.muted)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("Destination").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            if presentation.destinationPath.isEmpty {
+                Text("Calculated from the selected source").foregroundStyle(WorkbenchColor.muted)
             } else {
-                Label {
-                    Text(URL(fileURLWithPath: path).lastPathComponent)
-                        .font(WorkbenchTypography.section)
-                        .foregroundStyle(WorkbenchColor.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                } icon: {
-                    Image(systemName: "folder")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-                pathLine(path)
-                Text(size.text)
-                    .font(WorkbenchTypography.secondaryTabular)
-                    .foregroundStyle(WorkbenchColor.muted)
+                Text(URL(fileURLWithPath: presentation.destinationPath).lastPathComponent)
+                    .font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                pathLine(presentation.destinationPath)
             }
         }
     }
@@ -810,40 +787,49 @@ struct ConvertView: View {
     }
 
     private var tiles: some View {
-        let actual = presentation.actualBytes(outputModel: outputModel)
         let highlighted = presentation.highlightedBits(selected: qBits)
         let taskModel = outputModel ?? sourceModel
-        // A Hugging Face source is not in Library before it converts; intake labelled its task.
         let intakeTask = PrepareWorkflowPresentation.intakeTask(appHost.intake.resolution, repoID: presentation.repoID)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             if !presentation.bitWidths.contains(qBits) {
                 Text("Selected format is unavailable. Choose a supported output format.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-            ForEach(["Full precision", "Quantized"], id: \.self) { group in
-                Text(group).font(WorkbenchTypography.label)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: WorkbenchSize.Prepare.tileMinimum, maximum: WorkbenchSize.Prepare.tileMaximum), spacing: WorkbenchSpacing.sm, alignment: .top)], alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                    ForEach(group == "Full precision" ? [16, 32] : [2, 3, 4, 5, 6, 8], id: \.self) { bits in
-                        let tile = PrepareTile(bits: bits, size: presentation.size(forBits: bits, actualBytes: actual))
-                        let supported = presentation.bitWidths.contains(bits)
-                        PrepareQuantTileView(resources: appHost.resources, tile: tile,
-                            parameters: taskModel?.item.parameters, task: taskModel?.item.task?.type ?? intakeTask,
-                            taskIsLabelled: taskModel != nil || intakeTask != nil, reserveGB: appHost.config.fitReserveGB,
-                            hardware: appHost.hardwareProfile, isHighlighted: highlighted == bits,
-                            isLocked: presentation.isQuantizationLocked || !supported,
-                            titleOverride: bits == 32 && presentation.isRepoSource && presentation.sourceBackend != "mlx-lm" ? "Unquantized" : nil
-                        ) { qBits = bits }
-                        .help(supported ? "" : "This model or engine does not report support for this format.")
-                    }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: WorkbenchSpacing.sm)], alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                ForEach(presentation.bitWidths, id: \.self) { bits in
+                    let label = bits == 32 && presentation.isRepoSource && presentation.sourceBackend != "mlx-lm" ? "Unquantized" : PrepareTile(bits: bits, size: .unknown).widthLabel
+                    Button { qBits = bits } label: {
+                        Text(label).font(WorkbenchTypography.emphasis)
+                            .foregroundStyle(highlighted == bits ? WorkbenchColor.onAccentFill : WorkbenchColor.ink)
+                            .padding(.horizontal, WorkbenchSpacing.md).padding(.vertical, WorkbenchSpacing.sm)
+                            .frame(minWidth: 76)
+                            .background(highlighted == bits ? WorkbenchColor.accent : WorkbenchColor.surface,
+                                        in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                    }.buttonStyle(.plain).disabled(presentation.isQuantizationLocked)
+                        .accessibilityIdentifier("prepare-precision-\(bits)")
+                        .accessibilityAddTraits(highlighted == bits ? .isSelected : [])
                 }
             }
+            if (highlighted ?? qBits) >= 16, sourceModel?.item.quantization?.lowercased().hasPrefix("q") == true {
+                Text("Full precision cannot restore information lost to earlier quantization.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            let selectedSize = presentation.size(forBits: highlighted ?? qBits, actualBytes: presentation.actualBytes(outputModel: outputModel))
+            PrepareSelectedSummary(resources: appHost.resources, size: selectedSize,
+                parameters: taskModel?.item.parameters, task: taskModel?.item.task?.type ?? intakeTask,
+                taskIsLabelled: taskModel != nil || intakeTask != nil, reserveGB: appHost.config.fitReserveGB, hardware: appHost.hardwareProfile)
         }
     }
 
     // MARK: Actions
 
     private var actionRow: some View {
-        let items = actionPlan.items
+        let items = actionPlan.items.filter { item in
+            if item.action == .preview || item.action == .confirm {
+                return presentation.state != .previewingConversion && item.action == (presentation.primaryAction == .confirm ? .confirm : .preview)
+            }
+            return true
+        }
         return Group {
             if !items.isEmpty {
                 ViewThatFits(in: .horizontal) {
@@ -1033,79 +1019,19 @@ private extension View {
     }
 }
 
-// MARK: - Quantization tile
-
-/// One quantization width. This is the only view on the page that observes the
-/// memory monitor, so a probe re-evaluates the tiles and nothing around them.
-private struct PrepareQuantTileView: View {
+private struct PrepareSelectedSummary: View {
     @ObservedObject var resources: SystemResourceMonitor
-    let tile: PrepareTile
+    let size: PrepareTile.Size
     let parameters: String?
     let task: ModelTaskType?
     let taskIsLabelled: Bool
     let reserveGB: Double
     let hardware: HardwareProfile
-    let isHighlighted: Bool
-    let isLocked: Bool
-    var titleOverride: String? = nil
-    let select: () -> Void
-
-    private var fit: PrepareTileFit {
-        PrepareTileFit.make(
-            size: tile.size, parameters: parameters, task: task, taskIsLabelled: taskIsLabelled,
-            memory: resources.memory, hasProbed: resources.hasProbed,
-            contextTokens: resources.contextTokens, reserveGB: reserveGB, hardware: hardware
-        )
-    }
-
     var body: some View {
-        let fit = fit
-        Button(action: select) {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                Text(titleOverride ?? tile.widthLabel)
-                    .font(WorkbenchTypography.display)
-                    .foregroundStyle(isLocked && !isHighlighted ? WorkbenchColor.muted : WorkbenchColor.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(tile.size.text)
-                    .font(WorkbenchTypography.secondaryTabular)
-                    .foregroundStyle(WorkbenchColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xxs) {
-                    Image(systemName: fit.symbol)
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(fit.tone.color)
-                    Text(fit.word)
-                        .font(WorkbenchTypography.label)
-                        .foregroundStyle(fit.tone == .neutral ? WorkbenchColor.muted : WorkbenchColor.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .redacted(reason: fit.state == .redacted ? .placeholder : [])
-                .workbenchAnimation(value: fit.tone)
-            }
-            .padding(WorkbenchSpacing.sm)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHighlighted ? WorkbenchColor.accent.opacity(.fill) : WorkbenchColor.surface, in: shape)
-            .overlay {
-                shape.strokeBorder(isHighlighted ? WorkbenchColor.accent : WorkbenchColor.hairline, lineWidth: isHighlighted ? WorkbenchSize.stageTrack : WorkbenchSpacing.hairline)
-            }
-            .contentShape(shape)
-        }
-        .buttonStyle(PrepareTileButtonStyle())
-        .disabled(isLocked)
-        .workbenchAnimation(WorkbenchMotion.standard, value: isHighlighted)
-        .help(fit.help)
-        .accessibilityLabel("\(titleOverride ?? tile.widthLabel), \(tile.size.spokenText), \(fit.spokenVerdict)")
-        .accessibilityAddTraits(isHighlighted ? .isSelected : [])
-    }
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
-    }
-}
-
-/// Draws the tile as-is: a locked tile keeps its highlight instead of dimming.
-private struct PrepareTileButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let fit = PrepareTileFit.make(size: size, parameters: parameters, task: task, taskIsLabelled: taskIsLabelled,
+                                      memory: resources.memory, hasProbed: resources.hasProbed,
+                                      contextTokens: resources.contextTokens, reserveGB: reserveGB, hardware: hardware)
+        Text(size.text + (fit.state == .estimated ? " · " + fit.word : ""))
+            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).help(fit.help)
     }
 }

@@ -275,6 +275,9 @@ final class WorkbenchReviewUITests: XCTestCase {
                 data = {'receipt':receipt}
         elif args[:2] == ['intake', 'status'] and (root / 'update-fetch-job.json').exists():
             data = {'jobs':[json.loads((root / 'update-fetch-job.json').read_text())]}
+        elif args[:2] == ['convert', 'start'] and (root / 'prepare-review').exists():
+            assert '--confirm' not in args
+            data = {'status': 'preview', 'plan': {'preview_hash': 'prepare-review-hash'}}
         elif args[:2] == ['convert', 'start'] and (root / 'update-resolution.json').exists():
             assert '--confirm' not in args, 'Preparation must require its separate UI confirmation'
             fetched = json.loads((root / 'update-fetch-job.json').read_text())
@@ -4684,6 +4687,51 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"serve\", \"start\""))
+    }
+
+    func testPrepareReviewsExistingModelsAndSupportedPrecision() throws {
+        let source = root.appendingPathComponent("models/Atlas-7B-Source-Q6.gguf")
+        let related = root.appendingPathComponent("models/Atlas-7B-Existing-Q4.gguf")
+        try Data("source".utf8).write(to: source)
+        try Data("related".utf8).write(to: related)
+        try Data().write(to: root.appendingPathComponent("prepare-review"))
+        let sourceItem: [String: Any] = ["path": source.path, "name": source.lastPathComponent, "bytes": 24000,
+            "status": "pending", "outputs": [], "readable": true, "model_key": "atlas-7b",
+            "architecture": "atlas", "q_bits": [2, 3, 4, 5, 6, 8, 16, 32]]
+        let relatedItem: [String: Any] = ["path": related.path, "name": related.lastPathComponent, "bytes": 12000,
+            "status": "ready", "outputs": [], "readable": true, "model_key": "atlas-7b", "quantization": "Q4"]
+        let scan: [String: Any] = ["models": [sourceItem, relatedItem], "outputs": [], "pending": [], "duplicates": [],
+            "totals": ["gguf": 2, "pending": 1, "converted": 1, "unreadable": 0, "bytes": 36000, "reclaimable_bytes": 0]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: root.appendingPathComponent("scan-result.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        resizeWindow(width: 1024, height: 840)
+        let search = app.textFields["Search or paste a Hugging Face link"]
+        XCTAssertTrue(search.waitForExistence(timeout: 30))
+        search.click(); search.typeText(source.lastPathComponent)
+        let sourceRow = text(containing: source.lastPathComponent).firstMatch
+        XCTAssertTrue(sourceRow.waitForExistence(timeout: 20)); sourceRow.click()
+        let convert = app.buttons["Convert to MLX…"]
+        XCTAssertTrue(convert.waitForExistence(timeout: 20)); convert.click()
+        XCTAssertTrue(text(containing: "Already in your library").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: related.lastPathComponent).exists)
+        XCTAssertTrue(app.buttons["prepare-precision-6"].exists)
+        app.buttons["prepare-precision-6"].click()
+        XCTAssertTrue(text(containing: "-MLX-6bit").exists)
+        capture("Prepare-alternatives-precision")
+        app.buttons["Preview conversion"].click()
+        XCTAssertTrue(app.buttons["Confirm conversion"].waitForExistence(timeout: 15))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        let preview = try XCTUnwrap(calls.last { Array($0.prefix(2)) == ["convert", "start"] })
+        let bitsIndex = try XCTUnwrap(preview.firstIndex(of: "--q-bits"))
+        let outIndex = try XCTUnwrap(preview.firstIndex(of: "--out"))
+        XCTAssertEqual(preview[bitsIndex + 1], "6")
+        XCTAssertEqual(preview[outIndex + 1], source.deletingPathExtension().path + "-MLX-6bit")
+        XCTAssertFalse(preview.contains("--confirm"))
+        app.buttons["prepare-alternative-" + related.path].click()
+        XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Convert to MLX…"].waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: related.lastPathComponent).exists)
     }
 
     func testModelSourcesShowAllProvidersAndSharedFolders() throws {
