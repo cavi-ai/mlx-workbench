@@ -17,6 +17,23 @@ from pathlib import Path
 GGUF_MAGIC = b"GGUF"
 MAX_METADATA_PAIRS = 4096
 _MAX_STRING_BYTES = 4 * 1024 * 1024
+_MAX_ARRAY_ELEMENTS = 4 * 1024 * 1024
+_MAX_HEADER_BYTES = 128 * 1024 * 1024
+_MAX_ARRAY_DEPTH = 4
+_SKIP_CHUNK_BYTES = 65536
+_SCALARS = {
+    0: ("<B", 1),   # UINT8
+    1: ("<b", 1),   # INT8
+    2: ("<H", 2),   # UINT16
+    3: ("<h", 2),   # INT16
+    4: ("<I", 4),   # UINT32
+    5: ("<i", 4),   # INT32
+    6: ("<f", 4),   # FLOAT32
+    7: ("<?", 1),   # BOOL
+    10: ("<Q", 8),  # UINT64
+    11: ("<q", 8),  # INT64
+    12: ("<d", 8),  # FLOAT64
+}
 
 
 class GGUFFormatError(ValueError):
@@ -43,44 +60,82 @@ def _read_string(handle):
     return _read_exactly(handle, length)
 
 
-def _skip_value(handle, value_type):
-    sizes = {
-        0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8,
-        11: 8, 12: 8,
-    }
+def _skip_bytes(handle, count):
+    remaining = count
+    while remaining > 0:
+        chunk = min(remaining, _SKIP_CHUNK_BYTES)
+        _read_exactly(handle, chunk)
+        remaining -= chunk
+
+
+def _skip_value(handle, value_type, depth=0):
+    scalar = _SCALARS.get(value_type)
+    if scalar is not None:
+        _read_exactly(handle, scalar[1])
+        return
     if value_type == 8:
-        _read_string(handle)
+        (length,) = struct.unpack("<Q", _read_exactly(handle, 8))
+        if length > _MAX_STRING_BYTES:
+            raise GGUFFormatError(
+                "gguf_unreadable", "GGUF string is implausibly large"
+            )
+        _skip_bytes(handle, length)
         return
     if value_type == 9:  # array: type + count of nested values
+        if depth >= _MAX_ARRAY_DEPTH:
+            raise GGUFFormatError(
+                "gguf_unreadable", "GGUF array nesting is too deep"
+            )
         (inner_type,) = struct.unpack("<I", _read_exactly(handle, 4))
         (count,) = struct.unpack("<Q", _read_exactly(handle, 8))
-        for _ in range(min(count, MAX_METADATA_PAIRS)):
-            _skip_value(handle, inner_type)
+        if count > _MAX_ARRAY_ELEMENTS:
+            raise GGUFFormatError(
+                "gguf_unreadable", "GGUF array is implausibly large"
+            )
+        inner_scalar = _SCALARS.get(inner_type)
+        if inner_scalar is not None:
+            total_bytes = count * inner_scalar[1]
+            if total_bytes > _MAX_HEADER_BYTES:
+                raise GGUFFormatError(
+                    "gguf_unreadable", "GGUF array is implausibly large"
+                )
+            _skip_bytes(handle, total_bytes)
+            return
+        if inner_type not in (8, 9):
+            raise GGUFFormatError(
+                "gguf_unreadable",
+                "unknown GGUF metadata value type {0}".format(inner_type),
+            )
+        for _ in range(count):
+            _skip_value(handle, inner_type, depth + 1)
         return
-    size = sizes.get(value_type)
-    if size is None:
-        raise GGUFFormatError(
-            "gguf_unreadable",
-            "unknown GGUF metadata value type {0}".format(value_type),
-        )
-    if size:
-        _read_exactly(handle, size)
+    raise GGUFFormatError(
+        "gguf_unreadable",
+        "unknown GGUF metadata value type {0}".format(value_type),
+    )
 
 
-def _read_value(handle, value_type):
+def _read_value(handle, value_type, depth=0):
     if value_type == 8:
         return _read_string(handle).decode("utf-8", "replace")
     if value_type == 9:  # array
+        if depth >= _MAX_ARRAY_DEPTH:
+            raise GGUFFormatError(
+                "gguf_unreadable", "GGUF array nesting is too deep"
+            )
         (inner_type,) = struct.unpack("<I", _read_exactly(handle, 4))
         (count,) = struct.unpack("<Q", _read_exactly(handle, 8))
-        return [_read_value(handle, inner_type) for _ in range(min(count, 64))]
-    widths = {
-        0: ("<b", 1), 1: ("<b", 1), 2: ("<H", 2), 3: ("<h", 2),
-        4: ("<I", 4), 5: ("<i", 4), 6: ("<f", 4),
-        7: ("<B", 1), 10: ("<d", 8),
-        11: ("<Q", 8), 12: ("<q", 8),
-    }
-    packed = widths.get(value_type)
+        if count > _MAX_ARRAY_ELEMENTS:
+            raise GGUFFormatError(
+                "gguf_unreadable", "GGUF array is implausibly large"
+            )
+        if inner_type not in _SCALARS and inner_type not in (8, 9):
+            raise GGUFFormatError(
+                "gguf_unreadable",
+                "unknown GGUF metadata value type {0}".format(inner_type),
+            )
+        return [_read_value(handle, inner_type, depth + 1) for _ in range(min(count, 64))]
+    packed = _SCALARS.get(value_type)
     if packed is None:
         raise GGUFFormatError(
             "gguf_unreadable",
