@@ -1,11 +1,11 @@
 # mlx-workbench
 
-[![Release](https://img.shields.io/github/v/release/cavi-ai/mlx-workbench)](https://github.com/cavi-ai/mlx-workbench/releases/latest)
-[![License: MIT](https://img.shields.io/github/license/cavi-ai/mlx-workbench)](LICENSE)
+**Find the models that work for you—on your Mac.**
 
 ![Make your models audition: cartoon AI performers on a stage inside a laptop.](docs/images/mlx-workbench-hero.png)
 
-**Find the models that work for you—on your Mac.**
+[![Release](https://img.shields.io/github/v/release/cavi-ai/mlx-workbench)](https://github.com/cavi-ai/mlx-workbench/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/cavi-ai/mlx-workbench)](LICENSE)
 
 MLX Workbench is a native Apple Silicon app for preparing, comparing and running local AI. Give models the same task, inspect their actual outputs and compare measured performance on your machine. Choose what suits your work, with your model library, conversion and serving in the same app.
 
