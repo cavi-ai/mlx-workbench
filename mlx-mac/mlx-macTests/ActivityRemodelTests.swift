@@ -176,18 +176,18 @@ final class ActivityRemodelTests: XCTestCase {
             window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
             defer { window.close() }
             let calls = root.appendingPathComponent("calls.jsonl")
+            let expected = ["training-status", "convert-status", "serve-status", "queue-snapshot", "study-snapshot"]
+                + (scenario == "unavailable" ? [] : ["study-study-list"])
+            var operations: [String] = []
             for _ in 0..<150 {
-                if (try? String(contentsOf: calls, encoding: .utf8).contains("serve-status")) == true { break }
+                let lines = (try? String(contentsOf: calls, encoding: .utf8))?.split(separator: "\n") ?? []
+                operations = lines.compactMap { line in
+                    (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["operation"] as? String
+                }
+                if Set(expected).isSubset(of: Set(operations)) { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
-            try await Task.sleep(for: .milliseconds(200))
-            let rows = try String(contentsOf: calls, encoding: .utf8).split(separator: "\n").map {
-                try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
-            }
-            let operations = rows.compactMap { $0["operation"] as? String }
-            XCTAssertTrue(operations.contains("serve-status"))
-            XCTAssertTrue(Set(operations).isSubset(of: ["training-status", "convert-status", "serve-status", "queue-snapshot", "study-snapshot", "study-study-list"]))
-            XCTAssertLessThan(try XCTUnwrap(operations.firstIndex(of: "training-status")), try XCTUnwrap(operations.firstIndex(of: "convert-status")))
+            XCTAssertEqual(operations.sorted(), expected.sorted())
             XCTAssertEqual(app.modelWorkflow.history.map(\.id), records.map(\.id))
             host.layoutSubtreeIfNeeded()
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
