@@ -43,21 +43,26 @@ struct ModelSourceRow: Identifiable {
 
 private struct ModelSourceListRow: View {
     let source: ModelSourceRow
-    @Environment(\.backgroundProminence) private var prominence
+    let selected: Bool
     var body: some View {
-        let selected = prominence == .increased
-        return HStack(spacing: WorkbenchSpacing.md) {
-            Image(systemName: "cube.transparent").foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+        HStack(spacing: WorkbenchSpacing.md) {
+            Image(systemName: "cube.transparent").foregroundStyle(WorkbenchColor.muted)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text(source.model).lineLimit(1).truncationMode(.middle).accessibilityIdentifier("sources-model-cell")
-                Text(source.provider).font(WorkbenchTypography.secondary)
-                    .foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted)
+                Text(source.provider).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             Spacer(minLength: WorkbenchSpacing.sm)
-            Text(source.state).font(WorkbenchTypography.metadata)
-                .foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1)
-        }.foregroundStyle(selected ? WorkbenchColor.onSelection : WorkbenchColor.ink)
-            .padding(.vertical, WorkbenchSpacing.xs)
+            Text(source.state).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
+        }.foregroundStyle(WorkbenchColor.ink)
+            .padding(.horizontal, WorkbenchSpacing.md)
+            .padding(.vertical, WorkbenchSpacing.xxs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if selected {
+                    WorkbenchColor.canvas.overlay(WorkbenchColor.surface)
+                        .overlay(alignment: .leading) { Rectangle().fill(WorkbenchColor.accent).frame(width: 3) }
+                }
+            }
     }
 }
 
@@ -293,7 +298,8 @@ struct ModelSourcesView: View {
                 }
             }
             List(catalog, selection: $selectedID) { source in
-                ModelSourceListRow(source: source).tag(source.id)
+                ModelSourceListRow(source: source, selected: source.id == selectedID)
+                    .listRowInsets(EdgeInsets()).tag(source.id)
             }.listStyle(.plain).accessibilityIdentifier("sources-model-list")
                 .overlay {
                     if catalog.isEmpty {
