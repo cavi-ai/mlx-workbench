@@ -580,13 +580,13 @@ actor WorkbenchAPI {
         return Self.jobs(from: data) ?? []
     }
 
-    func serveStatus() async throws -> [ServerInfo] {
-        try await serveStatus(receiptsDirectory: receiptDirectory)
+    func serveStatus(timeout: TimeInterval? = nil) async throws -> [ServerInfo] {
+        try await serveStatus(receiptsDirectory: receiptDirectory, timeout: timeout)
     }
 
-    func serveStatus(receiptsDirectory: String) async throws -> [ServerInfo] {
+    func serveStatus(receiptsDirectory: String, timeout: TimeInterval? = nil) async throws -> [ServerInfo] {
         let receiptDirectory = receiptsDirectory
-        let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory], timeout: 30, cancellable: true)
+        let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory], timeout: timeout, cancellable: timeout != nil)
         guard let servers = Self.servers(from: data, defaultReceiptsDirectory: receiptDirectory) else {
             throw BridgeError.remote(code: "invalid_service_inventory", message: "The engine returned unreadable server status.", remediation: "Update the engine and refresh serving status.")
         }

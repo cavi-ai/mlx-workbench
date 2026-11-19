@@ -44,7 +44,7 @@ struct ModelWorkflowAPI {
             serveStart: { repo, runtime, port, hash in
                 try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, timeout: WorkbenchAPI.serveStartTimeout(runtime: runtime))
             },
-            serveStatus: { try await api.serveStatus() },
+            serveStatus: { try await api.serveStatus(timeout: 30) },
             serveStop: { port in try await api.serveStop(port: port) }
         )
         workflowAPI.discoverServers = { try await api.discoverServingServices() }
