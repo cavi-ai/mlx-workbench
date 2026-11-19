@@ -273,18 +273,25 @@ def _rewrite_ledger(root, deleted_path, now_iso):
     )
 
 
+_TRASH_SCRIPT = (
+    "on run argv\n"
+    'tell application "Finder" to delete POSIX file (item 1 of argv)\n'
+    "end run"
+)
+
+
 def _send_to_trash(path):
-    """macOS Trash via Finder-safe AppleScript; falls back to unlink."""
-    script = (
-        'tell application "Finder" to delete POSIX file "' + path + '"'
-    )
-    result = subprocess.run(
-        ["/usr/bin/osascript", "-e", script],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=15,
-    )
+    """Move a file to the macOS Trash via Finder AppleScript."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/osascript", "-e", _TRASH_SCRIPT, "--", str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise OSError("Finder timed out moving file to Trash") from error
     if result.returncode != 0:
         raise OSError(result.stderr.decode("utf-8", "replace").strip()[:200])
 

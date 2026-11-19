@@ -478,6 +478,54 @@ class QuarantineDeleteTests(unittest.TestCase):
         )
         self.assertFalse(entry["deleted"])
 
+    def test_send_to_trash_passes_special_path_via_argv_not_script(self):
+        from unittest import mock
+
+        record = self._quarantine_file(name='evil"$(id)\\name.gguf')
+        resolved = str(Path(record["to"]).resolve())
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with mock.patch.object(quarantine.subprocess, "run", side_effect=fake_run):
+            quarantine.purge(record["to"], str(self.hold))
+
+        cmd = captured["cmd"]
+        self.assertEqual(cmd[:4], ["/usr/bin/osascript", "-e", quarantine._TRASH_SCRIPT, "--"])
+        self.assertEqual(cmd[4], resolved)
+        self.assertNotIn('evil"$(id)\\name.gguf', cmd[2])
+        self.assertEqual(captured["kwargs"]["timeout"], 15)
+
+    def test_send_to_trash_timeout_raises_delete_failed(self):
+        from unittest import mock
+
+        record = self._quarantine_file()
+        with mock.patch.object(
+            quarantine.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd=["/usr/bin/osascript"], timeout=15),
+        ):
+            with self.assertRaises(quarantine.QuarantineError) as caught:
+                quarantine.purge(record["to"], str(self.hold))
+        self.assertEqual(caught.exception.code, "delete_failed")
+        self.assertIn("timed out", str(caught.exception).lower())
+
+    def test_send_to_trash_nonzero_exit_raises_delete_failed(self):
+        from unittest import mock
+
+        record = self._quarantine_file()
+        failed = subprocess.CompletedProcess(
+            ["/usr/bin/osascript"], 1, b"", b"Finder error: access denied\n"
+        )
+        with mock.patch.object(quarantine.subprocess, "run", return_value=failed):
+            with self.assertRaises(quarantine.QuarantineError) as caught:
+                quarantine.purge(record["to"], str(self.hold))
+        self.assertEqual(caught.exception.code, "delete_failed")
+        self.assertIn("Finder error: access denied", str(caught.exception))
+
 
 
 class QuarantineSymlinkTests(unittest.TestCase):
