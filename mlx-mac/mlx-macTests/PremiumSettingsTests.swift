@@ -129,6 +129,47 @@ final class PremiumSettingsTests: XCTestCase {
         XCTAssertEqual(loaded.comparisonMaxTokens, 512)
     }
 
+    func testValidLowNumericValuesLoadCorrectly() throws {
+        let url = temporaryConfigURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{\"port\": 1, \"fit_reserve_gb\": 1, \"reclaim_stale_days\": 2}".utf8).write(to: url)
+
+        let loaded = ConfigModule(pathOverride: url.path).load()
+
+        XCTAssertEqual(loaded.port, 1)
+        XCTAssertEqual(loaded.fitReserveGB, 1)
+        XCTAssertEqual(loaded.reclaimStaleDays, 2)
+    }
+
+    func testBooleanValuesInNumericFieldsFallBackToDefaults() throws {
+        let url = temporaryConfigURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(
+            "{\"port\": true, \"q_bits\": true, \"fit_reserve_gb\": true, \"reclaim_stale_days\": true, \"comparison_max_tokens\": true, \"signatures\": 0, \"verification_enabled\": 0, \"watch_enabled\": 0}".utf8
+        ).write(to: url)
+
+        let loaded = ConfigModule(pathOverride: url.path).load()
+
+        XCTAssertEqual(loaded.port, 8765)
+        XCTAssertEqual(loaded.qBits, 4)
+        XCTAssertEqual(loaded.fitReserveGB, 4)
+        XCTAssertEqual(loaded.reclaimStaleDays, 60)
+        XCTAssertEqual(loaded.comparisonMaxTokens, 512)
+        XCTAssertTrue(loaded.signatures)
+        XCTAssertTrue(loaded.verificationEnabled)
+        XCTAssertTrue(loaded.watchEnabled)
+    }
+
+    func testStaleDaysOneFallsBackToDefault() throws {
+        let url = temporaryConfigURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{\"reclaim_stale_days\": 1}".utf8).write(to: url)
+
+        let loaded = ConfigModule(pathOverride: url.path).load()
+
+        XCTAssertEqual(loaded.reclaimStaleDays, 60)
+    }
+
     // MARK: - Toggle application
 
     func testTogglingVerificationDetachesTheGate() async {

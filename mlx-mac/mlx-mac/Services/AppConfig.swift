@@ -312,31 +312,31 @@ func coerce(_ dict: [String: Any], discoverGgufRoots: () -> [String] = { Config.
         merged.quarantineDir = expand(quarantineDir)
     }
 
-    if let qBits = dict["q_bits"] as? Int, !qBits.isBool, Config.Q_BITS_CHOICES.contains(qBits) {
+    if let qBits = jsonInt(dict, "q_bits"), Config.Q_BITS_CHOICES.contains(qBits) {
         merged.qBits = qBits
     }
 
-    if let signatures = dict["signatures"] as? Bool {
+    if let signatures = jsonBool(dict, "signatures") {
         merged.signatures = signatures
     }
 
-    if let port = dict["port"] as? Int, !port.isBool, (1...65535).contains(port) {
+    if let port = jsonInt(dict, "port"), (1...65535).contains(port) {
         merged.port = port
     }
 
-    if let verificationEnabled = dict["verification_enabled"] as? Bool {
+    if let verificationEnabled = jsonBool(dict, "verification_enabled") {
         merged.verificationEnabled = verificationEnabled
     }
-    if let watchEnabled = dict["watch_enabled"] as? Bool {
+    if let watchEnabled = jsonBool(dict, "watch_enabled") {
         merged.watchEnabled = watchEnabled
     }
-    if let reserve = dict["fit_reserve_gb"] as? Double, Config.FIT_RESERVE_RANGE.contains(reserve) {
+    if let reserve = jsonDouble(dict, "fit_reserve_gb"), Config.FIT_RESERVE_RANGE.contains(reserve) {
         merged.fitReserveGB = reserve
     }
-    if let days = dict["reclaim_stale_days"] as? Int, !days.isBool, Config.STALE_DAYS_RANGE.contains(days) {
+    if let days = jsonInt(dict, "reclaim_stale_days"), Config.STALE_DAYS_RANGE.contains(days) {
         merged.reclaimStaleDays = days
     }
-    if let maxTokens = dict["comparison_max_tokens"] as? Int, !maxTokens.isBool, Config.COMPARISON_MAX_TOKENS_RANGE.contains(maxTokens) {
+    if let maxTokens = jsonInt(dict, "comparison_max_tokens"), Config.COMPARISON_MAX_TOKENS_RANGE.contains(maxTokens) {
         merged.comparisonMaxTokens = maxTokens
     }
 
@@ -367,10 +367,23 @@ private func encode(_ config: Config) -> [String: Any] {
     ]
 }
 
-private extension Int {
-    var isBool: Bool {
-        return self == 0 || self == 1
-    }
+private func isJSONBool(_ value: Any) -> Bool {
+    return CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
+}
+
+private func jsonBool(_ dict: [String: Any], _ key: String) -> Bool? {
+    guard let raw = dict[key], isJSONBool(raw) else { return nil }
+    return raw as? Bool
+}
+
+private func jsonInt(_ dict: [String: Any], _ key: String) -> Int? {
+    guard let raw = dict[key], !isJSONBool(raw) else { return nil }
+    return raw as? Int
+}
+
+private func jsonDouble(_ dict: [String: Any], _ key: String) -> Double? {
+    guard let raw = dict[key], !isJSONBool(raw) else { return nil }
+    return raw as? Double
 }
 
 // MARK: - Path Helpers
