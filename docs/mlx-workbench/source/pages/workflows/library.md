@@ -14,15 +14,17 @@ navigate or stage a preview; they never start conversion, installation or servin
 
 ## Library
 
-**Library** lists the GGUF and MLX models under your configured roots, one row per model. The output directory is scanned as an MLX root unless another root already reaches it. **View options** in the toolbar groups the table by **Family** or **Type** and filters it by readiness and quantization.
+**Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. The list groups models by family by default. **View options** changes the grouping, filters by readiness and quantization, and offers **View as table** for sortable columns. Workbench remembers these choices.
 
-The field above the table searches name, path, key and evidence. Paste a Hugging Face link there and press Return, or choose **Add**, to open intake for that model; **Add** with no link opens intake empty. Opening intake does not download a model.
+The search field searches name, path, key and evidence. Paste a Hugging Face link there and press Return, or choose **Add**, to open intake for that model; **Add** with no link opens intake empty. Opening intake does not download a model.
 
 The **Source** menu offers **All local models** and each saved model host, including Ollama, LM Studio and ComfyUI. Host choices use their saved identity and show their provider; connections with matching names and providers include their address to distinguish them. Adding, editing or removing a saved connection updates the menu. **Hosted models** opens host selection and connection setup. The separate **Local files** group contains **LM Studio files**.
 
 Switching sources preserves the main table's filters and selected model without refreshing a host, changing configuration or starting conversion or serving. Selecting a host shows that exact connection. If it is removed, Library returns to hosted selection rather than displaying another host.
 
 **Show in Library** on a source model opens **All local models**, clears search and readiness/quantization filters, and selects the model in the inspector. This explicit reveal leaves column and grouping preferences intact.
+
+In table view, the columns are:
 
 | Column | Meaning |
 |---|---|
@@ -34,7 +36,7 @@ Switching sources preserves the main table's filters and selected model without 
 | Quant | Declared bits or quant type; hidden until shown from the column header menu |
 | Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots; hidden until shown from the column header menu |
 
-Columns collapse as the window narrows. The footer gives the model count, storage and reclaimable space. **Refresh** rescans; a failed scan offers **Retry scan**.
+Columns collapse as the window narrows. On a wide window, model details appear alongside the list and can be hidden with **Inspector**. In a narrow window, select a model to open its details sheet. The footer gives the model count, storage and reclaimable space. **Refresh** rescans; a failed scan offers **Retry scan**.
 Managed downloads display their repository, checkpoint and shortened revision in Library and Served Models.
 
 Scans stay within the selected model locations and managed output folder. A missing or unreadable root is reported separately while readable roots keep their results. Empty root lists do not enable automatic searches of other model folders.

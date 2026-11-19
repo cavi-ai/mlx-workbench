@@ -34,6 +34,14 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(recorder.values[2].argv, ["serve", "tailnet", "stop", "--expected-share-id", "id"])
     }
 
+    func testSplashAgentSessionsStartingPoint() {
+        let tuning = SplashTuning.StartingPoint.agentSessions.tuning
+        XCTAssertEqual(tuning.reasoningEffort, "none")
+        XCTAssertEqual(tuning.thinkingBudget, 0)
+        XCTAssertEqual(tuning.persistentCache, true)
+        XCTAssertEqual(tuning.arguments, ["--splash-reasoning-effort", "none", "--splash-thinking-budget", "0", "--splash-persistent-cache"])
+    }
+
     func testSplashTuningPresetIsListedAndSavedWithEveryTuningOption() async throws {
         let recorder = AgentCallRecorder()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { path, argv, scout, timeout in

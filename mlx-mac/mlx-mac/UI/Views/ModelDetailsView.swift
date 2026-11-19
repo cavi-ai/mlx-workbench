@@ -335,13 +335,15 @@ struct ModelDetailsView: View {
     @ObservedObject private var comparison: ComparisonCoordinator
 
     let model: LibraryModel
+    let prominentTitle: Bool
     let onRouteSelection: (AppRoute) -> Void
 
-    init(appHost: AppHost, model: LibraryModel, onRouteSelection: @escaping (AppRoute) -> Void) {
+    init(appHost: AppHost, model: LibraryModel, prominentTitle: Bool = false, onRouteSelection: @escaping (AppRoute) -> Void) {
         self.appHost = appHost
         _verification = ObservedObject(wrappedValue: appHost.verification)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         self.model = model
+        self.prominentTitle = prominentTitle
         self.onRouteSelection = onRouteSelection
     }
 
@@ -354,13 +356,13 @@ struct ModelDetailsView: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 header
                 actionStack
-                if showsTaskPanel, UseMode.modes(for: model).first != .chat { taskPanel }
                 LibraryInspectorFit(
                     resources: appHost.resources,
                     reserveGB: appHost.config.fitReserveGB,
                     hardware: appHost.hardwareProfile,
                     model: model
                 )
+                if showsTaskPanel, UseMode.modes(for: model).first != .chat { taskPanel }
                 measuredSection
 
                 let inference = ModelInferencePresentation.options(for: model, chip: appHost.hardwareProfile.chip)
@@ -424,7 +426,7 @@ struct ModelDetailsView: View {
         return HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                 Text(model.displayName.split(separator: "/").last.map(String.init) ?? model.displayName)
-                    .font(WorkbenchTypography.inspectorTitle)
+                    .font(prominentTitle ? WorkbenchTypography.pageTitle : WorkbenchTypography.inspectorTitle)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .help(model.displayName)

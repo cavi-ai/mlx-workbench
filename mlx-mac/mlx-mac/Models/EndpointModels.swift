@@ -207,7 +207,7 @@ struct SplashTuning: Equatable {
         var tuning: SplashTuning {
             switch self {
             case .balanced: return SplashTuning()
-            case .agentSessions: return SplashTuning(persistentCache: true)
+            case .agentSessions: return SplashTuning(reasoningEffort: "none", thinkingBudget: 0, persistentCache: true)
             case .repeatable: return SplashTuning(verifyRows: "all", cachedStates: "exact")
             case .quickAnswers: return SplashTuning(reasoningEffort: "none")
             }
@@ -216,7 +216,7 @@ struct SplashTuning: Equatable {
         var detail: String {
             switch self {
             case .balanced: return "Splash defaults: adaptive verification, int8 caches, and each request sets its own effort."
-            case .agentSessions: return "Keeps the SSD prompt cache across restarts, so long agent prefixes resume warm."
+            case .agentSessions: return "Turns thinking off and keeps the SSD prompt cache across restarts."
             case .repeatable: return "Verifies every draft row and keeps cached states exact, so greedy and seeded outputs repeat."
             case .quickAnswers: return "Turns thinking off for every request."
             }

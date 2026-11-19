@@ -39,14 +39,15 @@ struct UseWorkspaceView: View {
     var body: some View {
         GeometryReader { geometry in
             let wide = geometry.size.width >= WorkbenchSize.Use.historyBreakpoint
+            let showContext = wide && coordinator.selected?.mode == .chat
             HStack(spacing: 0) {
-                if wide {
+                if wide && !showContext {
                     history
                         .frame(width: WorkbenchSize.Use.historyWidth)
                     Divider()
                 }
                 VStack(spacing: 0) {
-                    header(wide: wide)
+                    header(showHistoryButton: !wide || showContext, showContext: showContext)
                     Divider()
                     if let session = coordinator.selected {
                         if session.mode == .chat { chat(session) }
@@ -54,6 +55,11 @@ struct UseWorkspaceView: View {
                     } else { emptyState }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showContext, let session = coordinator.selected {
+                    Divider()
+                    modelContext(session)
+                        .frame(width: min(300, geometry.size.width * 0.25))
+                }
             }
         }
         .task(id: "\(isRouteActive):\(appHost.handoffs[.useModel]?.id.uuidString ?? ""):\(appHost.librarySnapshot?.models.count ?? 0):\(coordinator.isSending)") {
@@ -80,26 +86,28 @@ struct UseWorkspaceView: View {
 
     }
 
-    private func header(wide: Bool) -> some View {
+    private func header(showHistoryButton: Bool, showContext: Bool) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack(spacing: WorkbenchSpacing.sm) {
-                if !wide {
+                if showHistoryButton {
                     Button { showHistory = true } label: { Image(systemName: "clock.arrow.circlepath") }
                         .accessibilityLabel("Work sessions").accessibilityIdentifier("use-history")
                 }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                     Text(coordinator.selected?.title ?? "Choose a model")
                         .font(WorkbenchTypography.inspectorTitle).lineLimit(1)
-                    if let session = coordinator.selected {
+                    if !showContext, let session = coordinator.selected {
                         Text(session.modelName).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
                     }
                 }
                 Spacer(minLength: WorkbenchSpacing.xs)
                 newMenu
                 if coordinator.selected?.mode == .chat {
-                    Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
-                        .accessibilityLabel("Request settings").accessibilityIdentifier("use-settings")
-                        .disabled(!coordinator.canChange)
+                    if !showContext {
+                        Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                            .accessibilityLabel("Request settings").accessibilityIdentifier("use-settings")
+                            .disabled(!coordinator.canChange)
+                    }
                     Menu {
                         Button("Export Markdown…") { export(json: false) }
                         Button("Export JSON…") { export(json: true) }
@@ -107,7 +115,7 @@ struct UseWorkspaceView: View {
                     .accessibilityLabel("Export conversation").accessibilityIdentifier("use-export")
                 }
             }
-            if let session = coordinator.selected, session.mode == .chat {
+            if !showContext, let session = coordinator.selected, session.mode == .chat {
                 connection(session)
             }
             if let error = coordinator.error {
@@ -170,6 +178,42 @@ struct UseWorkspaceView: View {
                 manageServer(session)
             }
         }
+    }
+    private func modelContext(_ session: UseSession) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                Text("Model").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Text(session.modelName).font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                endpointPicker(session)
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    refreshServersButton
+                    manageServer(session)
+                }
+                Divider()
+                HStack {
+                    Text("Request settings").font(WorkbenchTypography.emphasis)
+                    Spacer()
+                    Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                        .accessibilityLabel("Request settings").accessibilityIdentifier("use-settings")
+                        .disabled(!coordinator.canChange)
+                }
+                HStack {
+                    Text("Response limit")
+                    Spacer()
+                    Text("\(session.settings.maximumTokens) tokens")
+                }
+                HStack {
+                    Text("Temperature")
+                    Spacer()
+                    Text(session.settings.temperature.formatted())
+                }
+                .font(WorkbenchTypography.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(WorkbenchSpacing.md)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .accessibilityIdentifier("use-model-context")
     }
     private var refreshServersButton: some View {
         Button { Task { await refreshServers() } } label: { Image(systemName: "arrow.clockwise") }
@@ -275,7 +319,10 @@ struct UseWorkspaceView: View {
             if selectedModel == nil {
                 Button("Find this model in Library") { onRouteSelection(.library) }
             }
-        }.padding(WorkbenchSpacing.md)
+        }
+        .frame(maxWidth: WorkbenchSize.Use.readingWidth, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(WorkbenchSpacing.md)
     }
     @ViewBuilder
     private func tasks(_ session: UseSession) -> some View {

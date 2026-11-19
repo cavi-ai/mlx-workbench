@@ -696,7 +696,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func filterNeedsConversion() {
-        app.menuButtons["Filter"].click()
+        app.menuButtons["library-view-options"].click()
         let readiness = app.menuItems["Readiness"].firstMatch
         XCTAssertTrue(readiness.waitForExistence(timeout: 5))
         readiness.hover()
@@ -853,9 +853,13 @@ final class WorkbenchReviewUITests: XCTestCase {
                                    "name": "Existing model", "bytes": 1024, "status": "ready", "outputs": [],
                                    "readable": true, "architecture": "llama", "quantization": "Q4_K_M",
                                    "model_key": "existing"]
-        try JSONSerialization.data(withJSONObject: ["models": [], "outputs": [model], "pending": [],
-            "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 1, "unreadable": 0,
-                                          "bytes": 1024, "reclaimable_bytes": 0]])
+        let secondModel: [String: Any] = ["path": root.appendingPathComponent("models/another.gguf").path,
+                                         "name": "Another model", "bytes": 2048, "status": "ready", "outputs": [],
+                                         "readable": true, "architecture": "qwen", "quantization": "Q8_0",
+                                         "model_key": "another"]
+        try JSONSerialization.data(withJSONObject: ["models": [], "outputs": [model, secondModel], "pending": [],
+            "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 2, "unreadable": 0,
+                                          "bytes": 3072, "reclaimable_bytes": 0]])
             .write(to: root.appendingPathComponent("scan-result.json"))
         app.buttons["Scan again"].click()
         XCTAssertTrue(text(containing: "Existing model").waitForExistence(timeout: 20))
@@ -870,9 +874,15 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture(width == 740 ? "Library-toolbar-compact" : "Library-toolbar-wide")
         }
         text(containing: "Existing model").click()
-        app.buttons["Inspector"].click()
         XCTAssertTrue(app.descendants(matching: .any)["More actions for Existing model"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(app.descendants(matching: .any)["library-model-inspector"].firstMatch.frame.width, 500)
         capture("Library-inspector-wide")
+        app.menuButtons["library-view-options"].click()
+        app.menuItems["View as table"].click()
+        XCTAssertTrue(app.descendants(matching: .any)["library-table"].firstMatch.waitForExistence(timeout: 5))
+        app.menuButtons["library-view-options"].click()
+        app.menuItems["View as table"].click()
+        XCTAssertTrue(app.descendants(matching: .any)["library-table"].firstMatch.waitForNonExistence(timeout: 5))
         app.buttons["Inspector"].click()
         resizeWindow(width: 1050, height: 720)
         filterNeedsConversion()
@@ -1376,9 +1386,19 @@ final class WorkbenchReviewUITests: XCTestCase {
         let messages = try XCTUnwrap(second["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["system", "user", "assistant", "user"])
         XCTAssertEqual(messages[2]["content"] as? String, "Saved local answer")
-        capture("Use-Dark-conversation-standard")
+        resizeWindow(width: 1400, height: 720)
+        XCTAssertTrue(app.descendants(matching: .any)["use-model-context"].firstMatch.waitForExistence(timeout: 5))
+        let answers = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Saved local answer", "Saved local answer"))
+        let lastAnswer = answers.allElementsBoundByIndex.last
+        XCTAssertNotNil(lastAnswer)
+        if let lastAnswer {
+            let visible = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: lastAnswer)
+            wait(for: [visible], timeout: 5)
+        }
+        XCTAssertTrue(app.textViews["use-message"].isHittable)
+        capture("Use-Dark-conversation-wide")
         app.terminate()
-        launch(appearance: "Dark", isolatedHome: true)
+        launch(appearance: "Dark", route: "use", isolatedHome: true)
         select("Use")
         XCTAssertTrue(app.textViews["use-message"].waitForExistence(timeout: 15))
         XCTAssertEqual(try useRequests().count, 2, "Restoring history must send nothing")
@@ -1388,7 +1408,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(restored.compactMap { $0["role"] as? String }, ["system", "user", "assistant", "user", "assistant", "user"])
         replace(app.textViews["use-message"], with: "Keep this draft during server review")
         app.buttons["use-manage-server"].click()
-        let returnToUse = app.buttons["run-return-to-use"]
+        let returnToUse = app.buttons["Return to Use"]
         XCTAssertTrue(returnToUse.waitForExistence(timeout: 10)); returnToUse.click()
         XCTAssertTrue(app.textViews["use-message"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.textViews["use-message"].value as? String, "Keep this draft during server review")

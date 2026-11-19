@@ -33,7 +33,7 @@ Presets are saved by the engine. **New preset…** opens the editor; every value
 | Start from | Sets |
 |---|---|
 | **Balanced** | Nothing: adaptive verification, int8 caches, and each request sets its own effort |
-| **Agent sessions** | The SSD prompt cache kept across restarts, so long agent prefixes resume warm |
+| **Agent sessions** | Reasoning effort none, thinking budget 0, and the SSD prompt cache kept across restarts |
 | **Repeatable output** | Every draft row verified and exact cached states, so greedy and seeded outputs repeat |
 | **Quick answers** | Reasoning effort none for every request |
 
