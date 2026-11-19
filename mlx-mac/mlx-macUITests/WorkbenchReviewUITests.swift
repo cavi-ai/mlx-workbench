@@ -4729,7 +4729,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(preview[bitsIndex + 1], "6")
         XCTAssertEqual(preview[outIndex + 1], source.deletingPathExtension().path + "-MLX-6bit")
         XCTAssertFalse(preview.contains("--confirm"))
-        app.buttons["prepare-alternative-" + related.path].click()
+        app.buttons.matching(NSPredicate(format: "identifier == %@", "prepare-alternative-" + related.path)).firstMatch.click()
         XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Convert to MLX…"].waitForExistence(timeout: 10))
         XCTAssertTrue(text(containing: related.lastPathComponent).exists)
