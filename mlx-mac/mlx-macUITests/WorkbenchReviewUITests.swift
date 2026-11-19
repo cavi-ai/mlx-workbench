@@ -4711,6 +4711,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let sourceRow = text(containing: source.lastPathComponent).firstMatch
         XCTAssertTrue(sourceRow.waitForExistence(timeout: 20)); sourceRow.click()
         let convert = app.buttons["Convert to MLX…"]
+        if !convert.exists { app.typeKey("i", modifierFlags: [.command, .option]) }
         XCTAssertTrue(convert.waitForExistence(timeout: 20)); convert.click()
         XCTAssertTrue(text(containing: "Already in your library").waitForExistence(timeout: 15))
         XCTAssertTrue(text(containing: related.lastPathComponent).exists)
