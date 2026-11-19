@@ -279,6 +279,56 @@ class ServePresetTests(unittest.TestCase):
                 with self.assertRaises(self.sp.PresetError):
                     self.book.upsert(**fields)
 
+    def test_load_drops_malformed_entries_and_strips_unknown_fields(self):
+        path = self.sp.presets_path(self.config_dir / "config.json")
+        valid = {
+            "id": "sp-1",
+            "name": "Coder",
+            "model": "mlx-community/Qwen3-8B-4bit",
+            "model_kind": "repo",
+            "runtime": "mlx_lm",
+            "port": 8766,
+            "max_tokens": 4096,
+            "adapter_path": None,
+        }
+        payload = {
+            "schema_version": self.sp.PRESETS_SCHEMA_VERSION,
+            "presets": [
+                42,
+                {"id": "sp-missing", "name": "Incomplete"},
+                {**valid, "extra_injected": "drop-me"},
+                {**valid, "name": "Duplicate ID"},
+                {**valid, "id": "   ", "name": "Blank ID"},
+                {**valid, "id": "sp-bad-port", "port": True},
+            ],
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        loaded = self.book.list()
+        self.assertEqual(loaded, [valid])
+
+    def test_store_save_rejects_invalid_presets(self):
+        store = self.sp.PresetStore(self.sp.presets_path(self.config_dir / "config.json"))
+        valid = {
+            "id": "sp-1",
+            "name": "Coder",
+            "model": "mlx-community/Qwen3-8B-4bit",
+            "model_kind": "repo",
+            "runtime": "mlx_lm",
+            "port": 8766,
+            "max_tokens": 4096,
+            "adapter_path": None,
+        }
+        for bad in (
+            [123],
+            [{**valid, "extra": "nope"}],
+            [{**valid, "id": ""}],
+            [{**valid, "port": True}],
+            [valid, dict(valid)],
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(self.sp.PresetError):
+                    store.save(bad)
+
 
 
 
@@ -351,6 +401,63 @@ class ConvertPreflightTests(unittest.TestCase):
         path = self.root / "broken.gguf"
         path.write_bytes(b"\x00\x01")
         self.assertIsNone(self.preflight.check(str(path)))
+
+    def test_reader_skips_large_string_and_float_arrays_before_architecture(self):
+        import struct
+
+        for case, inner_type, count in (
+            ("tokens", 8, 10000),
+            ("scores", 6, 10000),
+        ):
+            with self.subTest(case=case):
+                path = self.root / f"large_{case}.gguf"
+                with path.open("wb") as handle:
+                    handle.write(b"GGUF")
+                    handle.write(struct.pack("<I", 3))
+                    handle.write(struct.pack("<Q", 0))
+                    handle.write(struct.pack("<Q", 2))
+                    arr_key = f"tokenizer.ggml.{case}".encode("utf-8")
+                    handle.write(struct.pack("<Q", len(arr_key)))
+                    handle.write(arr_key)
+                    handle.write(struct.pack("<I", 9))  # array
+                    handle.write(struct.pack("<I", inner_type))
+                    handle.write(struct.pack("<Q", count))
+                    if inner_type == 8:
+                        elem = b"tok"
+                        chunk = struct.pack("<Q", len(elem)) + elem
+                        handle.write(chunk * count)
+                    else:
+                        handle.write(struct.pack("<f", 0.5) * count)
+                    arch_key = b"general.architecture"
+                    handle.write(struct.pack("<Q", len(arch_key)))
+                    handle.write(arch_key)
+                    handle.write(struct.pack("<I", 8))
+                    arch_val = b"qwen2"
+                    handle.write(struct.pack("<Q", len(arch_val)))
+                    handle.write(arch_val)
+                self.assertEqual(self.gguf_arch.read_architecture(str(path)), "qwen2")
+
+    def test_read_value_unpacks_uint8_unsigned(self):
+        import io
+        self.assertEqual(self.gguf_arch._read_value(io.BytesIO(b"\xff"), 0), 255)
+
+    def test_reader_rejects_implausibly_large_array(self):
+        import struct
+        path = self.root / "huge_array.gguf"
+        with path.open("wb") as handle:
+            handle.write(b"GGUF")
+            handle.write(struct.pack("<I", 3))
+            handle.write(struct.pack("<Q", 0))
+            handle.write(struct.pack("<Q", 1))
+            key = b"tokenizer.ggml.tokens"
+            handle.write(struct.pack("<Q", len(key)))
+            handle.write(key)
+            handle.write(struct.pack("<I", 9))
+            handle.write(struct.pack("<I", 8))
+            handle.write(struct.pack("<Q", self.gguf_arch._MAX_ARRAY_ELEMENTS + 1))
+        with self.assertRaises(self.gguf_arch.GGUFFormatError) as caught:
+            self.gguf_arch.read_architecture(str(path))
+        self.assertEqual(caught.exception.code, "gguf_unreadable")
 
 
 
@@ -477,6 +584,54 @@ class QuarantineDeleteTests(unittest.TestCase):
             if e["to"] == record["to"]
         )
         self.assertFalse(entry["deleted"])
+
+    def test_send_to_trash_passes_special_path_via_argv_not_script(self):
+        from unittest import mock
+
+        record = self._quarantine_file(name='evil"$(id)\\name.gguf')
+        resolved = str(Path(record["to"]).resolve())
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with mock.patch.object(quarantine.subprocess, "run", side_effect=fake_run):
+            quarantine.purge(record["to"], str(self.hold))
+
+        cmd = captured["cmd"]
+        self.assertEqual(cmd[:4], ["/usr/bin/osascript", "-e", quarantine._TRASH_SCRIPT, "--"])
+        self.assertEqual(cmd[4], resolved)
+        self.assertNotIn('evil"$(id)\\name.gguf', cmd[2])
+        self.assertEqual(captured["kwargs"]["timeout"], 15)
+
+    def test_send_to_trash_timeout_raises_delete_failed(self):
+        from unittest import mock
+
+        record = self._quarantine_file()
+        with mock.patch.object(
+            quarantine.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd=["/usr/bin/osascript"], timeout=15),
+        ):
+            with self.assertRaises(quarantine.QuarantineError) as caught:
+                quarantine.purge(record["to"], str(self.hold))
+        self.assertEqual(caught.exception.code, "delete_failed")
+        self.assertIn("timed out", str(caught.exception).lower())
+
+    def test_send_to_trash_nonzero_exit_raises_delete_failed(self):
+        from unittest import mock
+
+        record = self._quarantine_file()
+        failed = subprocess.CompletedProcess(
+            ["/usr/bin/osascript"], 1, b"", b"Finder error: access denied\n"
+        )
+        with mock.patch.object(quarantine.subprocess, "run", return_value=failed):
+            with self.assertRaises(quarantine.QuarantineError) as caught:
+                quarantine.purge(record["to"], str(self.hold))
+        self.assertEqual(caught.exception.code, "delete_failed")
+        self.assertIn("Finder error: access denied", str(caught.exception))
 
 
 
