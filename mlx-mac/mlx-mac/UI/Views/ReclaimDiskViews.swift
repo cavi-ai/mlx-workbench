@@ -54,6 +54,7 @@ struct ReclaimDiskPanel: View {
     @ObservedObject var reclaim: ReclaimCoordinator
     @ObservedObject var usage: UsageTracker
     let onOpenQuarantine: () -> Void
+    let onOpenServing: () -> Void
 
     @State private var filter: DiskFilter = .all
     @State private var sortOrder = DiskRow.defaultSortOrder
@@ -68,7 +69,6 @@ struct ReclaimDiskPanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                ErrorBanner(text: reclaim.lastError)
                 ReclaimSystemSection(resources: appHost.resources, inventory: appHost.servingInventory,
                                      volumePath: appHost.scanResult?.storage?.roots.first?.root)
                 if let storage = appHost.scanResult?.storage {
@@ -102,6 +102,19 @@ struct ReclaimDiskPanel: View {
         let selection = selected.intersection(removable)
         let freed = DiskLedger.freedBytes(removing: selection, items: storage.items)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+            switch reclaim.copyError {
+            case .serving(let error):
+                ErrorBanner(text: "Model removal is paused until serving ownership can be checked.")
+                DisclosureGroup("Serving issue details") {
+                    Text(error).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.font(WorkbenchTypography.secondary)
+                Button("Open Serving", action: onOpenServing).controlSize(.small)
+            case .other(let error):
+                ErrorBanner(text: error)
+            case nil:
+                EmptyView()
+            }
             suggestionList(suggestions, items: storage.items, staleDays: staleDays)
             DiskSummaryView(storage: storage)
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -138,7 +151,7 @@ struct ReclaimDiskPanel: View {
                 table(DiskRow.rows(shown, items: storage.items, sortOrder: sortOrder), models: all)
                     .frame(height: WorkbenchSize.Reclaim.modelTableHeight)
                 actionBar(selection: selection, freed: freed, items: storage.items)
-                if !reclaim.lastMoves.isEmpty { moveResults }
+                if !reclaim.copyMoves.isEmpty { moveResults }
             }
         }
     }
@@ -384,7 +397,7 @@ struct ReclaimDiskPanel: View {
 
     private var moveResults: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            ForEach(reclaim.lastMoves, id: \.path) { move in
+            ForEach(reclaim.copyMoves, id: \.path) { move in
                 Text(move.error.map { "\(URL(fileURLWithPath: move.path).lastPathComponent): \($0)" }
                      ?? "Removed \(URL(fileURLWithPath: move.path).lastPathComponent)")
                     .font(WorkbenchTypography.secondary)
@@ -398,6 +411,7 @@ struct ReclaimDiskPanel: View {
 
 /// Processor load, memory, swap and free disk, then each loaded model with the memory and MLX cache it holds.
 struct ReclaimSystemSection: View {
+    @Environment(\.isRouteActive) private var isRouteActive
     @ObservedObject var resources: SystemResourceMonitor
     @ObservedObject var inventory: ServingInventoryCoordinator
     let volumePath: String?
@@ -433,7 +447,7 @@ struct ReclaimSystemSection: View {
                     }
                 }
                 Divider()
-                Text(loaded.isEmpty ? "No models loaded" : "Loaded models").font(WorkbenchTypography.label)
+                Text(loaded.isEmpty ? (inventory.snapshot.sourceErrors.isEmpty ? "No models loaded" : "Loaded model status incomplete") : "Loaded models").font(WorkbenchTypography.label)
                 ForEach(loaded) { service in
                     loadedRow(service)
                 }
@@ -442,8 +456,10 @@ struct ReclaimSystemSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .task(id: volumePath) {
-            while !Task.isCancelled {
+        .task(id: ReclaimLoadTaskKey(path: volumePath, active: isRouteActive)) {
+            guard isRouteActive else { return }
+            for _ in 0..<60 {
+                guard !Task.isCancelled else { return }
                 await readLoad()
                 do { try await Task.sleep(for: .seconds(10)) } catch { return }
             }
@@ -458,7 +474,9 @@ struct ReclaimSystemSection: View {
 
     private func readLoad() async {
         let path = volumePath
-        load = await Task.detached(priority: .utility) { SystemLoadReading.probe(volumeOf: path) }.value
+        let reading = await Task.detached(priority: .utility) { SystemLoadReading.probe(volumeOf: path) }.value
+        guard !Task.isCancelled else { return }
+        load = reading
     }
 
     private func loadedRow(_ service: ServingServiceObservation) -> some View {
@@ -495,6 +513,11 @@ struct ReclaimSystemSection: View {
             Text(value).font(WorkbenchTypography.secondaryTabular).foregroundStyle(warn ? WorkbenchColor.warning : WorkbenchColor.ink)
         }
     }
+}
+
+private struct ReclaimLoadTaskKey: Equatable {
+    let path: String?
+    let active: Bool
 }
 
 enum ReclaimSystemPresentation {
@@ -633,7 +656,7 @@ struct CopyRemovalSheet: View {
                         await reclaim.confirmCopies()
                         let cancelled = Task.isCancelled
                         removalTask = nil
-                        if !cancelled || !reclaim.lastMoves.isEmpty { onDone() }
+                        if !cancelled || !reclaim.copyMoves.isEmpty { onDone() }
                     }
                 }
                 .buttonStyle(.workbenchPrimary)

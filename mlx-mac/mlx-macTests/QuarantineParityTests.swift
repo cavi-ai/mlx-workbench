@@ -634,7 +634,8 @@ final class QuarantineParityTests: XCTestCase {
         reclaim.mlxRoots = { [root.path] }
         await reclaim.previewLibraryTrash(model.path)
         XCTAssertNil(reclaim.libraryTrashPlan)
-        XCTAssertNotNil(reclaim.lastError)
+        XCTAssertNotNil(reclaim.libraryTrashError)
+        XCTAssertNil(reclaim.lastError)
         var requests = 0
         reclaim.servingModelPaths = {
             requests += 1
@@ -645,7 +646,8 @@ final class QuarantineParityTests: XCTestCase {
         await reclaim.confirmLibraryTrash()
         XCTAssertEqual(requests, 2)
         XCTAssertNil(reclaim.libraryTrashPlan)
-        XCTAssertNotNil(reclaim.lastError)
+        XCTAssertNotNil(reclaim.libraryTrashError)
+        XCTAssertNil(reclaim.lastError)
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
     }
 

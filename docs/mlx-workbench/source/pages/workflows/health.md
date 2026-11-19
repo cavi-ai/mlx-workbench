@@ -53,11 +53,13 @@ Doctor checks explicit client configuration files and Workbench’s receipt dire
 ## Activity recovery
 
 When Activity cannot read conversion, study, training, queue or server status,
-the error offers **Retry status** and **Open Health**. Retry refreshes the existing
+the error offers **Retry status** and **Open Health**. Retry reads only the affected source and refreshes its existing
 records without resubmitting jobs. Normal conversion-completion reconciliation,
 including its fresh scan and verification gate, still applies. Repeated retries are disabled while
 the read is in progress. Health opens the existing engine and runtime checks;
 installation still requires its separate confirmation.
+
+Activity shows in-flight work and recent conversions first; older conversion, training and study records are available in their history sections. While Activity or Prepare is visible, active conversions are checked every five seconds for up to ten minutes. Use **Refresh** in Activity to check again after that window or after a read fails.
 
 Previously loaded jobs remain visible when a status read fails. Those records
 may have changed since the last successful read. A successful retry replaces

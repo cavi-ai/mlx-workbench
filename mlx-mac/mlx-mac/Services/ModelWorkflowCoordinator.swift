@@ -709,7 +709,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             }
             else if acceleration.requested { _ = try await api.accelerationStart(model, runtime, port, hash, acceleration) }
             else { _ = try await api.serveStart(model, runtime, port, hash) }
-            let statusAvailable = await refreshOperationalStatus()
+            let statusAvailable = await refreshServingStatus()
             guard statusAvailable,
                   servers.contains(where: { serverRunsModel($0, model) }) else {
                 await savedUpdate(from: submitted, serveState: .failed, message: "Server start was requested, but authoritative status did not report it running.", errorMessage: "Refresh server status before trying again.")
@@ -778,7 +778,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         let stopped = workflow
         do {
             _ = try await api.serveStop(port)
-            let statusAvailable = await refreshOperationalStatus()
+            let statusAvailable = await refreshServingStatus()
             guard statusAvailable else {
                 await savedUpdate(from: stopped, serveState: .failed, message: "Server stop was requested, but authoritative status is unavailable.", errorMessage: "Refresh server status before assuming the server stopped.")
                 return
@@ -810,31 +810,22 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
-    func reconcile(snapshot: LibrarySnapshot?, jobs: [Job]) async {
+    func reconcile(snapshot: LibrarySnapshot?, jobs: [Job]? = nil) async {
         guard await historyAvailable() else { return }
-        let authoritativeJobs: [Job]
-        if jobs.isEmpty {
-            do {
-                authoritativeJobs = try await api.convertStatus()
-            } catch {
-                preserveLastKnownState(message: "Conversion status unavailable: \(AppHost.render(error))")
-                return
-            }
-        } else {
-            authoritativeJobs = jobs
+        do {
+            let current: [Job]
+            if let jobs { current = jobs } else { current = try await api.convertStatus() }
+            guard !Task.isCancelled else { return }
+            await reconcileAuthoritative(snapshot: snapshot, jobs: current)
+        } catch {
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            preserveLastKnownState(message: "Conversion status unavailable: \(AppHost.render(error))")
         }
-        await reconcileAuthoritative(snapshot: snapshot, jobs: authoritativeJobs)
     }
 
     @discardableResult
     func refreshOperationalStatus() async -> Bool {
-        guard await historyAvailable() else { return await refreshServingStatus() }
-        do {
-            let jobs = try await api.convertStatus()
-            await reconcileAuthoritative(snapshot: nil, jobs: jobs)
-        } catch {
-            preserveLastKnownState(message: "Conversion status unavailable: \(AppHost.render(error))")
-        }
+        await reconcile(snapshot: nil)
         return await refreshServingStatus()
     }
 
@@ -844,11 +835,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         let request = nextServersRequest()
         do {
             let snapshot = try await api.serveStatus()
-            guard showsServers(request) else { return }
+            guard !Task.isCancelled, showsServers(request) else { return }
             servers = snapshot
             serversError = nil
         } catch {
-            guard showsServers(request) else { return }
+            guard !Task.isCancelled, !(error is CancellationError), showsServers(request) else { return }
             serversError = "Serving status unavailable: \(AppHost.render(error))"
         }
     }
@@ -858,11 +849,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         let request = nextServersRequest()
         do {
             let snapshot = try await api.serveStatus()
-            if showsServers(request) { servers = snapshot }
+            if showsServers(request) { servers = snapshot; serversError = nil }
             return true
         } catch {
-            if showsServers(request) {
-                preserveLastKnownState(message: "Server status unavailable: \(AppHost.render(error))")
+            if !Task.isCancelled, !(error is CancellationError), showsServers(request) {
+                serversError = "Serving status unavailable: \(AppHost.render(error))"
             }
             return false
         }

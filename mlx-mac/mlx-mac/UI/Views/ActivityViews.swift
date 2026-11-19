@@ -66,7 +66,7 @@ struct ActivityRowView: View {
     let copySource: (String) -> Void
     let dismiss: () -> Void
 
-    private var detailIndent: CGFloat { isCompact ? 0 : WorkbenchSize.Activity.nameIndent }
+    private var detailIndent: CGFloat { 0 }
 
     private var stateColor: Color {
         switch row.workflow.state {
@@ -80,10 +80,7 @@ struct ActivityRowView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if isCompact { compactHeader } else { wideHeader }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                paths
-                if let receipt = row.receipt { ActivityPathLine(label: "Receipt", value: receipt) }
-                message
-                inlineLog
+                if row.isActive { message }
                 disclosure
             }
             .padding(.leading, detailIndent)
@@ -115,31 +112,29 @@ struct ActivityRowView: View {
 
     // MARK: Header
 
-    private var wideHeader: some View {
-        HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
-            stateWord.frame(width: WorkbenchSize.Activity.stateWord, alignment: .leading)
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                track
-                trackCaption
-            }
-            .frame(width: WorkbenchSize.Activity.trackWidth, alignment: .leading)
+    private var titleAndStatus: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             nameText
-                .frame(minWidth: WorkbenchSize.Activity.nameMinimum, maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: WorkbenchSpacing.xs) {
+                stateWord
+                if row.showsTrackCaption { trackCaption }
+                if row.isActive { track }
+            }
+        }
+    }
+
+    private var wideHeader: some View {
+        HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+            titleAndStatus.frame(maxWidth: .infinity, alignment: .leading)
             time.frame(width: WorkbenchSize.Activity.timeColumn, alignment: .trailing)
             actions.frame(width: WorkbenchSize.Activity.actionColumn, alignment: .trailing)
         }
     }
 
     private var compactHeader: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
-                stateWord
-                track
-                trackCaption
-                Spacer(minLength: WorkbenchSpacing.xs)
-                time
-            }
-            nameText
+        HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+            titleAndStatus.frame(maxWidth: .infinity, alignment: .leading)
+            time
         }
     }
 
@@ -233,6 +228,10 @@ struct ActivityRowView: View {
     private var disclosure: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                paths
+                if let receipt = row.receipt { ActivityPathLine(label: "Receipt", value: receipt) }
+                if !row.isActive { track; trackCaption; message }
+                if row.primary != nil { inlineLog }
                 ActivityFactLine(label: "Started", value: row.createdText)
                 ActivityFactLine(label: "Updated", value: row.updatedText)
                 if let agentState = row.agentState { ActivityFactLine(label: "Agent state", value: agentState) }
@@ -241,7 +240,7 @@ struct ActivityRowView: View {
             }
             .padding(.top, WorkbenchSpacing.xxs)
         } label: {
-            Text("Timing and log")
+            Text("Details")
                 .font(WorkbenchTypography.metadata)
                 .foregroundStyle(WorkbenchColor.muted)
         }
@@ -260,6 +259,11 @@ struct ActivityRowView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .fixedSize()
+            }
+            if row.primary == nil, row.showsInlineLog, let logPath = row.logPath {
+                Button("View log") { viewLog(logPath) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
             }
             if hasMenuItems { overflowMenu }
         }

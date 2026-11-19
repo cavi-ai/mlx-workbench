@@ -59,6 +59,9 @@ final class ModelHostsCoordinator: ObservableObject {
     }
 
     func servingSnapshot(refreshLocal: Bool) async -> ServingHostSnapshot {
+        if refreshLocal, discovering {
+            return ServingHostSnapshot(errors: ["local-listeners": "A local server discovery is already in progress. Refresh Serving and retry."])
+        }
         if refreshLocal, !discovering {
             discovering = true
             defer { discovering = false }

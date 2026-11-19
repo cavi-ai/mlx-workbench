@@ -230,12 +230,13 @@ enum ActivityJobPriority {
 // MARK: - Poll
 
 enum ActivityPoll {
-    static let interval: Duration = .seconds(2)
+    static let interval: Duration = .seconds(5)
+    static let maximumTicks = 120
 
-    /// The ids the poll is keyed to: it runs while any is in flight and restarts when the set changes.
+    /// The owned records that require conversion status reads.
     static func inFlightIDs(workflow: ConversionWorkflow, history: [ConversionWorkflow]) -> Set<UUID> {
-        var ids = Set(history.filter { $0.state.isInFlight }.map(\.id))
-        if workflow.state.isInFlight { ids.insert(workflow.id) }
+        var ids = Set(history.filter { $0.state == .queued || $0.state == .running }.map(\.id))
+        if workflow.state == .queued || workflow.state == .running { ids.insert(workflow.id) }
         return ids
     }
 }

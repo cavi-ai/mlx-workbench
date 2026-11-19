@@ -24,6 +24,8 @@ Expand a row to see its versions. A version is marked **Keep** only with evidenc
 
 Select versions, or **Select extra versions**, then **Review removal…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
 
+Before removal, Workbench checks current serving ownership. If a local source cannot be checked, the removal message names the source and its error; resolve it in Serving and retry. Disk inventory remains available while removal is paused.
+
 | Copy | Removal |
 |---|---|
 | GGUF file | Its GGUF files, including split shards and projectors, move to quarantine; notes beside them stay |

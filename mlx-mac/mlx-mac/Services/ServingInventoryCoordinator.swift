@@ -44,8 +44,8 @@ final class ServingInventoryCoordinator: ObservableObject {
     private let fetchHosts: (Bool) async -> ServingHostSnapshot
     private let now: () -> Date
     private let readMemory: ([Int]) async -> [Int: UInt64]?
-    private var engineTask: Task<Void, Never>?
-    private var hostTask: Task<Void, Never>?
+    private var engineTask: Task<Result<ServingEngineSnapshot, Error>?, Never>?
+    private var hostTask: Task<ServingHostSnapshot?, Never>?
     private var monitoring: Task<Void, Never>?
     private var lastEngine: ServingEngineSnapshot?
     private var lastEngineCapturedAt: Date?
@@ -68,53 +68,102 @@ final class ServingInventoryCoordinator: ObservableObject {
     }
 
     func refresh(refreshHosts: Bool = false) async {
-        async let engine: Void = refreshEngine()
-        if refreshHosts { await refreshHostConnections() }
+        async let engine = refreshEngine()
+        if refreshHosts { _ = await refreshHostConnections() }
         else {
             lastHosts = await fetchHosts(false)
             publish()
         }
-        await engine
+        _ = await engine
     }
 
-    private func refreshEngine() async {
-        if let engineTask { await engineTask.value; return }
+    /// Use the raw results of the completed refresh, not retained display observations.
+    func pathsForRemoval() async throws -> [String] {
+        async let engineRead = refreshEngine()
+        async let hostRead = refreshHostConnections()
+        let (engineResult, hostResult) = await (engineRead, hostRead)
+        try Task.checkCancellation()
+        guard let engineResult, let hostResult else {
+            throw ReclaimError.servingOwnershipUnavailable("Serving ownership refresh was interrupted. Refresh Serving, then retry model removal.")
+        }
+        switch engineResult {
+        case .success(let engine):
+            return try Self.pathsForRemoval(engine: engine, engineError: nil, hosts: hostResult, managedReceipts: managedReceipts)
+        case .failure(let error):
+            return try Self.pathsForRemoval(engine: nil, engineError: AppHost.render(error), hosts: hostResult, managedReceipts: managedReceipts)
+        }
+    }
+
+    static func pathsForRemoval(engine: ServingEngineSnapshot?, engineError: String?,
+                                hosts: ServingHostSnapshot, managedReceipts: String) throws -> [String] {
+        var issues = hosts.errors
+        if let engineError { issues["engine"] = engineError }
+        if let engine { issues.merge(engine.errors) { _, newer in newer } }
+        if !issues.isEmpty {
+            let details = issues.keys.sorted().map { key in
+                let name: String
+                if key == "local-listeners" { name = "Local server discovery" }
+                else if key == "host-settings" { name = "Saved model sources" }
+                else if key == "engine" { name = "Serving engine" }
+                else if key.hasPrefix("host:"), let inventory = hosts.inventories.first(where: { "host:" + $0.host.id.uuidString == key }) {
+                    name = inventory.host.name + " (" + inventory.host.baseURL + ")"
+                } else { name = key }
+                return name + ": " + (issues[key] ?? "Unavailable")
+            }.joined(separator: "\n")
+            throw ReclaimError.servingOwnershipUnavailable("Model removal is paused because serving ownership could not be checked. Resolve these issues in Serving, then retry:\n" + details)
+        }
+        guard let engine, engine.supportsDiscovery, engine.servers.allSatisfy({ !$0.modelIdentity.isEmpty }) else {
+            throw ReclaimError.servingOwnershipUnavailable("Serving engine ownership could not be checked. Update the engine or refresh Serving, then retry model removal.")
+        }
+        let hostServices = ServingInventorySnapshot.make(engine: [], hosts: hosts.inventories,
+            managedReceipts: managedReceipts, capturedAt: Date(), hostProcessIDs: hosts.processIDs).services
+        let enginePaths = engine.servers.flatMap { [$0.modelIdentity] + [$0.repo, $0.path].compactMap { $0 } }
+        return enginePaths + hostServices.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
+    }
+
+    private func refreshEngine() async -> Result<ServingEngineSnapshot, Error>? {
+        if let engineTask { return await engineTask.value }
         isRefreshing = true
-        let task = Task<Void, Never> { [weak self] in
-            guard let self else { return }
+        let task = Task<Result<ServingEngineSnapshot, Error>?, Never> { [weak self] in
+            guard let self else { return nil }
             defer { engineTask = nil; isRefreshing = hostTask != nil }
+            let outcome: Result<ServingEngineSnapshot, Error>
             do {
                 let result = try await fetchEngine()
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return nil }
                 lastEngine = result
                 lastEngineCapturedAt = now()
                 engineError = nil
                 supportsEngineDiscovery = result.supportsDiscovery
+                outcome = .success(result)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return nil }
                 engineError = AppHost.render(error)
+                outcome = .failure(error)
             }
             publish()
             await refreshProcessMemory()
+            return Task.isCancelled ? nil : outcome
         }
         engineTask = task
-        await task.value
+        return await task.value
     }
 
-    private func refreshHostConnections() async {
-        if let hostTask { await hostTask.value; return }
+    private func refreshHostConnections() async -> ServingHostSnapshot? {
+        if let hostTask { return await hostTask.value }
         isRefreshing = true
-        let task = Task<Void, Never> { [weak self] in
-            guard let self else { return }
+        let task = Task<ServingHostSnapshot?, Never> { [weak self] in
+            guard let self else { return nil }
             defer { hostTask = nil; isRefreshing = engineTask != nil }
             let result = await fetchHosts(true)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return nil }
             lastHosts = result
             publish()
             await refreshProcessMemory()
+            return Task.isCancelled ? nil : result
         }
         hostTask = task
-        await task.value
+        return await task.value
     }
 
     private func publish() {
