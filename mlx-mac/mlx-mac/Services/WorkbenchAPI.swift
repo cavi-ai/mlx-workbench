@@ -260,7 +260,7 @@ actor WorkbenchAPI {
     }
 
     /// Experiment operations share the agent's durable store and sealed projections.
-    func labWorkspace(request: LabRequest, store: URL, reviewer: String) async throws -> LabResponse {
+    func labWorkspace(request: LabRequest, store: URL, reviewer: String, timeout: TimeInterval? = nil) async throws -> LabResponse {
         let requestDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: requestDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: requestDirectory) }
@@ -270,10 +270,10 @@ actor WorkbenchAPI {
             "lab", "--database", store.appendingPathComponent("experiments.sqlite3").path,
             "--artifacts", store.appendingPathComponent("artifacts").path,
             "--reviewer-id", reviewer, "workspace", "--request", file.path
-        ], timeout: ["run", "training-evaluate", "study-run"].contains(request.operation) ? 86_400 : 300)
+        ], timeout: timeout ?? (["run", "training-evaluate", "study-run"].contains(request.operation) ? 86_400 : 300))
     }
 
-    func conversionQueue(_ request: LabValue) async throws -> QueueResponse {
+    func conversionQueue(_ request: LabValue, timeout: TimeInterval = 300) async throws -> QueueResponse {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -281,7 +281,7 @@ actor WorkbenchAPI {
         try JSONEncoder().encode(request).write(to: file, options: .atomic)
         return try await runOffActor(QueueResponse.self, [
             "lab", "queue", "--receipts-dir", receiptDirectory, "--request", file.path
-        ], timeout: 300)
+        ], timeout: timeout)
     }
 
     // MARK: - Scan
@@ -575,18 +575,18 @@ actor WorkbenchAPI {
 
     // MARK: - Jobs
 
-    func convertStatus() async throws -> [Job] {
-        let data = try await raw(["convert", "status", "--receipts-dir", receiptDirectory])
+    func convertStatus(timeout: TimeInterval? = nil, cancellable: Bool = false) async throws -> [Job] {
+        let data = try await raw(["convert", "status", "--receipts-dir", receiptDirectory], timeout: timeout, cancellable: cancellable)
         return Self.jobs(from: data) ?? []
     }
 
-    func serveStatus() async throws -> [ServerInfo] {
-        try await serveStatus(receiptsDirectory: receiptDirectory)
+    func serveStatus(timeout: TimeInterval? = nil) async throws -> [ServerInfo] {
+        try await serveStatus(receiptsDirectory: receiptDirectory, timeout: timeout)
     }
 
-    func serveStatus(receiptsDirectory: String) async throws -> [ServerInfo] {
+    func serveStatus(receiptsDirectory: String, timeout: TimeInterval? = nil) async throws -> [ServerInfo] {
         let receiptDirectory = receiptsDirectory
-        let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory])
+        let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory], timeout: timeout, cancellable: timeout != nil)
         guard let servers = Self.servers(from: data, defaultReceiptsDirectory: receiptDirectory) else {
             throw BridgeError.remote(code: "invalid_service_inventory", message: "The engine returned unreadable server status.", remediation: "Update the engine and refresh serving status.")
         }
@@ -692,16 +692,6 @@ actor WorkbenchAPI {
                 throw WorkflowEvidenceError.invalid("Memory policy readback did not match. Refresh before changing it again.")
             }
         }
-    }
-
-    /// Removal cannot treat an unreadable status response as an empty fleet.
-    func servingPathsForRemoval() async throws -> [String] {
-        let current = try await discoverServingServices()
-        guard current.supportsDiscovery, current.errors.isEmpty,
-              current.servers.allSatisfy({ !$0.modelIdentity.isEmpty }) else {
-            throw ReclaimError.ownershipUnavailable("Serving ownership could not be checked across model servers. Update the engine or resolve inventory errors before removing models.")
-        }
-        return current.servers.filter { $0.state != "stopped" }.flatMap { [$0.modelIdentity] + [$0.repo].compactMap { $0 } }
     }
 
     static func servingPathsForRemoval(from data: [String: Any]) throws -> [String] {

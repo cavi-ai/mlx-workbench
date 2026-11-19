@@ -85,15 +85,27 @@ enum ReclaimError: LocalizedError {
     case nothingSelected
     case previewHashMismatch
     case ownershipUnavailable(String)
+    case servingOwnershipUnavailable(String)
 
     var errorDescription: String? {
         switch self {
-        case .ownershipUnavailable(let message): return message
+        case .ownershipUnavailable(let message), .servingOwnershipUnavailable(let message): return message
         case .nothingSelected: return "Select reclaimable items before previewing."
         case .previewHashMismatch: return "The reclaim selection changed after preview. Preview it again before confirming."
         }
     }
 }
+
+enum CopyRemovalError {
+    case serving(String), other(String)
+
+    @MainActor init(_ error: Error) {
+        if let issue = error as? ReclaimError, case .servingOwnershipUnavailable(let message) = issue { self = .serving(message) }
+        else { self = .other(AppHost.render(error)) }
+    }
+}
+
+private struct CopyOwnershipCheckFailure: Error { let underlying: Error }
 
 @MainActor
 final class ReclaimCoordinator: ObservableObject {
@@ -111,8 +123,11 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var trashNote: String?
     @Published private(set) var folderPlan: ModelFolderReclaimPlan?
     @Published private(set) var copyPlan: CopyRemovalPlan?
+    @Published private(set) var copyError: CopyRemovalError?
+    @Published private(set) var copyMoves: [ReclaimMoveResult] = []
     @Published private(set) var libraryTrashPlan: LibraryTrashPlan?
     @Published private(set) var libraryTrashNote: String?
+    @Published private(set) var libraryTrashError: String?
     var servingModelPaths: (() async throws -> [String])?
     @Published private(set) var sourcePlan: ConvertedSourcePlan?
     @Published private(set) var sourceCleanupNote: String?
@@ -235,7 +250,7 @@ final class ReclaimCoordinator: ObservableObject {
         guard !isApplying else { return }
         isApplying = true
         defer { isApplying = false }
-        libraryTrashPlan = nil; libraryTrashNote = nil; lastError = nil
+        libraryTrashPlan = nil; libraryTrashNote = nil; libraryTrashError = nil
         do {
             guard let servingModelPaths else { throw QuarantineError.unsafeFolder("serving status is unavailable; refresh Health before retrying.") }
             let serving = try await servingModelPaths()
@@ -245,7 +260,7 @@ final class ReclaimCoordinator: ObservableObject {
             }.value
             guard roots == sourceRoots else { throw QuarantineError.changedSincePreview }
             libraryTrashPlan = plan
-        } catch { lastError = AppHost.render(error) }
+        } catch { libraryTrashError = AppHost.render(error) }
     }
 
     func cancelLibraryTrash() { if !isApplying { libraryTrashPlan = nil } }
@@ -262,8 +277,8 @@ final class ReclaimCoordinator: ObservableObject {
                 try Quarantine.trashModel(plan, roots: roots, protected: protected, fileManager: manager)
             }.value
             libraryTrashNote = "Moved to Trash. Recover in Finder: \(destination.path)"
-            lastError = nil
-        } catch { lastError = AppHost.render(error) }
+            libraryTrashError = nil
+        } catch { libraryTrashError = AppHost.render(error) }
     }
 
     func previewSource(_ workflow: ConversionWorkflow) async {
@@ -343,9 +358,9 @@ final class ReclaimCoordinator: ObservableObject {
         guard !isApplying else { return }
         isApplying = true
         defer { isApplying = false }
-        copyPlan = nil; lastError = nil
+        copyPlan = nil; copyError = nil; copyMoves = []
         do {
-            guard let servingModelPaths else { throw QuarantineError.unsafeFolder("serving status is unavailable; refresh Health before retrying.") }
+            guard let servingModelPaths else { throw ReclaimError.servingOwnershipUnavailable("Serving status is unavailable. Refresh Serving, then retry model removal.") }
             let serving = try await servingModelPaths()
             let roots = sourceRoots, protected = protectedFolderPaths + serving, dir = quarantineDir(), manager = fileManager
             let paths = DiskLedger.expanded(selected, items: items)
@@ -359,7 +374,8 @@ final class ReclaimCoordinator: ObservableObject {
             }.value
             guard roots == sourceRoots, dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
             copyPlan = CopyRemovalPlan(removals: removals, freedBytes: freed, roots: roots, quarantineDir: dir)
-        } catch { lastError = AppHost.render(error) }
+        } catch is CancellationError { return }
+        catch { if !Task.isCancelled { copyError = CopyRemovalError(error) } }
     }
 
     nonisolated static func removals(_ items: [StoredModel], roots: [String], protected: [String], fileManager: FileManager,
@@ -421,7 +437,7 @@ final class ReclaimCoordinator: ObservableObject {
         guard !isApplying, let plan = copyPlan else { return }
         guard plan.roots == sourceRoots, plan.quarantineDir == quarantineDir() else {
             copyPlan = nil
-            lastError = QuarantineError.changedSincePreview.errorDescription
+            copyError = CopyRemovalError(QuarantineError.changedSincePreview)
             return
         }
         isApplying = true
@@ -430,12 +446,22 @@ final class ReclaimCoordinator: ObservableObject {
         let manager = fileManager
         let cancellation = AssetVerificationCancellation()
         let deadline = ProcessInfo.processInfo.systemUptime + 600
+        func checkedServing() async throws -> [String] {
+            do {
+                guard let servingModelPaths else {
+                    throw ReclaimError.servingOwnershipUnavailable("Serving status is unavailable. Refresh Serving, then retry model removal.")
+                }
+                return try await servingModelPaths()
+            } catch is CancellationError { throw CancellationError() }
+            catch { throw CopyOwnershipCheckFailure(underlying: error) }
+        }
         for (index, removal) in plan.actionable.enumerated() {
             if Task.isCancelled { cancellation.cancel(); break }
             guard let step = removal.step else { continue }
             progressMessage = "Removing \(index + 1) of \(plan.actionable.count)…"
             do {
-                let serving = try await servingModelPaths?() ?? []
+                let serving = try await checkedServing()
+                try Task.checkCancellation()
                 let protected = protectedFolderPaths + serving, roots = plan.roots, dir = plan.quarantineDir, timestamp = now()
                 if case .quarantineAsset(let asset) = step {
                     let assetProtected = protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path } + serving
@@ -448,8 +474,7 @@ final class ReclaimCoordinator: ObservableObject {
                     try await withTaskCancellationHandler { try await worker.value } onCancel: { cancellation.cancel() }
                     try Task.checkCancellation()
                     try cancellation.check(deadline: deadline)
-                    guard let servingModelPaths else { throw QuarantineError.unsafeFolder("Serving status is unavailable.") }
-                    let freshServing = try await servingModelPaths()
+                    let freshServing = try await checkedServing()
                     try Task.checkCancellation()
                     let freshProtected = protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path } + freshServing
                     guard roots == sourceRoots, dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
@@ -483,12 +508,19 @@ final class ReclaimCoordinator: ObservableObject {
                 results.append(ReclaimMoveResult(path: removal.path, destination: destination, error: nil))
             } catch is CancellationError {
                 break
+            } catch let failure as CopyOwnershipCheckFailure {
+                if Task.isCancelled { break }
+                copyError = CopyRemovalError(failure.underlying)
+                results.append(ReclaimMoveResult(path: removal.path, destination: nil, error: AppHost.render(failure.underlying)))
+                break
             } catch {
                 results.append(ReclaimMoveResult(path: removal.path, destination: nil, error: AppHost.render(error)))
             }
         }
-        lastMoves = results
-        lastError = results.contains(where: { $0.error != nil }) ? "Some copies could not be removed; see per-item results." : nil
+        copyMoves = results
+        if case nil = copyError, results.contains(where: { $0.error != nil }) {
+            copyError = .other("Some copies could not be removed; see per-item results.")
+        }
         await refreshQuarantined()
     }
 

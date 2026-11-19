@@ -7,12 +7,22 @@ struct ActivityStatusRecovery: View {
     let onRetry: () -> Void
     let onHealth: () -> Void
 
+    private var source: String {
+        switch context {
+        case "activity": return "Conversion"
+        case "study": return "Study"
+        case "training": return "Training"
+        case "server": return "Server"
+        case "queue": return "Queue"
+        default: return "Activity"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text("\(source) status unavailable")
+                .font(WorkbenchTypography.emphasis)
             FailureNotice(error: error, details: .whenDifferent)
-            Text("Retry reads status without restarting work. Health shows the engine and runtime checks.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button(isRefreshing ? "Refreshing status…" : "Retry status", action: onRetry)
                     .disabled(isRefreshing)

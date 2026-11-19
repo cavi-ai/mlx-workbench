@@ -148,11 +148,15 @@ struct JobsView: View {
 
     @State private var isRefreshing = false
     @State private var statusError: String?
+    @State private var trainingRefreshing = false
+    @State private var queueRefreshing = false
+    @State private var serverRefreshing = false
     @State private var selectedLog: LogSelection?
     @State private var webQueue = WebConvertQueue.Snapshot(items: [], path: "", problem: nil)
     @State private var isCompact = false
     @State private var trainingState = ActivityTrainingState()
     @State private var showsEmptyQueue = false
+    @State private var showsConversionHistory = false
     @State private var queueBusy = false
     @State private var queueImport: QueueImport?
     @State private var verificationStatuses: [UUID: VerificationStatus] = [:]
@@ -196,11 +200,15 @@ struct JobsView: View {
             cards: cards, snapshot: appHost.librarySnapshot, verification: verificationStatuses, now: Date()
         )
         let inFlight = ActivityPoll.inFlightIDs(workflow: modelWorkflow.workflow, history: modelWorkflow.history)
+        let settled = (page.needsAttention + page.groups.flatMap(\.rows))
+            .sorted { $0.workflow.createdAt > $1.workflow.createdAt }
+        let recent = Array(settled.filter { Date().timeIntervalSince($0.workflow.createdAt) < 7 * 24 * 60 * 60 }.prefix(3))
+        let recentIDs = Set(recent.map(\.id))
         let studyJobs = lab.snapshot.queue ?? []
-        let currentStudies = lab.error != nil ? studyJobs : studyJobs.filter { ActivityJobPriority.study($0, runningJobID: lab.runningJobID) }
-        let earlierStudies = lab.error != nil ? [] : studyJobs.filter { !ActivityJobPriority.study($0, runningJobID: lab.runningJobID) }
-        let currentTraining = trainingState.error != nil ? trainingState.jobs : trainingState.jobs.filter(ActivityJobPriority.training)
-        let earlierTraining = trainingState.error != nil ? [] : trainingState.jobs.filter { !ActivityJobPriority.training($0) }
+        let currentStudies = studyJobs.filter { ActivityJobPriority.study($0, runningJobID: lab.runningJobID) }
+        let earlierStudies = studyJobs.filter { !ActivityJobPriority.study($0, runningJobID: lab.runningJobID) }
+        let currentTraining = trainingState.jobs.filter(ActivityJobPriority.training)
+        let earlierTraining = trainingState.jobs.filter { !ActivityJobPriority.training($0) }
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
@@ -210,20 +218,20 @@ struct JobsView: View {
                     if !page.inFlight.isEmpty { rowSection("In flight", rows: page.inFlight) }
                     ActivityStudySection(lab: lab, jobs: currentStudies, error: lab.error,
                         isWorking: lab.runningJobID != nil, isRefreshing: isRefreshing,
-                        onRetry: retryStatus, onHealth: openHealth, onOpen: { onRouteSelection(.studies) })
+                        onRetry: retryStudies, onHealth: openHealth, onOpen: { onRouteSelection(.studies) })
                     ActivityTrainingSection(jobs: currentTraining, error: trainingState.error,
-                        isRefreshing: isRefreshing, onRetry: retryStatus, onHealth: openHealth,
+                        isRefreshing: isRefreshing, onRetry: retryTraining, onHealth: openHealth,
                         onOpen: { onRouteSelection(.training) },
                         onViewLog: { selectedLog = LogSelection(id: $0, path: $0) }, onCancel: cancelTraining)
-                    if !page.needsAttention.isEmpty { rowSection("Needs attention", rows: page.needsAttention) }
+                    if !recent.isEmpty { rowSection("Recent conversions", rows: recent) }
                     serversSection
                     queueSection
-                    conversions(page)
+                    conversions(page, excluding: recentIDs)
                     ActivityStudySection(lab: lab, jobs: earlierStudies, error: nil, historical: true,
-                        isRefreshing: isRefreshing, onRetry: retryStatus, onHealth: openHealth,
+                        isRefreshing: isRefreshing, onRetry: retryStudies, onHealth: openHealth,
                         onOpen: { onRouteSelection(.studies) })
                     ActivityTrainingSection(jobs: earlierTraining, error: nil, historical: true,
-                        isRefreshing: isRefreshing, onRetry: retryStatus, onHealth: openHealth,
+                        isRefreshing: isRefreshing, onRetry: retryTraining, onHealth: openHealth,
                         onOpen: { onRouteSelection(.training) },
                         onViewLog: { selectedLog = LogSelection(id: $0, path: $0) }, onCancel: cancelTraining)
                 }
@@ -266,13 +274,19 @@ struct JobsView: View {
                 }
             }
         }
-        .task { await refresh() }
-        .task(id: inFlight) {
-            guard !inFlight.isEmpty else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: ActivityPoll.interval)
-                guard !Task.isCancelled else { return }
-                await refresh()
+        .task(id: isRouteActive) {
+            guard isRouteActive else { return }
+            await refresh()
+        }
+        .task(id: isRouteActive && !inFlight.isEmpty && statusError == nil) {
+            guard isRouteActive && !inFlight.isEmpty && statusError == nil else { return }
+            for _ in 0..<ActivityPoll.maximumTicks {
+                do { try await Task.sleep(for: ActivityPoll.interval) } catch { return }
+                guard statusError == nil else { return }
+                do { _ = try await appHost.refreshConversionStatus() } catch {
+                    if !Task.isCancelled { statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity." }
+                    return
+                }
             }
         }
         .onChange(of: verification.reports, initial: true) { refreshVerification() }
@@ -284,11 +298,18 @@ struct JobsView: View {
     // MARK: Conversions
 
     @ViewBuilder
-    private func conversions(_ page: ActivityPage) -> some View {
+    private func conversions(_ page: ActivityPage, excluding recentIDs: Set<UUID>) -> some View {
         if page.isEmpty {
             designedState(symbol: "clock.arrow.circlepath", text: "No conversions yet; the ones you start in Prepare appear here.")
         } else {
-            ForEach(page.groups) { rowSection($0.title, rows: $0.rows) }
+            let olderAttention = page.needsAttention.filter { !recentIDs.contains($0.id) }
+            let groups = page.groups.map { ActivityGroup(day: $0.day, title: $0.title, rows: $0.rows.filter { !recentIDs.contains($0.id) }) }.filter { !$0.rows.isEmpty }
+            if !olderAttention.isEmpty || !groups.isEmpty {
+                DisclosureGroup("Conversion history", isExpanded: $showsConversionHistory) {
+                    if !olderAttention.isEmpty { rowSection("Earlier attention", rows: olderAttention) }
+                    ForEach(groups) { rowSection($0.title, rows: $0.rows) }
+                }
+            }
         }
     }
 
@@ -490,37 +511,85 @@ struct JobsView: View {
         }
     }
 
-    private func retryStatus() { Task { await refresh() } }
+    private func retryStudies() { Task { await appHost.lab.refresh() } }
+    private func retryTraining() { Task { await refreshTraining() } }
+    private func retryStatus(_ context: String) {
+        Task {
+            switch context {
+            case "queue": await refreshQueue()
+            case "server": await refreshServers()
+            default: await refreshConversion()
+            }
+        }
+    }
     private func openHealth() { onRouteSelection(.health) }
 
     private func statusRecovery(_ error: String, context: String) -> some View {
         ActivityStatusRecovery(error: error, context: context, isRefreshing: isRefreshing,
-                               onRetry: retryStatus, onHealth: openHealth)
+                               onRetry: { retryStatus(context) }, onHealth: openHealth)
+    }
+
+    private func refreshServers() async {
+        guard !serverRefreshing else { return }
+        serverRefreshing = true
+        defer { serverRefreshing = false }
+        await modelWorkflow.refreshServers()
+    }
+
+    private func refreshTraining() async {
+        guard !trainingRefreshing else { return }
+        trainingRefreshing = true
+        defer { trainingRefreshing = false }
+        do {
+            let jobs = try await appHost.api.trainingStatus().jobs
+            guard !Task.isCancelled else { return }
+            trainingState.received(jobs)
+        } catch {
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            trainingState.failed("Training status unavailable: \(AppHost.render(error))")
+        }
+    }
+
+    private func refreshQueue() async {
+        guard !queueRefreshing else { return }
+        queueRefreshing = true
+        defer { queueRefreshing = false }
+        do {
+            let snapshot = try await appHost.api.conversionQueue(.object(["operation": .string("snapshot")]), timeout: 30).snapshot()
+            guard !Task.isCancelled else { return }
+            webQueue = snapshot
+        } catch {
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            webQueue = .init(items: webQueue.items, path: webQueue.path, problem: AppHost.render(error))
+        }
+    }
+
+    private func refreshConversion() async {
+        do {
+            let read = try await appHost.refreshConversionStatus()
+            guard read, !Task.isCancelled else { return }
+            statusError = nil
+        } catch {
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity."
+        }
     }
 
     private func refresh() async {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        await appHost.lab.refresh()
-        do { trainingState.received(try await appHost.api.trainingStatus().jobs) }
-        catch { trainingState.failed("Training status unavailable: \(AppHost.render(error))") }
-        do { webQueue = try await appHost.api.conversionQueue(.object(["operation": .string("snapshot")])).snapshot() }
-        catch { webQueue = .init(items: webQueue.items, path: webQueue.path, problem: AppHost.render(error)) }
-        do {
-            let jobs = try await appHost.api.convertStatus()
-            statusError = nil
-            await appHost.refreshWorkflowStatus(jobs: jobs)
-        } catch {
-            statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity."
-            await appHost.refreshWorkflowStatus()
-        }
-        await modelWorkflow.refreshServers()
+        async let studies: Void = appHost.lab.refresh()
+        async let training: Void = refreshTraining()
+        async let queue: Void = refreshQueue()
+        async let conversion: Void = refreshConversion()
+        async let servers: Void = refreshServers()
+        _ = await (studies, training, queue, conversion, servers)
     }
 
     private func cancelTraining(_ job: TrainingJob) {
         Task {
-            do { _ = try await appHost.api.trainingStop(pid: job.pid); await refresh() }
+            do { _ = try await appHost.api.trainingStop(pid: job.pid); await refreshTraining() }
             catch { trainingState.failed("Training cancellation failed: \(AppHost.render(error))") }
         }
     }

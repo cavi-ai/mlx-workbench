@@ -460,8 +460,25 @@ struct LibraryWorkspace: View {
 private struct LibrarySourcePicker: View {
     @Binding var selection: LibrarySource
     @ObservedObject var hosts: ModelHostsCoordinator
+    var embedded = false
 
     var body: some View {
+        HStack(spacing: WorkbenchSpacing.xs) {
+            if embedded {
+                Text("Source").accessibilityHidden(true)
+                sourceMenu.labelsHidden().accessibilityLabel("Source")
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+            } else {
+                sourceMenu.frame(maxWidth: 420, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, embedded ? 0 : WorkbenchSpacing.pageInset)
+        .padding(.top, embedded ? 0 : WorkbenchSpacing.pageInset)
+        .frame(maxWidth: embedded ? nil : .infinity, alignment: .leading)
+    }
+
+    private var sourceMenu: some View {
         Picker("Source", selection: $selection) {
             Text(LibrarySource.allModels.title(in: hosts.hosts)).tag(LibrarySource.allModels)
             Section("Model hosts") {
@@ -475,11 +492,7 @@ private struct LibrarySourcePicker: View {
             }
         }
         .pickerStyle(.menu)
-        .frame(maxWidth: 420)
-        .padding(.horizontal, WorkbenchSpacing.pageInset)
-        .padding(.top, WorkbenchSpacing.pageInset)
         .accessibilityIdentifier("library-source")
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -498,6 +511,7 @@ struct LibraryView: View {
     @State private var showInspector = false
     @State private var showRecentTasks = false
     @State private var revealError: String?
+    @State private var trashError: String?
     @State private var handledRevealID: UUID?
     @State private var columnCustomization = TableColumnCustomization<LibraryRow>()
     @State private var tier = LibraryColumnTier.resolve(width: WorkbenchSize.assumedContentWidth)
@@ -592,10 +606,7 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let sourceSelection {
-                LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts)
-                    .padding(.bottom, WorkbenchSpacing.sm)
-            }
+            searchBar
             if let errors = appHost.scanResult?.rootErrors, !errors.isEmpty {
                 DisclosureGroup(errors.count == 1 ? "1 model folder could not be scanned" : "\(errors.count) model folders could not be scanned") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -641,13 +652,19 @@ struct LibraryView: View {
                             Button("Move to Trash", role: .destructive) {
                                 Task {
                                     await reclaim.confirmLibraryTrash()
-                                    if reclaim.lastError == nil { appHost.requestRescan() }
+                                    if let error = reclaim.libraryTrashError { trashError = error }
+                                    else { appHost.requestRescan() }
                                 }
                             }.buttonStyle(.workbenchPrimary)
                         }.disabled(reclaim.isApplying)
                     }.padding(WorkbenchSpacing.lg).frame(width: 480)
                         .interactiveDismissDisabled(reclaim.isApplying)
                 }
+            }
+            .alert("Model removal unavailable", isPresented: Binding(get: { trashError != nil }, set: { if !$0 { trashError = nil } })) {
+                Button("OK", role: .cancel) { trashError = nil }
+            } message: {
+                Text(trashError ?? "")
             }
             .libraryInspector(isPresented: inspectorBinding) {
                 inspector
@@ -730,12 +747,9 @@ struct LibraryView: View {
     private var content: some View {
         if let snapshot {
             VStack(spacing: 0) {
-                searchBar
                 Divider()
                 ErrorBanner(text: appHost.lastError)
                     .padding([.horizontal, .top], WorkbenchSpacing.sm)
-                ErrorBanner(text: reclaim.lastError)
-                    .padding(.horizontal, WorkbenchSpacing.sm)
                 if let note = reclaim.libraryTrashNote {
                     Text(note).font(WorkbenchTypography.secondary).textSelection(.enabled)
                         .padding(.horizontal, WorkbenchSpacing.sm)
@@ -791,6 +805,33 @@ struct LibraryView: View {
 
     /// Filters the table, or takes a pasted Hugging Face link to intake.
     private var searchBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                sourcePicker
+                searchControls.frame(minWidth: 250)
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                sourcePicker
+                searchControls
+            }
+        }
+        .padding(.horizontal, WorkbenchSpacing.pageInset)
+        .padding(.vertical, WorkbenchSpacing.sm)
+        .background {
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+                .accessibilityHidden(true)
+        }
+    }
+
+    @ViewBuilder private var sourcePicker: some View {
+        if let sourceSelection {
+            LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts, embedded: true)
+        }
+    }
+
+    private var searchControls: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
             TextField("Search or paste a Hugging Face link", text: $search)
                 .textFieldStyle(.roundedBorder)
@@ -800,14 +841,6 @@ struct LibraryView: View {
             Button { addModel() } label: { Label("Add", systemImage: "plus") }
                 .help(searchIsLink ? "Add this Hugging Face model" : "Add a model from Hugging Face")
                 .accessibilityIdentifier("library-add")
-        }
-        .padding(.horizontal, WorkbenchSpacing.sm)
-        .padding(.vertical, WorkbenchSpacing.xs)
-        .background {
-            Button("") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .hidden()
-                .accessibilityHidden(true)
         }
     }
 
@@ -975,7 +1008,10 @@ struct LibraryView: View {
         }
         Divider()
         Button("Delete…", role: .destructive) {
-            Task { await reclaim.previewLibraryTrash(actions.model.item.path) }
+            Task {
+                await reclaim.previewLibraryTrash(actions.model.item.path)
+                if let error = reclaim.libraryTrashError { trashError = error }
+            }
         }.disabled(reclaim.isApplying)
     }
 
@@ -991,6 +1027,7 @@ struct LibraryView: View {
                 }
                 ModelDetailsView(appHost: appHost, model: selectedModel, onRouteSelection: onRouteSelection)
             }
+            .accessibilityIdentifier("library-model-inspector")
         } else if let family = selectedFamily {
             ContentUnavailableView(family.name, systemImage: "square.stack.3d.up", description: Text("\(family.detail) · \(LibraryTablePresentation.byteCount(family.bytes)). Select a variant to inspect it."))
         } else {
@@ -1072,7 +1109,7 @@ struct LibraryView: View {
         }
         .font(WorkbenchTypography.secondary)
         .foregroundStyle(WorkbenchColor.muted)
-        .padding(.horizontal, WorkbenchSpacing.md)
+        .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.vertical, WorkbenchSpacing.xs)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
