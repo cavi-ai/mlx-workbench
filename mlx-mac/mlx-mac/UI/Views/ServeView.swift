@@ -299,23 +299,25 @@ struct ServeView: View {
             }
             .padding(.horizontal, WorkbenchSpacing.md)
             .padding(.vertical, WorkbenchSpacing.sm)
-            if let pending = pendingFleetAction {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                    InlineMessage(kind: .warning, text: "Fleet memory: \(pending.summary). Enable anyway?")
-                    HStack {
-                        Button("Cancel") { pendingFleetAction = nil }
-                        Spacer()
-                        Button("Enable anyway") { pending.confirm(); pendingFleetAction = nil }
-                            .buttonStyle(.workbenchPrimary)
-                    }
-                }.padding(WorkbenchSpacing.md).accessibilityIdentifier("serving-memory-override")
+            VStack(alignment: .leading, spacing: 0) {
+                if let pending = pendingFleetAction {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        InlineMessage(kind: .warning, text: "Fleet memory: \(pending.summary). Enable anyway?")
+                        HStack {
+                            Button("Cancel") { pendingFleetAction = nil }
+                            Spacer()
+                            Button("Enable anyway") { pending.confirm(); pendingFleetAction = nil }
+                                .buttonStyle(.workbenchPrimary)
+                        }
+                    }.padding(WorkbenchSpacing.md).accessibilityIdentifier("serving-memory-override")
+                }
+                if let error = visibleActionError {
+                    InlineMessage(kind: .error, text: error).lineLimit(nil).fixedSize(horizontal: false, vertical: true).padding(WorkbenchSpacing.md)
+                }
+                workspaceScroll
             }
-            if let error = visibleActionError {
-                InlineMessage(kind: .error, text: error).lineLimit(nil).fixedSize(horizontal: false, vertical: true).padding(WorkbenchSpacing.md)
-            }
-            workspaceScroll
+            .accessibilityIdentifier("serving-model-workspace")
         }
-        .accessibilityIdentifier("serving-model-workspace")
         .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
         .sheet(isPresented: $showsRoleDefaults) {
             ServingRoleDefaultsSheet(endpoint: endpoint, models: models) { slot in
