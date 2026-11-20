@@ -1102,14 +1102,16 @@ extension RunRemodelTests {
         }
     }
 
-    func testUnloadedHistoryProtectsTheExactReclaimRoots() {
+    func testUnloadedHistoryRefusesReclaimInsteadOfProtectingEveryRoot() {
         let (host, _) = makeProtectedHost(counter: CallCounter(), endpointCalls: CallCounter(), server: Fixture.server(path, port: 8766))
         host.reclaim.ggufRoots = { ["/fixture/discovered-gguf"] }
         host.reclaim.mlxRoots = { ["/fixture/selected-mlx"] }
         XCTAssertFalse(host.comparison.hasLoadedHistory)
-        let protected = host.reclaim.protectedPaths()
-        XCTAssertTrue(protected.contains("/fixture/discovered-gguf"))
-        XCTAssertTrue(protected.contains("/fixture/selected-mlx"))
+        let ownership = host.reclaimOwnership()
+        XCTAssertEqual(ownership.refusal, ReclaimOwnership.comparisonUnavailable)
+        XCTAssertFalse(ownership.paths.contains("/fixture/discovered-gguf"))
+        XCTAssertFalse(ownership.paths.contains("/fixture/selected-mlx"))
+        XCTAssertEqual(Set(host.reclaim.protectedPaths()), ownership.paths)
     }
 
     func testUnprotectedServerReachesUnloadWhenTheDecisionAllowsIt() async {

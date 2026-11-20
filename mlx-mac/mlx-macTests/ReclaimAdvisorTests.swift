@@ -56,6 +56,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         app.librarySnapshot = snapshot(with: [model])
         XCTAssertTrue(app.occupancy.protectedPaths.contains(model.item.path))
         XCTAssertFalse(app.occupancy.blocksStop(modelIdentity: model.item.path))
+        await app.comparison.waitForHistory()
         app.analyzeReclaim()
         XCTAssertFalse(app.reclaim.opportunities.contains { $0.paths.contains(model.item.path) })
         let reasons = ModelFamilyReview.reasons(for: model, purpose: purposes.records.first, preferredRoles: [], served: false, replacements: [])

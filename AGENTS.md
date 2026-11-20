@@ -130,6 +130,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   Client adapters own credential fields; Zed keys stay in its own credential store.
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
   `DiskLedger` builds Reclaim's per-model disk table, version groups and suggested removals.
+  `ReclaimOwnership` is the protected-path answer; unloaded history refuses a move instead of treating every model root as protected.
   `ModelPurposeStore` owns durable keep reasons; `ModelFamilyReview` builds related-name review groups and identity-bound Compare handoffs.
   `ModelShowdownResults` validates recorded chat cohorts for task-specific result cards and replacement advice.
   Batch moves and quarantine-history refresh use a serial I/O queue; failed
