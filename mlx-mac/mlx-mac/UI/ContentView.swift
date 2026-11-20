@@ -185,7 +185,7 @@ struct ContentView: View {
     }
 
     private var inventoryReviewBinding: Binding<Bool> {
-        Binding(get: { servingInventory.actionReview != nil }, set: { if !$0 { servingInventory.cancelReview() } })
+        Binding(get: { servingInventory.actionReview?.surface == .window }, set: { if !$0 { servingInventory.cancelReview() } })
     }
 
     private var sidebarBadges: [AppRoute: String] {

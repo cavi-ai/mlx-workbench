@@ -1069,6 +1069,7 @@ actor WorkbenchAPI {
         if let context = preset.contextTokens { argv += ["--splash-max-context", String(context)] }
         argv += preset.tuning.arguments
         if preset.keepLoaded { argv.append("--keep-loaded") }
+        if let release = preset.releaseAfterRequest { argv.append(release ? "--release-after-request" : "--no-release-after-request") }
         argv.append(preset.unloadUnderPressure ? "--unload-under-pressure" : "--no-unload-under-pressure")
         if replace { argv.append("--replace") }
         _ = try await raw(argv)
@@ -1258,6 +1259,8 @@ actor WorkbenchAPI {
                 requestDefaults: (r["request_defaults"] as? [String: Any]).flatMap { try? Self.decode(LabValue.self, from: $0) },
                 lastError: r.string("last_error")
             )
+            server.splashConfiguredContextTokens = r.int("splash_configured_context_tokens")
+            server.splashEffectiveContextTokens = r.int("splash_effective_context_tokens")
             server.workerMemory = WorkerMemoryReading(r["worker_memory"])
             server.allocatorCache = AllocatorCacheReading(r["allocator_cache"])
             return server

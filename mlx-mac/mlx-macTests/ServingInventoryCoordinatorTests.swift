@@ -261,6 +261,37 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.snapshot.services.first?.residency, .unloaded)
     }
 
+    func testMenuReviewCannotCancelOrConfirmWindowReview() async throws {
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [self.server()]) }, readMemory: { _ in [:] })
+        var mutations = 0
+        coordinator.mutate = { _, _ in mutations += 1 }
+        await coordinator.refresh()
+        await coordinator.prepare(.unload, service: try XCTUnwrap(coordinator.snapshot.services.first))
+        coordinator.cancelReview(surface: .menuBar)
+        await coordinator.confirm(surface: .menuBar)
+        XCTAssertEqual(mutations, 0)
+        XCTAssertEqual(coordinator.actionReview?.surface, .window)
+    }
+
+    func testDismissedMenuPreparationDoesNotPublishReview() async throws {
+        let gate = InventoryTestGate()
+        var reads = 0
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
+            reads += 1
+            if reads > 1 { await gate.wait() }
+            return ServingEngineSnapshot(servers: [self.server()])
+        }, readMemory: { _ in [:] })
+        await coordinator.refresh()
+        let selected = try XCTUnwrap(coordinator.snapshot.services.first)
+        let task = Task { await coordinator.prepare(.unload, service: selected, surface: .menuBar) }
+        while reads < 2 { await Task.yield() }
+        coordinator.cancelReview(surface: .menuBar)
+        gate.open()
+        await task.value
+        XCTAssertNil(coordinator.actionReview)
+    }
+
     func testChangedProcessRefusesPreparationAndClearsAnOlderReview() async throws {
         var observed = server()
         let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,

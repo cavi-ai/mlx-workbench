@@ -18,10 +18,17 @@ enum ServingActionKind: String {
     }
 }
 
+enum ServingActionSurface { case window, menuBar }
+
 struct ServingActionReview: Identifiable {
     let id = UUID()
     let service: ServingServiceObservation
     let action: ServingActionKind
+    let surface: ServingActionSurface
+
+    init(service: ServingServiceObservation, action: ServingActionKind, surface: ServingActionSurface = .window) {
+        self.service = service; self.action = action; self.surface = surface
+    }
 }
 
 /// Shared read-only observations; mutations remain with their engine or provider owner.
@@ -33,6 +40,9 @@ final class ServingInventoryCoordinator: ObservableObject {
     @Published private(set) var supportsEngineDiscovery = true
     @Published private(set) var actionReview: ServingActionReview?
     @Published private(set) var actionError: String?
+    private var actionErrorSurface: ServingActionSurface?
+    private var preparation: (id: UUID, surface: ServingActionSurface)?
+    func actionError(for surface: ServingActionSurface) -> String? { actionErrorSurface == surface ? actionError : nil }
     @Published private(set) var processMemory: [Int: UInt64] = [:]
     @Published private(set) var processMemoryCapturedAt: Date?
     var mayChange: (ServingServiceObservation) -> Bool = { _ in true }
@@ -199,23 +209,32 @@ final class ServingInventoryCoordinator: ObservableObject {
         }
     }
 
-    func prepare(_ action: ServingActionKind, service: ServingServiceObservation) async {
-        guard !isChanging else { return }
+    func prepare(_ action: ServingActionKind, service: ServingServiceObservation, surface: ServingActionSurface = .window) async {
+        guard !isChanging, preparation == nil, actionReview == nil || actionReview?.surface == surface else { return }
+        let token = UUID()
+        preparation = (token, surface)
+        defer { if preparation?.id == token { preparation = nil } }
+        actionErrorSurface = surface
         actionError = nil
         actionReview = nil
         await refresh()
+        guard preparation?.id == token else { return }
         guard let fresh = snapshot.services.first(where: { $0.id == service.id }), !fresh.stale,
               mayChange(fresh), fresh.allows(action) else {
             actionError = "The service changed or is in use. Refresh and review it again."
             return
         }
-        actionReview = ServingActionReview(service: fresh, action: action)
+        actionReview = ServingActionReview(service: fresh, action: action, surface: surface)
     }
 
-    func cancelReview() { if !isChanging { actionReview = nil } }
+    func cancelReview(surface: ServingActionSurface = .window) {
+        guard !isChanging else { return }
+        if preparation?.surface == surface { preparation = nil }
+        if actionReview?.surface == surface { actionReview = nil }
+    }
 
-    func confirm() async {
-        guard !isChanging, let review = actionReview else { return }
+    func confirm(surface: ServingActionSurface = .window) async {
+        guard !isChanging, let review = actionReview, review.surface == surface else { return }
         guard mayChange(review.service) else { actionError = "Finish work using this model before changing its server."; return }
         isChanging = true
         defer { isChanging = false }

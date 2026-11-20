@@ -380,3 +380,5 @@ API copy actions, Monitor, Settings and Quit. Available-but-unloaded external
 models are omitted from this quick menu. Closing the main window keeps
 Workbench and its model servers running. Use **Open MLX Workbench** to return
 to the window. Login-item controls remain under Memory for startup persistence.
+
+Serving defaults assign load-on-request endpoints to roles. Roles can share one endpoint, worker and memory policy; open an assigned endpoint to review its memory settings. Coding can use an idle timeout, while Utility can release weights after each request, including with a Splash preset. For Splash, Serving shows reported effective context separately from a configured limit. If a Splash load fails, review its saved launch preset before applying changes.
