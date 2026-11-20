@@ -197,6 +197,27 @@ final class ClientSetupSessionTests: XCTestCase {
         XCTAssertNil(other.toolCall)
     }
 
+    func testCaviBridgeDeadlineCancelsHeldResponse() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HeldClientConnectionStub.self]
+        let transport = HostHTTPClient(session: URLSession(configuration: configuration))
+        let finished = expectation(description: "bridge deadline")
+        let started = Date()
+        let task = Task {
+            defer { finished.fulfill() }
+            do {
+                _ = try await CaviConnectionClient.request(baseURL: "http://127.0.0.1:8766", path: "v1/chat/completions",
+                    body: Data("{}".utf8), token: nil, http: transport, timeout: 1)
+                XCTFail("Held response must expire")
+            } catch {
+                XCTAssertEqual(error as? HostHTTPError, .timedOut)
+                XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.8)
+            }
+        }
+        await fulfillment(of: [finished], timeout: 4)
+        task.cancel()
+    }
+
     private func server(protected: Bool = false) -> ServerInfo {
         ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "running", jit: true,
                    apiKeySHA256: protected ? SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() : nil)
@@ -238,7 +259,9 @@ private final class ClientConnectionStub: URLProtocol {
                 data = bytes
             } else { data = Data() }
             let requestBody = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            if requestBody?["model"] as? String == "tool-supported", requestBody?["tools"] != nil {
+            let includesTools = requestBody?["tools"] != nil
+            XCTAssertEqual(request.timeoutInterval, includesTools ? 10 : 120)
+            if requestBody?["model"] as? String == "tool-supported", includesTools {
                 body = ["choices": [["message": ["tool_calls": [["id": "call-1", "type": "function", "function": ["name": "workbench_tool_check", "arguments": "{}"]]]]]]]
             } else { body = ["choices": [["message": ["content": "CONNECTED"]]]] }
         default: body = ["error": "incorrect path"]
@@ -249,4 +272,23 @@ private final class ClientConnectionStub: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private final class HeldClientConnectionStub: URLProtocol {
+    private var timer: DispatchSourceTimer?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200,
+            httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "held-client-response"))
+        timer.schedule(deadline: .now(), repeating: .milliseconds(200))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.client?.urlProtocol(self, didLoad: Data(" ".utf8))
+        }
+        self.timer = timer
+        timer.resume()
+    }
+    override func stopLoading() { timer?.cancel(); timer = nil }
 }

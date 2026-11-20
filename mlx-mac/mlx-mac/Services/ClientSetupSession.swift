@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-enum ClientToolCallCheck: Equatable, Sendable { case passed, notVerified }
+enum ClientToolCallCheck: Equatable, Sendable { case passed, notVerified, timedOut }
 
 struct ClientConnectionResult: Equatable, Sendable {
     let protocolName: String
@@ -57,7 +57,7 @@ enum ClientConnectionTest {
             } catch {
                 try Task.checkCancellation()
                 if error is CancellationError { throw error }
-                result.toolCall = .notVerified
+                result.toolCall = (error as? HostHTTPError) == .timedOut ? .timedOut : .notVerified
             }
         }
         return result
@@ -74,7 +74,7 @@ enum ClientConnectionTest {
             "tool_choice": "auto", "tools": [tool],
         ]
         let data = try await CaviConnectionClient.request(baseURL: baseURL, path: "v1/chat/completions",
-            body: JSONSerialization.data(withJSONObject: body), token: token, http: http)
+            body: JSONSerialization.data(withJSONObject: body), token: token, http: http, timeout: 10)
         try Task.checkCancellation()
         guard let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any], response["error"] == nil,
               let choice = (response["choices"] as? [[String: Any]])?.first,

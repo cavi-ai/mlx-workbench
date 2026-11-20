@@ -2,7 +2,7 @@ import Foundation
 import os
 
 enum HostHTTPError: Error, Equatable, LocalizedError, Sendable {
-    case invalidURL, invalidPath, invalidResponse, responseTooLarge, requestFailed
+    case invalidURL, invalidPath, invalidResponse, responseTooLarge, requestFailed, timedOut
     case httpStatus(Int)
 
     var errorDescription: String? {
@@ -12,6 +12,7 @@ enum HostHTTPError: Error, Equatable, LocalizedError, Sendable {
         case .invalidResponse: return "The host returned an invalid response."
         case .responseTooLarge: return "The host response exceeds the size limit."
         case .requestFailed: return "The local host could not be reached. Check its address and server settings."
+        case .timedOut: return "The local host response timed out."
         case .httpStatus(let status): return "The host returned HTTP \(status)."
         }
     }
@@ -73,6 +74,7 @@ struct HostHTTPClient: Sendable {
         } catch is CancellationError { throw CancellationError() }
         catch let error as HostHTTPError { throw error }
         catch let error as URLError where error.code == .cancelled { throw CancellationError() }
+        catch let error as URLError where error.code == .timedOut { throw HostHTTPError.timedOut }
         catch { throw HostHTTPError.requestFailed }
     }
 }

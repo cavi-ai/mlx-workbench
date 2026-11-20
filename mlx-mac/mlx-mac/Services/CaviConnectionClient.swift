@@ -5,9 +5,11 @@ import JavaScriptCore
 /// owns loopback validation, response bounds, redirects and cancellation.
 enum CaviConnectionClient {
     static func request(baseURL: String, path: String, body: Data, token: String?,
-                        http: HostHTTPClient = .init(), headers: [String: String] = [:]) async throws -> Data {
+                        http: HostHTTPClient = .init(), headers: [String: String] = [:],
+                        timeout: TimeInterval = 120) async throws -> Data {
+        guard (1...120).contains(timeout) else { throw HostHTTPError.invalidPath }
         let operation = CaviConnectionRequest(baseURL: baseURL, path: path, body: body,
-                                              token: token, headers: headers, http: http)
+                                              token: token, headers: headers, http: http, timeout: timeout)
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { operation.start($0) }
@@ -18,7 +20,7 @@ enum CaviConnectionClient {
 private final class CaviConnectionRequest: @unchecked Sendable {
     private let queue = DispatchQueue(label: "workbench.client-connection")
     private let baseURL: String, path: String, body: Data, token: String?
-    private let headers: [String: String], http: HostHTTPClient
+    private let headers: [String: String], http: HostHTTPClient, timeout: TimeInterval
     private var context: JSContext?
     private var fetchResolution: JSValue?
     private var continuation: CheckedContinuation<Data, Error>?
@@ -28,9 +30,9 @@ private final class CaviConnectionRequest: @unchecked Sendable {
     private var cancelled = false
     private var finished = false
 
-    init(baseURL: String, path: String, body: Data, token: String?, headers: [String: String], http: HostHTTPClient) {
+    init(baseURL: String, path: String, body: Data, token: String?, headers: [String: String], http: HostHTTPClient, timeout: TimeInterval) {
         self.baseURL = baseURL; self.path = path; self.body = body
-        self.token = token; self.headers = headers; self.http = http
+        self.token = token; self.headers = headers; self.http = http; self.timeout = timeout
     }
     func start(_ continuation: CheckedContinuation<Data, Error>) {
         queue.async {
@@ -70,7 +72,9 @@ private final class CaviConnectionRequest: @unchecked Sendable {
             self?.fetch(url: url, initJSON: initJSON, resolve: resolve)
         }
         let complete: @convention(block) (String) -> Void = { [weak self] text in self?.finish(.success(Data(text.utf8))) }
-        let fail: @convention(block) () -> Void = { [weak self] in self?.finish(.failure(HostHTTPError.invalidResponse)) }
+        let fail: @convention(block) (Bool) -> Void = { [weak self] timedOut in
+            self?.finish(.failure(timedOut ? HostHTTPError.timedOut : HostHTTPError.invalidResponse))
+        }
         context.setObject(setTimer, forKeyedSubscript: "setTimeout" as NSString)
         context.setObject(clearTimer, forKeyedSubscript: "clearTimeout" as NSString)
         context.setObject(fetch, forKeyedSubscript: "nativeFetch" as NSString)
@@ -79,7 +83,7 @@ private final class CaviConnectionRequest: @unchecked Sendable {
         context.evaluateScript(Self.adapter)
         context.evaluateScript(source, withSourceURL: sourceURL)
         guard !finished, let object = try? JSONSerialization.jsonObject(with: body) else { finish(.failure(HostHTTPError.invalidResponse)); return }
-        context.objectForKeyedSubscript("connectCavi")?.call(withArguments: [baseURL, path, object, token as Any? ?? NSNull(), headers])
+        context.objectForKeyedSubscript("connectCavi")?.call(withArguments: [baseURL, path, object, token as Any? ?? NSNull(), headers, Int(timeout * 1000)])
     }
     private func fetch(url: String, initJSON: String, resolve: JSValue) {
         guard network == nil, url == baseURL + "/" + path,
@@ -96,7 +100,7 @@ private final class CaviConnectionRequest: @unchecked Sendable {
         network = Task {
             do {
                 let response = try await http.request(host: host, path: path, method: "POST", body: Data(body.utf8),
-                    token: token, maximumBytes: 1_048_576, timeout: 120, headers: headers)
+                    token: token, maximumBytes: 1_048_576, timeout: timeout, headers: headers)
                 try Task.checkCancellation()
                 queue.async { [self] in
                     guard !finished, let text = String(data: response, encoding: .utf8) else { finish(.failure(HostHTTPError.invalidResponse)); return }
@@ -124,15 +128,24 @@ private final class CaviConnectionRequest: @unchecked Sendable {
           for (const fn of listeners) fn(); listeners.clear(); };
       }
     }
-    function connectCavi(baseURL, path, body, token, headers) {
+    function connectCavi(baseURL, path, body, token, headers, defaultTimeoutMs) {
+      let timedOut = false;
       const client = new CaviAPI.BaseHttpApiClient('workbench.connection', {
         baseUrl:baseURL, auth:{bearerToken:token}, includePortalClientIdHeader:false,
-        defaultTimeoutMs:120000, defaultHeaders:headers,
-        fetchImpl:(url, init)=>new Promise((resolve,reject)=>nativeFetch(url,JSON.stringify(init),
-          text=>resolve({ok:true,status:200,text:()=>Promise.resolve(text),headers:{get:()=> 'application/json'}}),reject))
+        defaultTimeoutMs:defaultTimeoutMs, defaultHeaders:headers,
+        fetchImpl:(url, init)=>new Promise((resolve,reject)=>{
+          const signal = init.signal;
+          const abort = () => { timedOut = true; reject(signal.reason || new Error('Request aborted')); };
+          if (signal?.aborted) { abort(); return; }
+          signal?.addEventListener('abort', abort);
+          nativeFetch(url,JSON.stringify(init), text=>{
+            signal?.removeEventListener('abort', abort);
+            resolve({ok:true,status:200,text:()=>Promise.resolve(text),headers:{get:()=> 'application/json'}});
+          },reject);
+        })
       });
       client.createTransport()(path,{method:'POST',body,redirect:'error'})
-        .then(value=>nativeComplete(JSON.stringify(value)),()=>nativeFail());
+        .then(value=>nativeComplete(JSON.stringify(value)),()=>nativeFail(timedOut));
     }
     """#
 }
