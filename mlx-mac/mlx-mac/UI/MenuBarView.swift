@@ -37,8 +37,10 @@ struct MenuBarView: View {
                 Spacer()
                 ServingSystemHeadroom(resources: appHost.resources)
             }
-            Text(ServingInventoryPresentation.summary(inventory.snapshot))
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if rows.isEmpty || ServingInventoryPresentation.summary(inventory.snapshot) != "No local serving models reported" {
+                Text(ServingInventoryPresentation.summary(inventory.snapshot))
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
             ForEach(EndpointDefaultRole.allCases) { role in
                 roleRow(role, models: models)
             }
@@ -67,8 +69,40 @@ struct MenuBarView: View {
             if !inventory.snapshot.sourceErrors.isEmpty {
                 Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Open Serving to inspect") { openManager() }
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if !rows.isEmpty {
+                Divider()
+                if rows.count > 5 {
+                    ScrollView { modelActions(rows: rows, models: models) }.frame(height: 178)
+                } else {
+                    modelActions(rows: rows, models: models)
+                }
+            }
+            Divider()
+            HStack {
+                Button("Open Serving") { openManager() }
+                Button("Live Monitor") { selectedRouteID = AppRoute.monitor.rawValue; openApp() }
+                Spacer()
+                Button { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("Refresh local services")
+                .disabled(inventory.isRefreshing)
+            }
+            HStack {
+                Button("Open MLX Workbench") { openApp() }
+                Button("Settings…") { selectedRouteID = AppRoute.settings.rawValue; openApp() }
+                Spacer()
+                Button("Quit MLX Workbench") { NSApp.terminate(nil) }.keyboardShortcut("q")
+            }
+        }
+        .padding(WorkbenchSpacing.md)
+        .frame(width: 380, alignment: .leading)
+        .onDisappear { inventory.cancelReview(surface: .menuBar) }
+    }
+
+    @ViewBuilder
+    private func modelActions(rows: [ServingRow], models: [LibraryModel]) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     ForEach(rows) { row in
                         Menu(MenuBarPresentation.rowTitle(row, models: models)) {
                             switch row {
@@ -132,31 +166,9 @@ struct MenuBarView: View {
                                 }
                             }
                         }
+                        .accessibilityIdentifier("serving-menu-endpoint-\(row.id)")
                     }
-                    if rows.isEmpty {
-                        Button("No Workbench endpoints configured") {}.disabled(true)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: 230)
-            Divider()
-            Button("Open Serving") { openManager() }
-            Button("Live Monitor") { selectedRouteID = AppRoute.monitor.rawValue; openApp() }
-            Button("Refresh local services") {
-                Task {
-                    await workflow.refreshServers()
-                    await inventory.refresh(refreshHosts: true)
-                }
-            }
-            .disabled(inventory.isRefreshing)
-            Button("Open MLX Workbench") { openApp() }
-            Button("Settings…") { selectedRouteID = AppRoute.settings.rawValue; openApp() }
-            Divider()
-            Button("Quit MLX Workbench") { NSApp.terminate(nil) }
-                .keyboardShortcut("q")
-        }
-        .padding(WorkbenchSpacing.md)
-        .frame(width: 380, alignment: .leading)
-        .onDisappear { inventory.cancelReview(surface: .menuBar) }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
