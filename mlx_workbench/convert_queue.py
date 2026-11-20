@@ -16,8 +16,8 @@ for _name in dir(_engine):
 
 class ConvertQueue(_engine.ConvertQueue):
     """Preserve the legacy bridge error type without duplicating queue behavior."""
-    def _try_start_next(self, agent_path, runner=None):
+    def try_start_next(self, *args, **kwargs):
         try:
-            return super()._try_start_next(agent_path, runner=runner)
+            return super().try_start_next(*args, **kwargs)
         except _engine.bridge.BridgeError as error:
             raise _workbench_bridge.BridgeError(error.code, str(error), error.remediation) from error
