@@ -138,7 +138,7 @@ final class MenuBarTests: XCTestCase {
             .appendingPathComponent("mlx-mac/UI/MenuBarView.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
         XCTAssertFalse(source.contains("URL(fileURLWithPath:"))
-        XCTAssertFalse(source.contains("HStack"))
+        XCTAssertTrue(source.contains("inventory.confirm(surface: .menuBar)"))
         XCTAssertFalse(source.contains("(spec 09"))
         XCTAssertTrue(source.contains("Button(\"Open MLX Workbench\")"))
         XCTAssertTrue(source.contains(".keyboardShortcut(\"q\")"))
