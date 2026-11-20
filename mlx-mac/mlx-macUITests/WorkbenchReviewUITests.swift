@@ -4997,7 +4997,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("OpenCode-tool-call-verified")
         try Data().write(to: root.appendingPathComponent("hold-tool-check"))
         test.click()
-        XCTAssertTrue(text(containing: "Tool call not verified").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "Tool check timed out").waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["CONNECTED"].exists)
         capture("OpenCode-tool-call-timeout")
         let tested = try String(contentsOf: root.appendingPathComponent("client-connection-models"), encoding: .utf8)

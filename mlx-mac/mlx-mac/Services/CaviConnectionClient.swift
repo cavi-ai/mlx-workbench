@@ -72,7 +72,9 @@ private final class CaviConnectionRequest: @unchecked Sendable {
             self?.fetch(url: url, initJSON: initJSON, resolve: resolve)
         }
         let complete: @convention(block) (String) -> Void = { [weak self] text in self?.finish(.success(Data(text.utf8))) }
-        let fail: @convention(block) () -> Void = { [weak self] in self?.finish(.failure(HostHTTPError.invalidResponse)) }
+        let fail: @convention(block) (Bool) -> Void = { [weak self] timedOut in
+            self?.finish(.failure(timedOut ? HostHTTPError.timedOut : HostHTTPError.invalidResponse))
+        }
         context.setObject(setTimer, forKeyedSubscript: "setTimeout" as NSString)
         context.setObject(clearTimer, forKeyedSubscript: "clearTimeout" as NSString)
         context.setObject(fetch, forKeyedSubscript: "nativeFetch" as NSString)
@@ -127,12 +129,13 @@ private final class CaviConnectionRequest: @unchecked Sendable {
       }
     }
     function connectCavi(baseURL, path, body, token, headers, defaultTimeoutMs) {
+      let timedOut = false;
       const client = new CaviAPI.BaseHttpApiClient('workbench.connection', {
         baseUrl:baseURL, auth:{bearerToken:token}, includePortalClientIdHeader:false,
         defaultTimeoutMs:defaultTimeoutMs, defaultHeaders:headers,
         fetchImpl:(url, init)=>new Promise((resolve,reject)=>{
           const signal = init.signal;
-          const abort = () => reject(signal.reason || new Error('Request aborted'));
+          const abort = () => { timedOut = true; reject(signal.reason || new Error('Request aborted')); };
           if (signal?.aborted) { abort(); return; }
           signal?.addEventListener('abort', abort);
           nativeFetch(url,JSON.stringify(init), text=>{
@@ -142,7 +145,7 @@ private final class CaviConnectionRequest: @unchecked Sendable {
         })
       });
       client.createTransport()(path,{method:'POST',body,redirect:'error'})
-        .then(value=>nativeComplete(JSON.stringify(value)),()=>nativeFail());
+        .then(value=>nativeComplete(JSON.stringify(value)),()=>nativeFail(timedOut));
     }
     """#
 }

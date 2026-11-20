@@ -168,7 +168,12 @@ struct ClientSetupWizard: View {
                 Label("Server responded over \(result.protocolName)", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(WorkbenchColor.success).accessibilityIdentifier("connect-app-tested")
                 if let toolCall = result.toolCall {
-                    Label(toolCall == .passed ? "Tool call verified" : "Tool call not verified",
+                    let title: String = switch toolCall {
+                    case .passed: "Tool call verified"
+                    case .notVerified: "Tool call not verified"
+                    case .timedOut: "Tool check timed out"
+                    }
+                    Label(title,
                           systemImage: toolCall == .passed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(toolCall == .passed ? WorkbenchColor.success : WorkbenchColor.warning)

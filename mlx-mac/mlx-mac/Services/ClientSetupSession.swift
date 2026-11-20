@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-enum ClientToolCallCheck: Equatable, Sendable { case passed, notVerified }
+enum ClientToolCallCheck: Equatable, Sendable { case passed, notVerified, timedOut }
 
 struct ClientConnectionResult: Equatable, Sendable {
     let protocolName: String
@@ -57,7 +57,7 @@ enum ClientConnectionTest {
             } catch {
                 try Task.checkCancellation()
                 if error is CancellationError { throw error }
-                result.toolCall = .notVerified
+                result.toolCall = (error as? HostHTTPError) == .timedOut ? .timedOut : .notVerified
             }
         }
         return result

@@ -210,7 +210,7 @@ final class ClientSetupSessionTests: XCTestCase {
                     body: Data("{}".utf8), token: nil, http: transport, timeout: 1)
                 XCTFail("Held response must expire")
             } catch {
-                XCTAssertEqual(error as? HostHTTPError, .invalidResponse)
+                XCTAssertEqual(error as? HostHTTPError, .timedOut)
                 XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.8)
             }
         }

@@ -27,7 +27,7 @@ For OpenCode, the endpoint list also offers **Front door** while the front door 
 **Test connection** sends a short prompt through the bundled CAVI API client using Chat Completions, Responses or Messages, according to the selected app. It checks the exact written configuration and server identity before and after testing. Testing may load the selected model. Success means the server responded using that protocol; open a new client session to use the configuration. App detection is separate from connection testing. Missing apps have an official installation link and can be configured before installation. OpenClaw gateways need a restart to reload configuration. Project settings and launch options can override user settings.
 
 For OpenCode, the test also checks whether the model returns a tool call, reports an unverified call separately, and does not execute the tool.
-The tool-call check has a 10-second time limit.
+The tool-call check has a 10-second time limit and reports a timeout separately.
 
 **Undo setup** reverses that setup transaction while its files still match the applied contents. **Connect another app** reuses the same flow for another client.
 
