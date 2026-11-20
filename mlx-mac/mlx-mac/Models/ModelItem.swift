@@ -401,6 +401,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     /// Why the gateway's last load or worker failed, as the engine reports it.
     var lastError: String? = nil
     /// Allocator memory a load-on-request worker reports; nil when it reports none.
+    var splashConfiguredContextTokens: Int? = nil
+    var splashEffectiveContextTokens: Int? = nil
     var workerMemory: WorkerMemoryReading? = nil
     /// Whether the worker can release its free MLX buffers on request.
     var allocatorCache: AllocatorCacheReading? = nil
@@ -430,6 +432,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case taskKinds = "task_kinds"
         case apiKeySHA256 = "api_key_sha256"
         case inferenceTelemetry = "inference_telemetry", requestDefaults = "request_defaults"
+        case splashConfiguredContextTokens = "splash_configured_context_tokens"
+        case splashEffectiveContextTokens = "splash_effective_context_tokens"
         case lastError = "last_error"
         case logPath = "log_path"
         case startedAt = "started_at"

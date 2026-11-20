@@ -4915,12 +4915,44 @@ final class WorkbenchReviewUITests: XCTestCase {
         let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
         menu.click()
-        XCTAssertTrue(app.menuItems["Live Monitor"].waitForExistence(timeout: 10))
-        app.menuItems["Open MLX Workbench"].click()
+        XCTAssertTrue(app.buttons["Live Monitor"].waitForExistence(timeout: 10))
+        app.buttons["Open MLX Workbench"].click()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"serve\", \"stop\""))
         XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
+    func testServingDefaultsPersistAndAppearInMenu() throws {
+        let model = try installTaskModel(kind: "text_llm", name: "Default text").path
+        let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let slotID = UUID().uuidString
+        let slot: [String: Any] = ["id": slotID, "enabled": true, "port": 8766, "modelPath": model, "loadOnRequest": true]
+        try JSONSerialization.data(withJSONObject: [["slots": [slot], "installedAtLogin": false]])
+            .write(to: state.appendingPathComponent("endpoint-fleet.json"))
+        let server: [String: Any] = ["path": model, "runtime": "mlx_lm", "port": 8766, "pid": 123,
+                                     "state": "running", "jit": true, "model_state": "unloaded"]
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        select("Serving")
+        let defaults = app.buttons["serving-defaults"]
+        XCTAssertTrue(defaults.waitForExistence(timeout: 15)); defaults.click()
+        let picker = app.popUpButtons["serving-default-coding"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click()
+        let choice = app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "8766")).firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.click()
+        capture("Serving-defaults")
+        app.buttons["Done"].click()
+        let saved = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: state.appendingPathComponent("endpoint-fleet.json"))) as? [[String: Any]])
+        XCTAssertEqual((saved.first?["roleDefaults"] as? [String: String])?["coding"]?.lowercased(), slotID.lowercased())
+        let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10)); menu.click()
+        XCTAssertTrue(text(containing: "Coding").waitForExistence(timeout: 10))
+        let menuCapture = XCTAttachment(screenshot: app.screenshot())
+        menuCapture.name = "Serving-defaults-menu"
+        menuCapture.lifetime = .keepAlways
+        add(menuCapture)
     }
 
     func testConnectAppReviewsSavesAndTestsAllFiveClients() throws {

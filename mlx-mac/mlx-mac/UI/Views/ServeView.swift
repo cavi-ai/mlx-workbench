@@ -80,6 +80,7 @@ struct ServeView: View {
         nonmutating set { fleetHold.pending = newValue }
     }
     @State private var showFleetRouter = false
+    @State private var showsRoleDefaults = false
     @State private var showLoginItemPreview = false
     @State private var loginPlan: LoginItemPlan?
     @State private var inferenceSlot: EndpointSlot?
@@ -289,6 +290,15 @@ struct ServeView: View {
 
     private var workspaceDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Button { showsRoleDefaults = true } label: {
+                    Label("Defaults", systemImage: "slider.horizontal.3")
+                }
+                .accessibilityIdentifier("serving-defaults")
+                Spacer()
+            }
+            .padding(.horizontal, WorkbenchSpacing.md)
+            .padding(.vertical, WorkbenchSpacing.sm)
             if let pending = pendingFleetAction {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                     InlineMessage(kind: .warning, text: "Fleet memory: \(pending.summary). Enable anyway?")
@@ -307,6 +317,13 @@ struct ServeView: View {
         }
         .accessibilityIdentifier("serving-model-workspace")
         .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
+        .sheet(isPresented: $showsRoleDefaults) {
+            ServingRoleDefaultsSheet(endpoint: endpoint, models: models) { slot in
+                workspaceSelection = "endpoint-\(slot.id.uuidString)"
+                showsServerSetup = false
+                workspaceTab = .connection
+            }
+        }
     }
 
     private var workspaceScroll: some View {
@@ -434,6 +451,23 @@ struct ServeView: View {
             if let server {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            if let server, server.runtime == "splash" {
+                if let effective = server.splashEffectiveContextTokens {
+                    LabeledContent("Context", value: "\(effective.formatted()) tokens reported")
+                } else {
+                    LabeledContent("Context", value: "Not reported")
+                }
+                if let configured = server.splashConfiguredContextTokens, configured != server.splashEffectiveContextTokens {
+                    LabeledContent("Configured context", value: "\(configured.formatted()) tokens")
+                }
+                if server.modelState == "failed" {
+                    InlineMessage(kind: .error, text: "Splash failed to load. Review the server log for details.")
+                    if case .endpoint(let slot, _, _) = row, slot.splashPresetName != nil {
+                        Button("Review Splash launch…") { splashPresetSlot = slot }
+                            .disabled(endpoint.pendingStops[slot.id] != nil)
+                    }
+                }
             }
             if let server, server.jit == true, UseChatClient.supports(server) {
                 if let address = tailnet.sharedAddress(port: server.port) {
@@ -627,7 +661,7 @@ struct ServeView: View {
         RunPresentation.shownModelPath(workflow: modelWorkflow.workflow, selectedModelPath: appHost.selectedModelPath)
     }
 
-    private var visibleActionError: String? { actionError ?? inventory.actionError ?? endpoint.lastError }
+    private var visibleActionError: String? { actionError ?? inventory.actionError(for: .window) ?? endpoint.lastError }
 
     /// A sheet binding that stays empty while this route is hidden, so a retained page never presents.
     private func gated<Value>(_ binding: Binding<Value?>) -> Binding<Value?> {
@@ -1173,11 +1207,12 @@ struct ServeView: View {
                     Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
                         Text("Never").tag(0)
                         Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
                         Text("5 minutes").tag(300)
                         Text("10 minutes").tag(600)
                         Text("30 minutes").tag(1800)
                         Text("1 hour").tag(3600)
-                        if ![0, 60, 300, 600, 1800, 3600].contains(policy.idleTimeoutSeconds) {
+                        if ![0, 60, 120, 300, 600, 1800, 3600].contains(policy.idleTimeoutSeconds) {
                             Text(verbatim: "\(policy.idleTimeoutSeconds) seconds").tag(policy.idleTimeoutSeconds)
                         }
                     }
@@ -1747,6 +1782,7 @@ private struct SplashPresetEditor: View {
     @State private var headroom = "2"
     @State private var idle = "300"
     @State private var keepLoaded = false
+    @State private var releaseAfterRequest = false
     @State private var pressure = true
     @State private var busy = false
     @State private var error: String?
@@ -1790,8 +1826,13 @@ private struct SplashPresetEditor: View {
                 }
                 Section("Residency") {
                     TextField("Headroom reserve in GB", text: $headroom)
-                    TextField("Idle timeout in seconds", text: $idle)
-                    Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in if value { pressure = false } }
+                    TextField("Idle timeout in seconds", text: $idle).disabled(keepLoaded || releaseAfterRequest)
+                    Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in
+                        if value { pressure = false; releaseAfterRequest = false }
+                    }
+                    Toggle("Release weights after each request", isOn: $releaseAfterRequest).onChange(of: releaseAfterRequest) { _, value in
+                        if value { keepLoaded = false }
+                    }
                     Toggle("Unload under memory pressure", isOn: $pressure).disabled(keepLoaded)
                 }
             }.formStyle(.grouped)
@@ -1823,6 +1864,7 @@ private struct SplashPresetEditor: View {
         if let problem = chosen.problem { error = problem; return }
         var values: [String: Any] = ["min_headroom_gb": reserve, "idle_timeout": seconds,
                                      "keep_loaded": keepLoaded, "unload_under_pressure": pressure]
+        if releaseAfterRequest { values["release_after_request"] = true }
         if let value = Double(memory) { values["splash_max_memory_gb"] = value }
         if let value = Int(context) { values["splash_max_context_tokens"] = value }
         values.merge(chosen.settings) { _, tuned in tuned }

@@ -83,10 +83,10 @@ struct MlxWorkbenchApp: App {
         MenuBarExtra {
             MenuBarView(appHost: appHost)
         } label: {
-            ServingInventoryMenuLabel(inventory: appHost.servingInventory, endpoint: appHost.endpoint)
+            ServingInventoryMenuLabel(inventory: appHost.servingInventory)
                 .onAppear { appHost.startLiveServices() }
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
         #endif
     }
 

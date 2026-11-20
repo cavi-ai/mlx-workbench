@@ -5,6 +5,66 @@ enum ServedModelsWindow {
     static let mainID = "workbench"
 }
 
+struct ServingRoleDefaultsSheet: View {
+    @ObservedObject var endpoint: EndpointSupervisor
+    let models: [LibraryModel]
+    let onOpen: (EndpointSlot) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var assignmentError: String?
+
+    private var eligible: [EndpointSlot] { endpoint.fleet.slots.filter { $0.enabled && $0.usesJIT } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Serving defaults").font(WorkbenchTypography.title)
+            Text("Choose a load-on-request endpoint for each role.")
+                .font(WorkbenchTypography.secondary)
+            ForEach(EndpointDefaultRole.allCases) { role in
+                Picker(role.title, selection: Binding<UUID?>(
+                    get: { endpoint.fleet.roleDefaults?[role] },
+                    set: { assignmentError = endpoint.setRoleDefault(role, slotID: $0) ? nil : endpoint.lastError }
+                )) {
+                    Text("No default").tag(UUID?.none)
+                    if let saved = endpoint.fleet.roleDefaults?[role], !eligible.contains(where: { $0.id == saved }) {
+                        Text("Unavailable endpoint").tag(Optional(saved))
+                    }
+                    ForEach(eligible) { slot in
+                        Text("\(MenuBarPresentation.modelName(slot.modelPath, models: models)) · \(slot.port)")
+                            .tag(Optional(slot.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("serving-default-\(role.rawValue)")
+                .disabled(endpoint.isChanging)
+                if let id = endpoint.fleet.roleDefaults?[role], let slot = eligible.first(where: { $0.id == id }) {
+                    HStack {
+                        Text(residency(slot)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        Spacer()
+                        Button("Open endpoint") { dismiss(); onOpen(slot) }
+                    }
+                }
+            }
+            Text("Coding can unload after an idle period; Utility can release after each request. Roles sharing an endpoint share its memory policy. Open an endpoint to review it.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: assignmentError)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(WorkbenchSpacing.lg)
+        .frame(width: 460)
+    }
+    private func residency(_ slot: EndpointSlot) -> String {
+        guard let policy = endpoint.slotMemoryPolicies[slot.id] ?? slot.memoryPolicy else { return "Residency unknown" }
+        if policy.keepLoaded { return "Keep loaded" }
+        if policy.releaseAfterRequest == true { return "Release after each request" }
+        if policy.idleTimeoutSeconds > 0 { return "Unload after \(policy.idleTimeoutSeconds.formatted()) seconds idle" }
+        return "No idle unload"
+    }
+
+}
+
 enum ServedModelsSelection {
     static func candidates(models: [LibraryModel], slots: [EndpointSlot], query: String) -> [LibraryModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
