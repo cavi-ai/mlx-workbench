@@ -957,7 +957,9 @@ actor WorkbenchAPI {
         if let profileName { args += ["--profile", profileName] }
         if jit {
             args.append("--jit")
-            if profileName == nil { args += memoryPolicy?.arguments ?? [] }
+            if let policy = ServeLaunch.retainedMemoryPolicy(memoryPolicy, jit: true, splashPresetName: profileName) {
+                args += policy.arguments
+            }
         }
         if m5Prefill { args += ["--m5-prefill"] }
         if promptLookup { args += ["--prompt-lookup"] }
@@ -975,11 +977,9 @@ actor WorkbenchAPI {
 
     func loginItemPlan(slot: EndpointSlot, fleetURL: URL) async throws -> LoginItemPlan {
         guard slot.enabled, !slot.modelPath.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
-        guard slot.servingProfile == nil || !slot.inferenceOptions.accelerationRequested else {
-            throw WorkflowEvidenceError.invalid("Local acceleration cannot be combined with a Strata serving profile.")
-        }
         let capturedAgent = agentPath
-        let runtime = slot.splashPresetName != nil ? "splash" : (slot.servingProfile == nil ? "auto" : "strata")
+        let launch = try ServeLaunch.saved(splashPresetName: slot.splashPresetName, hasServingProfile: slot.servingProfile != nil, jit: slot.usesJIT, accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff)
+        let runtime = launch.runtime
         let options = slot.servingProfile?.options
         let preview: [String: Any]
         if let profile = slot.servingProfile {

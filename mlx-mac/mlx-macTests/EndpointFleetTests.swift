@@ -33,6 +33,28 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertTrue(args.contains("--profile"))
         XCTAssertFalse(args.contains("--idle-timeout"))
         XCTAssertFalse(args.contains("--min-headroom-gb"))
+        XCTAssertNil(ServeLaunch.retainedMemoryPolicy(policy, jit: true, splashPresetName: "editing"))
+    }
+
+    func testServeLaunchAgreesOnSplashProfileAndAcceleration() throws {
+        let splash = try ServeLaunch.saved(splashPresetName: "editing", hasServingProfile: false, jit: true, accelerationRequested: false, thinkingOff: false)
+        XCTAssertEqual(splash.runtime, "splash")
+        XCTAssertEqual(splash.splashPresetName, "editing")
+        XCTAssertFalse(splash.includesMemoryPolicy)
+        XCTAssertThrowsError(try ServeLaunch.saved(splashPresetName: "editing", hasServingProfile: true, jit: true, accelerationRequested: false, thinkingOff: false))
+        XCTAssertThrowsError(try ServeLaunch.saved(splashPresetName: "editing", hasServingProfile: false, jit: false, accelerationRequested: false, thinkingOff: false))
+        XCTAssertThrowsError(try ServeLaunch.saved(splashPresetName: "editing", hasServingProfile: false, jit: true, accelerationRequested: true, thinkingOff: false))
+        let strata = try ServeLaunch.saved(splashPresetName: nil, hasServingProfile: true, jit: true, accelerationRequested: false, thinkingOff: false)
+        XCTAssertEqual(strata.runtime, "strata")
+        XCTAssertTrue(strata.includesMemoryPolicy)
+        XCTAssertThrowsError(try ServeLaunch.saved(splashPresetName: nil, hasServingProfile: true, jit: true, accelerationRequested: false, thinkingOff: true))
+        let automatic = try ServeLaunch.saved(splashPresetName: nil, hasServingProfile: false, jit: false, accelerationRequested: false, thinkingOff: false)
+        XCTAssertEqual(automatic.runtime, "auto")
+        XCTAssertFalse(automatic.includesMemoryPolicy)
+        XCTAssertNoThrow(try ServeLaunch.startNow(runtime: "splash", hasServingProfile: false, options: .init()))
+        XCTAssertThrowsError(try ServeLaunch.startNow(runtime: "mlx_lm", hasServingProfile: false, options: LocalInferenceOptions(visionCache: true)))
+        XCTAssertThrowsError(try ServeLaunch.startNow(runtime: "auto", hasServingProfile: true, options: LocalInferenceOptions(thinkingOff: true)))
+        XCTAssertEqual(ServeLaunch.retainedMemoryPolicy(.automatic, jit: true, splashPresetName: nil), .automatic)
     }
 
     func testObservedIdleStopUsesIdentityBoundEngineOption() {

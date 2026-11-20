@@ -650,7 +650,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         do {
             if let profile = servingProfile, profile.modelPath != model { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
             if let error = acceleration.validationError { throw WorkflowEvidenceError.invalid(error) }
-            if ((acceleration.accelerationRequested || acceleration.thinkingOff) && servingProfile != nil) || (acceleration.textRequested && (runtime == "mlx-vlm" || acceleration.visionCache)) || (acceleration.visionCache && runtime == "mlx_lm") { throw WorkflowEvidenceError.invalid("Choose text acceleration for MLX-LM or vision feature reuse for MLX-VLM, without a Strata profile.") }
+            try ServeLaunch.startNow(runtime: runtime, hasServingProfile: servingProfile != nil, options: acceleration)
             let response: [String: Any]
             if let profile = servingProfile { response = try await (acceleration.requested ? api.profileInferencePreview(profile, port, acceleration) : api.profilePreview(profile, port)) }
             else if acceleration.requested { response = try await api.accelerationPreview(model, runtime, port, acceleration) }
