@@ -15,7 +15,8 @@ struct ClientSetupWizard: View {
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
         _session = StateObject(wrappedValue: ClientSetupSession(wiring: appHost.wiring, client: client, server: server,
             prefersFrontDoor: prefersFrontDoor, servers: { try await appHost.api.serveStatus() },
-            frontDoor: { await appHost.frontDoor.refresh(); return appHost.frontDoor.endpoint }))
+            frontDoor: { await appHost.frontDoor.refresh(); return appHost.frontDoor.endpoint },
+            fleet: { appHost.endpoint.fleet }))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {

@@ -108,6 +108,7 @@ final class ClientSetupSession: ObservableObject {
     private let wiring: WiringCoordinator
     private let readServers: () async throws -> [ServerInfo]
     private let readFrontDoor: @MainActor () async -> WireEndpoint?
+    private let readFleet: @MainActor () -> EndpointFleetConfig?
     private let testConnection: (ServingClient, ServerInfo, String?) async throws -> ClientConnectionResult
     private let testFrontDoor: (ServingClient, WireEndpoint, String?) async throws -> ClientConnectionResult
     private let detect: (ServingClient) async -> Bool
@@ -121,6 +122,7 @@ final class ClientSetupSession: ObservableObject {
     init(wiring: WiringCoordinator, client: ServingClient = .opencode, server: ServerInfo? = nil, prefersFrontDoor: Bool = false,
          servers: @escaping () async throws -> [ServerInfo],
          frontDoor: @escaping @MainActor () async -> WireEndpoint? = { nil },
+         fleet: @escaping @MainActor () -> EndpointFleetConfig? = { nil },
          test: @escaping (ServingClient, ServerInfo, String?) async throws -> ClientConnectionResult = { try await ClientConnectionTest.run(client: $0, server: $1, token: $2) },
          testFrontDoor: @escaping (ServingClient, WireEndpoint, String?) async throws -> ClientConnectionResult = { try await ClientConnectionTest.run(client: $0, endpoint: $1, token: $2) },
          detect: @escaping (ServingClient) async -> Bool = { client in
@@ -132,7 +134,7 @@ final class ClientSetupSession: ObservableObject {
              }
          }) {
         self.wiring = wiring; self.client = client; self.initialServer = server; self.prefersFrontDoor = prefersFrontDoor
-        readServers = servers; readFrontDoor = frontDoor; testConnection = test; self.testFrontDoor = testFrontDoor; self.detect = detect
+        readServers = servers; readFrontDoor = frontDoor; readFleet = fleet; testConnection = test; self.testFrontDoor = testFrontDoor; self.detect = detect
     }
     var selected: ServerInfo? { servers.first { $0.id == selectedID } }
     /// The front door is the chosen target: OpenCode lists every model it routes.
@@ -165,7 +167,20 @@ final class ClientSetupSession: ObservableObject {
                 selectedID = servers.first { $0.sameProcess(as: expected) }?.id
                 if selectedID == nil { error = "This endpoint changed or stopped. Choose a running endpoint." }
                 initialServer = nil
-            } else if selectedID == nil { selectedID = servers.first?.id ?? (client == .opencode && frontDoor != nil ? Self.frontDoorID : nil) }
+            } else if selectedID == nil {
+                if client == .opencode, let fleet = readFleet(), fleet.roleDefaults?.coding != nil {
+                    if let slot = fleet.defaultSlot(for: .coding) {
+                        let matches = servers.filter {
+                            $0.port == slot.port && $0.jit == true && $0.apiKeySHA256 == slot.apiKeySHA256 &&
+                            $0.matchesUnadaptedModel(slot.modelPath) && (slot.splashPresetName == nil || $0.runtime == "splash")
+                        }
+                        if matches.count == 1 { selectedID = matches[0].id; error = nil }
+                    }
+                    if selectedID == nil { error = "The Coding default is unavailable. Choose a running endpoint or update Serving defaults." }
+                } else {
+                    selectedID = servers.first?.id ?? (client == .opencode && frontDoor != nil ? Self.frontDoorID : nil)
+                }
+            }
             appFound = await detect(client)
         } catch { self.error = AppHost.render(error) }
     }
