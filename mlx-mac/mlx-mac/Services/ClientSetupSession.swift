@@ -74,7 +74,7 @@ enum ClientConnectionTest {
             "tool_choice": "auto", "tools": [tool],
         ]
         let data = try await CaviConnectionClient.request(baseURL: baseURL, path: "v1/chat/completions",
-            body: JSONSerialization.data(withJSONObject: body), token: token, http: http)
+            body: JSONSerialization.data(withJSONObject: body), token: token, http: http, timeout: 10)
         try Task.checkCancellation()
         guard let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any], response["error"] == nil,
               let choice = (response["choices"] as? [[String: Any]])?.first,

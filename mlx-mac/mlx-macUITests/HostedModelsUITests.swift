@@ -362,10 +362,20 @@ final class HostedUIFixture: @unchecked Sendable {
                 var models = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
                 models += "\(path) \(payload?["model"] as? String ?? "missing")\n"
                 try? models.write(to: log, atomically: true, encoding: .utf8)
+                let tools = payload?["tools"] as? [[String: Any]] ?? []
+                let isToolCheck = path == "/v1/chat/completions" && tools.contains {
+                    ($0["function"] as? [String: Any])?["name"] as? String == "workbench_tool_check"
+                }
+                if isToolCheck, FileManager.default.fileExists(atPath: root.appendingPathComponent("hold-tool-check").path) {
+                    queue.asyncAfter(deadline: .now() + 20) { connection.cancel() }
+                    return
+                }
                 let value: [String: Any]
                 switch path {
                 case "/v1/responses": value = ["status": "completed", "output": [["content": [["text": "CONNECTED"]]]]]
                 case "/v1/messages": value = ["type": "message", "content": [["type": "text", "text": "CONNECTED"]]]
+                case "/v1/chat/completions" where isToolCheck:
+                    value = ["choices": [["message": ["tool_calls": [["id": "call-1", "type": "function", "function": ["name": "workbench_tool_check", "arguments": "{}"]]]]]]]
                 default: value = ["choices": [["message": ["content": "CONNECTED"]]]]
                 }
                 let body = try! JSONSerialization.data(withJSONObject: value)

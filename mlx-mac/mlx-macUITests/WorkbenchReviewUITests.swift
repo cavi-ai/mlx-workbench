@@ -4964,11 +4964,44 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
         app.buttons["Done"].click()
         let tested = try String(contentsOf: root.appendingPathComponent("client-connection-models"), encoding: .utf8)
-        XCTAssertEqual(tested.components(separatedBy: "/v1/chat/completions org/Connected-model").count - 1, 3)
+        XCTAssertEqual(tested.components(separatedBy: "/v1/chat/completions org/Connected-model").count - 1, 4)
         XCTAssertTrue(tested.contains("/v1/responses org/Connected-model"))
         XCTAssertTrue(tested.contains("/v1/messages org/Connected-model"))
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("\"--confirm\""))
+    }
+
+    func testOpenCodeToolCheckKeepsVerifiedConnectionOnTimeout() throws {
+        let fixture = try HostedUIFixture(root: root)
+        let port = try fixture.start()
+        defer { fixture.stop() }
+        try Data().write(to: root.appendingPathComponent("client-connection-fixture"))
+        let server: [String: Any] = ["repo": "org/Connected-model", "runtime": "mlx_lm", "port": Int(port),
+            "pid": 123, "state": "running", "jit": true, "receipt": "/fixture/connection.json"]
+        try JSONSerialization.data(withJSONObject: [server]).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true, expandedSystem: true)
+        resizeWindow(width: 1380, height: 820)
+        select("Clients")
+        let connect = app.buttons["open-connect-app-wizard"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 15)); connect.click()
+        XCTAssertTrue(app.staticTexts["connect-app-reviewed-url"].waitForExistence(timeout: 10))
+        app.buttons["connect-app-review"].click()
+        XCTAssertTrue(app.buttons["connect-app-apply"].waitForExistence(timeout: 10))
+        app.buttons["connect-app-apply"].click()
+        let test = app.buttons["connect-app-test"]
+        XCTAssertTrue(test.waitForExistence(timeout: 10))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(".config/opencode/opencode.jsonc").path))
+        test.click()
+        XCTAssertTrue(text(containing: "Tool call verified").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["CONNECTED"].exists)
+        capture("OpenCode-tool-call-verified")
+        try Data().write(to: root.appendingPathComponent("hold-tool-check"))
+        test.click()
+        XCTAssertTrue(text(containing: "Tool call not verified").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["CONNECTED"].exists)
+        capture("OpenCode-tool-call-timeout")
+        let tested = try String(contentsOf: root.appendingPathComponent("client-connection-models"), encoding: .utf8)
+        XCTAssertEqual(tested.components(separatedBy: "/v1/chat/completions org/Connected-model").count - 1, 4)
     }
 
     func testProcessMemoryInspectorReadsWithoutStartingWork() throws {
