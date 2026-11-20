@@ -867,8 +867,7 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     private func benchmarks(for run: ComparisonRun) -> [RecommendationBenchmarkResult] {
-        guard run.state == .completed, run.effectiveMode == .chat, !run.hasCustomServingConfiguration,
-              let measuredAt = run.finishedAt else { return [] }
+        guard run.feedsRecommendations, let measuredAt = run.finishedAt else { return [] }
         let useCase = run.useCase ?? .generalChat
         return run.results.compactMap { result in
             guard result.error == nil, !result.samples.isEmpty else { return nil }

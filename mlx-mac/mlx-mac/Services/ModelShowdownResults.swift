@@ -73,7 +73,7 @@ struct ModelShowdownResults: Identifiable {
     /// filtering eligibility, so missing reviews never revive an older winner.
     static func latest(runs: [ComparisonRun], models: [LibraryModel], environment: String?, promptSets: [PromptSet]) -> [Self] {
         var seen = Set<String>()
-        return runs.filter { $0.state == .completed && $0.effectiveMode == .chat && !$0.hasCustomServingConfiguration }
+        return runs.filter(\.feedsRecommendations)
             .sorted {
                 let left = $0.finishedAt ?? $0.startedAt, right = $1.finishedAt ?? $1.startedAt
                 return left == right ? $0.id.uuidString < $1.id.uuidString : left > right
@@ -82,7 +82,7 @@ struct ModelShowdownResults: Identifiable {
     }
 
     private static func assess(run: ComparisonRun, models: [LibraryModel], environment: String?, promptSets: [PromptSet]?) -> ReviewState {
-        guard run.state == .completed, run.effectiveMode == .chat, !run.hasCustomServingConfiguration else {
+        guard run.feedsRecommendations else {
             return .unavailable("A completed chat comparison with standard serving settings is required.")
         }
         guard run.variants.count >= 2, Set(run.variants).count == run.variants.count,

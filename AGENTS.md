@@ -161,8 +161,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   files to Quarantine or the macOS Trash; nothing is deleted permanently.
 - Hosted inventory refresh is read-only; host memory actions are serialized,
   confirmed, never retried automatically and followed by readback.
-- Media comparisons never feed the RecommendationEngine; Promote winner is
-  chat-only; recommendations require matching model signatures and
+- `ComparisonRun.feedsRecommendations` is the only gate into the
+  RecommendationEngine, promotion, and showdown: completed chat with ordinary
+  serving settings. Recommendations require matching model signatures and
   environment fingerprints.
 - Workflow evidence is imported explicitly and never relabeled as current.
 - Native serving, verification and chat comparisons default to `--runtime auto`;

@@ -379,7 +379,7 @@ enum ComparisonInsights {
             }
         }
         var seenRuns = Set<String>()
-        for run in runs.sorted(by: { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }) where run.state == .completed && run.effectiveMode == .chat && !run.hasCustomServingConfiguration {
+        for run in runs.sorted(by: { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }) where run.feedsRecommendations {
             // Newer results for a prompt set supersede its older advice, including incomplete reviews.
             guard seenRuns.insert(run.promptSetID).inserted else { continue }
             guard ModelShowdownResults(run: run, models: models, environment: environment, promptSets: promptSets).supportsReplacement else { continue }

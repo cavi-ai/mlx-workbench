@@ -262,8 +262,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
                     }
                 }
                 if let reviewError { ErrorBanner(text: reviewError) }
-                if allowsPromotion, run.state == .completed, !run.hasCustomServingConfiguration,
-                   let winner = run.winner, [firstID, secondID].contains(winner.id),
+                if allowsPromotion, let winner = run.winner, [firstID, secondID].contains(winner.id),
                    let lane = lanes.first(where: { $0.resultKey == winner.id }) {
                     Divider()
                     Button("Use model \(lane.letter)…") { onPromote(winner) }
