@@ -181,6 +181,22 @@ final class ClientSetupSessionTests: XCTestCase {
         }
     }
 
+    func testOpenCodeToolCallCheckPreservesConnectionResult() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ClientConnectionStub.self]
+        let transport = HostHTTPClient(session: URLSession(configuration: configuration))
+        let unsupported = try await ClientConnectionTest.run(client: .opencode, endpoint: endpoint, token: key, http: transport)
+        XCTAssertEqual(unsupported.answer, "CONNECTED")
+        XCTAssertEqual(unsupported.toolCall, .notVerified)
+        let supportedEndpoint = WireEndpoint(baseURL: endpoint.baseURL, modelName: "tool-supported")
+        let supported = try await ClientConnectionTest.run(client: .opencode, endpoint: supportedEndpoint, token: key, http: transport)
+        XCTAssertEqual(supported.answer, "CONNECTED")
+        XCTAssertEqual(supported.toolCall, .passed)
+        let other = try await ClientConnectionTest.run(client: .hermes, endpoint: endpoint, token: key, http: transport)
+        XCTAssertEqual(other.answer, "CONNECTED")
+        XCTAssertNil(other.toolCall)
+    }
+
     private func server(protected: Bool = false) -> ServerInfo {
         ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "running", jit: true,
                    apiKeySHA256: protected ? SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() : nil)
@@ -208,7 +224,23 @@ private final class ClientConnectionStub: URLProtocol {
         switch path {
         case "/v1/responses": body = ["status": "completed", "output": [["content": [["text": "CONNECTED"]]]]]
         case "/v1/messages": body = ["type": "message", "content": [["type": "text", "text": "CONNECTED"]]]
-        case "/v1/chat/completions": body = ["choices": [["message": ["content": "CONNECTED"]]]]
+        case "/v1/chat/completions":
+            let data: Data
+            if let bytes = request.httpBody { data = bytes }
+            else if let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var bytes = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    bytes.append(contentsOf: buffer.prefix(count))
+                }
+                data = bytes
+            } else { data = Data() }
+            let requestBody = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            if requestBody?["model"] as? String == "tool-supported", requestBody?["tools"] != nil {
+                body = ["choices": [["message": ["tool_calls": [["id": "call-1", "type": "function", "function": ["name": "workbench_tool_check", "arguments": "{}"]]]]]]]
+            } else { body = ["choices": [["message": ["content": "CONNECTED"]]]] }
         default: body = ["error": "incorrect path"]
         }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: authorized && versionOK ? 200 : 401,

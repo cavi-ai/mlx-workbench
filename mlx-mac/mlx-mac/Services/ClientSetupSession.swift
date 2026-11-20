@@ -1,9 +1,12 @@
 import Foundation
 import Combine
 
+enum ClientToolCallCheck: Equatable, Sendable { case passed, notVerified }
+
 struct ClientConnectionResult: Equatable, Sendable {
     let protocolName: String
     let answer: String
+    var toolCall: ClientToolCallCheck? = nil
 }
 
 enum ClientConnectionTest {
@@ -47,7 +50,41 @@ enum ClientConnectionTest {
             text = content
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw HostHTTPError.invalidResponse }
-        return ClientConnectionResult(protocolName: name, answer: String(text.prefix(4_000)))
+        var result = ClientConnectionResult(protocolName: name, answer: String(text.prefix(4_000)))
+        if client == .opencode {
+            do {
+                result.toolCall = try await checkToolCall(baseURL: baseURL, model: endpoint.modelName, token: token, http: http) ? .passed : .notVerified
+            } catch {
+                try Task.checkCancellation()
+                if error is CancellationError { throw error }
+                result.toolCall = .notVerified
+            }
+        }
+        return result
+    }
+
+    private static func checkToolCall(baseURL: String, model: String, token: String?, http: HostHTTPClient) async throws -> Bool {
+        let toolName = "workbench_tool_check"
+        let schema: [String: Any] = ["type": "object", "properties": [String: Any](), "additionalProperties": false]
+        let tool: [String: Any] = ["type": "function", "function": ["name": toolName,
+            "description": "Check tool calling", "parameters": schema]]
+        let body: [String: Any] = [
+            "model": model, "stream": false, "max_tokens": 128,
+            "messages": [["role": "user", "content": "Call workbench_tool_check with no arguments."]],
+            "tool_choice": "auto", "tools": [tool],
+        ]
+        let data = try await CaviConnectionClient.request(baseURL: baseURL, path: "v1/chat/completions",
+            body: JSONSerialization.data(withJSONObject: body), token: token, http: http)
+        try Task.checkCancellation()
+        guard let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any], response["error"] == nil,
+              let choice = (response["choices"] as? [[String: Any]])?.first,
+              let message = choice["message"] as? [String: Any], let calls = message["tool_calls"] as? [[String: Any]], calls.count == 1,
+              let call = calls.first, call["type"] as? String == "function",
+              let id = call["id"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let function = call["function"] as? [String: Any], function["name"] as? String == toolName,
+              let arguments = function["arguments"] as? String, let argumentData = arguments.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: argumentData) as? [String: Any], object.isEmpty else { return false }
+        return true
     }
 }
 
