@@ -44,8 +44,8 @@ struct MenuBarView: View {
             ForEach(EndpointDefaultRole.allCases) { role in
                 roleRow(role, models: models)
             }
-            Divider()
             if let review = inventory.actionReview, review.surface == .menuBar {
+                Divider()
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     Text(review.action.title).font(WorkbenchTypography.emphasis)
                     Text(review.service.name)
@@ -59,8 +59,8 @@ struct MenuBarView: View {
                             .disabled(inventory.isChanging || !inventory.mayChange(review.service))
                     }
                 }
-                Divider()
             } else if let error = inventory.actionError(for: .menuBar) {
+                Divider()
                 ErrorBanner(text: error)
             }
             if let error = endpoint.lastError {
@@ -89,10 +89,10 @@ struct MenuBarView: View {
                 .disabled(inventory.isRefreshing)
             }
             HStack {
-                Button("Open MLX Workbench") { openApp() }
+                Button("Open Workbench") { openApp() }.accessibilityLabel("Open MLX Workbench")
                 Button("Settings…") { selectedRouteID = AppRoute.settings.rawValue; openApp() }
                 Spacer()
-                Button("Quit MLX Workbench") { NSApp.terminate(nil) }.keyboardShortcut("q")
+                Button("Quit") { NSApp.terminate(nil) }.accessibilityLabel("Quit MLX Workbench").keyboardShortcut("q")
             }
         }
         .padding(WorkbenchSpacing.md)

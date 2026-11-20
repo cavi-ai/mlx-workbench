@@ -140,7 +140,7 @@ final class MenuBarTests: XCTestCase {
         XCTAssertFalse(source.contains("URL(fileURLWithPath:"))
         XCTAssertTrue(source.contains("inventory.confirm(surface: .menuBar)"))
         XCTAssertFalse(source.contains("(spec 09"))
-        XCTAssertTrue(source.contains("Button(\"Open MLX Workbench\")"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open MLX Workbench\")"))
         XCTAssertTrue(source.contains(".keyboardShortcut(\"q\")"))
         XCTAssertTrue(source.contains("Button(\"Open Serving\")"))
         XCTAssertFalse(source.contains("Manage served models"))

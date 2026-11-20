@@ -20,31 +20,36 @@ struct ServingRoleDefaultsSheet: View {
             Text("Choose a load-on-request endpoint for each role.")
                 .font(WorkbenchTypography.secondary)
             ForEach(EndpointDefaultRole.allCases) { role in
-                Picker(role.title, selection: Binding<UUID?>(
-                    get: { endpoint.fleet.roleDefaults?[role] },
-                    set: { assignmentError = endpoint.setRoleDefault(role, slotID: $0) ? nil : endpoint.lastError }
-                )) {
-                    Text("No default").tag(UUID?.none)
-                    if let saved = endpoint.fleet.roleDefaults?[role], !eligible.contains(where: { $0.id == saved }) {
-                        Text("Unavailable endpoint").tag(Optional(saved))
+                let slot = endpoint.fleet.roleDefaults?[role].flatMap { id in eligible.first { $0.id == id } }
+                HStack(alignment: .top) {
+                    Text(role.title).frame(width: 65, alignment: .leading)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        Picker(role.title, selection: Binding<UUID?>(
+                            get: { endpoint.fleet.roleDefaults?[role] },
+                            set: { assignmentError = endpoint.setRoleDefault(role, slotID: $0) ? nil : endpoint.lastError }
+                        )) {
+                            Text("No default").tag(UUID?.none)
+                            if let saved = endpoint.fleet.roleDefaults?[role], !eligible.contains(where: { $0.id == saved }) {
+                                Text("Unavailable endpoint").tag(Optional(saved))
+                            }
+                            ForEach(eligible) { slot in
+                                Text("\(MenuBarPresentation.modelName(slot.modelPath, models: models)) · :\(String(slot.port))")
+                                    .tag(Optional(slot.id))
+                            }
+                        }
+                        .labelsHidden().pickerStyle(.menu)
+                        .accessibilityLabel(role.title)
+                        .accessibilityIdentifier("serving-default-\(role.rawValue)")
+                        .disabled(endpoint.isChanging)
+                        if let slot, let detail = residency(slot) {
+                            Text(detail).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }
                     }
-                    ForEach(eligible) { slot in
-                        Text("\(MenuBarPresentation.modelName(slot.modelPath, models: models)) · :\(String(slot.port))")
-                            .tag(Optional(slot.id))
-                    }
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("serving-default-\(role.rawValue)")
-                .disabled(endpoint.isChanging)
-                if let id = endpoint.fleet.roleDefaults?[role], let slot = eligible.first(where: { $0.id == id }) {
-                    HStack {
-                        Text(residency(slot)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                        Spacer()
-                        Button("Open endpoint") { dismiss(); onOpen(slot) }
-                    }
+                    Spacer()
+                    if let slot { Button("Open endpoint") { dismiss(); onOpen(slot) } }
                 }
             }
-            Text("Coding can unload after an idle period; Utility can release after each request. Roles sharing an endpoint share its memory policy. Open an endpoint to review it.")
+            Text("Use a short idle timeout for Coding or release after each Utility request. Roles sharing an endpoint also share its memory policy.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: assignmentError)
             HStack {
@@ -55,8 +60,8 @@ struct ServingRoleDefaultsSheet: View {
         .padding(WorkbenchSpacing.lg)
         .frame(width: 460)
     }
-    private func residency(_ slot: EndpointSlot) -> String {
-        guard let policy = endpoint.slotMemoryPolicies[slot.id] ?? slot.memoryPolicy else { return "Residency unknown" }
+    private func residency(_ slot: EndpointSlot) -> String? {
+        guard let policy = endpoint.slotMemoryPolicies[slot.id] ?? slot.memoryPolicy else { return nil }
         if policy.keepLoaded { return "Keep loaded" }
         if policy.releaseAfterRequest == true { return "Release after each request" }
         if policy.idleTimeoutSeconds > 0 { return "Unload after \(policy.idleTimeoutSeconds.formatted()) seconds idle" }
