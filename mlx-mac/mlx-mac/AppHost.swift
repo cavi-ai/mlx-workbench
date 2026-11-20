@@ -286,15 +286,13 @@ class AppHost {
             return self.hostedComparison.activeRunID != nil || self.comparison.activeRunID != nil
         }
         self.servingInventory.mayChange = { [weak self] service in
-            guard let self else { return false }
-            return self.comparison.hasLoadedHistory && !self.occupancy.blocksStop(modelIdentity: service.modelID)
-                && !self.modelHosts.resourceBusy && (!service.isWorkbenchManaged || !self.endpoint.isChanging)
+            self?.servedModelChange(identity: service.modelID, workbenchManaged: service.isWorkbenchManaged).allowed ?? false
         }
         self.servingInventory.mutate = { [weak self] service, action in
             guard let self, let server = service.server else {
                 throw WorkflowEvidenceError.invalid("Review this model through its provider's memory controls.")
             }
-            guard self.comparison.hasLoadedHistory, !self.occupancy.blocksStop(server) else {
+            guard self.servedModelChange(identity: service.modelID, workbenchManaged: service.isWorkbenchManaged).allowed else {
                 throw WorkflowEvidenceError.invalid("Finish work using this model before changing its server.")
             }
             if action == .releaseCache {
@@ -1134,17 +1132,20 @@ class AppHost {
         return "\(saved) Endpoint requested; check Run for its current status."
     }
 
-    /// The one stop/unload path for the toolbar and Run; models a run serves are refused.
-    func unloadServing(_ server: ServerInfo) async -> Bool {
-        guard comparison.hasLoadedHistory, !occupancy.blocksStop(server) else { return false }
-        return await endpoint.unloadServer(server)
+    /// Stop and unload permission for one served model. `workbenchManaged` waits for an in-flight fleet change.
+    func servedModelChange(identity: String, workbenchManaged: Bool) -> ServedModelChange {
+        ServedModelChange(
+            historyLoaded: comparison.hasLoadedHistory,
+            blockedByWork: occupancy.blocksStop(modelIdentity: identity),
+            hostMemoryBusy: modelHosts.resourceBusy,
+            endpointChanging: endpoint.isChanging,
+            workbenchManaged: workbenchManaged)
     }
 
-    /// Run's stop for the selected model's server; a model a run serves is refused before any workflow call.
-    func stopSelectedServer(modelPath: String) async -> Bool {
-        guard comparison.hasLoadedHistory, !occupancy.blocksStop(modelIdentity: modelPath) else { return false }
-        await modelWorkflow.stopServer(modelPath: modelPath)
-        return true
+    /// Toolbar unload for a discovered server. Fleet slots stop through `EndpointChanges`.
+    func unloadServing(_ server: ServerInfo) async -> Bool {
+        guard servedModelChange(identity: server.modelIdentity, workbenchManaged: false).allowed else { return false }
+        return await endpoint.unloadServer(server)
     }
 
     /// Every model active work holds: running and endpoint servers, preferences,

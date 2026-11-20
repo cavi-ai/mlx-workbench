@@ -1054,11 +1054,11 @@ extension RunRemodelTests {
 
         host.verification.verifyNow(modelPath: path, signature: nil)
         XCTAssertTrue(host.occupancy.blocksStop(server))
+        XCTAssertFalse(host.servedModelChange(identity: path, workbenchManaged: true).allowed)
+        XCTAssertFalse(host.servingInventory.mayChange(observedService(server, managed: true)))
 
-        let selected = await host.stopSelectedServer(modelPath: path)
         let unloaded = await host.unloadServing(server)
 
-        XCTAssertFalse(selected)
         XCTAssertFalse(unloaded)
         XCTAssertEqual(counter.count("serveStop"), 0)
         XCTAssertEqual(counter.count("serveStatus"), statusBefore)
@@ -1085,11 +1085,12 @@ extension RunRemodelTests {
         try await host.hostedComparison.start(
             targets: [HostedComparisonTarget(local: Fixture.model(path: path), capturedAt: Date())],
             promptSet: PromptSet(id: "lane", name: "Lane", useCase: nil, prompts: [PromptEntry(id: "a", text: "Hi")], origin: .userCreated))
+        await host.comparison.waitForHistory()
 
-        let selected = await host.stopSelectedServer(modelPath: path)
+        XCTAssertFalse(host.servedModelChange(identity: path, workbenchManaged: true).allowed)
+        XCTAssertFalse(host.servingInventory.mayChange(observedService(server, managed: true)))
         let unloaded = await host.unloadServing(server)
 
-        XCTAssertFalse(selected)
         XCTAssertFalse(unloaded)
         XCTAssertEqual(counter.count("serveStop"), 0)
         XCTAssertEqual(endpointCalls.count("stop"), 0)
@@ -1111,17 +1112,39 @@ extension RunRemodelTests {
         XCTAssertTrue(protected.contains("/fixture/selected-mlx"))
     }
 
-    func testUnprotectedServerStopsThroughTheSelectedPath() async {
+    func testUnprotectedServerReachesUnloadWhenTheDecisionAllowsIt() async {
         let counter = CallCounter()
+        let endpointCalls = CallCounter()
         let server = Fixture.server(path, port: 8766)
-        let (host, _) = makeProtectedHost(counter: counter, endpointCalls: CallCounter(), server: server)
+        let (host, _) = makeProtectedHost(counter: counter, endpointCalls: endpointCalls, server: server)
         await host.comparison.waitForHistory()
         await host.modelWorkflow.refreshServers()
 
-        let stopped = await host.stopSelectedServer(modelPath: path)
+        XCTAssertTrue(host.servedModelChange(identity: path, workbenchManaged: false).allowed)
+        XCTAssertTrue(host.servingInventory.mayChange(observedService(server, managed: false)))
+        let unloaded = await host.unloadServing(server)
 
-        XCTAssertTrue(stopped)
-        XCTAssertEqual(counter.count("serveStop"), 1)
+        XCTAssertFalse(unloaded)
+        XCTAssertEqual(endpointCalls.count("stop"), 1)
+        XCTAssertEqual(counter.count("serveStop"), 0)
+    }
+
+    func testServedModelChangeRefusesUntilHistoryWorkAndFleetAgree() {
+        let open = ServedModelChange(historyLoaded: true, blockedByWork: false, hostMemoryBusy: false, endpointChanging: false, workbenchManaged: true)
+        XCTAssertTrue(open.allowed)
+        XCTAssertFalse(ServedModelChange(historyLoaded: false, blockedByWork: false, hostMemoryBusy: false, endpointChanging: false, workbenchManaged: false).allowed)
+        XCTAssertFalse(ServedModelChange(historyLoaded: true, blockedByWork: true, hostMemoryBusy: false, endpointChanging: false, workbenchManaged: false).allowed)
+        XCTAssertFalse(ServedModelChange(historyLoaded: true, blockedByWork: false, hostMemoryBusy: true, endpointChanging: false, workbenchManaged: false).allowed)
+        XCTAssertFalse(ServedModelChange(historyLoaded: true, blockedByWork: false, hostMemoryBusy: false, endpointChanging: true, workbenchManaged: true).allowed)
+        XCTAssertTrue(ServedModelChange(historyLoaded: true, blockedByWork: false, hostMemoryBusy: false, endpointChanging: true, workbenchManaged: false).allowed)
+    }
+
+    private func observedService(_ server: ServerInfo, managed: Bool) -> ServingServiceObservation {
+        ServingServiceObservation(
+            id: "svc", sourceID: "local", providerName: "MLX Workbench", modelID: server.modelIdentity,
+            modelPath: server.modelIdentity, baseURL: nil, runtime: server.runtime, residency: .loaded,
+            isLocal: true, isWorkbenchManaged: managed, modelProcessID: server.pid, reportedMemoryBytes: nil,
+            server: server, host: nil, hostedModel: nil, capturedAt: Date())
     }
 }
 

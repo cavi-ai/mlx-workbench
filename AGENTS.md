@@ -75,8 +75,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   in one locked JSON mutation and publishes them after the write succeeds.
 - Default state paths: `Services/WorkbenchStatePaths.swift`.
 - Model identity and occupancy: `HFRepoID` (cached symlink resolution,
-  `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop,
-  Unload, reclaim and guidance refuse claimed models.
+  `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop
+  and Unload ask `ServedModelChange` before they run. Reclaim and guidance
+  refuse claimed models.
 - Library: `ModelLibraryBuilder`, `LibraryView`; inspector tasks
   (`InferenceTaskCoordinator`, `InferenceTaskPanels`, `TaskDestinationPanel`; `ServedTaskSessions` and `ServedTaskAPI` bind served jobs to their original process and engine-owned artifact root); LM Studio source
   (`LMStudioShelfResolver`, `LMStudioShelfPresentation`); Hosted models

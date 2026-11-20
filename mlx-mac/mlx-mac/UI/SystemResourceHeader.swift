@@ -96,7 +96,7 @@ struct SystemResourceHeader: View {
             if let servingInventory {
                 ServingInventoryResourceSection(
                     inventory: servingInventory, endpoint: endpoint, servers: servers, models: libraryModels,
-                    occupancy: occupancy, historyLoaded: historyLoaded,
+                    occupancy: occupancy, historyLoaded: historyLoaded, hostMemoryBusy: hosts?.resourceBusy == true,
                     onManage: { rowID in
                         expanded = false
                         onManageServing(rowID)
@@ -137,7 +137,9 @@ struct SystemResourceHeader: View {
                             .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil ||
                                       server.modelState == "unloaded" || server.modelState == "loading" || server.modelState == "unloading" ||
                                       (server.activeRequests ?? 0) > 0 ||
-                                      occupancy.blocksStop(server))
+                                      !ServedModelChange(historyLoaded: historyLoaded, blockedByWork: occupancy.blocksStop(server),
+                                                         hostMemoryBusy: hosts?.resourceBusy == true, endpointChanging: endpoint.isChanging,
+                                                         workbenchManaged: false).allowed)
                             .help(server.jit == true
                                   ? "Release model weights while keeping this endpoint reachable. The next request loads the same local files."
                                   : "Stop this server and disable automatic restart. Enable Load on request in Run for JIT unload.")
@@ -347,6 +349,7 @@ private struct ServingInventoryResourceSection: View {
     let models: [LibraryModel]
     let occupancy: ModelOccupancy
     let historyLoaded: Bool
+    let hostMemoryBusy: Bool
     let onManage: (String?) -> Void
     let onReview: (ServingActionKind, ServingServiceObservation) -> Void
 
@@ -367,7 +370,7 @@ private struct ServingInventoryResourceSection: View {
             }
             ForEach(rows) { row in
                 ServingPopoverRow(row: row, inventory: inventory, endpoint: endpoint, servers: servers, models: models,
-                                  occupancy: occupancy, historyLoaded: historyLoaded, onManage: onManage, onReview: onReview)
+                                  occupancy: occupancy, historyLoaded: historyLoaded, hostMemoryBusy: hostMemoryBusy, onManage: onManage, onReview: onReview)
                 if row.id != rows.last?.id { Divider() }
             }
             Text("Process RAM is observed resident memory and may share pages. Provider readings and source estimates are separate; none are added to system headroom.")
@@ -389,6 +392,7 @@ private struct ServingPopoverRow: View {
     let models: [LibraryModel]
     let occupancy: ModelOccupancy
     let historyLoaded: Bool
+    let hostMemoryBusy: Bool
     let onManage: (String?) -> Void
     let onReview: (ServingActionKind, ServingServiceObservation) -> Void
     @State private var detailsOpen = false
@@ -409,6 +413,11 @@ private struct ServingPopoverRow: View {
                 + (server.adapterSummary.map { " · " + $0 } ?? "")
         case .service(let service): service.name
         }
+    }
+
+    private func mayStop(_ identity: String) -> Bool {
+        ServedModelChange(historyLoaded: historyLoaded, blockedByWork: occupancy.blocksStop(modelIdentity: identity),
+                          hostMemoryBusy: hostMemoryBusy, endpointChanging: endpoint.isChanging, workbenchManaged: true).allowed
     }
 
     private var identity: String {
@@ -509,11 +518,11 @@ private struct ServingPopoverRow: View {
             if slot.enabled {
                 Button("Stop") {
                     Task {
-                        guard historyLoaded, !occupancy.blocksStop(modelIdentity: slot.modelPath) else { return }
+                        guard mayStop(slot.modelPath) else { return }
                         await endpoint.setSlotEnabled(id: slot.id, false)
                     }
                 }
-                .disabled(endpoint.isChanging || !historyLoaded || occupancy.blocksStop(modelIdentity: slot.modelPath))
+                .disabled(!mayStop(slot.modelPath))
             } else {
                 Button("Start…") { onManage(row.id) }
                     .disabled(endpoint.isChanging || !historyLoaded || occupancy.blocksStop(modelIdentity: slot.modelPath))

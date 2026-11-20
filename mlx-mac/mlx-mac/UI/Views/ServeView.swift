@@ -410,7 +410,7 @@ struct ServeView: View {
                         Button(slot.enabled ? "Stop server" : "Start server…") {
                             if slot.enabled { Task { if let error = await changes.stop(slot) { actionError = error } } }
                             else { prepare(slot: slot, remove: false) }
-                        }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging || !comparison.hasLoadedHistory)
+                        }.buttonStyle(.workbenchPrimary).disabled(slot.enabled ? !changes.mayStop(slot) : (endpoint.isChanging || !comparison.hasLoadedHistory))
                             .accessibilityIdentifier("serving-toggle-server")
                         slotMenu(slot, server: server, service: service, name: name)
                     } else if let service = ServingWorkspacePresentation.service(row), service.canStop {
@@ -1615,9 +1615,13 @@ struct EndpointChanges {
         return verdict.summary
     }
 
+    func mayStop(_ slot: EndpointSlot) -> Bool {
+        appHost.servedModelChange(identity: slot.modelPath, workbenchManaged: true).allowed
+    }
+
     /// Why this endpoint cannot stop or be removed now; nil when it can.
     func stopRefusal(_ slot: EndpointSlot) -> String? {
-        guard appHost.comparison.hasLoadedHistory, !appHost.occupancy.blocksStop(modelIdentity: slot.modelPath) else {
+        guard mayStop(slot) else {
             return "Finish the operation using this model before stopping or removing its endpoint."
         }
         return nil
