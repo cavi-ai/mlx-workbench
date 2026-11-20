@@ -4948,7 +4948,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual((saved.first?["roleDefaults"] as? [String: String])?["coding"]?.lowercased(), slotID.lowercased())
         let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 10)); menu.click()
-        XCTAssertTrue(text(containing: "Coding").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["serving-menu-role-coding"].waitForExistence(timeout: 10))
         let menuCapture = XCTAttachment(screenshot: app.screenshot())
         menuCapture.name = "Serving-defaults-menu"
         menuCapture.lifetime = .keepAlways

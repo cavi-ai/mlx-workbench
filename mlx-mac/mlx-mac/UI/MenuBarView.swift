@@ -171,6 +171,7 @@ struct MenuBarView: View {
                         .font(WorkbenchTypography.secondary)
                 }
             }.buttonStyle(.plain)
+                .accessibilityIdentifier("serving-menu-role-\(role.rawValue)")
         } else {
             HStack {
                 Text(role.title).font(WorkbenchTypography.emphasis)

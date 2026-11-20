@@ -29,7 +29,7 @@ struct ServingRoleDefaultsSheet: View {
                         Text("Unavailable endpoint").tag(Optional(saved))
                     }
                     ForEach(eligible) { slot in
-                        Text("\(MenuBarPresentation.modelName(slot.modelPath, models: models)) · \(slot.port)")
+                        Text("\(MenuBarPresentation.modelName(slot.modelPath, models: models)) · :\(String(slot.port))")
                             .tag(Optional(slot.id))
                     }
                 }
