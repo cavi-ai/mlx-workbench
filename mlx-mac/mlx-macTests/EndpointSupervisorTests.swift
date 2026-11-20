@@ -7,12 +7,12 @@ import XCTest
 final class EndpointSupervisorTests: XCTestCase {
     func testRoleDefaultsPersistShareAndClearOnRemoval() async throws {
         let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
-        let world = SplashPresetWorld(root: home)
+        let world = FakeServeWorld()
         let jit = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/splash", loadOnRequest: true)
         let eager = EndpointSlot(enabled: true, port: 8926, modelPath: "/Models/eager", loadOnRequest: false)
         let store = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
         try store.replaceAll([EndpointFleetConfig(slots: [jit, eager], installedAtLogin: false)])
-        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { world.status() },
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")), fleetStore: store)
         XCTAssertFalse(supervisor.setRoleDefault(.coding, slotID: eager.id))
         XCTAssertTrue(supervisor.setRoleDefault(.coding, slotID: jit.id))
