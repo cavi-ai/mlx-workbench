@@ -120,7 +120,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
 - Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
   `ComparisonMediaRunner`, histories via `ComparisonHistoryWorker`),
   `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; classification set
-  health via `ClassificationSetHealth`; Classify test sets via `ClassificationTestSets`; outputs in
+  health and the shared Classify catalog via `ClassificationSets`; outputs in
   `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
   `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
   `ComparisonPickerViews.swift`, `CompareSheets.swift`.

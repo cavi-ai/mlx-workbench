@@ -1260,7 +1260,7 @@ final class InferenceTaskTests: XCTestCase {
 
     func testClassificationTestSetsListBuiltinSetsBeforeSavedClassificationSets() {
         let chat = PromptSet(id: "saved-chat", name: "Chat", useCase: nil, prompts: [PromptEntry(id: "p", text: "Hi")], origin: .userCreated)
-        let sets = ClassificationTestSets.sets([Self.savedRoutingSet, chat] + ComparisonMediaFixtures.all)
+        let sets = ClassificationSets.sets([Self.savedRoutingSet, chat] + ComparisonMediaFixtures.all)
         XCTAssertTrue(sets.contains { $0.id == ComparisonMediaFixtures.supportRoutingSet.id })
         XCTAssertEqual(sets.last?.id, Self.savedRoutingSet.id)
         XCTAssertEqual(sets.filter { $0.id == Self.savedRoutingSet.id }.count, 1)

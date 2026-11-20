@@ -140,7 +140,7 @@ struct ClassificationSetHealthView: View {
     @ObservedObject var comparison: ComparisonCoordinator
 
     var body: some View {
-        let health = ClassificationSetHealth(set: set, runs: comparison.runs) {
+        let health = ClassificationSets.health(set: set, runs: comparison.runs) {
             ComparePresentation.displayName(for: $0, models: [])
         }
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {

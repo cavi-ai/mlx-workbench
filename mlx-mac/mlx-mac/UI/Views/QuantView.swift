@@ -436,7 +436,7 @@ struct QuantView: View {
     }
 
     private var modePromptSets: [PromptSet] {
-        let stored = ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
+        let stored = mode == .classification ? ClassificationSets.sets(comparison.promptSets) : ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
         return reusedPromptSet.map { $0.effectiveMode == mode ? [$0] + stored : stored } ?? stored
     }
 

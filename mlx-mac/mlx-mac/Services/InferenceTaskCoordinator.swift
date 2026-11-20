@@ -94,7 +94,7 @@ struct ClassificationDraft: Equatable, Sendable {
     /// The first built-in classification set's first entry, so a fresh panel starts without typing.
     static let starter: ClassificationDraft = {
         var draft = ClassificationDraft()
-        for set in ClassificationTestSets.builtin { if draft.load(set) { break } }
+        for set in ClassificationSets.builtin { if draft.load(set) { break } }
         return draft
     }()
 
@@ -170,26 +170,6 @@ struct ClassificationDraft: Equatable, Sendable {
         self.questions = drafts
         source = nil
         showsValidation = false
-    }
-}
-
-/// Classification test sets offered by the inspector: built-in sets first, then saved sets.
-enum ClassificationTestSets {
-    static let builtin = (BuiltinPromptSets.all + ComparisonMediaFixtures.all)
-        .filter { $0.origin == .builtin && $0.effectiveMode == .classification }
-
-    /// `promptSets` is Compare's list: built-in and saved sets of every mode.
-    static func sets(_ promptSets: [PromptSet]) -> [PromptSet] {
-        let builtinIDs = Set(builtin.map(\.id))
-        return builtin + promptSets.filter {
-            $0.origin == .userCreated && $0.effectiveMode == .classification && !builtinIDs.contains($0.id)
-        }
-    }
-
-    /// One line naming an entry in the entry picker.
-    static func title(_ entry: PromptEntry) -> String {
-        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
-        return text.count > 60 ? String(text.prefix(60)) + "…" : text
     }
 }
 
