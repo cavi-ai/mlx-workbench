@@ -167,11 +167,18 @@ struct ClientSetupWizard: View {
             if let result = session.result {
                 Label("Server responded over \(result.protocolName)", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(WorkbenchColor.success).accessibilityIdentifier("connect-app-tested")
+                if let toolCall = result.toolCall {
+                    Label(toolCall == .passed ? "Tool call verified" : "Tool call not verified",
+                          systemImage: toolCall == .passed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(toolCall == .passed ? WorkbenchColor.success : WorkbenchColor.warning)
+                        .accessibilityIdentifier("connect-app-tool-tested")
+                }
                 Text(result.answer).font(WorkbenchTypography.secondary).textSelection(.enabled)
                 Text("Open a new \(session.client.title) session to use this model. Project settings or launch options can override user settings.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else {
-                Text("Test sends one short prompt using this client’s API protocol and the endpoint’s inference key. It may load the selected model.")
+                Text(session.client == .opencode ? "Test checks for a text reply and a tool call. It may load the model." : "Test sends one short prompt using this client’s API protocol and the endpoint’s inference key. It may load the selected model.")
                     .font(WorkbenchTypography.secondary)
             }
             if session.client == .openclaw {

@@ -24,7 +24,9 @@ Write targets are these files, in their standard folder or a folder chosen with 
 
 For OpenCode, the endpoint list also offers **Front door** while the front door runs (**Settings → Serving → Front door**, see [Run](run.md)). Setup writes the front door's base URL and key and lists every model it routes, with the first as OpenCode's default; models already listed for the same port stay. Workbench reads the front door's model list again before writing and refuses the write when it changed.
 
-**Test connection** sends one short prompt through the bundled CAVI API client using Chat Completions, Responses or Messages, according to the selected app. It checks the exact written configuration and server identity before and after the request. Testing may load the selected model. Success means the server responded using that protocol; open a new client session to use the configuration. App detection is separate from connection testing. Missing apps have an official installation link and can be configured before installation. OpenClaw gateways need a restart to reload configuration. Project settings and launch options can override user settings.
+**Test connection** sends a short prompt through the bundled CAVI API client using Chat Completions, Responses or Messages, according to the selected app. It checks the exact written configuration and server identity before and after testing. Testing may load the selected model. Success means the server responded using that protocol; open a new client session to use the configuration. App detection is separate from connection testing. Missing apps have an official installation link and can be configured before installation. OpenClaw gateways need a restart to reload configuration. Project settings and launch options can override user settings.
+
+For OpenCode, the test also checks whether the model returns a tool call, reports an unverified call separately, and does not execute the tool.
 
 **Undo setup** reverses that setup transaction while its files still match the applied contents. **Connect another app** reuses the same flow for another client.
 
