@@ -102,6 +102,12 @@ final class CompareRemodelTests: XCTestCase {
             variants: ["/a"], results: [result([sample("stop")])], startedAt: Date(), state: .completed,
             promptEntries: prompts)
         XCTAssertTrue(ChatComparisonPresentation.completion(run.results[0], in: run).isComplete)
+        XCTAssertTrue(run.feedsRecommendations)
+        XCTAssertNotNil(run.winner)
+        run.laneConfigurations = [ComparisonLaneConfiguration(id: "a", modelPath: "/a", modelSignature: nil, runtime: "splash")]
+        XCTAssertFalse(run.feedsRecommendations)
+        XCTAssertNil(run.winner, "Custom serving stays out of recommendations and promotion")
+        run.laneConfigurations = nil
         XCTAssertNotNil(run.winner)
         for samples in [[sample("length")], [sample(nil)], [], [sample("stop"), sample("stop")],
                         [sample("stop", output: "")], [sample("stop", output: "<think>Still thinking")]] {

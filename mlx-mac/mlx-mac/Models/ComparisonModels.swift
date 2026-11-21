@@ -1215,9 +1215,14 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
 
     var effectiveMode: ComparisonMode { mode ?? .chat }
 
+    /// Completed chat on the model's ordinary serving settings. Recommendations, promotion, and showdown read this and nothing else.
+    var feedsRecommendations: Bool {
+        state == .completed && effectiveMode == .chat && !hasCustomServingConfiguration
+    }
+
     /// Fastest eligible chat variant; raw speed alone cannot establish completion.
     var winner: VariantResult? {
-        guard effectiveMode == .chat, state == .completed else { return nil }
+        guard feedsRecommendations else { return nil }
         return results
             .filter { metricValue(of: $0) != nil && ChatComparisonPresentation.completion($0, in: self).isComplete }
             .sorted {
@@ -1481,7 +1486,7 @@ struct ModelPerformanceProfile: Equatable {
         runs: [ComparisonRun]
     ) -> ModelPerformanceProfile? {
         let matches: [(measuredAt: Date, result: VariantResult)] = runs
-            .filter { $0.state == .completed && $0.effectiveMode == .chat && !$0.hasCustomServingConfiguration }
+            .filter(\.feedsRecommendations)
             .compactMap { run in
                 guard let result = run.results.first(where: {
                     $0.modelPath == modelPath

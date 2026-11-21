@@ -426,10 +426,10 @@ extension EndpointFleetConfig {
             if let reason = slot.inferenceOptions.validationError {
                 throw EndpointFleetValidation.invalidInference(slot.id, reason)
             }
-            if slot.splashPresetName != nil && (!slot.usesJIT || slot.servingProfile != nil || slot.inferenceOptions.accelerationRequested) {
+            if slot.splashPresetName != nil && !ServeLaunch.splashPresetIsLegal(jit: slot.usesJIT, hasServingProfile: slot.servingProfile != nil, accelerationRequested: slot.inferenceOptions.accelerationRequested) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
             }
-            if slot.servingProfile != nil && (slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff) {
+            if slot.servingProfile != nil && !ServeLaunch.profileAllows(accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
             }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }

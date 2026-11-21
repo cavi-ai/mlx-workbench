@@ -92,3 +92,27 @@ struct ClassificationSetHealth: Equatable {
         }
     }
 }
+
+/// Classification sets and their health. Compare and the inspector both read this list.
+enum ClassificationSets {
+    static let builtin = (BuiltinPromptSets.all + ComparisonMediaFixtures.all)
+        .filter { $0.origin == .builtin && $0.effectiveMode == .classification }
+
+    /// Built-in classification sets first, then saved sets that are not already built in.
+    static func sets(_ promptSets: [PromptSet]) -> [PromptSet] {
+        let builtinIDs = Set(builtin.map(\.id))
+        return builtin + promptSets.filter {
+            $0.origin == .userCreated && $0.effectiveMode == .classification && !builtinIDs.contains($0.id)
+        }
+    }
+
+    static func health(set: PromptSet, runs: [ComparisonRun], laneName: (String) -> String = { $0 }) -> ClassificationSetHealth {
+        ClassificationSetHealth(set: set, runs: runs, laneName: laneName)
+    }
+
+    /// One line naming an entry in the entry picker.
+    static func title(_ entry: PromptEntry) -> String {
+        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+        return text.count > 60 ? String(text.prefix(60)) + "…" : text
+    }
+}

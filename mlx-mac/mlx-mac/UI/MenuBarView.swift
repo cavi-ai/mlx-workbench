@@ -112,11 +112,13 @@ struct MenuBarView: View {
                                 Button(slot.enabled ? "Stop" : "Start…") {
                                     if slot.enabled {
                                         Task {
-                                            guard comparison.hasLoadedHistory, !appHost.occupancy.blocksStop(modelIdentity: slot.modelPath) else { return }
+                                            guard appHost.servedModelChange(identity: slot.modelPath, workbenchManaged: true).allowed else { return }
                                             await endpoint.setSlotEnabled(id: slot.id, false)
                                         }
                                     } else { openManager(rowID: row.id) }
-                                }.disabled(endpoint.isChanging || !comparison.hasLoadedHistory || appHost.occupancy.blocksStop(modelIdentity: slot.modelPath))
+                                }.disabled(slot.enabled
+                                    ? !appHost.servedModelChange(identity: slot.modelPath, workbenchManaged: true).allowed
+                                    : (endpoint.isChanging || !comparison.hasLoadedHistory || appHost.occupancy.blocksStop(modelIdentity: slot.modelPath)))
                                 if let service, service.canUnload {
                                     Button("Unload model…") { prepare(.unload, service: service) }
                                         .disabled(inventory.isChanging || !inventory.mayChange(service))

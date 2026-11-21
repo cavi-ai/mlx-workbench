@@ -86,7 +86,8 @@ struct ReclaimDiskPanel: View {
     }
 
     private func content(_ storage: ScanStorage) -> some View {
-        let protected = appHost.occupancy.protectedPaths.union(reclaim.protectedPaths())
+        let ownership = appHost.reclaimOwnership()
+        let protected = ownership.paths
         let duplicates = appHost.scanResult?.duplicates ?? []
         let all = DiskLedger.models(storage: storage, families: appHost.scanResult?.families ?? [], duplicates: duplicates,
                                     lastUsedByPath: usage.lastUsedByPath, protectedPaths: protected, keep: keep)
@@ -95,13 +96,14 @@ struct ReclaimDiskPanel: View {
         let modified = Dictionary((appHost.librarySnapshot?.models ?? []).compactMap { model in
             model.item.modifiedAt.map { (model.item.path, Date(timeIntervalSince1970: TimeInterval($0))) }
         }, uniquingKeysWith: { first, _ in first })
-        let suggestions = DiskLedger.suggestions(models: all, items: storage.items, duplicates: duplicates,
-                                                 staleBefore: staleBefore, modifiedByPath: modified)
+        let suggestions = ownership.ready ? DiskLedger.suggestions(models: all, items: storage.items, duplicates: duplicates,
+                                                 staleBefore: staleBefore, modifiedByPath: modified) : []
         let shown = DiskLedger.filter(all, by: filter, staleBefore: staleBefore)
-        let removable = Set(all.flatMap(\.removable).map(\.id))
+        let removable = ownership.ready ? Set(all.flatMap(\.removable).map(\.id)) : []
         let selection = selected.intersection(removable)
         let freed = DiskLedger.freedBytes(removing: selection, items: storage.items)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+            if let refusal = ownership.refusal { ErrorBanner(text: refusal) }
             switch reclaim.copyError {
             case .serving(let error):
                 ErrorBanner(text: "Model removal is paused until serving ownership can be checked.")

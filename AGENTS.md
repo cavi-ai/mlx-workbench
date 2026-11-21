@@ -75,8 +75,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   in one locked JSON mutation and publishes them after the write succeeds.
 - Default state paths: `Services/WorkbenchStatePaths.swift`.
 - Model identity and occupancy: `HFRepoID` (cached symlink resolution,
-  `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop,
-  Unload, reclaim and guidance refuse claimed models.
+  `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop
+  and Unload ask `ServedModelChange` before they run. Reclaim and guidance
+  refuse claimed models.
 - Library: `ModelLibraryBuilder`, `LibraryView`; inspector tasks
   (`InferenceTaskCoordinator`, `InferenceTaskPanels`, `TaskDestinationPanel`; `ServedTaskSessions` and `ServedTaskAPI` bind served jobs to their original process and engine-owned artifact root); LM Studio source
   (`LMStudioShelfResolver`, `LMStudioShelfPresentation`); Hosted models
@@ -93,7 +94,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:
   `ConvertedSourceCleanup`.
 - Run and endpoints: `ServedModelsView` and `MenuBarView` share `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
-  JIT gateway, memory policy, source-bound acceleration settings), transient endpoint prompts (`EndpointTestCoordinator`,
+  JIT gateway, memory policy, source-bound acceleration settings). `ServeLaunch` decides which runtime,
+  Splash preset, and memory policy may be combined. Transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
   `DuplicationPolicyCoordinator` (`Services/DuplicationPolicy.swift`) edits the duplicate-serving allowlist from Settings
@@ -118,7 +120,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
 - Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
   `ComparisonMediaRunner`, histories via `ComparisonHistoryWorker`),
   `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; classification set
-  health via `ClassificationSetHealth`; Classify test sets via `ClassificationTestSets`; outputs in
+  health and the shared Classify catalog via `ClassificationSets`; outputs in
   `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
   `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
   `ComparisonPickerViews.swift`, `CompareSheets.swift`.
@@ -128,6 +130,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   Client adapters own credential fields; Zed keys stay in its own credential store.
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
   `DiskLedger` builds Reclaim's per-model disk table, version groups and suggested removals.
+  `ReclaimOwnership` is the protected-path answer; unloaded history refuses a move instead of treating every model root as protected.
   `ModelPurposeStore` owns durable keep reasons; `ModelFamilyReview` builds related-name review groups and identity-bound Compare handoffs.
   `ModelShowdownResults` validates recorded chat cohorts for task-specific result cards and replacement advice.
   Batch moves and quarantine-history refresh use a serial I/O queue; failed
@@ -160,8 +163,9 @@ Behavior detail for each area is in the operator guide; this lists owners.
   files to Quarantine or the macOS Trash; nothing is deleted permanently.
 - Hosted inventory refresh is read-only; host memory actions are serialized,
   confirmed, never retried automatically and followed by readback.
-- Media comparisons never feed the RecommendationEngine; Promote winner is
-  chat-only; recommendations require matching model signatures and
+- `ComparisonRun.feedsRecommendations` is the only gate into the
+  RecommendationEngine, promotion, and showdown: completed chat with ordinary
+  serving settings. Recommendations require matching model signatures and
   environment fingerprints.
 - Workflow evidence is imported explicitly and never relabeled as current.
 - Native serving, verification and chat comparisons default to `--runtime auto`;

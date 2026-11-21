@@ -436,7 +436,7 @@ struct QuantView: View {
     }
 
     private var modePromptSets: [PromptSet] {
-        let stored = ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
+        let stored = mode == .classification ? ClassificationSets.sets(comparison.promptSets) : ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
         return reusedPromptSet.map { $0.effectiveMode == mode ? [$0] + stored : stored } ?? stored
     }
 
@@ -949,7 +949,7 @@ struct QuantView: View {
     // MARK: - Selected run detail
 
     private func runDetail(_ run: ComparisonRun) -> some View {
-        let winnerPath = run.effectiveMode == .chat && run.state == .completed && !run.hasCustomServingConfiguration ? run.winner?.modelPath : nil
+        let winnerPath = run.winner?.modelPath
         return Group {
             if run.effectiveMode == .chat { runDetailBody(run, winnerPath: winnerPath) }
             else { WorkbenchSurface { runDetailBody(run, winnerPath: winnerPath) } }

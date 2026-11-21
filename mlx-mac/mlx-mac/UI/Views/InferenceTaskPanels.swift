@@ -91,7 +91,7 @@ struct InferenceTaskPanel: View {
 
     private var classifier: some View {
         let draft = coordinator.classificationDraft
-        let sets = ClassificationTestSets.sets(promptSets)
+        let sets = ClassificationSets.sets(promptSets)
         let selectedSet = draft.source.flatMap { source in sets.first { $0.id == source.setID } }
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Classify")
@@ -107,7 +107,7 @@ struct InferenceTaskPanel: View {
                 Picker("Entry", selection: Binding(get: { source.entryID }, set: { id in
                     coordinator.classificationDraft.load(selectedSet, entryID: id)
                 })) {
-                    ForEach(selectedSet.prompts, id: \.id) { entry in Text(ClassificationTestSets.title(entry)).tag(entry.id) }
+                    ForEach(selectedSet.prompts, id: \.id) { entry in Text(ClassificationSets.title(entry)).tag(entry.id) }
                 }
                 .accessibilityIdentifier("task-classification-entry")
             }

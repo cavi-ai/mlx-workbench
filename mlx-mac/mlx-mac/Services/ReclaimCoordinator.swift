@@ -81,6 +81,17 @@ struct SourceCleanupCandidate: Identifiable {
     var title: String { URL(fileURLWithPath: workflow.completedModelPath ?? workflow.outputPath).lastPathComponent }
 }
 
+/// Protected paths for reclaim. A refusal means history is not ready; callers do not invent a wider set.
+struct ReclaimOwnership: Equatable, Sendable {
+    var paths: Set<String>
+    var refusal: String?
+
+    var ready: Bool { refusal == nil }
+
+    static let comparisonUnavailable = "Saved comparison ownership is unavailable. Wait for history to load before reclaiming models."
+    static let purposesUnavailable = "Saved model purposes are unavailable or changing. Resolve that state before removing models."
+}
+
 enum ReclaimError: LocalizedError {
     case nothingSelected
     case previewHashMismatch
@@ -163,6 +174,10 @@ final class ReclaimCoordinator: ObservableObject {
         guard !isApplying, !isCheckingSources else { return }
         isCheckingSources = true
         defer { isCheckingSources = false }
+        if let refusal = ownershipRefusal() {
+            sourceCandidates = []; sourcesChecked = false; lastError = refusal
+            return
+        }
         let roots = sourceRoots, protected = protectedPaths(), manager = fileManager
         let candidates = await Task.detached(priority: .userInitiated) {
             workflows.filter { $0.state == .verified }.map { workflow in
@@ -239,6 +254,8 @@ final class ReclaimCoordinator: ObservableObject {
     var ggufRoots: () -> [String] = { [] }
     var mlxRoots: () -> [String] = { [] }
     var protectedPaths: () -> [String] = { [] }
+    /// Nil when comparison history and model purposes are ready. Moves refuse this instead of widening protection.
+    var ownershipRefusal: () -> String? = { nil }
 
     private var duplicateKeepers: [String] = []
 
@@ -283,6 +300,7 @@ final class ReclaimCoordinator: ObservableObject {
 
     func previewSource(_ workflow: ConversionWorkflow) async {
         guard !isApplying else { return }
+        if let refusal = ownershipRefusal() { sourcePlan = nil; lastError = refusal; return }
         isApplying = true
         defer { isApplying = false }
         sourcePlan = nil; sourceCleanupNote = nil; lastError = nil
@@ -296,6 +314,7 @@ final class ReclaimCoordinator: ObservableObject {
 
     func confirmSource(_ workflow: ConversionWorkflow) async {
         guard !isApplying, let plan = sourcePlan else { return }
+        if let refusal = ownershipRefusal() { sourcePlan = nil; lastError = refusal; return }
         isApplying = true
         defer { isApplying = false; sourcePlan = nil }
         let roots = Array(Set(ggufRoots() + mlxRoots())).sorted(), protected = protectedPaths(), manager = fileManager
