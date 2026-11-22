@@ -1,6 +1,16 @@
 # 06 — Always-on Endpoint + Menu Bar
 
-**Status:** implemented (all three phases) · **Tier:** Premium · **Synergy:** endpoint feeds spec 02 (Wiring)
+**Status:** implemented. The app supervises saved endpoints while it runs. The login item is `RunAtLoad` with `KeepAlive` false: one `mlx-agent serve start` per enabled endpoint (`ai.cavi.mlxworkbench.endpoint.<slot id>`, at most four). `serve start` supervises that detached server; a KeepAlive loop is refused because it would fight that supervisor. A won't-fit fleet refuses install until the same explicit override used when enabling an endpoint. While Workbench is open, `EndpointSupervisor` reconciles every enabled slot. Menu bar status is `MenuBarView`. · **Tier:** Premium · **Synergy:** endpoint feeds spec 02 (Wiring); fleet is spec 09, shipped
+
+## Shipped behavior
+
+Operator page: `docs/mlx-workbench/source/pages/workflows/run.md` (“Always-on endpoints”).
+
+- Up to four endpoints, each on its own loopback port. Verified models are the default; an unverified model needs an explicit override. A won’t-fit fleet total needs an explicit override.
+- Crash restart is the in-app supervisor, with a per-slot crash-loop guard. It does not run after the app quits.
+- The login plist is previewed in full, then written and bootstrapped with `launchctl` argv. Changed endpoint settings require remove and reinstall. There is no `endpoint_keepalive` setting.
+
+The launchd sketch below is the original design. `KeepAlive`, `ThrottleInterval`, and the `ai.cavi.mlxmac.endpoint` label were not shipped.
 
 ## Problem
 
@@ -91,22 +101,16 @@ status, not a surface for doing work.
 
 ## Settings
 
-```json
-{
-  "endpoint_enabled": false,
-  "endpoint_port": 8766,
-  "endpoint_model_path": "",
-  "endpoint_keepalive": true
-}
-```
+Endpoint desired state lives in `endpoint-fleet.json`, not these keys. `endpoint_keepalive` is not a setting. Login startup is the reviewed LaunchAgent above, `RunAtLoad` only.
 
 ## Failure modes & edges
 
 - Port already bound by something else (e.g. LM Studio) → enable refused
   with the owner identified (`lsof` via argv tokens, parsed) and a suggested
   alternate port.
-- Machine sleeps/wakes → health probe on wake; launchd KeepAlive restarts a
-  killed server; supervisor only reports.
+- Machine sleeps/wakes → the in-app supervisor reconciles while Workbench
+  runs. Launchd does not restart the server (`KeepAlive` is false).
+  `serve start` remains the process authority for the login item's server.
 - Model file moved/quarantined → health probe fails, supervisor marks
   degraded, menu bar shows the model-missing state with a route to Library.
 - Uninstall path: bootout + plist delete, previewed the same way.

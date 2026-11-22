@@ -29,7 +29,7 @@ extension AppHost {
             }
             conversion = nil
         }
-        let slots = endpoint.fleet.slots.filter { $0.modelPath == previous.path }
+        let slots = endpoint.fleet.slots.filter { $0.modelPath == previous.path && !$0.isTrainedAdapter }
         let bundleSelection = ModelUpdateGGUFSelection.bundle(previous: previous, settings: settings,
             main: resolution.source.file, available: resolution.files.gguf.map(\.name))
         let projector = bundleSelection.projector, additional = bundleSelection.additionalFiles

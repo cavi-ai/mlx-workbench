@@ -290,7 +290,10 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var acceleration: LocalInferenceOptions? = nil
     var accelerationPreviewHash: String? = nil
     var apiKeySHA256: String? = nil
+    /// Completed training receipt for an adapter endpoint. Nil for an ordinary model endpoint.
+    var trainingReceipt: String? = nil
     var inferenceOptions: LocalInferenceOptions { acceleration ?? .init() }
+    var isTrainedAdapter: Bool { trainingReceipt != nil }
     var usesJIT: Bool { loadOnRequest == true }
 
     init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
@@ -379,6 +382,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case incompatibleAcceleration(UUID)
     case invalidAuthentication(UUID)
     case invalidFrontDoorKey
+    case invalidAdapterEndpoint(UUID)
 }
 
 extension EndpointFleetValidation: LocalizedError {
@@ -402,6 +406,8 @@ extension EndpointFleetValidation: LocalizedError {
             return "API key authentication requires Load on request and a valid credential reference."
         case .invalidFrontDoorKey:
             return "The front door needs a valid credential reference."
+        case .invalidAdapterEndpoint:
+            return "A trained adapter endpoint uses explicit MLX-LM serving and does not inherit the base model's quality verdict."
         }
     }
 }
@@ -431,6 +437,13 @@ extension EndpointFleetConfig {
             }
             if slot.servingProfile != nil && !ServeLaunch.profileAllows(accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
+            }
+            if let receipt = slot.trainingReceipt {
+                let pinned = receipt.hasPrefix("/") && receipt != "/" && !receipt.contains("\0") && slot.modelPath.hasPrefix("/")
+                let ordinary = !slot.usesJIT && slot.servingProfile == nil && slot.splashPresetName == nil
+                    && slot.apiKeySHA256 == nil && !slot.inferenceOptions.requested && !slot.inferenceOptions.hasRequestDefaults
+                    && slot.memoryPolicy == nil
+                if !pinned || !ordinary { throw EndpointFleetValidation.invalidAdapterEndpoint(slot.id) }
             }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }
             guard (1...65535).contains(slot.port) else {

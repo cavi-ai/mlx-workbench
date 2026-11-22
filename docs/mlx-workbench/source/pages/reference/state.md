@@ -50,7 +50,7 @@ Existing `model-workflows.json`, `verification-reports.json`, `comparison-runs.j
 | `~/.config/mlx-workbench/config.json` | Configuration; see [Configuration](configuration.md) | App |
 | `<quarantine_dir>/quarantine-ledger.jsonl` | Quarantine and Trash history | App |
 | `~/Library/Application Support/mlx-agent/lab` | Experiment database and artifacts | Engine |
-| `~/Library/LaunchAgents/ai.cavi.mlxworkbench.endpoint.plist` | Optional endpoint login item | App |
+| `~/Library/LaunchAgents/ai.cavi.mlxworkbench.endpoint.<slot-id>.plist` | Optional login item, one `RunAtLoad` agent per enabled endpoint. Installing or removing it also removes the earlier `ai.cavi.mlxworkbench.endpoint.plist`. | App |
 | `~/.cache/mlx-agent/strata` | Optional Strata runtime | Engine |
 | `$XDG_STATE_HOME/mlx-agent/services` (default `~/.local/state/mlx-agent/services`) | Registered serving receipt locations | Engine |
 

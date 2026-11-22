@@ -11,6 +11,9 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+### Changed
+- Serving: the login item starts every enabled endpoint at login, one `RunAtLoad` agent each, and refuses a won't-fit fleet until **Install anyway**.
+- Training: a reviewed adapter can be saved as an unverified MLX-LM endpoint without inheriting the base model's verdict.
 ### Fixed
 - Library: **Classify** sends choice criteria as labels with descriptions, which Kev models require.
 - Library: the inspector fits its 320 pt minimum column without clipping; a task model's panel sits under its actions, music settings wrap, and the empty-caption hint is muted until typing starts.

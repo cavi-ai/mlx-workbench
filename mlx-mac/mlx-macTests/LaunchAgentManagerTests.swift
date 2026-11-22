@@ -94,7 +94,7 @@ final class LaunchAgentManagerTests: XCTestCase {
         let plist = try XCTUnwrap(
             PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
         )
-        XCTAssertEqual(plist["Label"] as? String, LaunchAgentManager.label)
+        XCTAssertEqual(plist["Label"] as? String, LaunchAgentManager.label(for: slot.id))
         XCTAssertEqual(plist["RunAtLoad"] as? Bool, true)
         // KeepAlive must stay off — mlx-agent supervises its own server.
         XCTAssertEqual(plist["KeepAlive"] as? Bool, false)
@@ -134,13 +134,13 @@ final class LaunchAgentManagerTests: XCTestCase {
         try manager.install(plan: plan())
 
         XCTAssertTrue(manager.isInstalled)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: manager.plistURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manager.plistURL(for: slot.id).path))
 
         let commands = recorder.commands
-        XCTAssertEqual(commands.count, 2)
-        XCTAssertEqual(commands[0].executable, "/bin/launchctl")
-        XCTAssertEqual(commands[0].argv, ["bootout", "gui/501/\(LaunchAgentManager.label)"])
-        XCTAssertEqual(commands[1].argv, ["bootstrap", "gui/501", manager.plistURL.path])
+        XCTAssertEqual(commands.map(\.executable), ["/bin/launchctl", "/bin/launchctl", "/bin/launchctl"])
+        XCTAssertEqual(commands[0].argv, ["bootout", "gui/501/\(LaunchAgentManager.legacyLabel)"])
+        XCTAssertEqual(commands[1].argv, ["bootout", "gui/501/\(LaunchAgentManager.label(for: slot.id))"])
+        XCTAssertEqual(commands[2].argv, ["bootstrap", "gui/501", manager.plistURL(for: slot.id).path])
     }
 
     func testInstallPropagatesBootstrapFailure() throws {
@@ -169,13 +169,75 @@ final class LaunchAgentManagerTests: XCTestCase {
         try manager.uninstall()
 
         XCTAssertFalse(manager.isInstalled)
-        XCTAssertEqual(recorder.commands.count, 1)
-        XCTAssertEqual(recorder.commands.first?.argv, ["bootout", "gui/501/\(LaunchAgentManager.label)"])
+        XCTAssertEqual(recorder.commands.map(\.argv), [
+            ["bootout", "gui/501/\(LaunchAgentManager.legacyLabel)"],
+            ["bootout", "gui/501/\(LaunchAgentManager.label(for: slot.id))"],
+        ])
     }
 
     func testUninstallWhenNothingInstalledSucceeds() throws {
         let manager = LaunchAgentManager(home: try makeHome(), run: recordingRunner().run, uid: 501)
         XCTAssertNoThrow(try manager.uninstall())
+    }
+
+    func testInstallStartsEachEnabledSlotAndRemovesLegacyAndStaleAgents() throws {
+        let home = try makeHome()
+        let recorder = Recorder()
+        let manager = LaunchAgentManager(home: home, run: recorder.run, uid: 501)
+        let first = EndpointSlot(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, enabled: true, port: 8766, modelPath: "/models/a")
+        let second = EndpointSlot(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, enabled: true, port: 8767, modelPath: "/models/b")
+        let stale = EndpointSlot(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, enabled: true, port: 8768, modelPath: "/models/stale")
+        try FileManager.default.createDirectory(at: manager.plistURL(for: stale.id).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: manager.plistURL(for: stale.id))
+        try Data("legacy".utf8).write(to: home.appendingPathComponent("Library/LaunchAgents/\(LaunchAgentManager.legacyLabel).plist"))
+        let plans = [first, second].map { item in
+            LoginItemPlan(slot: item, fleetURL: URL(fileURLWithPath: "/state/endpoint-fleet.json"), agentPath: "/opt/agent",
+                arguments: WorkbenchAPI.serveArguments(model: item.modelPath, runtime: "auto", port: item.port, receipts: "/state", previewHash: "reviewed-hash"))
+        }
+
+        try manager.install(plans: plans)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/LaunchAgents/\(LaunchAgentManager.legacyLabel).plist").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: manager.plistURL(for: stale.id).path))
+        let bootstraps = recorder.commands.filter { $0.argv.first == "bootstrap" }.map(\.argv)
+        XCTAssertEqual(bootstraps, [
+            ["bootstrap", "gui/501", manager.plistURL(for: first.id).path],
+            ["bootstrap", "gui/501", manager.plistURL(for: second.id).path],
+        ])
+        let firstPlist = try parsedPlist(manager.plistURL(for: first.id))
+        let secondPlist = try parsedPlist(manager.plistURL(for: second.id))
+        XCTAssertEqual(firstPlist["Label"] as? String, LaunchAgentManager.label(for: first.id))
+        XCTAssertEqual(secondPlist["Label"] as? String, LaunchAgentManager.label(for: second.id))
+        XCTAssertEqual(firstPlist["RunAtLoad"] as? Bool, true)
+        XCTAssertEqual(secondPlist["KeepAlive"] as? Bool, false)
+        XCTAssertEqual(firstPlist["StandardOutPath"] as? String, home.appendingPathComponent("Library/Logs/mlx-workbench-endpoint-8766.log").path)
+        XCTAssertEqual(secondPlist["StandardOutPath"] as? String, home.appendingPathComponent("Library/Logs/mlx-workbench-endpoint-8767.log").path)
+    }
+
+    func testInstallRejectsMoreThanTheFleetCap() throws {
+        let manager = LaunchAgentManager(home: try makeHome(), run: recordingRunner().run, uid: 501)
+        let plans = (0..<5).map { index in
+            LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8800 + index, modelPath: "/models/\(index)"),
+                fleetURL: URL(fileURLWithPath: "/state/fleet.json"), agentPath: "/opt/agent", arguments: ["serve", "start"])
+        }
+        XCTAssertThrowsError(try manager.install(plans: plans)) { error in
+            guard case LaunchAgentError.invalidPlan = error else { return XCTFail("expected invalidPlan, got \(error)") }
+        }
+    }
+
+    func testLoginInstallRefusesWontFitUntilOverride() {
+        let wont = FitVerdict.wontFit(deficitGB: 1.5, suggestedMaxContext: nil)
+        XCTAssertEqual(LoginFleetInstall.refusal(verdict: wont, overridden: false), wont.summary)
+        XCTAssertNil(LoginFleetInstall.refusal(verdict: wont, overridden: true))
+        XCTAssertNil(LoginFleetInstall.refusal(verdict: .fits(headroomGB: 2), overridden: false))
+        XCTAssertNil(LoginFleetInstall.refusal(verdict: .tight(headroomGB: 0.4), overridden: false))
+        XCTAssertNil(LoginFleetInstall.refusal(verdict: .unknown(reason: "size unknown"), overridden: false))
+        XCTAssertNil(LoginFleetInstall.refusal(verdict: nil, overridden: false))
+    }
+
+    private func parsedPlist(_ url: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: url)
+        return try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
     }
 
     // MARK: - Helpers

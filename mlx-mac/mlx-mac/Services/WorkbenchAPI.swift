@@ -977,6 +977,18 @@ actor WorkbenchAPI {
 
     func loginItemPlan(slot: EndpointSlot, fleetURL: URL) async throws -> LoginItemPlan {
         guard slot.enabled, !slot.modelPath.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
+        if let receipt = slot.trainingReceipt {
+            let capturedAgent = agentPath
+            let plan = try await trainedAdapterPreview(receipt: receipt, port: slot.port, runtime: "mlx_lm")
+            guard capturedAgent == agentPath,
+                  let binding = TrainedAdapterBinding.decode(plan["training_binding"]),
+                  binding.receiptPath == receipt, binding.basePath == slot.modelPath, binding.isValid,
+                  let hash = plan["preview_hash"] as? String, TrainedAdapterBinding.isHash(hash) else {
+                throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
+            }
+            return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent,
+                arguments: Self.trainedAdapterArguments(receipt: receipt, port: slot.port, receipts: receiptDirectory, previewHash: hash))
+        }
         let capturedAgent = agentPath
         let launch = try ServeLaunch.saved(splashPresetName: slot.splashPresetName, hasServingProfile: slot.servingProfile != nil, jit: slot.usesJIT, accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff)
         let runtime = launch.runtime
@@ -1137,15 +1149,20 @@ actor WorkbenchAPI {
         return try await runOffActor(TrainingInspection.self, argv, timeout: 120)
     }
 
-    func trainedAdapterPreview(receipt: String, port: Int?) async throws -> [String: Any] {
-        var argv = ["serve", "start", "--training-receipt", receipt, "--runtime", "auto", "--receipts-dir", receiptDirectory]
+    func trainedAdapterPreview(receipt: String, port: Int?, runtime: String = "auto") async throws -> [String: Any] {
+        var argv = ["serve", "start", "--training-receipt", receipt, "--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv += ["--port", String(port)] }
         return Self.unwrapPlan(try await raw(argv))
     }
 
-    func trainedAdapterStart(receipt: String, port: Int, hash: String) async throws -> [String: Any] {
-        try await raw(["serve", "start", "--training-receipt", receipt, "--runtime", "auto", "--receipts-dir", receiptDirectory,
+    func trainedAdapterStart(receipt: String, port: Int, hash: String, runtime: String = "auto") async throws -> [String: Any] {
+        try await raw(["serve", "start", "--training-receipt", receipt, "--runtime", runtime, "--receipts-dir", receiptDirectory,
             "--port", String(port), "--confirm", "--preview-hash", hash])
+    }
+
+    static func trainedAdapterArguments(receipt: String, port: Int, receipts: String, previewHash: String) -> [String] {
+        ["serve", "start", "--training-receipt", receipt, "--runtime", "mlx_lm", "--receipts-dir", receipts,
+         "--port", String(port), "--confirm", "--preview-hash", previewHash]
     }
 
     func loraPreview(repo: String, data: String, iters: Int?, out: String?, batchSize: Int? = nil) async throws -> [String: Any] {
