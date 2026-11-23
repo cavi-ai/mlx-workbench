@@ -378,10 +378,8 @@ struct SettingsView: View {
                 Button("Open Run") { onRouteSelection(.run) }
             }
             SettingsSeparator()
-            SettingsRow(label: "macOS menu bar", stacked: layout.stacksRows) {
-                Toggle("Show MLX Workbench", isOn: $showsMenuBarItem)
-                    .accessibilityIdentifier("settings-show-menu-bar-item")
-            }
+            SettingsToggleRow(title: "Show in macOS menu bar", isOn: $showsMenuBarItem, stacked: layout.stacksRows)
+                .accessibilityIdentifier("settings-show-menu-bar-item")
             SettingsSeparator()
             SettingsRow(label: "Agent memory limit", hint: "Shared by MLX Agent model workers and included agent processes.", stacked: layout.stacksRows) {
                 HStack {

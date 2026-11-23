@@ -369,13 +369,13 @@ struct ActivityToolbarButton: View {
 
     private var glyph: some View {
         Image(systemName: status.symbol)
-            .font(.system(size: 11, weight: .semibold))
+            .font(WorkbenchTypography.metadata.weight(.semibold))
             .symbolRenderingMode(.hierarchical)
             .symbolEffect(.variableColor.iterative, options: .repeating,
                           isActive: status.kind == .working && !reduceMotion)
             .foregroundStyle(tint)
             .frame(width: 20, height: 20)
-            .background(tint.opacity(0.13), in: Circle())
+            .background(tint.opacity(WorkbenchTint.fill), in: Circle())
             .accessibilityHidden(true)
     }
 }

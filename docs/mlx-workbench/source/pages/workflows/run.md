@@ -382,7 +382,7 @@ existing endpoints keep their current access mode.
 ## Menu-bar access
 
 The **CPU** icon identifies MLX Workbench in the macOS menu bar. Use
-**Settings → Serving → Show MLX Workbench** to show it again if removed.
+**Settings → Serving → Show in macOS menu bar** to show it again if removed.
 Open it for model status, start/stop, reviewed unload,
 API copy actions, Monitor, Settings and Quit. Available-but-unloaded external
 models are omitted from this quick menu. Closing the main window keeps
