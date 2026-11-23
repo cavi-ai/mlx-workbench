@@ -17,8 +17,10 @@ has a title and turns keeps that title.
 
 If no server is available, the conversation shows the model's name and says it
 is not running. **Send** stays unavailable and the draft is kept. **Start server…**
-reviews a loopback server in the chat. It loads on the first message and releases
-the weights afterward. An unverified model asks you to confirm that explicitly.
+reviews a loopback server in the chat. A new server loads on the first message and
+releases the weights afterward. If there is a saved endpoint for the model, the
+review uses its existing settings. An unverified model asks you to confirm that
+explicitly. If startup fails, the review shows the reason and retains your draft.
 **More settings…** opens Run for the port, role and inference controls, then
 **Return to Use**. A single matching running server is selected after it starts;
 choose a connection when several match. Opening a conversation does not start a

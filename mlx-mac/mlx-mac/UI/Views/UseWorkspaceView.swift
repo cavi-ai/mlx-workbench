@@ -14,11 +14,11 @@ struct UseWorkspaceView: View {
     @State private var filePanelPresented = false
     @State private var refreshingServers = false
     @State private var showChatServer = false
+    @State private var chatServerSessionID: UUID?
     @State private var chatServerReview: EndpointChangeReview?
     @State private var chatServerError: String?
     @State private var chatServerBusy = false
     @State private var chatServerHold: String?
-    @State private var chatServerProceed: (() -> Void)?
     private var controlsPresented: Bool { showHistory || showSettings || filePanelPresented || showChatServer }
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void) {
@@ -262,11 +262,11 @@ struct UseWorkspaceView: View {
     private func manageServer(_ session: UseSession, index: UseLibraryIndex) -> some View {
         Button(session.endpoint == nil ? "Start server…" : "Manage server…") {
             if session.endpoint == nil, let model = index.model(for: session.modelPath) {
-                openChatServer(model)
+                openChatServer(model, sessionID: session.id)
             } else {
                 openServingReview(session, index: index)
             }
-        }.disabled(coordinator.isSending).accessibilityIdentifier("use-manage-server")
+        }.disabled(coordinator.isSending || chatServerBusy).accessibilityIdentifier("use-manage-server")
     }
     private func openServingReview(_ session: UseSession, index: UseLibraryIndex) {
         appHost.selectedModelPath = session.modelPath
@@ -274,10 +274,10 @@ struct UseWorkspaceView: View {
         appHost.handoffs.send(UseServerReviewRequest(sessionID: session.id, modelPath: session.modelPath), as: .returnToUse)
         onRouteSelection(.run)
     }
-    private func openChatServer(_ model: LibraryModel) {
+    private func openChatServer(_ model: LibraryModel, sessionID: UUID) {
+        chatServerSessionID = sessionID
         chatServerError = nil
         chatServerHold = nil
-        chatServerProceed = nil
         switch UseChatServerSetup.review(model: model, appHost: appHost) {
         case .review(let review):
             chatServerReview = review
@@ -295,7 +295,9 @@ struct UseWorkspaceView: View {
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Start \(name)").font(WorkbenchTypography.cardTitle)
             if let review = chatServerReview {
-                Text("This chat stays open. The server listens on 127.0.0.1:\(review.port), loads on the first message, and releases the weights afterward.")
+                Text(review.slot == nil
+                    ? "This chat stays open. The server listens on 127.0.0.1:\(review.port), loads on the first message, and releases the weights afterward."
+                    : "Start the saved server on 127.0.0.1:\(review.port) with its current settings.")
                     .fixedSize(horizontal: false, vertical: true)
                 if review.unverified {
                     InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.")
@@ -308,26 +310,20 @@ struct UseWorkspaceView: View {
             if let hold = chatServerHold {
                 InlineMessage(kind: .warning, text: "Fleet memory: \(hold). Start anyway?")
             }
+            if chatServerBusy { ProgressView("Starting server…").controlSize(.small) }
             HStack {
-                Button("Cancel") { showChatServer = false }.keyboardShortcut(.cancelAction)
+                Button(chatServerBusy ? "Close" : "Cancel") { showChatServer = false }.keyboardShortcut(.cancelAction)
                 Spacer()
-                if let session = coordinator.selected {
+                if let session = coordinator.selected, session.id == chatServerSessionID {
                     Button("More settings…") {
                         showChatServer = false
                         openServingReview(session, index: libraryIndex)
-                    }
+                    }.disabled(chatServerBusy)
                 }
-                if let review = chatServerReview {
+                if let review = chatServerReview, let sessionID = chatServerSessionID {
                     Button(chatServerHold == nil ? (review.unverified ? "Start unverified server" : "Start server") : "Start anyway") {
-                        if let proceed = chatServerProceed {
-                            proceed()
-                            chatServerHold = nil
-                            chatServerProceed = nil
-                            showChatServer = false
-                            Task { await refreshServers() }
-                        } else {
-                            Task { await confirmChatServer(review) }
-                        }
+                        let overrideMemory = chatServerHold != nil
+                        Task { await confirmChatServer(review, sessionID: sessionID, overrideMemory: overrideMemory) }
                     }.buttonStyle(.workbenchPrimary).disabled(chatServerBusy || appHost.endpoint.isChanging)
                 }
             }
@@ -336,24 +332,45 @@ struct UseWorkspaceView: View {
         .frame(width: 460)
         .accessibilityIdentifier("use-start-server")
     }
-    private func confirmChatServer(_ review: EndpointChangeReview) async {
+    private func confirmChatServer(_ review: EndpointChangeReview, sessionID: UUID, overrideMemory: Bool) async {
+        guard !chatServerBusy, showChatServer, let session = coordinator.selected, session.id == sessionID else { return }
         chatServerBusy = true
         defer { chatServerBusy = false }
         chatServerError = nil
-        let error = await EndpointChanges(appHost: appHost).confirm(review) { summary, proceed in
+        chatServerHold = nil
+        let result = await EndpointChanges(appHost: appHost).confirm(review, overrideMemory: overrideMemory)
+        if result == .completed { await workflow.refreshServers() }
+        guard showChatServer, coordinator.selected?.id == sessionID else { return }
+        switch result {
+        case .memoryHold(let summary):
             chatServerHold = summary
-            chatServerProceed = proceed
-        }
-        if chatServerHold != nil { return }
-        if let error { chatServerError = error; return }
-        await workflow.refreshServers()
-        if let path = review.model?.item.path {
-            let candidates = workflow.servers.filter { UseChatClient.matches($0, modelPath: path) && UseChatClient.supports($0) }
-            if candidates.count == 1, let server = candidates.first {
-                do { try await coordinator.setEndpoint(server) } catch { coordinator.showError(error) }
+        case .refused(let message):
+            chatServerError = message
+            updateChatServerReview(modelPath: session.modelPath)
+        case .completed:
+            let candidates = workflow.servers.filter { UseChatClient.matches($0, modelPath: session.modelPath) && UseChatClient.supports($0) }
+            guard workflow.serversError == nil, candidates.contains(where: {
+                $0.port == review.port && $0.matchesUnadaptedModel(review.slot?.modelPath ?? session.modelPath)
+                    && $0.apiKeySHA256 == review.slot?.apiKeySHA256 && ($0.jit == true) == review.loadOnRequest
+            }) else {
+                chatServerError = workflow.serversError ?? "Serving did not report a running Chat connection for this endpoint. Check its status in Serving."
+                updateChatServerReview(modelPath: session.modelPath)
+                return
             }
+            if candidates.count == 1, let server = candidates.first {
+                do { try await coordinator.setEndpoint(server, forSessionID: sessionID) }
+                catch { chatServerError = AppHost.render(error); return }
+            }
+            showChatServer = false
         }
-        showChatServer = false
+    }
+    private func updateChatServerReview(modelPath: String) {
+        if let model = libraryIndex.model(for: modelPath),
+           case .review(let review) = UseChatServerSetup.review(model: model, appHost: appHost) {
+            chatServerReview = review
+        } else {
+            chatServerReview = nil
+        }
     }
     private func chat(_ session: UseSession, index: UseLibraryIndex) -> some View {
         let modelName = index.displayName(for: session)
@@ -539,19 +556,23 @@ struct UseLibraryIndex {
     }
 }
 
-/// The chat start path: a loopback server that loads on the first message and releases weights afterward.
+/// Reviews an existing Chat endpoint or a new load-on-request server.
 enum UseChatServerSetup {
-    static func suggestedPort(slots: [EndpointSlot]) -> Int {
-        var candidate = EndpointConfig.defaultPort
-        let used = Set(slots.map(\.port))
-        while used.contains(candidate) { candidate += 1 }
-        return candidate
-    }
-
     @MainActor
     static func review(model: LibraryModel, appHost: AppHost) -> EndpointChanges.AddOutcome {
-        EndpointChanges(appHost: appHost).reviewAdd(
-            model: model, portText: "", suggestedPort: suggestedPort(slots: appHost.endpoint.fleet.slots),
-            role: nil, loadOnRequest: true, keepLoaded: false, requireKey: false)
+        let changes = EndpointChanges(appHost: appHost)
+        let saved = appHost.endpoint.fleet.slots.filter { ServedModelsSelection.matches($0, model: model) }
+        if !saved.isEmpty {
+            let matching = saved.filter { !$0.isTrainedAdapter && $0.modelPath == model.item.path }
+            guard matching.count == 1, let slot = matching.first else {
+                return .portRejected("Open More settings to choose a saved endpoint for this model.")
+            }
+            return .review(changes.review(slot: slot, remove: false))
+        }
+        guard let port = changes.nextAvailablePort() else {
+            return .portRejected("No available port for a new server. Open More settings to choose a port.")
+        }
+        return changes.reviewAdd(model: model, portText: "", suggestedPort: port, role: nil, loadOnRequest: true,
+                                 keepLoaded: false, requireKey: false)
     }
 }

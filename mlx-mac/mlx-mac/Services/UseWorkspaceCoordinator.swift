@@ -109,7 +109,8 @@ final class UseWorkspaceCoordinator: ObservableObject {
         } catch {}
     }
 
-    func setEndpoint(_ server: ServerInfo?) async throws {
+    func setEndpoint(_ server: ServerInfo?, forSessionID sessionID: UUID? = nil) async throws {
+        if let sessionID, selected?.id != sessionID { throw UseSessionError.changed }
         guard canChange, let session = selected else { throw UseSessionError.history }
         if let server {
             guard UseChatClient.matches(server, modelPath: session.modelPath),

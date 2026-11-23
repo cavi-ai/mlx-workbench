@@ -231,13 +231,15 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async {
-        guard beginUserOperation() else { return }
+    /// Returns the saved slot ID so callers can read its startup state.
+    @discardableResult
+    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async -> UUID? {
+        guard beginUserOperation() else { return nil }
         defer { activeUserOperations -= 1 }
-        guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
+        guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return nil }
         if let profile, !profile.hasPassedVerification || profile.modelPath != modelPath || profileLifecycle == nil {
             lastError = "Verify the selected serving profile for this model before enabling it."
-            return
+            return nil
         }
         let usesJIT = loadOnRequest ?? (lifecycle.jitPreview != nil)
         var candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role,
@@ -245,9 +247,9 @@ final class EndpointSupervisor: ObservableObject {
         candidate.acceleration = inference.requested ? inference : nil
         candidate.servingProfile = profile
         if let splashPreset {
-            guard profile == nil, usesJIT, let lookup = splashPresetLookup else { lastError = "Splash presets require a load-on-request endpoint."; return }
-            do { guard try await lookup(splashPreset.name) == splashPreset else { lastError = "The preset changed. Review it again."; return } }
-            catch { lastError = AppHost.render(error); return }
+            guard profile == nil, usesJIT, let lookup = splashPresetLookup else { lastError = "Splash presets require a load-on-request endpoint."; return nil }
+            do { guard try await lookup(splashPreset.name) == splashPreset else { lastError = "The preset changed. Review it again."; return nil } }
+            catch { lastError = AppHost.render(error); return nil }
             candidate.splashPresetName = splashPreset.name
             candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy, jit: candidate.usesJIT, splashPresetName: splashPreset.name)
         }
@@ -261,7 +263,7 @@ final class EndpointSupervisor: ObservableObject {
                 candidate.loadOnRequest = true
                 candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName)
             }
-            guard validate(candidate, isNew: true) else { return }
+            guard validate(candidate, isNew: true) else { return nil }
             if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
                 let hash = try await accelerationPreviewHash(candidate)
@@ -275,13 +277,14 @@ final class EndpointSupervisor: ObservableObject {
             }
             guard validate(candidate, isNew: true), commit(replacing: candidate) else {
                 if let savedKey { try removeAPIKey(savedKey) }
-                return
+                return nil
             }
         } catch {
             if let savedKey { try? removeAPIKey(savedKey) }
-            lastError = AppHost.render(error); return
+            lastError = AppHost.render(error); return nil
         }
         await reconcile(userRequestedSlotID: candidate.id)
+        return candidate.id
     }
 
     /// Save a reviewed adapter as an enabled endpoint. The base model's verdict is never consulted;
@@ -330,21 +333,23 @@ final class EndpointSupervisor: ObservableObject {
         await reconcile(userRequestedSlotID: selectionChanged ? id : nil)
     }
 
-    func setSlotEnabled(id: UUID, _ enabled: Bool) async {
-        guard beginUserOperation() else { return }
+    @discardableResult
+    func setSlotEnabled(id: UUID, _ enabled: Bool) async -> Bool {
+        guard beginUserOperation() else { return false }
         defer { activeUserOperations -= 1 }
-        guard var slot = fleet.slots.first(where: { $0.id == id }) else { return }
+        guard var slot = fleet.slots.first(where: { $0.id == id }) else { return false }
         slot.enabled = enabled
-        guard commit(replacing: slot) else { return }
+        guard commit(replacing: slot) else { return false }
         pendingUserServeBySlot.removeValue(forKey: id)
         if enabled {
             slotAttemptTimestamps[id] = []
             await reconcile(userRequestedSlotID: id)
         } else {
-            guard await stopServing(slot) else { syncShim(); return }
+            guard await stopServing(slot) else { syncShim(); return false }
             slotStates[id] = .disabled
             syncShim()
         }
+        return true
     }
 
     /// Swap one slot's model on its stable port (same discipline as the
