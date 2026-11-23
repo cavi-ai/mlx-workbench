@@ -20,6 +20,10 @@ import Foundation
 struct AdapterEndpointLaunch: Sendable {
     var preview: @Sendable (_ receipt: String, _ basePath: String, _ port: Int) async throws -> (hash: String, binding: TrainedAdapterBinding)
     var start: @Sendable (_ receipt: String, _ port: Int, _ hash: String) async throws -> Void
+    var jitPreview: (@Sendable (_ receipt: String, _ basePath: String, _ port: Int, _ memoryPolicy: EndpointMemoryPolicy?, _ apiKeySHA256: String?) async throws -> (hash: String, binding: TrainedAdapterBinding))? = nil
+    var jitStart: (@Sendable (_ receipt: String, _ port: Int, _ hash: String, _ memoryPolicy: EndpointMemoryPolicy?, _ apiKeySHA256: String?) async throws -> Void)? = nil
+
+    var supportsJIT: Bool { jitPreview != nil && jitStart != nil }
 }
 
 @MainActor
@@ -324,8 +328,16 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     /// Save a reviewed adapter as an enabled endpoint. The base model's verdict is never consulted;
-    /// `allowUnverified` is the explicit override.
-    func addTrainedAdapterSlot(binding: TrainedAdapterBinding, port: Int, allowUnverified: Bool) async {
+    /// allowUnverified is the explicit override. Eager serving remains the safe default; optional JIT
+    /// and API-key serving require engine JIT adapter support and fail closed when unavailable.
+    func addTrainedAdapterSlot(
+        binding: TrainedAdapterBinding,
+        port: Int,
+        allowUnverified: Bool,
+        loadOnRequest: Bool = false,
+        requireAPIKey: Bool = false,
+        memoryPolicy: EndpointMemoryPolicy? = nil
+    ) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard allowUnverified else {
@@ -336,9 +348,41 @@ final class EndpointSupervisor: ObservableObject {
             lastError = "Historical training receipts without a pinned base identity cannot be saved as endpoints."
             return
         }
-        var candidate = EndpointSlot(enabled: true, port: port, modelPath: binding.basePath, loadOnRequest: false)
+        let usesJIT = loadOnRequest || requireAPIKey
+        if usesJIT && adapterLaunch?.supportsJIT != true {
+            lastError = "Load-on-request serving for trained adapters is unavailable in this runtime."
+            return
+        }
+        var candidate = EndpointSlot(
+            enabled: true,
+            port: port,
+            modelPath: binding.basePath,
+            loadOnRequest: usesJIT,
+            memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil
+        )
         candidate.trainingReceipt = binding.receiptPath
-        guard validate(candidate, isNew: true), commit(replacing: candidate) else { return }
+        var savedKey: String?
+        do {
+            var token: String?
+            if requireAPIKey {
+                let created = try generateAPIKey()
+                token = created
+                candidate.apiKeySHA256 = EndpointCredentialStore.digest(created)
+            }
+            guard validate(candidate, isNew: true) else { return }
+            if let token {
+                try saveAPIKey(token)
+                savedKey = candidate.apiKeySHA256
+            }
+            guard validate(candidate, isNew: true), commit(replacing: candidate) else {
+                if let savedKey { try? removeAPIKey(savedKey) }
+                return
+            }
+        } catch {
+            if let savedKey { try? removeAPIKey(savedKey) }
+            lastError = AppHost.render(error)
+            return
+        }
         await reconcile(userRequestedSlotID: candidate.id)
     }
 
@@ -599,9 +643,15 @@ final class EndpointSupervisor: ObservableObject {
         }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }),
               fleet.slots[index].usesJIT != enabled else { return }
-        guard !fleet.slots[index].isTrainedAdapter else {
-            lastError = "A trained adapter endpoint uses explicit MLX-LM serving."
-            return
+        if fleet.slots[index].isTrainedAdapter {
+            if enabled && adapterLaunch?.supportsJIT != true {
+                lastError = "Load-on-request serving for trained adapters is unavailable in this runtime."
+                return
+            }
+            if !enabled && fleet.slots[index].apiKeySHA256 != nil {
+                lastError = "API-key protected endpoints require Load on request."
+                return
+            }
         }
         guard enabled || fleet.slots[index].splashPresetName == nil else {
             lastError = "Splash presets require Load on request."; return
@@ -612,11 +662,18 @@ final class EndpointSupervisor: ObservableObject {
             let slot = fleet.slots[index]
             let current = try await statusProvider().first { $0.port == slot.port && $0.state?.lowercased() == "running" }
             if let current {
-                guard current.matchesUnadaptedModel(slot.modelPath) else {
-                    lastError = "A different model is serving on this port. Refresh before changing load mode."
-                    return
+                if slot.isTrainedAdapter {
+                    guard matchesTrainedAdapter(current, slot: slot) else {
+                        lastError = "A different model is serving on this port. Refresh before changing load mode."
+                        return
+                    }
+                } else {
+                    guard current.matchesUnadaptedModel(slot.modelPath) else {
+                        lastError = "A different model is serving on this port. Refresh before changing load mode."
+                        return
+                    }
+                    _ = try await confirmedAccelerationHash(current, slot: slot)
                 }
-                _ = try await confirmedAccelerationHash(current, slot: slot)
                 guard (current.activeRequests ?? 0) == 0 else {
                     lastError = "Finish active requests before changing load mode."
                     return
@@ -625,7 +682,8 @@ final class EndpointSupervisor: ObservableObject {
             var candidate = fleet
             candidate.slots[index].loadOnRequest = enabled
             if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic }
-            guard commit(candidate) else { return }
+            if !enabled && candidate.slots[index].isTrainedAdapter { candidate.slots[index].memoryPolicy = nil }
+            guard validate(candidate.slots[index], isNew: false), commit(candidate) else { return }
             if let current, (current.jit == true) != enabled {
                 if let stop = lifecycle.stopObserved { try await stop(current) }
                 else { try await lifecycle.stop(slot.port) }
@@ -1188,6 +1246,25 @@ final class EndpointSupervisor: ObservableObject {
                     slotStates[slot.id] = .modelMismatch(servedModel: ours.adapterSummary.map { name + " · " + $0 } ?? name, port: slot.port)
                     return
                 }
+                slotResidencies[slot.id] = ours.residencySummary
+                slotMemoryPolicies[slot.id] = ours.memoryPolicy
+                slotLoadBlockedReasons[slot.id] = ours.loadBlockedReason
+                guard (ours.jit == true) == slot.usesJIT else {
+                    slotStates[slot.id] = .degraded(reason: "Endpoint load mode differs. Disable and enable it to apply the selected mode.")
+                    return
+                }
+                if slot.usesJIT, let policy = slot.memoryPolicy, ours.memoryPolicy != policy {
+                    do {
+                        guard let configure = lifecycle.configureMemory, let pid = ours.pid, pid > 0 else {
+                            throw WorkflowEvidenceError.invalid("Memory management is unavailable in this runtime.")
+                        }
+                        try await configure(slot.port, pid, policy)
+                        slotMemoryPolicies[slot.id] = policy
+                    } catch {
+                        slotStates[slot.id] = .degraded(reason: "Could not apply memory policy: \(AppHost.render(error))")
+                        return
+                    }
+                }
                 slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
                 recordIntentionalServe(slot)
                 return
@@ -1262,6 +1339,19 @@ final class EndpointSupervisor: ObservableObject {
             if slot.isTrainedAdapter {
                 guard let receipt = slot.trainingReceipt, let launch = adapterLaunch else {
                     throw WorkflowEvidenceError.invalid("Trained adapter serving is unavailable.")
+                }
+                if slot.usesJIT || slot.apiKeySHA256 != nil {
+                    guard let jitPreview = launch.jitPreview, let jitStart = launch.jitStart else {
+                        throw WorkflowEvidenceError.invalid("Load-on-request serving for trained adapters is unavailable in this runtime.")
+                    }
+                    let reviewed = try await jitPreview(receipt, slot.modelPath, slot.port, slot.memoryPolicy, slot.apiKeySHA256)
+                    guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath, reviewed.binding.isValid,
+                          TrainedAdapterBinding.isHash(reviewed.hash), fleet.slots.contains(slot) else {
+                        throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
+                    }
+                    try await jitStart(receipt, slot.port, reviewed.hash, slot.memoryPolicy, slot.apiKeySHA256)
+                    slotStates[slot.id] = .waitingForServer
+                    return
                 }
                 let reviewed = try await launch.preview(receipt, slot.modelPath, slot.port)
                 guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath, reviewed.binding.isValid,

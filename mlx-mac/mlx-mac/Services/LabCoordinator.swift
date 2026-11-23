@@ -97,12 +97,13 @@ final class LabCoordinator: ObservableObject {
         guard !isRefreshing else { return }
         refreshRevision += 1
         let revision = refreshRevision, workspace = store
+        let api = self.api, reviewer = reviewerID
         isRefreshing = true
         defer { if revision == refreshRevision { isRefreshing = false } }
         do {
-            let nextSnapshot = try await api.labWorkspace(request: LabRequest(operation: "snapshot"), store: workspace, reviewer: reviewerID, timeout: 30)
-            guard revision == refreshRevision else { return }
-            let response = try await api.labWorkspace(request: LabRequest(operation: "study-list"), store: workspace, reviewer: reviewerID, timeout: 30)
+            async let snapshotTask = api.labWorkspace(request: LabRequest(operation: "snapshot"), store: workspace, reviewer: reviewer, timeout: 30)
+            async let studiesTask = api.labWorkspace(request: LabRequest(operation: "study-list"), store: workspace, reviewer: reviewer, timeout: 30)
+            let (nextSnapshot, response) = try await (snapshotTask, studiesTask)
             guard revision == refreshRevision else { return }
             snapshot = nextSnapshot
             studies = response.studies?.compactMap(LabStudyRow.init(value:)) ?? []

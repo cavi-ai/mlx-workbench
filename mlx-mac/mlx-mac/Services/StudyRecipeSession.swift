@@ -59,20 +59,39 @@ final class StudyRecipeSession: ObservableObject {
     @Published var draft = StudyRecipeDraft() {
         didSet { if draft != oldValue { manifest = nil; error = nil } }
     }
+    @Published var selectedModelID: String = "" {
+        didSet {
+            guard selectedModelID != oldValue else { return }
+            manifest = nil
+            error = nil
+            guard !isUpdatingSelectionFromCatalog else { return }
+            if let option = selectedOption, !option.revisions.contains(draft.revision) {
+                draft.revision = option.revisions.first ?? ""
+            }
+        }
+    }
     @Published private(set) var options: [StudyRecipeOption] = []
     @Published private(set) var manifest: LabValue?
     @Published private(set) var error: String?
     @Published private(set) var isBusy = false
     private var originalDraft = StudyRecipeDraft()
+    private var isUpdatingSelectionFromCatalog = false
     private let request: (LabRequest) async throws -> LabResponse
 
     init(request: @escaping (LabRequest) async throws -> LabResponse) { self.request = request }
+
+    var selectedOption: StudyRecipeOption? {
+        if !selectedModelID.isEmpty, let match = options.first(where: { $0.modelID == selectedModelID }) {
+            return match
+        }
+        return options.first
+    }
 
     var hasDraftChanges: Bool { draft != originalDraft }
 
     var unavailableReason: String? {
         if isBusy { return "Wait for the current recipe request to finish." }
-        guard let option = options.first else {
+        guard let option = selectedOption else {
             return "Refresh availability to check the cached model and study runtime."
         }
         if let reason = option.unavailableReason { return reason }
@@ -94,10 +113,17 @@ final class StudyRecipeSession: ObservableObject {
         defer { isBusy = false }
         do {
             let response = try await request(LabRequest(operation: "recipe-catalog"))
-            guard let options = response.recipes, options.count == 1,
-                  options[0].modelID == "Wan-AI/Wan2.1-T2V-1.3B-Diffusers" else { throw BridgeError.skillOutputUnreadable }
+            guard let options = response.recipes, !options.isEmpty,
+                  options.allSatisfy({ !$0.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                throw BridgeError.skillOutputUnreadable
+            }
             self.options = options
-            if draft.revision.isEmpty, let revision = options.first?.revisions.first {
+            isUpdatingSelectionFromCatalog = true
+            if selectedModelID.isEmpty || !options.contains(where: { $0.modelID == selectedModelID }) {
+                selectedModelID = options[0].modelID
+            }
+            isUpdatingSelectionFromCatalog = false
+            if draft.revision.isEmpty, let revision = selectedOption?.revisions.first {
                 // Catalog initialization is not a user edit; never checkpoint authored fields.
                 if originalDraft.revision.isEmpty { originalDraft.revision = revision }
                 draft.revision = revision
@@ -107,20 +133,22 @@ final class StudyRecipeSession: ObservableObject {
     }
 
     func capture() async {
-        guard canCapture, let settings = draft.settings else { return }
+        guard canCapture, let option = selectedOption, let settings = draft.settings else { return }
         let captured = draft
+        let capturedModelID = option.modelID
         isBusy = true
         manifest = nil
         error = nil
         defer { isBusy = false }
         do {
             let response = try await request(LabRequest(operation: "recipe-prepare", settings: settings))
-            guard draft == captured else { return }
+            guard draft == captured, selectedOption?.modelID == capturedModelID else { return }
             guard let value = response.manifest, let fields = value.object,
-                  fields["model_id"]?.text == options.first?.modelID,
-                  fields["adapter_id"]?.text == "diffusers.wan2.1-t2v-1.3b.mps.v1",
+                  fields["model_id"]?.text == capturedModelID,
+                  let adapterID = fields["adapter_id"]?.text, !adapterID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   fields["model_revision"]?.text == captured.revision,
                   let digest = fields["model_checksum"]?.text, digest.hasPrefix("sha256:"), digest.count == 71,
+                  digest.dropFirst(7).allSatisfy({ "0123456789abcdefABCDEF".contains($0) }),
                   let assets = fields["source_checksums"]?.object, !assets.isEmpty,
                   let versions = fields["runtime_versions"]?.object, !versions.isEmpty,
                   settings.object?.allSatisfy({ name, expected in
@@ -131,7 +159,7 @@ final class StudyRecipeSession: ObservableObject {
                   }) == true else { throw BridgeError.skillOutputUnreadable }
             manifest = value
         } catch {
-            guard draft == captured else { return }
+            guard draft == captured, selectedOption?.modelID == capturedModelID else { return }
             self.error = AppHost.render(error)
         }
     }

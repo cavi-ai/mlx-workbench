@@ -22,9 +22,14 @@ split keeps its count when another check fails. **Fix field** returns to the
 relevant input; a missing runtime offers **Open Health**.
 
 **Create dataset…** beside Dataset path opens a chat-example editor. Write user
-requests and desired assistant replies, choosing **Training** or **Validation**
-explicitly. Each split needs at least the selected batch size; the editor rejects
-blank fields and exact examples shared across both splits (ignoring surrounding
+requests and desired assistant replies with an optional shared **system prompt**
+(emitted as a leading `system` message when non-empty), choosing **Training** or
+**Validation** explicitly. You can also import examples from local JSONL files
+(enforcing 1 MiB per record and 64 MiB per file, and refusing symlinks) or
+completed text-only chat turns from saved Use sessions, and partition unique
+examples deterministically into non-overlapping training and validation splits.
+Each split needs at least the selected batch size; the editor rejects blank
+fields and exact examples shared across both splits (ignoring surrounding
 whitespace). Other overlap still needs human review. The editor supports up to
 500 examples per split; existing dataset folders remain available through Choose.
 
@@ -71,13 +76,20 @@ the last known jobs until the read succeeds. These actions never resubmit a job.
 [Run](run.md#serve-a-trained-adapter). It does not start inference. Preview and
 confirmation recheck the artifacts before starting an explicit MLX-LM adapter
 server. **Save as endpoint…** on that preview saves an unverified always-on
-endpoint and does not inherit the base model's quality verdict.
+endpoint (eager serving by default) and does not inherit the base model's
+quality verdict. When the engine adapter serving lifecycle advertises JIT
+support, trained adapter endpoints can also opt into Load on request and API-key
+authentication so they can join Front Door and shared memory management; when
+unsupported, Workbench fails closed with a clear validation message.
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
 
-Choose **Single prompt** and a token limit, or capture an existing chat prompt set.
-Sets are managed in **Compare**, support 1–16 text-only prompts and 1–512 tokens
-per prompt, and exclude tools, media and expected-word scoring. Prompt text,
+Choose **Single prompt** and a token limit (1–2,048 tokens, giving thinking
+models room to finish without truncation), or capture an existing chat prompt
+set. In-flight preview, evaluation, and review-save requests can be canceled
+cleanly. Sets are managed in **Compare**, support 1–16 text-only prompts and
+1–512 tokens per prompt, and exclude tools, media and expected-word scoring.
+Prompt text,
 order, identities and token limits are frozen for the evaluation; later edits to
 the source set do not change it. Choose evaluation prompts kept separate from
 training data; the app does not check that separation.

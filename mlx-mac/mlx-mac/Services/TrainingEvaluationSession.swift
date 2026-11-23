@@ -36,9 +36,12 @@ final class TrainingEvaluationSession: ObservableObject {
     @Published private(set) var reviewNotice: String?
     @Published var selectedPromptID = ""
     let isRetainedOnly: Bool
+    static let maxSinglePromptTokens = 2048
     private let receipt: String
     private let request: (LabRequest) async throws -> LabResponse
     private var revision = 0
+    private var activeTask: Task<Void, Never>?
+    private var activeTaskID: UUID?
 
     init(receipt: String, retained: LabResponse? = nil, request: @escaping (LabRequest) async throws -> LabResponse) {
         self.receipt = receipt
@@ -49,6 +52,17 @@ final class TrainingEvaluationSession: ObservableObject {
         }
     }
 
+    deinit {
+        activeTask?.cancel()
+    }
+
+    func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
+        activeTaskID = nil
+        operation = nil
+    }
+
     var isBusy: Bool { operation != nil }
     var canChangeSetup: Bool { !isBusy && !hasUnsavedReviews }
     var inputValidation: String? {
@@ -56,7 +70,9 @@ final class TrainingEvaluationSession: ObservableObject {
         if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.count > 8000 {
             return "Enter an evaluation prompt of 1–8,000 characters."
         }
-        guard let limit = Int(maxTokens), (1...512).contains(limit) else { return "Enter a token limit from 1 to 512." }
+        guard let limit = Int(maxTokens), (1...Self.maxSinglePromptTokens).contains(limit) else {
+            return "Enter a token limit from 1 to \(Self.maxSinglePromptTokens)."
+        }
         return nil
     }
     var canPreview: Bool { canChangeSetup && !isRetainedOnly && inputValidation == nil }
@@ -113,19 +129,29 @@ final class TrainingEvaluationSession: ObservableObject {
         guard canPreview else { return nil }
         let prompt = prompt, revision = revision
         let suite = suite, limit = suite == nil ? Int(maxTokens) : nil
+        let taskID = UUID()
+        activeTask?.cancel()
+        activeTaskID = taskID
         operation = .previewing
         preview = nil
         clearEvidence()
         errorMessage = nil
-        return Task {
-            defer { operation = nil }
+        let task = Task { [weak self] in
+            defer {
+                if let self, self.activeTaskID == taskID {
+                    self.activeTaskID = nil
+                    self.activeTask = nil
+                    self.operation = nil
+                }
+            }
+            guard let self else { return }
             do {
-                let response = try await request(LabRequest(operation: "training-preview", receipt: receipt,
+                let response = try await self.request(LabRequest(operation: "training-preview", receipt: self.receipt,
                     prompt: suite == nil ? prompt : nil, maxTokens: limit, promptSuite: suite))
-                guard self.revision == revision else { return }
+                guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
                 guard let plan = response.plan, let hash = plan.object?["preview_hash"]?.text,
                       !hash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    errorMessage = "Evaluation preview did not include a confirmation hash. Preview again before running."
+                    self.errorMessage = "Evaluation preview did not include a confirmation hash. Preview again before running."
                     return
                 }
                 if let suite {
@@ -134,28 +160,40 @@ final class TrainingEvaluationSession: ObservableObject {
                         throw WorkflowEvidenceError.invalid("The preview returned different evaluation prompts.")
                     }
                 }
-                preview = Preview(prompt: prompt, maxTokens: limit, suite: suite, revision: revision, plan: plan, hash: hash)
+                self.preview = Preview(prompt: prompt, maxTokens: limit, suite: suite, revision: revision, plan: plan, hash: hash)
             } catch {
-                guard self.revision == revision else { return }
-                errorMessage = AppHost.render(error)
+                guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
+                self.errorMessage = AppHost.render(error)
             }
         }
+        activeTask = task
+        return task
     }
 
     @discardableResult
     func evaluate() -> Task<Void, Never>? {
         guard canEvaluate, let preview else { return nil }
         let revision = revision
+        let taskID = UUID()
+        activeTask?.cancel()
+        activeTaskID = taskID
         operation = .evaluating
         clearEvidence()
         errorMessage = nil
-        return Task {
-            defer { operation = nil }
+        let task = Task { [weak self] in
+            defer {
+                if let self, self.activeTaskID == taskID {
+                    self.activeTaskID = nil
+                    self.activeTask = nil
+                    self.operation = nil
+                }
+            }
+            guard let self else { return }
             do {
-                let response = try await request(LabRequest(operation: "training-evaluate", receipt: receipt,
+                let response = try await self.request(LabRequest(operation: "training-evaluate", receipt: self.receipt,
                     prompt: preview.suite == nil ? preview.prompt : nil, maxTokens: preview.maxTokens,
                     previewHash: preview.hash, promptSuite: preview.suite))
-                guard self.revision == revision else { return }
+                guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
                 guard let report = response.report, report.object?["preview_hash"]?.text == preview.hash else {
                     throw WorkflowEvidenceError.invalid("The retained report does not match the reviewed evaluation.")
                 }
@@ -170,12 +208,14 @@ final class TrainingEvaluationSession: ObservableObject {
                         throw WorkflowEvidenceError.invalid("The evaluation prompt or token limit changed.")
                     }
                 }
-                try publish(response)
+                try self.publish(response)
             } catch {
-                guard self.revision == revision else { return }
-                errorMessage = AppHost.render(error)
+                guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
+                self.errorMessage = AppHost.render(error)
             }
         }
+        activeTask = task
+        return task
     }
 
     var reviewValidation: String? {
@@ -194,26 +234,38 @@ final class TrainingEvaluationSession: ObservableObject {
         guard canSaveReview, let sample = selectedSample, let response = result,
               let identity = response.evaluationID, let digest = response.artifactSHA256 else { return nil }
         let captured = draft(sample.id), revision = revision
+        let taskID = UUID()
+        activeTask?.cancel()
+        activeTaskID = taskID
         operation = .savingReview; reviewError = nil; reviewNotice = nil
-        return Task {
-            defer { operation = nil }
+        let task = Task { [weak self] in
+            defer {
+                if let self, self.activeTaskID == taskID {
+                    self.activeTaskID = nil
+                    self.activeTask = nil
+                    self.operation = nil
+                }
+            }
+            guard let self else { return }
             do {
-                let saved = try await request(LabRequest(operation: "training-review", preference: captured.preference,
+                let saved = try await self.request(LabRequest(operation: "training-review", preference: captured.preference,
                     notes: captured.notes, evaluationID: identity, promptID: sample.id, artifactSHA256: digest))
-                guard self.revision == revision else { return }
+                guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
                 guard saved.evaluationID == identity, saved.artifactSHA256 == digest, let values = saved.reviews,
                       let reviewID = saved.reviewID,
                       values.contains(where: { $0.id == reviewID && $0.promptID == sample.id
                           && $0.preference == captured.preference && $0.notes == captured.notes }) else {
                     throw WorkflowEvidenceError.invalid("The saved review could not be confirmed for this report.")
                 }
-                try validateReviews(values, evaluationID: identity, digest: digest, samples: samples)
-                reviews = values; var updated = response; updated.reviews = values; result = updated
-                reviewDrafts[sample.id] = captured; reviewNotice = "Review saved."
+                try self.validateReviews(values, evaluationID: identity, digest: digest, samples: self.samples)
+                self.reviews = values; var updated = response; updated.reviews = values; self.result = updated
+                self.reviewDrafts[sample.id] = captured; self.reviewNotice = "Review saved."
             } catch {
-                guard self.revision == revision else { return }
-                reviewError = AppHost.render(error)
+                guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
+                self.reviewError = AppHost.render(error)
             }
         }
+        activeTask = task
+        return task
     }
 }
