@@ -241,8 +241,7 @@ struct ContentView: View {
         acknowledgedOutcome = Self.outcomeKey(modelWorkflow.workflow)
     }
 
-    /// Lifecycle and endpoint state ride in the toolbar only while they carry
-    /// information: an idle workflow and an empty fleet show nothing.
+    /// Serving and Activity stay accessible from every workspace.
     @ToolbarContentBuilder
     private var contextToolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
@@ -263,28 +262,120 @@ struct ContentView: View {
                 await appHost.unloadServing(server)
             })
         }
-        if modelWorkflow.isLoadingHistory || modelWorkflow.isSavingHistory {
-            ToolbarItem(placement: .automatic) {
-                HStack(spacing: WorkbenchSpacing.xs) {
-                    ProgressView().controlSize(.small)
-                    Text(modelWorkflow.isLoadingHistory ? "Reading workflow history…" : "Saving workflow history…")
-                        .font(WorkbenchTypography.metadata)
-                }.accessibilityElement(children: .combine)
+        ToolbarItem(id: "workbench.activity", placement: .primaryAction) {
+            let workflow = modelWorkflow.workflow
+            let unacknowledged = (workflow.state == .failed || workflow.state == .verificationFailed)
+                && Self.showsWorkflowBadge(route: selectedRoute, state: workflow.state,
+                                           acknowledged: acknowledgedOutcome == Self.outcomeKey(workflow))
+            ActivityToolbarButton(status: ActivityToolbarStatus(
+                workflow: workflow, history: modelWorkflow.history,
+                statusUnavailable: appHost.conversionStatusError != nil,
+                unacknowledgedFailure: unacknowledged, verifying: verification.activeModelPath != nil,
+                comparing: comparison.activeRunID != nil, reading: modelWorkflow.isLoadingHistory,
+                saving: modelWorkflow.isSavingHistory), selected: selectedRoute == .activity,
+                compact: viewport.width < 920) {
+                navigate(to: .activity)
             }
         }
-        if Self.showsWorkflowBadge(route: selectedRoute, state: modelWorkflow.workflow.state,
-                                   acknowledged: acknowledgedOutcome == Self.outcomeKey(modelWorkflow.workflow)) {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    navigate(to: .activity)
-                } label: {
-                    StatusBadge(state: modelWorkflow.workflow.state.rawValue)
-                        .fixedSize()
+    }
+}
+
+struct ActivityToolbarStatus: Equatable {
+    enum Kind: Equatable { case idle, working, queued, attention }
+
+    let kind: Kind
+    let detail: String?
+
+    init(workflow: ConversionWorkflow, history: [ConversionWorkflow], statusUnavailable: Bool = false,
+         unacknowledgedFailure: Bool = false, verifying: Bool = false, comparing: Bool = false,
+         reading: Bool = false, saving: Bool = false) {
+        let earlier = history.lazy.filter { $0.id != workflow.id }
+        let converting = workflow.state == .running || earlier.contains { $0.state == .running }
+        let queued = earlier.reduce(workflow.state == .queued ? 1 : 0) { $0 + ($1.state == .queued ? 1 : 0) }
+        if statusUnavailable && (converting || queued > 0) {
+            self.init(.attention, "Status unavailable")
+        } else if unacknowledgedFailure {
+            self.init(.attention, workflow.state == .verificationFailed ? "Verification failed" : "Conversion failed")
+        } else if converting {
+            self.init(.working, queued > 0 ? "Converting · \(queued) queued" : "Converting")
+        } else if verifying || workflow.state == .verifying {
+            self.init(.working, "Verifying")
+        } else if comparing {
+            self.init(.working, "Comparing")
+        } else if queued > 0 {
+            self.init(.queued, "\(queued) queued")
+        } else if reading || saving {
+            self.init(.working, reading ? "Reading history" : "Saving history")
+        } else {
+            self.init(.idle, nil)
+        }
+    }
+
+    private init(_ kind: Kind, _ detail: String?) {
+        self.kind = kind
+        self.detail = detail
+    }
+
+    var symbol: String {
+        switch kind {
+        case .idle, .working: "waveform"
+        case .queued: "clock"
+        case .attention: "exclamationmark"
+        }
+    }
+}
+
+struct ActivityToolbarButton: View {
+    let status: ActivityToolbarStatus
+    let selected: Bool
+    var compact = false
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var tint: Color {
+        switch status.kind {
+        case .idle: selected ? WorkbenchColor.accent : WorkbenchColor.muted
+        case .working: WorkbenchColor.accent
+        case .queued, .attention: WorkbenchColor.warning
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                glyph
+                if !compact {
+                    Text("Activity").font(WorkbenchTypography.metadata.weight(.semibold))
+                    if let detail = status.detail {
+                        Divider().frame(height: 12)
+                        Text(detail).font(WorkbenchTypography.metadata).foregroundStyle(tint)
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("Conversion \(modelWorkflow.workflow.state.rawValue). Open Activity.")
-                .accessibilityLabel("Conversion status: \(modelWorkflow.workflow.state.rawValue)")
             }
+            .fixedSize()
+            .padding(.horizontal, WorkbenchSpacing.xs)
+            .padding(.vertical, WorkbenchSpacing.xxxs)
+            .background(.regularMaterial, in: Capsule())
+            .overlay { Capsule().strokeBorder(WorkbenchColor.hairline, lineWidth: 1) }
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Activity")
+        .accessibilityValue(status.detail ?? "Idle")
+        .accessibilityHint("Opens Activity")
+        .accessibilityIdentifier("activity-toolbar-button")
+        .help(status.detail.map { "Activity · " + $0 } ?? "Open Activity")
+    }
+
+    private var glyph: some View {
+        Image(systemName: status.symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .symbolRenderingMode(.hierarchical)
+            .symbolEffect(.variableColor.iterative, options: .repeating,
+                          isActive: status.kind == .working && !reduceMotion)
+            .foregroundStyle(tint)
+            .frame(width: 20, height: 20)
+            .background(tint.opacity(0.13), in: Circle())
+            .accessibilityHidden(true)
     }
 }

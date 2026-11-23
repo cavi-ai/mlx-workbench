@@ -618,10 +618,9 @@ struct ConvertView: View {
         }
         .task(id: isRouteActive && (modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running)) {
             guard isRouteActive && (modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running) else { return }
-            for _ in 0..<ActivityPoll.maximumTicks {
+            while !Task.isCancelled {
                 await sampleProgress()
                 do { try await Task.sleep(for: ActivityPoll.interval) } catch { return }
-                do { try await appHost.refreshConversionStatus() } catch { return }
             }
         }
 
@@ -637,16 +636,19 @@ struct ConvertView: View {
             progress = nil
             return
         }
+        let workflowID = modelWorkflow.workflow.id
         let output = modelWorkflow.workflow.outputPath
         let logPath = currentJob?.logPath
         let estimate = ConversionProgressSnapshot.estimate(for: modelWorkflow.workflow)
-        progress = await Task.detached(priority: .utility) {
+        let reading = await Task.detached(priority: .utility) {
             ConversionProgressSnapshot(
                 writtenBytes: ConversionProgressReader.writtenBytes(at: output),
                 estimatedBytes: estimate,
                 logLines: ConversionProgressReader.logTail(at: logPath)
             )
         }.value
+        guard !Task.isCancelled, modelWorkflow.workflow.id == workflowID else { return }
+        progress = reading
     }
 
     private func pasteIntake() {

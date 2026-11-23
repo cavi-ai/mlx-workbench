@@ -244,18 +244,10 @@ struct MenuBarView: View {
 
 }
 
-struct ServingInventoryMenuLabel: View {
-    @ObservedObject var inventory: ServingInventoryCoordinator
-
-    var body: some View {
-        Image(systemName: "cpu")
-            .overlay(alignment: .bottomTrailing) {
-                if inventory.snapshot.loadedCount > 0 { Circle().fill(WorkbenchColor.success).frame(width: 5, height: 5) }
-            }
-        .help("MLX Workbench · " + ServingInventoryPresentation.summary(inventory.snapshot))
-        .accessibilityIdentifier("workbench-menu-bar")
-        .accessibilityLabel("MLX Workbench")
-    }
+enum WorkbenchMenuBarItem {
+    static let title = "MLX Workbench"
+    static let systemImage = "cpu"
+    static let storageKey = "showsWorkbenchMenuBarItem"
 }
 
 /// Strings the menu draws; pure so no file-system lookup happens during rendering.

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Observation
 
@@ -7,6 +8,9 @@ import Observation
 @Observable
 class AppHost {
     private var conversionStatusReadOwner = false
+    @ObservationIgnored private var conversionMonitoring: AnyCancellable?
+    @ObservationIgnored private var conversionPoll: Task<Void, Never>?
+    private(set) var conversionStatusError: String?
 
     var config: Config = Config.defaults(ggufRoots: [])
     var agentHealth: AgentHealth = .notConfigured
@@ -587,17 +591,46 @@ class AppHost {
         await finishCompletionReconciliationIfNeeded()
     }
 
-    /// One targeted status read shared by the visible Activity and Prepare routes.
+    /// One targeted status read shared by the monitor and explicit refresh.
     @discardableResult
     func refreshConversionStatus() async throws -> Bool {
         guard !conversionStatusReadOwner else { return false }
         conversionStatusReadOwner = true
         defer { conversionStatusReadOwner = false }
-        let jobs = try await api.convertStatus(timeout: 30, cancellable: true)
-        try Task.checkCancellation()
-        // Reconciliation owns completion scanning once a status read succeeds.
-        await Task { await refreshWorkflowStatus(jobs: jobs) }.value
-        return true
+        do {
+            let jobs = try await api.convertStatus(timeout: 30, cancellable: true)
+            try Task.checkCancellation()
+            if conversionStatusError != nil { conversionStatusError = nil }
+            // Reconciliation owns completion scanning once a status read succeeds.
+            await Task { await refreshWorkflowStatus(jobs: jobs) }.value
+            return true
+        } catch {
+            if !Task.isCancelled, !(error is CancellationError) {
+                let message = "Live conversion status unavailable: \(Self.render(error)). Showing last known activity."
+                if conversionStatusError != message { conversionStatusError = message }
+            }
+            throw error
+        }
+    }
+
+    /// Keep owned conversions current even when neither Activity nor Prepare is open.
+    func startConversionMonitoring(sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        guard conversionMonitoring == nil else { return }
+        conversionMonitoring = modelWorkflow.$workflow.combineLatest(modelWorkflow.$history)
+            .map { !ActivityPoll.inFlightIDs(workflow: $0, history: $1).isEmpty }
+            .removeDuplicates()
+            .sink { [weak self] active in
+                self?.conversionPoll?.cancel()
+                self?.conversionPoll = active ? Task { [weak self] in
+                    var delay = ActivityPoll.interval
+                    while !Task.isCancelled {
+                        do { try await sleep(delay) } catch { return }
+                        guard let self, !Task.isCancelled else { return }
+                        _ = try? await refreshConversionStatus()
+                        delay = conversionStatusError == nil ? ActivityPoll.interval : ActivityPoll.recoveryInterval
+                    }
+                } : nil
+            }
     }
 
     /// New downloads share one managed root; existing provider caches stay in place.
@@ -1223,6 +1256,7 @@ class AppHost {
         liveServicesStarted = true
         if isCheckingRuntime { refreshRuntimeReport() }
         applyFeatureToggles()
+        startConversionMonitoring()
         let startup = Task {
             await comparison.waitForHistory()
             if comparison.hasLoadedHistory { endpoint.startMonitoring() }

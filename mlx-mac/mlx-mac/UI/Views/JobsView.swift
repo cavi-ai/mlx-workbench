@@ -199,7 +199,6 @@ struct JobsView: View {
         let page = ActivityTimeline.page(
             cards: cards, snapshot: appHost.librarySnapshot, verification: verificationStatuses, now: Date()
         )
-        let inFlight = ActivityPoll.inFlightIDs(workflow: modelWorkflow.workflow, history: modelWorkflow.history)
         let settled = (page.needsAttention + page.groups.flatMap(\.rows))
             .sorted { $0.workflow.createdAt > $1.workflow.createdAt }
         let recent = Array(settled.filter { Date().timeIntervalSince($0.workflow.createdAt) < 7 * 24 * 60 * 60 }.prefix(3))
@@ -212,7 +211,7 @@ struct JobsView: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                    if let statusError { statusRecovery(statusError, context: "activity") }
+                    if let error = statusError ?? appHost.conversionStatusError { statusRecovery(error, context: "activity") }
                     ErrorBanner(text: modelWorkflow.persistenceError)
                     ActivityComparisonSection(comparison: appHost.comparison) { onRouteSelection(.compare) }
                     if !page.inFlight.isEmpty { rowSection("In flight", rows: page.inFlight) }
@@ -277,17 +276,6 @@ struct JobsView: View {
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
             await refresh()
-        }
-        .task(id: isRouteActive && !inFlight.isEmpty && statusError == nil) {
-            guard isRouteActive && !inFlight.isEmpty && statusError == nil else { return }
-            for _ in 0..<ActivityPoll.maximumTicks {
-                do { try await Task.sleep(for: ActivityPoll.interval) } catch { return }
-                guard statusError == nil else { return }
-                do { _ = try await appHost.refreshConversionStatus() } catch {
-                    if !Task.isCancelled { statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity." }
-                    return
-                }
-            }
         }
         .onChange(of: verification.reports, initial: true) { refreshVerification() }
         .onChange(of: modelWorkflow.history) { refreshVerification() }
@@ -569,10 +557,7 @@ struct JobsView: View {
             let read = try await appHost.refreshConversionStatus()
             guard read, !Task.isCancelled else { return }
             statusError = nil
-        } catch {
-            guard !Task.isCancelled, !(error is CancellationError) else { return }
-            statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity."
-        }
+        } catch { /* AppHost retains the error and the last successful status. */ }
     }
 
     private func refresh() async {

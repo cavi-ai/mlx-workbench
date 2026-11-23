@@ -5,12 +5,18 @@ import Darwin
 @main
 struct MlxWorkbenchApp: App {
     @NSApplicationDelegateAdaptor(WorkbenchApplicationDelegate.self) private var appDelegate
-    @State private var appHost = AppHost()
+    @State private var appHost: AppHost
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
+    @AppStorage(WorkbenchMenuBarItem.storageKey) private var showsMenuBarItem = true
+    private let isHostedUnitTest = WorkbenchStatePaths.isHostedUnitTest()
 
     init() {
+        let host = AppHost()
+        _appHost = State(initialValue: host)
         #if WORKBENCH_HOSTED_TEST_BUILD
         NSApplication.shared.setActivationPolicy(.prohibited)
+        #else
+        if isHostedUnitTest { NSApplication.shared.setActivationPolicy(.prohibited) }
         #endif
         if CommandLine.arguments.contains("--check-installation") {
             NSApplication.shared.setActivationPolicy(.prohibited)
@@ -24,6 +30,10 @@ struct MlxWorkbenchApp: App {
             }
             exit(1)
         }
+        if !isHostedUnitTest {
+            appDelegate.startLiveServices = { host.startLiveServices() }
+            appDelegate.prepareToQuit = { await host.useWorkspace.prepareForQuit() }
+        }
     }
 
     var body: some Scene {
@@ -33,10 +43,6 @@ struct MlxWorkbenchApp: App {
         Window("MLX Workbench", id: ServedModelsWindow.mainID) {
             ContentView(appHost: appHost)
                 .workbenchTheme()
-                .onAppear {
-                    appDelegate.prepareToQuit = { await appHost.useWorkspace.prepareForQuit() }
-                    appHost.startLiveServices()
-                }
         }
         .windowToolbarStyle(.unified)
         .defaultSize(width: WorkbenchSize.windowDefaultWidth, height: WorkbenchSize.windowDefaultHeight)
@@ -80,14 +86,18 @@ struct MlxWorkbenchApp: App {
         }
         .defaultSize(width: WorkbenchSize.Compare.meshInspectorWidth, height: WorkbenchSize.Compare.meshInspectorHeight)
         .commandsRemoved()
-        MenuBarExtra {
+        MenuBarExtra(WorkbenchMenuBarItem.title, systemImage: WorkbenchMenuBarItem.systemImage,
+                     isInserted: menuBarInsertion) {
             MenuBarView(appHost: appHost)
-        } label: {
-            ServingInventoryMenuLabel(inventory: appHost.servingInventory)
-                .onAppear { appHost.startLiveServices() }
         }
         .menuBarExtraStyle(.window)
         #endif
+    }
+
+    private var menuBarInsertion: Binding<Bool> {
+        Binding(get: { !isHostedUnitTest && showsMenuBarItem }, set: { shown in
+            if !isHostedUnitTest { showsMenuBarItem = shown }
+        })
     }
 
     private static var marketingVersion: String {
@@ -97,7 +107,11 @@ struct MlxWorkbenchApp: App {
 
 @MainActor
 final class WorkbenchApplicationDelegate: NSObject, NSApplicationDelegate {
+    var startLiveServices: (() -> Void)?
     var prepareToQuit: (() async -> Bool)?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        startLiveServices?()
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let prepareToQuit else { return .terminateNow }
         Task {

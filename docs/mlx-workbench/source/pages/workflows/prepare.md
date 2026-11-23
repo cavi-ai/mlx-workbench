@@ -35,6 +35,12 @@ Convert and the Library inspector show the result under **Agent tools**, with ea
 
 ## Activity
 
+The **Activity** toolbar button shows conversion progress by stage, the queue
+count, verification, comparisons and failures that need attention. Select it
+from any page to see the full Activity view. Conversion status continues to
+update while Workbench runs, including when viewing another page. After a
+status error, Workbench keeps the last known state and retries at a slower rate.
+
 **Activity** puts active comparisons and in-flight conversions before older records. Study and training work that is queued, running, failed or in an unknown state stays prominent; successful and cancelled jobs remain in expandable history. Failed conversions appear under **Needs attention**. Other conversion records stay grouped by creation day. Each conversion has a stage track, its state and one action.
 
 Empty study and training sections are omitted. Their status failures stay visible with the latest available records, rather than appearing as empty history. **Open Experiments** and **Open Training** lead to their full workflows.

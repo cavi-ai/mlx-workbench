@@ -577,7 +577,11 @@ actor WorkbenchAPI {
 
     func convertStatus(timeout: TimeInterval? = nil, cancellable: Bool = false) async throws -> [Job] {
         let data = try await raw(["convert", "status", "--receipts-dir", receiptDirectory], timeout: timeout, cancellable: cancellable)
-        return Self.jobs(from: data) ?? []
+        guard let jobs = Self.jobs(from: data) else {
+            throw BridgeError.remote(code: "invalid_conversion_status", message: "The engine returned unreadable conversion status.",
+                                     remediation: "Refresh Activity or check the engine in Health.")
+        }
+        return jobs
     }
 
     func serveStatus(timeout: TimeInterval? = nil) async throws -> [ServerInfo] {
