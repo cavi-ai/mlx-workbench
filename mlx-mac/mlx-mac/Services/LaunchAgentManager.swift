@@ -128,8 +128,8 @@ struct LaunchAgentManager: Sendable {
         try install(plans: [plan])
     }
 
-    /// Writes and bootstraps one plist per plan. A failed bootstrap removes
-    /// the agents this call started so a partial fleet is not left running.
+    /// Writes and bootstraps one plist per plan, restoring the previous
+    /// login configuration if writing, retiring or bootstrapping an agent fails.
     func install(plans: [LoginItemPlan]) throws {
         guard !plans.isEmpty, plans.allSatisfy({ $0.slot.enabled && !$0.slot.modelPath.isEmpty }) else {
             throw LaunchAgentError.invalidPlan("Enable an endpoint before installing its login item.")
@@ -137,30 +137,73 @@ struct LaunchAgentManager: Sendable {
         guard plans.count <= EndpointFleetConfig.maxSlots, Set(plans.map(\.slot.id)).count == plans.count else {
             throw LaunchAgentError.invalidPlan("A login item can start at most \(EndpointFleetConfig.maxSlots) different endpoints.")
         }
-        let rendered = try plans.map { (plan: $0, text: try plistPreview(plan: $0)) }
+        let rendered = try plans.map { (url: plistURL(for: $0.slot.id), text: try plistPreview(plan: $0)) }
         try FileManager.default.createDirectory(at: agentsDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: home.appendingPathComponent("Library/Logs"), withIntermediateDirectories: true)
-        for item in rendered {
-            try item.text.write(to: plistURL(for: item.plan.slot.id), atomically: true, encoding: .utf8)
+        let desired = Set(rendered.map(\.url))
+        let retired = [legacyPlistURL] + slotPlistURLs().filter { !desired.contains($0) }
+        let affected = retired + rendered.map(\.url)
+        var previous: [URL: Data] = [:]
+        for url in affected where FileManager.default.fileExists(atPath: url.path) {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw LaunchAgentError.invalidPlan("The login item at \(url.lastPathComponent) must be a regular plist file.")
+            }
+            previous[url] = try Data(contentsOf: url)
         }
-        try removeAgents(keeping: Set(plans.map(\.slot.id)))
-        var started: [UUID] = []
+        var changed: [URL] = []
+        var stopped: [URL] = []
+        var started: [URL] = []
         do {
-            for plan in plans {
-                let label = Self.label(for: plan.slot.id)
-                _ = try? run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
-                _ = try run("/bin/launchctl", ["bootstrap", "gui/\(uid)", plistURL(for: plan.slot.id).path])
-                started.append(plan.slot.id)
+            for item in rendered {
+                try item.text.write(to: item.url, atomically: true, encoding: .utf8)
+                changed.append(item.url)
+            }
+            for url in affected {
+                let bootedOut = (try? bootout(url)) != nil
+                if bootedOut && previous[url] != nil { stopped.append(url) }
+                if desired.contains(url) {
+                    try bootstrap(url)
+                    started.append(url)
+                } else if previous[url] != nil {
+                    try FileManager.default.removeItem(at: url)
+                    changed.append(url)
+                }
             }
         } catch {
-            for id in started {
-                _ = try? run("/bin/launchctl", ["bootout", "gui/\(uid)/\(Self.label(for: id))"])
+            let installError = error
+            var rollbackErrors: [String] = []
+            for url in started.reversed() {
+                do { try bootout(url) } catch { rollbackErrors.append(error.localizedDescription) }
             }
-            for plan in plans {
-                try? FileManager.default.removeItem(at: plistURL(for: plan.slot.id))
+            var unrestored = Set<URL>()
+            for url in changed.reversed() {
+                do {
+                    if let data = previous[url] { try data.write(to: url, options: .atomic) }
+                    else { try FileManager.default.removeItem(at: url) }
+                } catch {
+                    unrestored.insert(url)
+                    rollbackErrors.append(error.localizedDescription)
+                }
             }
-            throw error
+            for url in stopped where !unrestored.contains(url) {
+                do { try bootstrap(url) } catch { rollbackErrors.append(error.localizedDescription) }
+            }
+            if !rollbackErrors.isEmpty {
+                throw LaunchAgentError.launchctlFailed(
+                    installError.localizedDescription + " Rollback could not restore the login fleet: " + rollbackErrors.joined(separator: "; "))
+            }
+            throw installError
         }
+    }
+
+    private func bootout(_ url: URL) throws {
+        let label = url.deletingPathExtension().lastPathComponent
+        _ = try run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+    }
+
+    private func bootstrap(_ url: URL) throws {
+        _ = try run("/bin/launchctl", ["bootstrap", "gui/\(uid)", url.path])
     }
 
     /// Read the current fleet before executing the captured, confirmed engine command.
@@ -181,21 +224,9 @@ struct LaunchAgentManager: Sendable {
     """
 
     func uninstall() throws {
-        try removeAgents(keeping: [])
-    }
-
-    /// Boots out the legacy single-slot agent and any slot agent not in `keeping`.
-    private func removeAgents(keeping: Set<UUID>) throws {
-        _ = try? run("/bin/launchctl", ["bootout", "gui/\(uid)/\(Self.legacyLabel)"])
-        if FileManager.default.fileExists(atPath: legacyPlistURL.path) {
-            try FileManager.default.removeItem(at: legacyPlistURL)
-        }
-        for url in slotPlistURLs() {
-            let label = url.deletingPathExtension().lastPathComponent
-            let idText = label.dropFirst(Self.legacyLabel.count + 1)
-            if let id = UUID(uuidString: String(idText)), keeping.contains(id) { continue }
-            _ = try? run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
-            try FileManager.default.removeItem(at: url)
+        for url in [legacyPlistURL] + slotPlistURLs() {
+            try? bootout(url)
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
         }
     }
 

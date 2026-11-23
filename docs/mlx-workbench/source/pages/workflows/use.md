@@ -9,6 +9,8 @@ server in Run. **New** starts another work session with a ready model.
 Choose a running connection in **Server**, enter a message and choose **Send**
 (⌘Return). Each request includes the conversation's completed turns. History
 is stored locally and reopens without relying on a server response cache.
+For models that stream inline reasoning, Chat shows the reasoning separately
+and groups incoming chunks into updates as the response arrives.
 
 A new conversation is titled with the model name. The first message replaces
 that title with the question. Opening an older conversation replaces a stored

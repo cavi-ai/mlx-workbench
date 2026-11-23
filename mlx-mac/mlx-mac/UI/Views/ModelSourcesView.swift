@@ -103,6 +103,7 @@ enum ModelSourcesPresentation {
 struct ModelSourcesView: View {
     let appHost: AppHost
     let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
     @ObservedObject private var hosts: ModelHostsCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
@@ -160,6 +161,10 @@ struct ModelSourcesView: View {
             else { serverModels(catalog) }
         }
         .padding(WorkbenchSpacing.lg)
+        .task(id: isRouteActive && !foldersSelected) {
+            guard isRouteActive, !foldersSelected, appHost.liveServicesStarted else { return }
+            await inventory.refresh(refreshHosts: true)
+        }
         .sheet(isPresented: $showingDetails, onDismiss: {
             if let host = pendingEditor { pendingEditor = nil; editor = host }
         }) {

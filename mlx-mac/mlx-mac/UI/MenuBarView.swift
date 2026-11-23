@@ -97,6 +97,9 @@ struct MenuBarView: View {
         }
         .padding(WorkbenchSpacing.md)
         .frame(width: 380, alignment: .leading)
+        .task {
+            if appHost.liveServicesStarted { await inventory.refresh(refreshHosts: true) }
+        }
         .onDisappear { inventory.cancelReview(surface: .menuBar) }
     }
 

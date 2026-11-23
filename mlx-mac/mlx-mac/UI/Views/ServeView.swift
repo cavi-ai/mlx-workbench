@@ -242,7 +242,13 @@ struct ServeView: View {
         .sheet(item: $splashPresetSlot) { slot in
             SplashPresetApplySheet(slot: slot, endpoint: endpoint, api: appHost.api)
         }
-        .task { await modelWorkflow.refreshServers(); await loadSplashPresets() }
+        .task { await loadSplashPresets() }
+        .task(id: isRouteActive) {
+            guard isRouteActive else { return }
+            async let discovery: Void = refreshDiscovery()
+            await modelWorkflow.refreshServers()
+            await discovery
+        }
         .onChange(of: selectedSplashPresetName) { _, name in
             if !name.isEmpty { newSlotLoadOnRequest = true }
             inferenceOptions = inferenceContext.normalized(inferenceOptions)
@@ -252,7 +258,7 @@ struct ServeView: View {
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
         .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
         .onChange(of: isRouteActive) { _, active in
-            if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime(); Task { await modelWorkflow.refreshServers() } }
+            if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime() }
             else { closePrompt() }
         }
         .onDisappear(perform: closePrompt)
@@ -1033,6 +1039,10 @@ struct ServeView: View {
     private func refreshServing() async {
         await modelWorkflow.refreshServers()
         await inventory.refresh(refreshHosts: true)
+    }
+
+    private func refreshDiscovery() async {
+        if appHost.liveServicesStarted { await inventory.refresh(refreshHosts: true) }
     }
 
     @ViewBuilder

@@ -19,6 +19,7 @@ final class ModelHostsCoordinator: ObservableObject {
     @Published private(set) var resourceHostID: UUID?
     var resourceUseBlocked: () -> Bool = { false }
     private let store: JSONStore<ModelHost>
+    private let discoverLocal: () async throws -> [LocalModelHost]
     private let fetch: @Sendable (ModelHost, String?) async throws -> HostInventory
     private let inspectModel: @Sendable (ModelHost, HostedModel, String?) async throws -> HostInventory
     private let readToken: (UUID) throws -> String?
@@ -29,6 +30,7 @@ final class ModelHostsCoordinator: ObservableObject {
     private var resourceGeneration = UUID()
 
     init(store: JSONStore<ModelHost> = JSONStore(fileURL: JSONStore<ModelHost>.defaultFileURL("model-hosts.json")),
+         discoverLocal: @escaping () async throws -> [LocalModelHost] = LocalModelHostDiscovery.discover,
          readToken: @escaping (UUID) throws -> String? = HostCredentialStore.token,
          writeToken: @escaping (String?, UUID) throws -> Void = HostCredentialStore.setToken,
          fetch: @escaping @Sendable (ModelHost, String?) async throws -> HostInventory = { host, token in
@@ -43,7 +45,8 @@ final class ModelHostsCoordinator: ObservableObject {
          releaseResource: @escaping @Sendable (HostResourcePreview, String?) async throws -> Void = { preview, token in
              try await HostResourceClient().release(preview: preview, token: token)
          }) {
-        self.store = store; self.fetch = fetch; self.inspectModel = inspectModel; self.readToken = readToken; self.writeToken = writeToken
+        self.store = store; self.discoverLocal = discoverLocal
+        self.fetch = fetch; self.inspectModel = inspectModel; self.readToken = readToken; self.writeToken = writeToken
         self.inspectResource = inspectResource; self.releaseResource = releaseResource
         do {
             let saved = try store.load()
@@ -66,23 +69,31 @@ final class ModelHostsCoordinator: ObservableObject {
             discovering = true
             defer { discovering = false }
             do {
-                let candidates = try await LocalModelHostDiscovery.discover()
+                let candidates = try await discoverLocal()
                 discoveryError = nil
+                var processIDs: [UUID: Int] = [:]
+                var discovered: [ModelHost] = []
                 for candidate in candidates {
-                    let saved = hosts.first { (try? $0.validatedURL()) == (try? candidate.host.validatedURL()) }
+                    let address = try? candidate.host.validatedURL()
+                    let saved = hosts.first { (try? $0.validatedURL()) == address }
                     let host = saved ?? candidate.host
-                    discoveredProcessIDs[host.id] = candidate.processID
-                    if saved == nil, !discoveredHosts.contains(where: { $0.id == host.id }) { discoveredHosts.append(host) }
+                    processIDs[host.id] = candidate.processID
+                    if saved == nil { discovered.append(host) }
                 }
-                let detected = Set(candidates.compactMap { candidate in
-                    (hosts.first { (try? $0.validatedURL()) == (try? candidate.host.validatedURL()) } ?? candidate.host).id
-                })
-                for host in discoveredHosts where !detected.contains(host.id) {
-                    errors[host.id] = "This server is no longer listening. The last inventory is shown."
+                // A complete scan can retire an ephemeral host. On a failed scan,
+                // retain the observations and refuse removal until ownership is known.
+                let current = Set((hosts + discovered).map(\.id))
+                for host in discoveredHosts where !current.contains(host.id) {
+                    inventories[host.id] = nil
+                    errors[host.id] = nil
+                    generations[host.id] = nil
+                    refreshing.remove(host.id)
                 }
+                discoveredHosts = discovered
+                discoveredProcessIDs = processIDs
                 let targets = knownHosts.filter { host in
                     let local = (try? host.validatedURL()).flatMap(\.host).map { ["127.0.0.1", "localhost", "::1", "[::1]"].contains($0) } ?? false
-                    return local && (hosts.contains(host) || detected.contains(host.id))
+                    return local && (hosts.contains(host) || processIDs[host.id] != nil)
                 }
                 await withTaskGroup(of: Void.self) { group in
                     for host in targets { group.addTask { [weak self] in _ = await self?.refresh(host.id) } }

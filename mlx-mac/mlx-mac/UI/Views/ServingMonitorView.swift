@@ -59,12 +59,19 @@ struct ServingMonitorView: View {
         .padding(WorkbenchSpacing.lg)
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
+            async let discovery: Void = refreshDiscovery()
             await workflow.refreshServers()
+            await discovery
         }
         .onChange(of: rows.map(\.id), initial: true) { _, ids in
             if selection == nil || !ids.contains(selection ?? "") { selection = ids.first }
         }
     }
+
+    private func refreshDiscovery() async {
+        if appHost.liveServicesStarted { await inventory.refresh(refreshHosts: true) }
+    }
+
     private var monitorTable: some View {
         Table(rows, selection: $selection) {
                 TableColumn("Model") { row in

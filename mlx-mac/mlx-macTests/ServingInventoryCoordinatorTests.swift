@@ -57,6 +57,67 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
         XCTAssertTrue(paths.contains("org/model"))
     }
 
+    func testBackgroundPollingSlowsWhenEmptyAndResumesWhenServing() async {
+        let published = expectation(description: "four background passes")
+        let live = server()
+        var engineReads = 0
+        var hostProbes: [Bool] = []
+        var waits: [Duration] = []
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
+            engineReads += 1
+            return ServingEngineSnapshot(servers: engineReads <= 2 ? [] : [live])
+        }, fetchHosts: { refresh in
+            hostProbes.append(refresh)
+            return ServingHostSnapshot()
+        }, readMemory: { _ in [:] })
+        coordinator.startMonitoring(sleep: { delay in
+            waits.append(delay)
+            if waits.count == 4 {
+                published.fulfill()
+                throw CancellationError()
+            }
+        })
+        await fulfillment(of: [published], timeout: 2)
+        coordinator.stopMonitoring()
+
+        XCTAssertEqual(waits, [.seconds(30), .seconds(30), .seconds(10), .seconds(10)])
+        XCTAssertEqual(hostProbes, [true, false, true, false])
+    }
+
+    func testRemovedListenerDoesNotBlockRemovalAfterSuccessfulDiscovery() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inventory = hostInventory()
+        var listeners = [LocalModelHost(host: inventory.host, processID: 42)]
+        var failDiscovery = false
+        let hosts = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent("hosts.json")),
+            discoverLocal: {
+                if failDiscovery { throw CocoaError(.fileReadUnknown) }
+                return listeners
+            }, fetch: { _, _ in inventory })
+        let managedServer = server()
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [managedServer]) },
+            fetchHosts: { await hosts.servingSnapshot(refreshLocal: $0) }, readMemory: { _ in [:] })
+
+        let initial = try await coordinator.pathsForRemoval()
+        XCTAssertTrue(initial.contains("org/model"))
+        listeners = []
+        failDiscovery = true
+        do {
+            _ = try await coordinator.pathsForRemoval()
+            XCTFail("A failed probe must still block model removal")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Local server discovery"))
+        }
+        failDiscovery = false
+        let current = try await coordinator.pathsForRemoval()
+        XCTAssertTrue(current.contains("/models/model"))
+        XCTAssertFalse(current.contains("org/model"))
+        XCTAssertNil(hosts.discoveredProcessIDs[inventory.host.id])
+    }
+
     func testRemovalNamesUnavailableSourcesAndFailsClosed() throws {
         let host = hostInventory()
         let key = "host:" + host.host.id.uuidString

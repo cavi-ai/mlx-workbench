@@ -195,6 +195,7 @@ model does not establish that one configuration is fastest for every workload.
 ## Always-on endpoints
 
 Saved endpoints in **Served models** keep chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
+Starting one endpoint checks that endpoint immediately. The background supervisor handles repairs for the rest of the fleet.
 
 - **Add endpoint…** suggests the next free port. Up to four endpoints.
 - Endpoints require a verified model unless you explicitly override for an unverified one.
@@ -203,6 +204,9 @@ Saved endpoints in **Served models** keep chosen models serving on stable ports.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
 The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item installs one `RunAtLoad` agent per enabled endpoint, `ai.cavi.mlxworkbench.endpoint.<slot id>`, and each runs `mlx-agent serve start` once at login. The preview lists every command before confirmation. Each captured command preserves that endpoint's local path, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent that endpoint's login startup; a change to any included endpoint requires a fresh preview. Remove and reinstall the login item after changing endpoint settings. Installing is refused when the enabled fleet will not fit, until you choose **Install anyway**, the same override as enabling an endpoint. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority. An older single-agent plist, `ai.cavi.mlxworkbench.endpoint`, is removed when you install or remove the login item.
+
+If login-item installation fails partway through, Workbench rolls back the
+changes and reports any part of the previous setup it could not restore.
 
 ### Inference settings for saved endpoints
 
@@ -285,6 +289,7 @@ If disabling or removing an endpoint cannot confirm its server stopped, Run keep
 **Served models** shows Workbench endpoints alongside services started by MLX Agent, including Strata, and recognized local Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible server processes. Discovery reads this user’s listening processes and provider APIs at their actual ports. Engine services are found through registered receipt locations and live engine process arguments. Discovery does not search model folders or add external servers to automatic restart supervision. An older engine reports that cross-location engine discovery needs an update.
 
 Rows distinguish loaded, unloaded, loading, failed and unknown residency. The same service reported through its engine receipt and listening process appears once. Failed sources retain dated observations and an error. Paths, runtime, active requests and process identity appear when available. Provider APIs may omit storage locations or residency.
+Background discovery checks less often when a successful scan finds no active local servers. Opening Serving, Monitor, Model sources or the menu bar panel refreshes discovery immediately.
 
 System headroom, observed process RAM, shared host process RAM, provider-reported model memory and source estimates are shown separately. They are not added into a model-memory total: shared pages, host processes and GPU allocations overlap. A load-on-request worker that reports MLX allocator memory shows its memory in use, cache and peak in the row details. **Unload model…** and **Stop server…** review the selected process, recheck ownership before acting and read status afterwards. **Release cache…** in **Disk space → Models** uses the same review for an idle task worker whose runtime exposes cache control, and keeps the model loaded. Provider unload uses that provider’s model, instance or whole-host scope; unsupported actions are unavailable.
 
