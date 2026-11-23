@@ -289,9 +289,17 @@ enum LineDiff {
 // MARK: - Secret redaction
 
 /// Display-side redaction for diffs: any line assigning a key/token/secret
-/// value shows `•••` instead of the value.
+/// value shows `•••` instead of the value, while preserving secret-free
+/// environment-variable references such as `${MLX_AGENT_API_KEY}`.
 enum SecretRedaction {
     private static let sensitiveMarkers = ["api_key", "apikey", "api-key", "token", "secret", "authorization"]
+    private static let envReferencePattern =
+        #"^(?:os\.environ(?:\[["'][A-Z][A-Z0-9_]{0,127}["']\]|/[A-Z][A-Z0-9_]{0,127})|\$\{[A-Z][A-Z0-9_]{0,127}\}|\$[A-Z][A-Z0-9_]{0,127}|\{env:[A-Z][A-Z0-9_]{0,127}\}|env:[A-Z][A-Z0-9_]{0,127})$"#
+
+    static func isEnvVarReference(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.range(of: envReferencePattern, options: .regularExpression) != nil
+    }
 
     static func redact(_ text: String) -> String {
         var tripleQuote: String?
@@ -320,6 +328,15 @@ enum SecretRedaction {
         guard let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "=" }),
               sensitiveMarkers.contains(where: { line.lowercased().contains($0) }) else { return line }
         let valueStart = line.index(after: delimiter)
+        var rawValue = line[valueStart...].trimmingCharacters(in: .whitespaces)
+        if rawValue.hasSuffix(",") { rawValue = String(rawValue.dropLast()).trimmingCharacters(in: .whitespaces) }
+        if rawValue.count >= 2,
+           ((rawValue.hasPrefix("\"") && rawValue.hasSuffix("\"")) || (rawValue.hasPrefix("'") && rawValue.hasSuffix("'"))) {
+            let unquoted = String(rawValue.dropFirst().dropLast())
+            if isEnvVarReference(unquoted) { return line }
+        } else if isEnvVarReference(rawValue) {
+            return line
+        }
         return String(line[..<valueStart]) + " \"•••\""
     }
 }

@@ -68,8 +68,62 @@ struct ClientsEndpointRow: Equatable, Identifiable {
     /// The full model identity of a running server.
     let identity: String?
     let isSelected: Bool
+    let apiKeyRequired: Bool
+    let supportsChat: Bool
+    let supportsResponses: Bool
+    let supportsAnthropic: Bool
+    let supportsEmbeddings: Bool
+    let statusLabel: String?
+
+    init(
+        id: String,
+        kind: Kind,
+        name: String,
+        port: Int?,
+        identity: String?,
+        isSelected: Bool,
+        apiKeyRequired: Bool = false,
+        supportsChat: Bool = true,
+        supportsResponses: Bool = false,
+        supportsAnthropic: Bool = false,
+        supportsEmbeddings: Bool = false,
+        statusLabel: String? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.port = port
+        self.identity = identity
+        self.isSelected = isSelected
+        self.apiKeyRequired = apiKeyRequired
+        self.supportsChat = supportsChat
+        self.supportsResponses = supportsResponses
+        self.supportsAnthropic = supportsAnthropic
+        self.supportsEmbeddings = supportsEmbeddings
+        self.statusLabel = statusLabel
+    }
 
     var ghostText: String { ":\(port.map(String.init) ?? "?") · No Workbench server" }
+
+    var quickConnectTarget: QuickConnectTarget? {
+        guard kind == .running, let port, let identity, !identity.isEmpty else { return nil }
+        return QuickConnectTarget(
+            baseURL: "http://127.0.0.1:\(port)/v1",
+            modelID: identity,
+            requiresAPIKey: apiKeyRequired,
+            isFrontDoor: false,
+            supportsChat: supportsChat,
+            supportsResponses: supportsResponses,
+            supportsAnthropic: supportsAnthropic,
+            supportsEmbeddings: supportsEmbeddings,
+            statusLabel: statusLabel ?? "Running"
+        )
+    }
+
+    var quickConnectSnippets: [QuickConnectSnippet] {
+        guard let target = quickConnectTarget else { return [] }
+        return QuickConnectSnippets.snippets(for: target)
+    }
 
     var accessibilityLabel: String {
         switch kind {
@@ -300,9 +354,17 @@ struct ClientsPresentation: Equatable {
         }
 
         var endpoints = running.sorted { ($0.port ?? 0) < ($1.port ?? 0) }.map { server in
-            ClientsEndpointRow(
+            let supportsChat = server.supportsChatCompletions
+            let supportsGateway = supportsChat && server.jit == true
+            return ClientsEndpointRow(
                 id: server.id, kind: .running, name: URL(fileURLWithPath: server.modelIdentity).lastPathComponent + (server.adapterSummary.map { " · " + $0 } ?? ""),
-                port: server.port, identity: server.modelIdentity, isSelected: server.id == selectedServerID
+                port: server.port, identity: server.modelIdentity, isSelected: server.id == selectedServerID,
+                apiKeyRequired: server.apiKeySHA256 != nil,
+                supportsChat: supportsChat,
+                supportsResponses: supportsGateway,
+                supportsAnthropic: supportsGateway,
+                supportsEmbeddings: QuickConnectTarget.hasEmbeddingsTaskKind(server.taskKinds),
+                statusLabel: QuickConnectTarget.statusLabel(for: server)
             )
         }
         endpoints += ghostPorts.sorted().map {
@@ -448,5 +510,159 @@ enum ClientsElbowPlan {
     /// A pending elbow fades in; every other elbow is fully drawn.
     static func opacity(for kind: ClientsLineKind, appeared: Bool) -> Double {
         kind == .pending && !appeared ? 0 : 1
+    }
+}
+
+// MARK: - Quick Connect Strip
+
+/// Compact Ollama/LM Studio-style Quick Connect snippet bar with live status pill and one-click copy.
+struct QuickConnectStrip: View {
+    let target: QuickConnectTarget
+    var frontDoorTarget: QuickConnectTarget? = nil
+    var onCopy: (String) -> Void = { ServedModelsSelection.copy($0) }
+
+    @State private var useFrontDoor = false
+    @State private var selectedFormat: QuickConnectFormat = .curlChat
+    @State private var copiedFormat: QuickConnectFormat?
+
+    private var activeTarget: QuickConnectTarget {
+        if useFrontDoor, let frontDoorTarget {
+            return frontDoorTarget
+        }
+        return target
+    }
+
+    private var snippets: [QuickConnectSnippet] {
+        QuickConnectSnippets.snippets(for: activeTarget)
+    }
+
+    private var activeSnippet: QuickConnectSnippet? {
+        snippets.first(where: { $0.format == selectedFormat }) ?? snippets.first
+    }
+
+    var body: some View {
+        if !snippets.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Text("Quick Connect")
+                        .font(WorkbenchTypography.label)
+                    statusPill(activeTarget.statusLabel, isLive: activeTarget.isFrontDoor || activeTarget.statusLabel != "Stopped")
+                    if activeTarget.requiresAPIKey {
+                        Text("$MLX_AGENT_API_KEY")
+                            .font(WorkbenchTypography.compactValue)
+                            .foregroundStyle(WorkbenchColor.muted)
+                            .padding(.horizontal, WorkbenchSpacing.xs)
+                            .padding(.vertical, 2)
+                            .background(WorkbenchColor.surface, in: Capsule())
+                    }
+                    Spacer()
+                    if frontDoorTarget != nil {
+                        Picker("Route", selection: $useFrontDoor) {
+                            Text("Direct").tag(false)
+                            Text("Front door").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(maxWidth: 160)
+                        .accessibilityIdentifier("quick-connect-route-picker")
+                    }
+                }
+
+                HStack(spacing: WorkbenchSpacing.xs) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: WorkbenchSpacing.xs) {
+                            ForEach(snippets) { item in
+                                let isSelected = item.format == activeSnippet?.format
+                                Button {
+                                    selectedFormat = item.format
+                                } label: {
+                                    Text(item.format.shortTitle)
+                                        .font(WorkbenchTypography.metadata)
+                                        .padding(.horizontal, WorkbenchSpacing.sm)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            isSelected ? WorkbenchColor.accent.opacity(WorkbenchTint.fill.rawValue) : WorkbenchColor.surface,
+                                            in: RoundedRectangle(cornerRadius: WorkbenchRadius.control)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("quick-connect-tab-\(item.format.rawValue)")
+                            }
+                        }
+                    }
+
+                    if let current = activeSnippet {
+                        Button {
+                            copySnippet(current)
+                        } label: {
+                            Label(
+                                copiedFormat == current.format ? "Copied" : "Copy",
+                                systemImage: copiedFormat == current.format ? "checkmark" : "doc.on.doc"
+                            )
+                            .font(WorkbenchTypography.metadata)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("quick-connect-copy-active")
+                    }
+                }
+
+                if let current = activeSnippet {
+                    ScrollView(.horizontal, showsIndicators: true) {
+                        Text(current.code)
+                            .font(WorkbenchTypography.compactValue)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(WorkbenchSpacing.sm)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: WorkbenchRadius.control)
+                            .strokeBorder(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
+                    )
+                    .accessibilityIdentifier("quick-connect-code-preview")
+                }
+            }
+            .padding(WorkbenchSpacing.sm)
+            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+            .accessibilityIdentifier("quick-connect-strip")
+            .onChange(of: activeTarget) { _, _ in
+                if !snippets.contains(where: { $0.format == selectedFormat }), let first = snippets.first?.format {
+                    selectedFormat = first
+                }
+            }
+            .onAppear {
+                if !snippets.contains(where: { $0.format == selectedFormat }), let first = snippets.first?.format {
+                    selectedFormat = first
+                }
+            }
+        }
+    }
+
+    private func copySnippet(_ snippet: QuickConnectSnippet) {
+        onCopy(snippet.code)
+        copiedFormat = snippet.format
+        let copied = snippet.format
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            if copiedFormat == copied {
+                copiedFormat = nil
+            }
+        }
+    }
+
+    private func statusPill(_ label: String, isLive: Bool) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isLive ? WorkbenchColor.success : WorkbenchColor.muted)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(WorkbenchTypography.metadata)
+                .foregroundStyle(isLive ? WorkbenchColor.ink : WorkbenchColor.muted)
+        }
+        .padding(.horizontal, WorkbenchSpacing.xs)
+        .padding(.vertical, 2)
+        .background((isLive ? WorkbenchColor.success : WorkbenchColor.muted).opacity(WorkbenchTint.fill.rawValue), in: Capsule())
     }
 }

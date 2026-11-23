@@ -40,6 +40,7 @@ struct ServeView: View {
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var tailnet: TailnetSharingCoordinator
+    @ObservedObject private var frontDoor: FrontDoorCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var tailnetServer: ServerInfo?
     @State private var mode = ServeMode.saveEndpoint
@@ -115,6 +116,7 @@ struct ServeView: View {
         _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _tailnet = ObservedObject(wrappedValue: appHost.tailnetSharing)
+        _frontDoor = ObservedObject(wrappedValue: appHost.frontDoor)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -479,6 +481,9 @@ struct ServeView: View {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
+            if let quickTarget = quickConnectTarget(for: row) {
+                QuickConnectStrip(target: quickTarget, frontDoorTarget: quickConnectFrontDoorTarget(for: row))
+            }
             if let server, server.runtime == "splash" {
                 if let effective = server.splashEffectiveContextTokens {
                     LabeledContent("Effective context", value: "\(effective.formatted()) tokens")
@@ -564,6 +569,50 @@ struct ServeView: View {
             .frame(maxWidth: 680, alignment: .leading)
             .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
         .onAppear(perform: synchronizeConnectionPort)
+    }
+
+    private func quickConnectTarget(for row: ServingRow) -> QuickConnectTarget? {
+        let server = ServingWorkspacePresentation.server(row)
+        if let server, let target = QuickConnectTarget.direct(server: server, baseURL: ServingWorkspacePresentation.baseURL(row)) {
+            return target
+        }
+        if case .endpoint(let slot, _, _) = row {
+            return QuickConnectTarget.direct(slot: slot, server: server)
+        }
+        if let baseURL = ServingWorkspacePresentation.baseURL(row) {
+            let modelID = ServingWorkspacePresentation.modelID(row)
+            guard !modelID.isEmpty else { return nil }
+            return QuickConnectTarget(
+                baseURL: baseURL,
+                modelID: modelID,
+                requiresAPIKey: false,
+                isFrontDoor: false,
+                supportsChat: true,
+                statusLabel: ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
+            )
+        }
+        return nil
+    }
+
+    private func quickConnectFrontDoorTarget(for row: ServingRow) -> QuickConnectTarget? {
+        let modelID = ServingWorkspacePresentation.modelID(row)
+        guard !modelID.isEmpty else { return nil }
+        if let listener = frontDoor.listening {
+            if let route = listener.routes.first(where: { $0.id == modelID }) {
+                return QuickConnectTarget.frontDoor(listener, modelID: route.id)
+            }
+            if case .endpoint(let slot, _, _) = row,
+               let door = endpoint.fleet.frontDoor,
+               slot.apiKeySHA256 == door.apiKeySHA256 {
+                return QuickConnectTarget.frontDoor(listener, modelID: modelID)
+            }
+        } else if case .endpoint(let slot, _, _) = row,
+                  let door = endpoint.fleet.frontDoor,
+                  slot.apiKeySHA256 == door.apiKeySHA256 {
+            let taskKinds = ServingWorkspacePresentation.server(row)?.taskKinds ?? []
+            return QuickConnectTarget.frontDoor(settings: door, modelID: modelID, taskKinds: taskKinds)
+        }
+        return nil
     }
 
     @ViewBuilder

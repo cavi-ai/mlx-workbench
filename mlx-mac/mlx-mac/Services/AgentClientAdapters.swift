@@ -5,52 +5,63 @@ import Yams
 /// Client-native formats; the wiring coordinator owns paths, credentials and every write.
 enum AgentClientAdapters {
     static let providerID = "workbench"
+    static let mlxAgentProviderID = "mlx-agent"
+    static let openclawProviderIDs = [providerID, mlxAgentProviderID]
+    static let openclawAPIKeyEnvReference = "${MLX_AGENT_API_KEY}"
 
     static let openclaw = ClientAdapter(
         clientID: "openclaw", displayName: "OpenClaw", relativeConfigPath: ".openclaw/openclaw.json",
         advisoryOnly: false, advisoryNote: nil,
-        apiKeyPlan: { text, key in
-            var root = try json5(text)
-            var models = try object(root, "models"), providers = try object(models, "providers")
-            var provider = try object(providers, providerID)
-            provider["apiKey"] = key; provider.removeValue(forKey: "auth"); provider["authHeader"] = true
-            providers[providerID] = provider; models["providers"] = providers; root["models"] = models
-            return try JSONCTolerant.serialize(root)
-        },
+        credentialInstruction: "Export MLX_AGENT_API_KEY with this endpoint’s inference key in the OpenClaw gateway environment before restarting OpenClaw. No raw API key is written to openclaw.json.",
         normalizesFormatting: true,
-        validate: { _ = try json5($0) },
+        validate: {
+            let root = try json5($0)
+            guard root["mlx_agent_wire"] == nil else { throw invalid() }
+        },
         read: { text in
             reading {
                 let root = try json5(text)
                 let models = try object(root, "models"), providers = try object(models, "providers")
-                let provider = try object(providers, providerID)
-                guard let base = provider["baseUrl"] as? String else { return .noWorkbenchEntry }
                 let defaults = try object(try object(root, "agents"), "defaults")
                 let selected = (defaults["model"] as? String) ?? (defaults["model"] as? [String: Any])?["primary"] as? String
-                let names = (provider["models"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
-                return endpointReading(base: base, models: names, selected: selected, prefix: providerID + "/")
+                guard let match = try openclawProviderForRead(providers: providers, selected: selected),
+                      let base = match.provider["baseUrl"] as? String else { return .noWorkbenchEntry }
+                let names = (match.provider["models"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+                return endpointReading(base: base, models: names, selected: selected, prefix: match.id + "/")
             }
         },
         plan: { before, endpoint in
             var root = try json5(before)
             var models = try object(root, "models"), providers = try object(models, "providers")
-            var provider = try object(providers, providerID)
+            var agents = try object(root, "agents"), defaults = try object(agents, "defaults")
+            let currentSelected = (defaults["model"] as? String) ?? (defaults["model"] as? [String: Any])?["primary"] as? String
+            let activeProviderID = openclawProviderIDForWrite(providers: providers, selected: currentSelected)
+            var provider = try object(providers, activeProviderID)
             provider["baseUrl"] = endpoint.baseURL; provider["api"] = "openai-completions"
-            provider["auth"] = "none"; provider.removeValue(forKey: "apiKey"); provider["authHeader"] = false
+            if endpoint.apiKeySHA256 != nil {
+                if !isOpenClawEnvSecretRef(provider["apiKey"]) {
+                    provider["apiKey"] = openclawAPIKeyEnvReference
+                }
+                provider.removeValue(forKey: "auth")
+                provider["authHeader"] = true
+            } else {
+                provider["auth"] = "none"; provider.removeValue(forKey: "apiKey"); provider["authHeader"] = false
+            }
             if var headers = provider["headers"] as? [String: Any] {
                 for key in headers.keys where key.lowercased() == "authorization" { headers.removeValue(forKey: key) }
                 provider["headers"] = headers
             }
             var entries = provider["models"] as? [[String: Any]] ?? []
-            if !entries.contains(where: { $0["id"] as? String == endpoint.modelName }) {
-                entries.append(["id": endpoint.modelName, "name": endpoint.modelName])
+            for model in endpoint.models + [endpoint.modelName] where !model.isEmpty {
+                if !entries.contains(where: { $0["id"] as? String == model }) {
+                    entries.append(["id": model, "name": model])
+                }
             }
-            provider["models"] = entries; providers[providerID] = provider; models["providers"] = providers
+            provider["models"] = entries; providers[activeProviderID] = provider; models["providers"] = providers
             if models["mode"] == nil { models["mode"] = "merge" }
             root["models"] = models
-            var agents = try object(root, "agents"), defaults = try object(agents, "defaults")
             var selected = defaults["model"] as? [String: Any] ?? [:]
-            selected["primary"] = providerID + "/" + endpoint.modelName
+            selected["primary"] = activeProviderID + "/" + endpoint.modelName
             defaults["model"] = selected; agents["defaults"] = defaults; root["agents"] = agents
             return try JSONCTolerant.serialize(root)
         })
@@ -148,6 +159,43 @@ enum AgentClientAdapters {
             root["env"] = env
             return try JSONCTolerant.serialize(root)
         })
+
+    private static func openclawProviderForRead(providers: [String: Any], selected: String?) throws -> (id: String, provider: [String: Any])? {
+        if let selected {
+            for id in openclawProviderIDs where selected.hasPrefix(id + "/") {
+                let candidate = try object(providers, id)
+                if candidate["baseUrl"] as? String != nil { return (id, candidate) }
+            }
+        }
+        for id in openclawProviderIDs {
+            let candidate = try object(providers, id)
+            if candidate["baseUrl"] as? String != nil { return (id, candidate) }
+        }
+        return nil
+    }
+
+    private static func openclawProviderIDForWrite(providers: [String: Any], selected: String?) -> String {
+        let hasWorkbench = providers[providerID] != nil
+        let hasMLXAgent = providers[mlxAgentProviderID] != nil
+        if hasMLXAgent && !hasWorkbench { return mlxAgentProviderID }
+        if hasMLXAgent && hasWorkbench, let selected, selected.hasPrefix(mlxAgentProviderID + "/") {
+            return mlxAgentProviderID
+        }
+        return providerID
+    }
+
+    private static func isOpenClawEnvSecretRef(_ value: Any?) -> Bool {
+        if let str = value as? String { return SecretRedaction.isEnvVarReference(str) }
+        guard let dict = value as? [String: Any],
+              dict["source"] as? String == "env",
+              Set(dict.keys).isSubset(of: ["source", "id", "provider"]),
+              let envID = dict["id"] as? String,
+              envID.range(of: "^[A-Z][A-Z0-9_]{0,127}$", options: .regularExpression) != nil else { return false }
+        if let provider = dict["provider"] {
+            guard let text = provider as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        }
+        return true
+    }
 
     private static func invalid() -> WorkflowEvidenceError { .invalid("This client config has an unsupported structure. Correct the marked settings before reviewing setup.") }
     private static func object(_ root: [String: Any], _ key: String) throws -> [String: Any] {

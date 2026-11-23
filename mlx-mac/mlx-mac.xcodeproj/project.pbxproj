@@ -10,6 +10,7 @@
 		A17A00000000000000000003 /* TailnetSharingWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17A00000000000000000004 /* TailnetSharingWizard.swift */; };
 		A17A00000000000000000001 /* TailnetSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17A00000000000000000002 /* TailnetSharing.swift */; };
 		FD0D00000000000000000001 /* FrontDoor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000002 /* FrontDoor.swift */; };
+		C5C000000000000000000001 /* QuickConnectSnippets.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C000000000000000000002 /* QuickConnectSnippets.swift */; };
 		FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000006 /* FrontDoorEditor.swift */; };
         E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
         E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
@@ -171,6 +172,7 @@
 		26EFBL002 /* ServeWorldFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EFREF002 /* ServeWorldFakes.swift */; };
 		26FFBL01 /* FleetFitAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26FFREF01 /* FleetFitAdvisorTests.swift */; };
 		26FRBL01 /* FleetRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26FRREF01 /* FleetRouterTests.swift */; };
+		C5C000000000000000000003 /* QuickConnectSnippetsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C000000000000000000004 /* QuickConnectSnippetsTests.swift */; };
 		24BBLD021 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD025 /* LibraryDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01F /* LibraryDomainTests.swift */; };
 		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
@@ -408,6 +410,7 @@
 		A17A00000000000000000004 /* TailnetSharingWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TailnetSharingWizard.swift; sourceTree = "<group>"; };
 		A17A00000000000000000002 /* TailnetSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TailnetSharing.swift; sourceTree = "<group>"; };
 		FD0D00000000000000000002 /* FrontDoor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/FrontDoor.swift; sourceTree = "<group>"; };
+		C5C000000000000000000002 /* QuickConnectSnippets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickConnectSnippets.swift; sourceTree = "<group>"; };
 		FD0D00000000000000000006 /* FrontDoorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/FrontDoorEditor.swift; sourceTree = "<group>"; };
 		E71400000000000000000101 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TerminalSession.swift; sourceTree = "<group>"; };
 		E71400000000000000000201 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TerminalWorkspaceView.swift; sourceTree = "<group>"; };
@@ -748,6 +751,7 @@
 		26EFREF002 /* ServeWorldFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeWorldFakes.swift; sourceTree = "<group>"; };
 		26FFREF01 /* FleetFitAdvisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetFitAdvisorTests.swift; sourceTree = "<group>"; };
 		26FRREF01 /* FleetRouterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetRouterTests.swift; sourceTree = "<group>"; };
+		C5C000000000000000000004 /* QuickConnectSnippetsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickConnectSnippetsTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -1036,6 +1040,7 @@
 				26WQREF001 /* WebConvertQueue.swift */,
 				A17A00000000000000000002 /* TailnetSharing.swift */,
 				FD0D00000000000000000002 /* FrontDoor.swift */,
+				C5C000000000000000000002 /* QuickConnectSnippets.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				4CB6BA6036AACD20164BB94B /* LabView.swift */,
 				4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */,
@@ -1221,6 +1226,7 @@
 				26EFREF002 /* ServeWorldFakes.swift */,
 				26FFREF01 /* FleetFitAdvisorTests.swift */,
 				26FRREF01 /* FleetRouterTests.swift */,
+				C5C000000000000000000004 /* QuickConnectSnippetsTests.swift */,
 				27TST001 /* QuarantineParityTests.swift */,
 				27TST002 /* JSONStoreTests.swift */,
 				27TST003 /* JSONCTolerantTests.swift */,
@@ -1453,6 +1459,7 @@
 				A17A00000000000000000001 /* TailnetSharing.swift in Sources */,
 				A17A00000000000000000003 /* TailnetSharingWizard.swift in Sources */,
 				FD0D00000000000000000001 /* FrontDoor.swift in Sources */,
+				C5C000000000000000000001 /* QuickConnectSnippets.swift in Sources */,
 				FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */,
 				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
 				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
@@ -1794,6 +1801,7 @@
 				26EFBL002 /* ServeWorldFakes.swift in Sources */,
 				26FFBL01 /* FleetFitAdvisorTests.swift in Sources */,
 				26FRBL01 /* FleetRouterTests.swift in Sources */,
+				C5C000000000000000000003 /* QuickConnectSnippetsTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27ABCD000000000000000004 /* DesignLintTests.swift in Sources */,
 				27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */,
