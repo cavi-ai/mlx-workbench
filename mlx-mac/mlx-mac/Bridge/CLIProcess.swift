@@ -279,6 +279,7 @@ struct CLIProcess {
         let group = launchError == nil ? AgentProcessGroup(pid: process.processIdentifier) : nil
         if let group, !registry.register(group) {
             AgentProcessGroup.stop([group], grace: terminationGrace)
+            throw CancellationError()
         }
         defer { if let group { registry.unregister(group) } }
 
@@ -362,18 +363,28 @@ struct CLIProcess {
     #endif
 
     /// Drain a pipe until EOF with a hard byte cap so oversized output cannot
-    /// balloon memory or hang the drain.
+    /// balloon memory or hang the drain. Once `cap` bytes are buffered, keep
+    /// draining into a discarded chunk until EOF so the child cannot deadlock
+    /// on macOS's 64 KiB pipe buffer.
     private static func collect(handle: FileHandle, cap: Int) -> (Data, Bool) {
         var data = Data()
-        while data.count < cap {
+        var tooLarge = false
+        while true {
             guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
                 break
             }
-            data.append(chunk)
-        }
-        let tooLarge = data.count >= cap
-        if tooLarge {
-            data = data.prefix(cap)
+            if tooLarge {
+                continue
+            }
+            let remaining = cap - data.count
+            if chunk.count >= remaining {
+                if remaining > 0 {
+                    data.append(chunk.prefix(remaining))
+                }
+                tooLarge = true
+            } else {
+                data.append(chunk)
+            }
         }
         return (data, tooLarge)
     }

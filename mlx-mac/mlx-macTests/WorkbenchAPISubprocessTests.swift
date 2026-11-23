@@ -1374,12 +1374,39 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         center.post(name: NSApplication.willTerminateNotification, object: nil)
 
         let started = Date()
-        XCTAssertThrowsError(try cli.run(agentPath: agent.root.path, argv: ["convert", "video"], timeout: 60))
+        XCTAssertThrowsError(try cli.run(agentPath: agent.root.path, argv: ["convert", "video"], timeout: 60)) { error in
+            XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
+        }
         XCTAssertLessThan(Date().timeIntervalSince(started), 30, "the call ends with its stopped group, not at the timeout")
         if let spawned = SpawnedAgent(contentsOf: pids) {
             XCTAssertTrue(processIsGone(spawned.agent), "agent \(spawned.agent) is stopped")
             XCTAssertTrue(processIsGone(spawned.backend), "backend \(spawned.backend) is stopped")
         }
+    }
+
+    func testOversizedStdoutDrainsWithoutDeadlockAndThrowsOutputTooLarge() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-oversized-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import sys
+        chunk = b"A" * (64 * 1024)
+        for _ in range(144):  # 9 MiB > 8 MiB CLIProcess.maxOutputBytes
+            sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+
+        let cli = CLIProcess()
+        let started = ProcessInfo.processInfo.systemUptime
+        XCTAssertThrowsError(try cli.run(agentPath: root.path, argv: ["convert", "scan"], timeout: 10)) { error in
+            guard case BridgeError.skillOutputTooLarge = error else {
+                return XCTFail("Expected BridgeError.skillOutputTooLarge, got \(error)")
+            }
+        }
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2.0, "oversized stdout must drain without hitting the timeout")
     }
 
     /// True once `pid` no longer exists (exited and reaped), polling up to `seconds`.

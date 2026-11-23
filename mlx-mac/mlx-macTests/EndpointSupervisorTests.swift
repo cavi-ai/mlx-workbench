@@ -1657,6 +1657,151 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertFalse(login.arguments.contains("auto"))
     }
 
+    func testReconcileStartsMultipleDownSlotsConcurrently() async throws {
+        actor LaunchBarrier {
+            private var inFlight = 0
+            private var peak = 0
+            private var waiters: [CheckedContinuation<Void, Never>] = []
+            private var startedPorts: [Int] = []
+            func enterPreview() async {
+                inFlight += 1
+                if inFlight > peak { peak = inFlight }
+                if inFlight >= 2 {
+                    let pending = waiters
+                    waiters.removeAll()
+                    pending.forEach { $0.resume() }
+                } else {
+                    await withCheckedContinuation { continuation in
+                        waiters.append(continuation)
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            self.releaseAll()
+                        }
+                    }
+                }
+                inFlight -= 1
+            }
+            func releaseAll() {
+                let pending = waiters
+                waiters.removeAll()
+                pending.forEach { $0.resume() }
+            }
+            func recordStart(_ port: Int) { startedPorts.append(port) }
+            var peakConcurrency: Int { peak }
+            var starts: [Int] { startedPorts }
+        }
+
+        let barrier = LaunchBarrier()
+        let slotA = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a", loadOnRequest: false)
+        let slotB = EndpointSlot(enabled: true, port: 8767, modelPath: "/Models/b", loadOnRequest: false)
+        let fleetURL = temporaryURL("concurrent-fleet.json")
+        let fleetStore = JSONStore<EndpointFleetConfig>(fileURL: fleetURL)
+        try fleetStore.replaceAll([EndpointFleetConfig(slots: [slotA, slotB], installedAtLogin: false)])
+
+        let lifecycle = ServeLifecycle(
+            preview: { _, port in
+                await barrier.enterPreview()
+                return "preview-\(port)"
+            },
+            start: { _, port, _ in
+                await barrier.recordStart(port)
+            },
+            stop: { _ in }
+        )
+        let supervisor = EndpointSupervisor(
+            lifecycle: lifecycle,
+            statusProvider: { [] },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            fleetStore: fleetStore
+        )
+
+        await supervisor.reconcile()
+
+        let peak = await barrier.peakConcurrency
+        let starts = await barrier.starts
+        XCTAssertEqual(peak, 2, "Down slots should run preview/start concurrently without blocking later slots")
+        XCTAssertEqual(Set(starts), Set([8766, 8767]))
+        XCTAssertEqual(supervisor.slotStates[slotA.id], .waitingForServer)
+        XCTAssertEqual(supervisor.slotStates[slotB.id], .waitingForServer)
+        XCTAssertEqual(supervisor.slotRestartAttempts[slotA.id], 1)
+        XCTAssertEqual(supervisor.slotRestartAttempts[slotB.id], 1)
+    }
+
+    func testUserRequestedReconcileDuringActivePassQueuesAndRunsAfterActivePass() async throws {
+        actor StatusGate {
+            private var calls = 0
+            private var firstEntered: CheckedContinuation<Void, Never>?
+            private var firstRelease: CheckedContinuation<Void, Never>?
+            private var firstStarted = false
+            private var firstReleased = false
+            private var slotBRunning = false
+
+            func markSlotBRunning() { slotBRunning = true }
+            func waitForFirstPass() async {
+                if firstStarted { return }
+                await withCheckedContinuation { firstEntered = $0 }
+            }
+            func releaseFirstPass() {
+                firstReleased = true
+                firstRelease?.resume()
+                firstRelease = nil
+            }
+            func status(slotA: EndpointSlot, slotB: EndpointSlot) async -> [ServerInfo] {
+                calls += 1
+                if calls == 1 {
+                    firstStarted = true
+                    firstEntered?.resume()
+                    firstEntered = nil
+                    if !firstReleased {
+                        await withCheckedContinuation { firstRelease = $0 }
+                    }
+                }
+                var servers = [ServerInfo(path: slotA.modelPath, runtime: "mlx_lm", port: slotA.port, pid: 101, state: "running")]
+                if slotBRunning {
+                    servers.append(ServerInfo(path: slotB.modelPath, runtime: "mlx_lm", port: slotB.port, pid: 102, state: "running"))
+                }
+                return servers
+            }
+            var callCount: Int { calls }
+        }
+
+        let gate = StatusGate()
+        let slotA = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a", loadOnRequest: false)
+        let slotB = EndpointSlot(enabled: true, port: 8767, modelPath: "/Models/b", loadOnRequest: false)
+        let fleetURL = temporaryURL("queued-fleet.json")
+        let fleetStore = JSONStore<EndpointFleetConfig>(fileURL: fleetURL)
+        try fleetStore.replaceAll([EndpointFleetConfig(slots: [slotA, slotB], installedAtLogin: false)])
+
+        let lifecycle = ServeLifecycle(
+            preview: { _, port in "preview-\(port)" },
+            start: { _, port, _ in
+                if port == slotB.port { await gate.markSlotBRunning() }
+            },
+            stop: { _ in }
+        )
+        let supervisor = EndpointSupervisor(
+            lifecycle: lifecycle,
+            statusProvider: { await gate.status(slotA: slotA, slotB: slotB) },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            fleetStore: fleetStore
+        )
+        var intentionalModels: [String] = []
+        supervisor.onUserServeStarted = { intentionalModels.append($0) }
+
+        let timerPass = Task { await supervisor.reconcile() }
+        await gate.waitForFirstPass()
+
+        // Explicit user reconcile arrives while the timer pass is actively reconciling.
+        await supervisor.reconcile(userRequestedSlotID: slotB.id)
+        await gate.releaseFirstPass()
+        await timerPass.value
+
+        let statusCalls = await gate.callCount
+        XCTAssertEqual(statusCalls, 2, "Queued userRequestedSlotID must trigger an immediate follow-up pass")
+        XCTAssertEqual(supervisor.slotStates[slotB.id], .running(modelPath: slotB.modelPath, port: slotB.port))
+        XCTAssertEqual(intentionalModels, [slotB.modelPath])
+    }
+
     // MARK: - Helpers
 
     private enum TrainedAdapterEndpointFixture {

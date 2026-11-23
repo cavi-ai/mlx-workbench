@@ -19,6 +19,8 @@ final class UseWorkspaceCoordinator: ObservableObject {
     private var draftTask: Task<Void, Never>?
     private var requestTask: Task<Void, Never>?
     private var activeTurnID: UUID?
+    private var activeTurnPriorBytes = 0
+    private var activeTurnPromptBytes = 0
     private var terminating = false
     private var lastCheckpoint = Date.distantPast
 
@@ -106,7 +108,9 @@ final class UseWorkspaceCoordinator: ObservableObject {
         do {
             try await saveSelected()
             await refreshList()
-        } catch {}
+        } catch {
+            recordSaveFailure(error)
+        }
     }
 
     func setEndpoint(_ server: ServerInfo?, forSessionID sessionID: UUID? = nil) async throws {
@@ -248,7 +252,14 @@ final class UseWorkspaceCoordinator: ObservableObject {
     }
     private func perform(prompt: String, inputImages: [UseImage], retryOf: UUID?, server: ServerInfo) async {
         var dispatched = false
-        defer { isSending = false; activeServer = nil; activeTurnID = nil; requestTask = nil }
+        defer {
+            isSending = false
+            activeServer = nil
+            activeTurnID = nil
+            activeTurnPriorBytes = 0
+            activeTurnPromptBytes = 0
+            requestTask = nil
+        }
         do {
             try await flushDraft()
             try Task.checkCancellation()
@@ -267,6 +278,10 @@ final class UseWorkspaceCoordinator: ObservableObject {
             selected = pending
             let turnID = turn.id
             activeTurnID = turnID
+            activeTurnPriorBytes = session.turns.reduce(0) {
+                $0 + $1.prompt.utf8.count + $1.answer.utf8.count + $1.reasoning.utf8.count
+            }
+            activeTurnPromptBytes = turn.prompt.utf8.count
             // The durable pending turn precedes the only inference request.
             try await saveSelected()
             try await client.assertCurrent(server)
@@ -318,10 +333,8 @@ final class UseWorkspaceCoordinator: ObservableObject {
     private func receive(text: String, reasoning: String, turnID: UUID) async throws {
         guard !terminating, activeTurnID == turnID else { throw CancellationError() }
         try Task.checkCancellation()
-        guard let session = selected else { throw UseSessionError.history }
-        let priorBytes = session.turns.filter { $0.id != turnID }.reduce(0) { $0 + $1.prompt.utf8.count + $1.answer.utf8.count + $1.reasoning.utf8.count }
-        let promptBytes = session.turns.first(where: { $0.id == turnID })?.prompt.utf8.count ?? 0
-        guard priorBytes + promptBytes + text.utf8.count + reasoning.utf8.count <= 8_388_608 else { throw UseSessionError.history }
+        guard selected != nil else { throw UseSessionError.history }
+        guard activeTurnPriorBytes + activeTurnPromptBytes + text.utf8.count + reasoning.utf8.count <= 8_388_608 else { throw UseSessionError.history }
         updateActiveTurn { $0.answer = text; $0.reasoning = reasoning }
         if Date().timeIntervalSince(lastCheckpoint) >= 1 {
             try await saveSelected()

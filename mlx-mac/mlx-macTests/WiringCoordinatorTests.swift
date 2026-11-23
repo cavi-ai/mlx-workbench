@@ -1253,6 +1253,69 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertTrue(diff.contains { $0.text.contains("•••") })
     }
 
+    func testMatchesAppliedConfigUsesInjectedFileManagerAndRefusesAncestorSymlink() async throws {
+        final class TrackingFileManager: FileManager {
+            var symlinkChecks: [String] = []
+            var attributeChecks: [String] = []
+            var contentReads: [String] = []
+            var forcedSymlinkPath: String?
+
+            override func destinationOfSymbolicLink(atPath path: String) throws -> String {
+                symlinkChecks.append(path)
+                if path == forcedSymlinkPath {
+                    return "/tmp/redirected-target"
+                }
+                return try super.destinationOfSymbolicLink(atPath: path)
+            }
+
+            override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
+                attributeChecks.append(path)
+                return try super.attributesOfItem(atPath: path)
+            }
+
+            override func contents(atPath path: String) -> Data? {
+                contentReads.append(path)
+                return super.contents(atPath: path)
+            }
+        }
+
+        let home = try makeHome()
+        let opencodeConfig = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: opencodeConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{\"theme\": \"dark\"}".write(to: opencodeConfig, atomically: true, encoding: .utf8)
+        let trackingFM = TrackingFileManager()
+        let trashDirectory = trash(home)
+        let coordinator = WiringCoordinator(
+            home: home,
+            fileManager: trackingFM,
+            store: JSONStore<WiringTransaction>(fileURL: temporaryURL("transactions.json")),
+            moveToTrash: { url in
+                try FileManager.default.createDirectory(at: trashDirectory, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: url, to: trashDirectory.appendingPathComponent(url.lastPathComponent))
+            }
+        )
+
+        coordinator.preview(endpoint: endpoint)
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        let transaction = try XCTUnwrap(coordinator.confirm(endpoint: endpoint, previewHash: hash))
+        let receipt = try XCTUnwrap(transaction.receipts.first)
+
+        trackingFM.symlinkChecks.removeAll()
+        trackingFM.attributeChecks.removeAll()
+        trackingFM.contentReads.removeAll()
+
+        let matched = await coordinator.matchesAppliedConfig(receipt, endpoint: endpoint)
+        XCTAssertTrue(matched)
+        XCTAssertTrue(trackingFM.symlinkChecks.contains(receipt.configPath))
+        XCTAssertTrue(trackingFM.symlinkChecks.contains(opencodeConfig.deletingLastPathComponent().path))
+        XCTAssertTrue(trackingFM.attributeChecks.contains(receipt.configPath))
+        XCTAssertTrue(trackingFM.contentReads.contains(receipt.configPath))
+
+        trackingFM.forcedSymlinkPath = opencodeConfig.deletingLastPathComponent().path
+        let matchedWithAncestorSymlink = await coordinator.matchesAppliedConfig(receipt, endpoint: endpoint)
+        XCTAssertFalse(matchedWithAncestorSymlink)
+    }
+
     // MARK: - Helpers
 
     private var storeURL: URL!

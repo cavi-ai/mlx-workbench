@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - EndpointSupervisor
@@ -77,8 +78,38 @@ final class EndpointSupervisor: ObservableObject {
     /// and automatic restarts never emit this intentional-usage evidence.
     var onUserServeStarted: ((String) -> Void)?
 
+    private struct FleetFileStamp: Equatable {
+        let exists: Bool
+        let dev: Int32
+        let ino: UInt64
+        let size: Int64
+        let mtimeSec: Int
+        let mtimeNsec: Int
+        let ctimeSec: Int
+        let ctimeNsec: Int
+
+        static func capture(at url: URL) -> FleetFileStamp {
+            var st = stat()
+            guard stat(url.path, &st) == 0 else {
+                return FleetFileStamp(exists: false, dev: 0, ino: 0, size: 0, mtimeSec: 0, mtimeNsec: 0, ctimeSec: 0, ctimeNsec: 0)
+            }
+            return FleetFileStamp(
+                exists: true,
+                dev: st.st_dev,
+                ino: st.st_ino,
+                size: st.st_size,
+                mtimeSec: st.st_mtimespec.tv_sec,
+                mtimeNsec: st.st_mtimespec.tv_nsec,
+                ctimeSec: st.st_ctimespec.tv_sec,
+                ctimeNsec: st.st_ctimespec.tv_nsec
+            )
+        }
+    }
+
     private var slotAttemptTimestamps: [UUID: [Date]] = [:]
     private var pendingUserServeBySlot: [UUID: (modelPath: String, port: Int)] = [:]
+    private var queuedUserReconcileIDs: [UUID] = []
+    private var cachedFleetLoad: (fleetStamp: FleetFileStamp, legacyStamp: FleetFileStamp, load: EndpointFleetLoad)?
     private var monitorTask: Task<Void, Never>?
 
     init(
@@ -102,6 +133,11 @@ final class EndpointSupervisor: ObservableObject {
         let loaded = self.fleetStore.load()
         self.fleet = loaded.config
         self.persistenceError = loaded.problem
+        self.cachedFleetLoad = (
+            FleetFileStamp.capture(at: self.fleetStore.fleetStore.url),
+            FleetFileStamp.capture(at: self.fleetStore.legacyStore.url),
+            loaded
+        )
     }
 
     // MARK: - User actions (single-slot shim)
@@ -112,7 +148,7 @@ final class EndpointSupervisor: ObservableObject {
         guard activeUserOperations == 0, !isReconciling, !isUnloading else {
             throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish before removing a profile.")
         }
-        let persisted = fleetStore.load()
+        let persisted = loadPersistedFleet()
         guard persisted.problem == nil, persistenceError == nil else {
             throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable. The profile was kept.")
         }
@@ -1054,14 +1090,30 @@ final class EndpointSupervisor: ObservableObject {
         await reconcile(userRequestedSlotID: nil)
     }
 
-    private func reconcile(userRequestedSlotID: UUID?) async {
+    func reconcile(userRequestedSlotID: UUID?) async {
         if let id = userRequestedSlotID,
            let slot = fleet.slots.first(where: { $0.id == id && $0.enabled && !$0.modelPath.isEmpty }) {
             pendingUserServeBySlot[id] = (slot.modelPath, slot.port)
         }
-        guard !isUnloading, !isReconciling else { return }
+        guard !isUnloading else { return }
+        if isReconciling {
+            if let id = userRequestedSlotID, !queuedUserReconcileIDs.contains(id) {
+                queuedUserReconcileIDs.append(id)
+            }
+            return
+        }
         isReconciling = true
         defer { isReconciling = false }
+
+        var nextTarget: UUID? = userRequestedSlotID
+        while true {
+            await performReconcilePass(userRequestedSlotID: nextTarget)
+            guard !isUnloading, !queuedUserReconcileIDs.isEmpty else { break }
+            nextTarget = queuedUserReconcileIDs.removeFirst()
+        }
+    }
+
+    private func performReconcilePass(userRequestedSlotID: UUID?) async {
         let enabledSlots = fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
         guard !enabledSlots.isEmpty else {
             for slot in fleet.slots where pendingStops[slot.id] == nil { slotStates[slot.id] = .disabled }
@@ -1077,22 +1129,50 @@ final class EndpointSupervisor: ObservableObject {
             // last known state instead of guessing (mirrors the workflow
             // coordinator's rule).
             lastError = "Serve status unavailable: \(AppHost.render(error))"
-            pendingUserServeBySlot.removeAll()
+            if let userRequestedSlotID {
+                pendingUserServeBySlot.removeValue(forKey: userRequestedSlotID)
+            } else {
+                let queued = Set(queuedUserReconcileIDs)
+                pendingUserServeBySlot = pendingUserServeBySlot.filter { queued.contains($0.key) }
+            }
             return
         }
 
         let running = servers.filter { $0.state?.lowercased() == "running" }
-        for slot in enabledSlots {
-            // Explicit starts must not wait behind repairs of other slots.
-            if let userRequestedSlotID, slot.id != userRequestedSlotID { continue }
-            guard fleet.slots.contains(slot) else { continue }
-            await reconcileSlot(slot, running: running)
+        // Explicit starts must not wait behind repairs of other slots.
+        let targetSlots = enabledSlots.filter { slot in
+            if let userRequestedSlotID, slot.id != userRequestedSlotID { return false }
+            return fleet.slots.contains(slot)
+        }
+        if targetSlots.count <= 1 {
+            if let slot = targetSlots.first {
+                await reconcileSlot(slot, running: running)
+            }
+        } else {
+            let maxConcurrency = 4
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = targetSlots.makeIterator()
+                for _ in 0..<min(maxConcurrency, targetSlots.count) {
+                    if let slot = iterator.next() {
+                        group.addTask {
+                            await self.reconcileSlot(slot, running: running)
+                        }
+                    }
+                }
+                while await group.next() != nil {
+                    if let slot = iterator.next() {
+                        group.addTask {
+                            await self.reconcileSlot(slot, running: running)
+                        }
+                    }
+                }
+            }
         }
         syncShim()
     }
 
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
-        guard pendingStops[slot.id] == nil else { return }
+        guard pendingStops[slot.id] == nil, fleet.slots.contains(slot) else { return }
         if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath || slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
@@ -1320,10 +1400,27 @@ final class EndpointSupervisor: ObservableObject {
         return commit(candidate)
     }
 
+    private func loadPersistedFleet() -> EndpointFleetLoad {
+        let fleetStamp = FleetFileStamp.capture(at: fleetStore.fleetStore.url)
+        let legacyStamp = FleetFileStamp.capture(at: fleetStore.legacyStore.url)
+        if let cached = cachedFleetLoad,
+           cached.fleetStamp == fleetStamp,
+           cached.legacyStamp == legacyStamp {
+            return cached.load
+        }
+        let loaded = fleetStore.load()
+        cachedFleetLoad = (
+            FleetFileStamp.capture(at: fleetStore.fleetStore.url),
+            FleetFileStamp.capture(at: fleetStore.legacyStore.url),
+            loaded
+        )
+        return loaded
+    }
+
     /// Publish desired state only after the durable configuration accepts it.
     private func commit(_ candidate: EndpointFleetConfig) -> Bool {
         do {
-            let saved = fleetStore.load()
+            let saved = loadPersistedFleet()
             guard saved.problem == nil, saved.config == fleet else {
                 throw WorkflowEvidenceError.invalid("Saved endpoint settings changed or are unavailable. Reopen Workbench before editing them.")
             }
@@ -1331,8 +1428,14 @@ final class EndpointSupervisor: ObservableObject {
             fleet = candidate
             persistenceError = nil
             lastError = nil
+            cachedFleetLoad = (
+                FleetFileStamp.capture(at: fleetStore.fleetStore.url),
+                FleetFileStamp.capture(at: fleetStore.legacyStore.url),
+                EndpointFleetLoad(config: candidate, problem: nil)
+            )
             return true
         } catch {
+            cachedFleetLoad = nil
             persistenceError = "Endpoint fleet could not be saved: \(AppHost.render(error))"
             lastError = persistenceError
             return false
