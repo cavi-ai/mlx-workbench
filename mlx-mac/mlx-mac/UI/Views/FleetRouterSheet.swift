@@ -113,16 +113,20 @@ struct FleetRouterSheet: View {
                             .foregroundStyle(WorkbenchColor.muted)
                     }
                     if let guidance = assignment.authMode.guidance {
-                        Text(guidance)
-                            .font(WorkbenchTypography.metadata)
-                            .foregroundStyle(WorkbenchColor.muted)
-                            .padding(.leading, 90)
+                        HStack {
+                            Color.clear.frame(width: 90, height: 0)
+                            Text(guidance)
+                                .font(WorkbenchTypography.metadata)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
                     }
                     if case .typedTask(let kinds) = assignment.routeKind, !kinds.isEmpty {
-                        Text("Typed tasks: \(kinds.joined(separator: ", "))")
-                            .font(WorkbenchTypography.metadata)
-                            .foregroundStyle(WorkbenchColor.muted)
-                            .padding(.leading, 90)
+                        HStack {
+                            Color.clear.frame(width: 90, height: 0)
+                            Text("Typed tasks: \(kinds.joined(separator: ", "))")
+                                .font(WorkbenchTypography.metadata)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
                     }
                 }
             }

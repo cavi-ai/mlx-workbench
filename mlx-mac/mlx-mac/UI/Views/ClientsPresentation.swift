@@ -552,7 +552,7 @@ struct QuickConnectStrip: View {
                             .font(WorkbenchTypography.compactValue)
                             .foregroundStyle(WorkbenchColor.muted)
                             .padding(.horizontal, WorkbenchSpacing.xs)
-                            .padding(.vertical, 2)
+                            .padding(.vertical, WorkbenchSpacing.xxxs)
                             .background(WorkbenchColor.surface, in: Capsule())
                     }
                     Spacer()
@@ -579,7 +579,7 @@ struct QuickConnectStrip: View {
                                     Text(item.format.shortTitle)
                                         .font(WorkbenchTypography.metadata)
                                         .padding(.horizontal, WorkbenchSpacing.sm)
-                                        .padding(.vertical, 4)
+                                        .padding(.vertical, WorkbenchSpacing.xxs)
                                         .background(
                                             isSelected ? WorkbenchColor.accent.opacity(WorkbenchTint.fill.rawValue) : WorkbenchColor.surface,
                                             in: RoundedRectangle(cornerRadius: WorkbenchRadius.control)
@@ -653,7 +653,7 @@ struct QuickConnectStrip: View {
     }
 
     private func statusPill(_ label: String, isLive: Bool) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: WorkbenchSpacing.xxs) {
             Circle()
                 .fill(isLive ? WorkbenchColor.success : WorkbenchColor.muted)
                 .frame(width: 6, height: 6)
@@ -662,7 +662,7 @@ struct QuickConnectStrip: View {
                 .foregroundStyle(isLive ? WorkbenchColor.ink : WorkbenchColor.muted)
         }
         .padding(.horizontal, WorkbenchSpacing.xs)
-        .padding(.vertical, 2)
+        .padding(.vertical, WorkbenchSpacing.xxxs)
         .background((isLive ? WorkbenchColor.success : WorkbenchColor.muted).opacity(WorkbenchTint.fill.rawValue), in: Capsule())
     }
 }

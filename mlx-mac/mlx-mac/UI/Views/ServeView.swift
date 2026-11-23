@@ -1002,7 +1002,7 @@ struct ServeView: View {
                         .font(WorkbenchTypography.metadata)
                         .foregroundStyle(WorkbenchColor.muted)
                         .padding(.horizontal, WorkbenchSpacing.xs)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, WorkbenchSpacing.xxxs)
                         .background(WorkbenchColor.well, in: Capsule())
                 }
             }
@@ -1286,7 +1286,7 @@ struct ServeView: View {
                 }
             }
             .padding(WorkbenchSpacing.sm)
-            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: 8))
+            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
             .accessibilityIdentifier("serving-coresidency-budget-bar")
         }
     }
