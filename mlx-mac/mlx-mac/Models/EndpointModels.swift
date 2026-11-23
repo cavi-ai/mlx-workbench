@@ -461,10 +461,10 @@ extension EndpointFleetConfig {
             }
             if let receipt = slot.trainingReceipt {
                 let pinned = receipt.hasPrefix("/") && receipt != "/" && !receipt.contains("\0") && slot.modelPath.hasPrefix("/")
-                let ordinary = !slot.usesJIT && slot.servingProfile == nil && slot.splashPresetName == nil
-                    && slot.apiKeySHA256 == nil && !slot.inferenceOptions.requested && !slot.inferenceOptions.hasRequestDefaults
-                    && slot.memoryPolicy == nil
-                if !pinned || !ordinary { throw EndpointFleetValidation.invalidAdapterEndpoint(slot.id) }
+                let allowedOptions = slot.servingProfile == nil && slot.splashPresetName == nil
+                    && !slot.inferenceOptions.requested && !slot.inferenceOptions.hasRequestDefaults
+                    && (slot.memoryPolicy == nil || slot.usesJIT)
+                if !pinned || !allowedOptions { throw EndpointFleetValidation.invalidAdapterEndpoint(slot.id) }
             }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }
             guard (1...65535).contains(slot.port) else {

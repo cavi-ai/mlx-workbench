@@ -987,6 +987,9 @@ actor WorkbenchAPI {
     func loginItemPlan(slot: EndpointSlot, fleetURL: URL) async throws -> LoginItemPlan {
         guard slot.enabled, !slot.modelPath.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
         if let receipt = slot.trainingReceipt {
+            if slot.usesJIT || slot.apiKeySHA256 != nil {
+                throw WorkflowEvidenceError.invalid("Login items for trained adapters do not yet support Load on request or API key protection.")
+            }
             let capturedAgent = agentPath
             let plan = try await trainedAdapterPreview(receipt: receipt, port: slot.port, runtime: "mlx_lm")
             guard capturedAgent == agentPath,

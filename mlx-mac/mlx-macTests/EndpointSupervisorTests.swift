@@ -1655,6 +1655,63 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(login.arguments[login.arguments.firstIndex(of: "--preview-hash")! + 1], TrainedAdapterEndpointFixture.hash)
         XCTAssertFalse(login.arguments.contains("--path"))
         XCTAssertFalse(login.arguments.contains("auto"))
+
+        var protectedJITSlot = EndpointSlot(enabled: true, port: 8767, modelPath: "/models/base", loadOnRequest: true)
+        protectedJITSlot.apiKeySHA256 = String(repeating: "a", count: 64)
+        protectedJITSlot.trainingReceipt = "/receipts/trained.json"
+        do {
+            _ = try await api.loginItemPlan(slot: protectedJITSlot, fleetURL: URL(fileURLWithPath: "/state/fleet.json"))
+            XCTFail("Expected loginItemPlan to fail closed for JIT/API-key trained adapter slot")
+        } catch let error as WorkflowEvidenceError {
+            XCTAssertTrue(error.localizedDescription.contains("Load on request or API key"))
+        }
+    }
+
+    func testTrainedAdapterSupportsJITAndAPIKeyAndSetSlotLoadOnRequest() async throws {
+        let binding = try XCTUnwrap(TrainedAdapterBinding.decode(TrainedAdapterEndpointFixture.binding))
+        let world = FakeServeWorld()
+        let fleetURL = temporaryURL("fleet-adapter-jit.json")
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            fleetStore: JSONStore<EndpointFleetConfig>(fileURL: fleetURL))
+        supervisor.saveAPIKey = { _ in }
+        supervisor.removeAPIKey = { _ in }
+        var recordedJITStarts: [(String, Int, String?)] = []
+        supervisor.adapterLaunch = AdapterEndpointLaunch(
+            preview: { _, _, _ in (TrainedAdapterEndpointFixture.hash, binding) },
+            start: { _, _, _ in },
+            jitPreview: { receipt, _, port, policy, _ in
+                XCTAssertEqual(receipt, binding.receiptPath)
+                XCTAssertTrue([8766, 8767].contains(port))
+                return (TrainedAdapterEndpointFixture.hash, binding)
+            },
+            jitStart: { receipt, port, hash, _, _ in
+                recordedJITStarts.append((receipt, port, hash))
+            }
+        )
+        await supervisor.addTrainedAdapterSlot(binding: binding, port: 8766, allowUnverified: true, loadOnRequest: true, requireAPIKey: true, memoryPolicy: .automatic)
+        XCTAssertNil(supervisor.lastError)
+        let slot = try XCTUnwrap(supervisor.fleet.slots.first)
+        XCTAssertTrue(slot.usesJIT)
+        XCTAssertNotNil(slot.apiKeySHA256)
+        XCTAssertEqual(slot.memoryPolicy, .automatic)
+        XCTAssertEqual(recordedJITStarts.count, 1)
+        XCTAssertEqual(recordedJITStarts.first?.0, binding.receiptPath)
+        XCTAssertEqual(recordedJITStarts.first?.1, 8766)
+
+        // Toggling loadOnRequest off while API-key-protected must refuse rather than strip auth
+        await supervisor.setSlotLoadOnRequest(id: slot.id, false)
+        XCTAssertTrue(try XCTUnwrap(supervisor.fleet.slots.first).usesJIT)
+        XCTAssertNotNil(try XCTUnwrap(supervisor.fleet.slots.first).apiKeySHA256)
+
+        // An eager unauthenticated trained-adapter slot can toggle loadOnRequest on and off
+        await supervisor.addTrainedAdapterSlot(binding: binding, port: 8767, allowUnverified: true, loadOnRequest: false, requireAPIKey: false)
+        let eagerSlot = try XCTUnwrap(supervisor.fleet.slots.last)
+        XCTAssertFalse(eagerSlot.usesJIT)
+        await supervisor.setSlotLoadOnRequest(id: eagerSlot.id, true)
+        XCTAssertTrue(try XCTUnwrap(supervisor.fleet.slots.last).usesJIT)
+        await supervisor.setSlotLoadOnRequest(id: eagerSlot.id, false)
+        XCTAssertFalse(try XCTUnwrap(supervisor.fleet.slots.last).usesJIT)
     }
 
     func testReconcileStartsMultipleDownSlotsConcurrently() async throws {

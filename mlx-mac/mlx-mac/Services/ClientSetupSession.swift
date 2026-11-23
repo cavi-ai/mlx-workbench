@@ -136,6 +136,10 @@ final class ClientSetupSession: ObservableObject {
     private var initialServer: ServerInfo?
     private var prefersFrontDoor: Bool
 
+    deinit {
+        activeTask?.cancel()
+    }
+
     init(wiring: WiringCoordinator, client: ServingClient = .opencode, server: ServerInfo? = nil, prefersFrontDoor: Bool = false,
          servers: @escaping () async throws -> [ServerInfo],
          frontDoor: @escaping @MainActor () async -> WireEndpoint? = { nil },
