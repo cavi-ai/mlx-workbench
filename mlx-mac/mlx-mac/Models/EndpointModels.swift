@@ -372,7 +372,7 @@ struct EndpointFleetConfig: Codable, Equatable, Sendable {
     /// Absent in older fleets; synthesized decoding keeps them readable.
     var roleDefaults: EndpointRoleDefaults? = nil
 
-    static let maxSlots = 4
+    static let maxSlots = 8
 
     static var empty: EndpointFleetConfig {
         EndpointFleetConfig(slots: [], installedAtLogin: false)

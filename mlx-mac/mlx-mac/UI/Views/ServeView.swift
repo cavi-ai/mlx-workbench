@@ -57,6 +57,7 @@ struct ServeView: View {
     @State private var keepModelLoaded = false
     @State private var requireAPIKey = false
     @State private var splashPresets: [SplashPreset] = []
+    @State private var agentMemoryBudget: AgentMemoryBudget?
     @State private var selectedSplashPresetName = ""
     @State private var showingSplashEditor = false
     @State private var splashPresetSlot: EndpointSlot?
@@ -242,12 +243,17 @@ struct ServeView: View {
         .sheet(item: $splashPresetSlot) { slot in
             SplashPresetApplySheet(slot: slot, endpoint: endpoint, api: appHost.api)
         }
-        .task { await loadSplashPresets() }
+        .task {
+            await loadSplashPresets()
+            await refreshAgentMemoryBudget()
+        }
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
             async let discovery: Void = refreshDiscovery()
+            async let budget: Void = refreshAgentMemoryBudget()
             await modelWorkflow.refreshServers()
             await discovery
+            await budget
         }
         .onChange(of: selectedSplashPresetName) { _, name in
             if !name.isEmpty { newSlotLoadOnRequest = true; inferenceOptions.sharedPrefixCacheMiB = nil }
@@ -585,6 +591,7 @@ struct ServeView: View {
     @ViewBuilder
     private func memoryWorkspace(_ row: ServingRow) -> some View {
         ServingSystemHeadroom(resources: appHost.resources)
+        fleetCoResidencyBudgetBar
         if case .endpoint(let slot, _, _) = row {
             Toggle("Load weights on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
                 Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
@@ -1143,6 +1150,96 @@ struct ServeView: View {
     private func refreshServing() async {
         await modelWorkflow.refreshServers()
         await inventory.refresh(refreshHosts: true)
+        await refreshAgentMemoryBudget()
+    }
+
+    private func refreshAgentMemoryBudget() async {
+        agentMemoryBudget = try? await appHost.api.agentMemoryBudget()
+    }
+
+    private var fleetBudgetSummary: FleetFitAdvisor.BudgetSummary? {
+        let enabledSlots = endpoint.fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
+        guard !enabledSlots.isEmpty, let memory = appHost.resources.memory else { return nil }
+        let estimates = enabledSlots.map { slot -> FleetFitAdvisor.Estimate in
+            let model = RunModels.model(for: slot.modelPath, in: models)
+            let server = modelWorkflow.servers.first(where: { $0.port == slot.port })
+            let modality = FleetFitAdvisor.modality(for: model, server: server, role: slot.role)
+            let residency: FleetFitAdvisor.Residency
+            if let presetName = slot.splashPresetName,
+               let cap = splashPresets.first(where: { $0.name == presetName })?.memoryGB,
+               cap > 0 {
+                residency = .splashCapped(maxMemoryGB: cap)
+            } else if slot.usesJIT {
+                let state = server?.modelState?.lowercased()
+                residency = (state == "unloaded" || state == "idle" || server == nil) ? .jitUnloaded : .resident
+            } else {
+                residency = .resident
+            }
+            let modelBytes: Int64? = (model?.item.bytes ?? 0) > 0 ? model?.item.bytes : nil
+            let contextTokens = slot.memoryPolicy?.contextTokens ?? appHost.resources.contextTokens
+            return FleetFitAdvisor.Estimate.slot(
+                modelBytes: modelBytes,
+                contextTokens: contextTokens,
+                parameters: model?.item.parameters,
+                modality: modality,
+                residency: residency
+            )
+        }
+        return FleetFitAdvisor.assess(
+            estimates: estimates,
+            availableBytes: memory.availableBytes,
+            reserveBytes: Int64(max(0, appHost.config.fitReserveGB) * 1e9),
+            agentBudget: agentMemoryBudget
+        )
+    }
+
+    @ViewBuilder
+    private var fleetCoResidencyBudgetBar: some View {
+        if let summary = fleetBudgetSummary {
+            let tint: Color = {
+                switch summary.verdict {
+                case .fits: return WorkbenchColor.success
+                case .tight: return WorkbenchColor.warning
+                case .wontFit: return WorkbenchColor.failure
+                case .unknown: return WorkbenchColor.muted
+                }
+            }()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                HStack {
+                    Text("Fleet co-residency budget")
+                        .font(WorkbenchTypography.label)
+                    Spacer()
+                    Text("\(summary.totalSlotCount)/\(EndpointFleetConfig.maxSlots) slots")
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                ProgressView(value: min(1.0, max(0.0, summary.utilizationFraction)))
+                    .tint(tint)
+                Text(summary.summaryText)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(summary.isPartial ? WorkbenchColor.warning : WorkbenchColor.muted)
+                if !summary.modalityBreakdown.isEmpty {
+                    let breakdown = FleetFitAdvisor.Modality.allCases.compactMap { modality -> String? in
+                        guard let bytes = summary.modalityBreakdown[modality], bytes > 0 else { return nil }
+                        return String(format: "%@ %.1f GB", modality.title, Double(bytes) / 1e9)
+                    }
+                    if !breakdown.isEmpty {
+                        Text(breakdown.joined(separator: " · "))
+                            .font(WorkbenchTypography.metadata)
+                            .foregroundStyle(WorkbenchColor.muted)
+                    }
+                }
+                if let admission = summary.agentAdmissionBytes, let accounted = summary.agentAccountedBytes {
+                    Text(String(format: "Shared agent budget: %.1f GB accounted / %.1f GB admission",
+                                Double(accounted) / 1e9, Double(admission) / 1e9))
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(summary.agentWithinBudget == false ? WorkbenchColor.failure : WorkbenchColor.muted)
+                }
+            }
+            .padding(WorkbenchSpacing.sm)
+            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier("serving-coresidency-budget-bar")
+        }
     }
 
     private func refreshDiscovery() async {
