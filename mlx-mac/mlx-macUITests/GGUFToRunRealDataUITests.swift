@@ -84,7 +84,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Prepare destination"].exists, "Library did not expose the Prepare destination label.")
 
         app.buttons["Convert to MLX…"].click()
-        XCTAssertTrue(app.staticTexts["Prepare"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["Convert"].waitForExistence(timeout: 20))
         capture("02-prepare-workflow", note: "Prepare rendered the workflow state reached from the selected real GGUF.")
         let hasPrepareAction = app.buttons["Run existing"].waitForExistence(timeout: 10)
             || app.buttons["Preview conversion"].exists

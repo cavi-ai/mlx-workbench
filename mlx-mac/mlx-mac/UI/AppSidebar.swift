@@ -144,7 +144,7 @@ struct AppSidebar: View {
                 routeRows(AppRoute.routes(in: .sources))
             }
             Section(AppRoute.Group.attention.rawValue) {
-                filterRow(.needsConversion, title: "Needs converting", symbol: "arrow.triangle.2.circlepath")
+                filterRow(.needsConversion, title: "To convert", symbol: "arrow.triangle.2.circlepath")
                 routeRows(AppRoute.routes(in: .attention))
             }
             Section(isExpanded: $workspacesExpanded) {

@@ -16,9 +16,9 @@ Open **Settings** and confirm:
 
 ## 3. Add a model from Hugging Face
 
-Press ⇧⌘V with a Hugging Face model link on the clipboard, or paste it into Prepare. The intake window shows a verdict before anything downloads:
+Press ⇧⌘V with a Hugging Face model link on the clipboard, or paste it into Convert. The intake window shows a verdict before anything downloads:
 
-- **Convertible**: download, then convert in Prepare.
+- **Convertible**: download, then convert in Convert.
 - **Convertible after install**: install the needed backend with one click first.
 - **Already MLX**: download straight into your output directory.
 - **GGUF repository**: pick one quant file to download.
@@ -27,7 +27,7 @@ The window also shows the estimated output size, whether it fits on this Mac and
 
 ## 4. Convert and verify
 
-In **Prepare**, choose the quantization width. Each tile shows the output size and fit. **Preview conversion** shows the exact command, destination and preview hash. **Confirm conversion** starts the job; a progress ring tracks bytes written and the job log is one click away. **Activity** shows the same job on its timeline.
+In **Convert**, choose the quantization width. Each tile shows the output size and fit. **Preview conversion** shows the exact command, destination and preview hash. **Confirm conversion** starts the job; a progress ring tracks bytes written and the job log is one click away. **Activity** shows the same job on its timeline.
 
 When the output appears, the conversion quality gate runs. Chat models are served on a temporary loopback port and answer canary prompts; speech, classification and image models run their own canary. A model that passes is marked **verified**. A notification announces the result.
 

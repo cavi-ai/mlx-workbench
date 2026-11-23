@@ -8,7 +8,7 @@ History loads and saves run in the background. The toolbar shows workflow histor
 Usage stamps and Watch state also load and save in the background. Usage updates
 retain the last serving timestamp when a later verification or comparison records
 use. Failed writes preserve the saved file. Current usage observations remain
-available until quit, with a warning in Overview and Reclaim when they could not
+available until quit, with a warning in Overview and Disk space when they could not
 be saved.
 
 | File | Holds |
@@ -64,4 +64,4 @@ Before the engine owned the conversion queue, Workbench kept `convert-queue.json
 
 New revision inputs use `<output_dir>/managed/<owner>/<repository>/…/<revision>`; prepared outputs use `<output_dir>/managed-prepared/<owner>/<repository>/recipe-…/<revision>`. Required Hugging Face components use `<output_dir>/managed-dependencies/<update-id>/…`, and HTTP support assets stay in the source revision's `support` folder. The saved review records every location.
 
-The app never moves model files on its own. Conversions write to the output directory. Deletion, quarantine, Trash and source cleanup happen only through their reviewed actions in Library and Reclaim.
+The app never moves model files on its own. Conversions write to the output directory. Deletion, quarantine, Trash and source cleanup happen only through their reviewed actions in Library and Disk space.

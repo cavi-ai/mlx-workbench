@@ -300,7 +300,7 @@ struct JobsView: View {
     @ViewBuilder
     private func conversions(_ page: ActivityPage, excluding recentIDs: Set<UUID>) -> some View {
         if page.isEmpty {
-            designedState(symbol: "clock.arrow.circlepath", text: "No conversions yet; the ones you start in Prepare appear here.")
+            designedState(symbol: "clock.arrow.circlepath", text: "No conversions yet; the ones you start in Convert appear here.")
         } else {
             let olderAttention = page.needsAttention.filter { !recentIDs.contains($0.id) }
             let groups = page.groups.map { ActivityGroup(day: $0.day, title: $0.title, rows: $0.rows.filter { !recentIDs.contains($0.id) }) }.filter { !$0.rows.isEmpty }

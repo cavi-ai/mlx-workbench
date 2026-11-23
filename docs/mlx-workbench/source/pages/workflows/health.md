@@ -15,13 +15,13 @@ Before a base installation, read-only prerequisite checks identify missing Comma
 Guided installation shows the installation being run and the final
 base-tool check. **Cancel installation** stops only that installer's process group;
 retry stays disabled until its processes exit and the tool check finishes. The
-same status and cancellation controls appear in Studies for study-tool and video
+same status and cancellation controls appear in Experiments for study-tool and video
 runtime installs. Base-tool checks do not certify those optional runtimes.
 
 Cancellation and failures retain the install log. They can leave a partially
 installed environment; Workbench keeps those files and does not automatically
 delete or rebuild the environment. Review **Tool check details** and **Install
-log**, then explicitly retry **Install Runtime…** or the relevant Studies install.
+log**, then explicitly retry **Install Runtime…** or the relevant Experiments install.
 **Install command finished** reports the command's exit, separately from whether
 conversion and base serving tools passed their checks. These checks do not load
 a model or prove model-specific readiness.
@@ -59,7 +59,7 @@ including its fresh scan and verification gate, still applies. Repeated retries 
 the read is in progress. Health opens the existing engine and runtime checks;
 installation still requires its separate confirmation.
 
-Activity shows in-flight work and recent conversions first; older conversion, training and study records are available in their history sections. While Activity or Prepare is visible, active conversions are checked every five seconds for up to ten minutes. Use **Refresh** in Activity to check again after that window or after a read fails.
+Activity shows in-flight work and recent conversions first; older conversion, training and study records are available in their history sections. While Activity or Convert is visible, active conversions are checked every five seconds for up to ten minutes. Use **Refresh** in Activity to check again after that window or after a read fails.
 
 Previously loaded jobs remain visible when a status read fails. Those records
 may have changed since the last successful read. A successful retry replaces
@@ -69,7 +69,7 @@ into a successful one.
 Failed training jobs offer **View log** when a log path was recorded, alongside
 **Review training setup**. The latter opens Training without changing its draft
 or submitting a job. Correct the inputs, use **Check setup**, then preview and
-confirm a new run explicitly. Study jobs retain their existing Studies controls;
+confirm a new run explicitly. Study jobs retain their existing Experiments controls;
 conversion retry retains its preview and confirmation boundary.
 
 Activity's log window reads only a bounded tail of a regular file in the

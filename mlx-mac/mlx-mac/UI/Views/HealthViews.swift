@@ -645,7 +645,7 @@ struct HealthFindingGroupView: View {
             .font(WorkbenchTypography.secondary)
             .foregroundStyle(WorkbenchColor.warning)
             .fixedSize(horizontal: false, vertical: true)
-        let button = Button("Open Reclaim", action: onOpenReclaim)
+        let button = Button("Open Disk space", action: onOpenReclaim)
             .buttonStyle(.bordered)
             .controlSize(.small)
         if wrapsHeader {

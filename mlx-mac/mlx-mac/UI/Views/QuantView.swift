@@ -304,7 +304,7 @@ struct QuantView: View {
             reuseError = "Finish the current comparison or editor, then use the selected showdown models."; return
         }
         guard let models = request.resolve(in: appHost.librarySnapshot?.models ?? []) else {
-            reuseError = "A showdown model changed or is unavailable. Select the entrants again in Reclaim."
+            reuseError = "A showdown model changed or is unavailable. Select the entrants again in Disk space."
             appHost.handoffs.finish(request, as: .compareFamily); return
         }
         reusedPromptSet = nil

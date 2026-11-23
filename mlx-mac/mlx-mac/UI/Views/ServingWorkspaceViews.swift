@@ -14,6 +14,12 @@ enum ServingWorkspaceTab: String, CaseIterable, Identifiable {
 }
 
 enum ServingWorkspacePresentation {
+    /// The count is how many sources missed the latest refresh. The sheet lists each one.
+    static func sourceIssueTitle(_ count: Int) -> String {
+        count == 1
+            ? "1 source did not answer the latest refresh."
+            : "\(count) sources did not answer the latest refresh."
+    }
     enum Section: String, CaseIterable {
         case live = "Live endpoints", saved = "Saved configurations", available = "Available from other apps"
     }
@@ -282,8 +288,10 @@ struct ServingModelList: View {
                     .font(WorkbenchTypography.secondary).accessibilityIdentifier("serving-include-available")
                 Button("Open live Monitor", action: monitor).buttonStyle(.borderless)
                 if sourceIssueCount > 0 {
-                    Button("Connection issues (\(sourceIssueCount))", action: showSources)
+                    Button(ServingWorkspacePresentation.sourceIssueTitle(sourceIssueCount), action: showSources)
                         .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.muted)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("serving-source-issues")
                 }
             }.padding(WorkbenchSpacing.md)

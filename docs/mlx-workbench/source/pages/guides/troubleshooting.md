@@ -40,7 +40,7 @@ Confirmation refuses a server that stopped or changed since the preview, a confi
 
 ## Training or controlled studies cannot load
 
-Re-run `make install` for the engine's `requirements-lab.txt`. Video generation needs **Studies → Runtime setup → Install video runtime**. Read the error and the receipt before retrying; **Recover interrupted jobs** reconciles jobs left by a crash.
+Re-run `make install` for the engine's `requirements-lab.txt`. Video generation needs **Experiments → Runtime setup → Install video runtime**. Read the error and the receipt before retrying; **Recover interrupted jobs** reconciles jobs left by a crash.
 
 ## An earlier queue cannot be imported
 
@@ -48,7 +48,7 @@ Stop the former Workbench server first, then choose the exact earlier `convert-q
 
 ## A reclaimed model is needed again
 
-Use **Put back** in Reclaim for quarantined items, or **Restore originals** for source cleanup. Changed items or occupied destinations refuse restore. Files in the Trash keep their disk space until it is emptied. Rescan Library afterwards.
+Use **Put back** in Disk space for quarantined items, or **Restore originals** for source cleanup. Changed items or occupied destinations refuse restore. Files in the Trash keep their disk space until it is emptied. Rescan Library afterwards.
 
 ## An update is unavailable or refused
 

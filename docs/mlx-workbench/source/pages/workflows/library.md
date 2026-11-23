@@ -2,10 +2,10 @@
 
 ## Overview
 
-The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** contains **Model sources** and Discover. **Attention** lists **Needs converting**, which filters the table to sources awaiting conversion, and Reclaim. Workspaces and System pages follow in collapsible groups; a collapsed group shows the total of its pages' counts beside its name, such as the Watch alert count on Overview. ⌘1 through ⌘9 open the first nine pages in sidebar order (Library, Model sources, Discover, Reclaim, Use, Serving, Monitor, Compare and Prepare), and ⌘0 opens Settings. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
+The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** contains **Model sources** and Discover. **Attention** lists **To convert**, which filters the table to sources awaiting conversion, and Disk space. Workspaces and System pages follow in collapsible groups; a collapsed group shows the total of its pages' counts beside its name, such as the Watch alert count on Overview. ⌘1 through ⌘9 open the first nine pages in sidebar order (Library, Model sources, Discover, Disk space, Use, Serving, Monitor, Compare and Convert), and ⌘0 opens Settings. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
 The **Next step** follows the model selected in Library: ready supported models open
-Run for a serve preview, sources needing conversion open Prepare, and other task
+Run for a serve preview, sources needing conversion open Convert, and other task
 types open their own Library inspector. Missing runtimes lead to repair guidance.
 An unavailable selection asks you to choose another model. Active conversions,
 verification and workflow failures still take priority. While a scan is running
@@ -309,7 +309,7 @@ Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embe
 
 **Model sources → Server models** lists model inventories across saved and detected local providers. Search, filter by provider, and use Sort to order the catalog by model, provider, or status. Select a model to inspect each connection’s state and API address, and copy the address from its details. In a narrow window, choose **Connection details** to open the inspector. Use **Add provider** to connect another server and **Connections** to edit existing connections. Refresh reads inventory without loading or downloading weights. Matching Ollama tags with the same reported digest appear once, with each connection listed in the details. Ollama tags reporting remote execution appear as Cloud in the provider inventory and are excluded from local Sources. Connection issues appear in the toolbar; stale observations are labeled as last seen.
 
-**Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Reclaim, and **Manage folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
+**Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Disk space, and **Manage folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
 
 ## LM Studio files
 
@@ -318,7 +318,7 @@ Choose **LM Studio files** in the Source menu's **Local files** group to list mo
 Two lanes are ranked by fit:
 
 - **MLX**: models that run as they are; **Run…** opens Run.
-- **GGUF**: files that need converting; **Convert to MLX…** opens Prepare, or **Run…** when a converted output already exists. Split GGUF files are summed; vision projector files appear as tags.
+- **GGUF**: files that need converting; **Convert to MLX…** opens Convert, or **Run…** when a converted output already exists. Split GGUF files are summed; vision projector files appear as tags.
 
 The fit summary shows **fit unknown** until the MLX models have fit estimates. A partial set of estimates is labeled **known to fit**; a complete set uses **fit now**. Zero is shown only as the known count, never as a substitute for unavailable estimates.
 

@@ -184,7 +184,7 @@ final class OverviewPresentationTests: XCTestCase {
         XCTAssertEqual(derive(workflow: workflow(state: .running)).buttonTitle, "Open Activity")
 
         let source = makeModel(bytes: 1000, parameters: nil, readiness: .needsConversion, path: "/models/source.gguf")
-        XCTAssertEqual(derive(snapshot: snapshot(with: [source])).buttonTitle, "Prepare")
+        XCTAssertEqual(derive(snapshot: snapshot(with: [source])).buttonTitle, "Convert")
 
         let ready = makeModel(bytes: 1000, parameters: nil, readiness: .ready, path: "/models/atlas-mlx")
         let run = derive(workflow: workflow(state: .completed, completedModelPath: ready.item.path), snapshot: snapshot(with: [ready]))
@@ -194,7 +194,7 @@ final class OverviewPresentationTests: XCTestCase {
 
         let reclaim = derive(snapshot: snapshot(with: []), reclaimableBytes: ReclaimAdvisor.badgeThresholdBytes, diskFreeFraction: 0.05)
         XCTAssertEqual(reclaim.route, AppRoute.reclaim.rawValue)
-        XCTAssertEqual(reclaim.buttonTitle, "Open Reclaim")
+        XCTAssertEqual(reclaim.buttonTitle, "Open Disk space")
     }
 
     // MARK: - Layout

@@ -65,8 +65,8 @@ make start
 | Runtime | Install | Used by |
 |---|---|---|
 | mlx-vlm, mlx-audio backends | One click in the Add from Hugging Face window | Vision, audio and other models those backends convert or serve |
-| Study tools | **Studies → Runtime setup → Install study tools** | Controlled experiments |
-| Video runtime | **Studies → Runtime setup → Install video runtime** | Video generation in studies (adds Torch) |
+| Study tools | **Experiments → Runtime setup → Install study tools** | Controlled experiments |
+| Video runtime | **Experiments → Runtime setup → Install video runtime** | Video generation in studies (adds Torch) |
 | Strata | `make install-strata` | Qwen3.8-Flash-Next GGUF serving; see [Strata](../workflows/strata.md) |
 | Splash | `brew install incoai/tap/splash` and the family's DFlash2 draft | MLX, GGUF and Strata profile serving with a DFlash2 draft; see [Splash](../workflows/splash.md) |
 

@@ -329,6 +329,12 @@ final class UseWorkspaceTests: XCTestCase {
         XCTAssertNil(index.model(for: missing.modelPath))
     }
 
+    func testChatServerSetupSkipsPortsAlreadyUsed() {
+        XCTAssertEqual(UseChatServerSetup.suggestedPort(slots: []), EndpointConfig.defaultPort)
+        let used = EndpointSlot(enabled: true, port: EndpointConfig.defaultPort, modelPath: "/Models/chat")
+        XCTAssertEqual(UseChatServerSetup.suggestedPort(slots: [used]), EndpointConfig.defaultPort + 1)
+    }
+
     static func readyChatModel(path: String, storedName: String, displayName: String) -> LibraryModel {
         let item = ModelItem(path: path, name: storedName, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
             architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,

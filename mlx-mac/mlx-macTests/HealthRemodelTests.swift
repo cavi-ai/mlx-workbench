@@ -746,11 +746,11 @@ final class HealthDoctorCopyTests: XCTestCase {
 
     func testPrunableLineLivesOnlyUnderTheIncompleteGroup() throws {
         let groups = try groups()
-        XCTAssertEqual(groups[0].prunableLine, "1 incomplete download can be removed in Reclaim")
+        XCTAssertEqual(groups[0].prunableLine, "1 incomplete download can be removed in Disk space")
         XCTAssertTrue(groups.dropFirst().allSatisfy { $0.prunableLine == nil })
         let onlyCount = HealthDoctor.groups(findings: [], prunableCount: 2, models: [])
         XCTAssertEqual(onlyCount.map(\.title), ["Incomplete download"])
-        XCTAssertEqual(onlyCount[0].prunableLine, "2 incomplete downloads can be removed in Reclaim")
+        XCTAssertEqual(onlyCount[0].prunableLine, "2 incomplete downloads can be removed in Disk space")
     }
 
     func testCleanCopyCountsModelsHonestly() {
@@ -800,7 +800,7 @@ final class HealthDoctorCopyTests: XCTestCase {
             XCTAssertTrue(doctor.contains(text), "DoctorView.swift is missing \(text)")
         }
         let views = try Fixture.source("UI/Views/HealthViews.swift")
-        for text in [#"Button("Copy command")"#, #"Button("Open Settings""#, #"Button("Open Reclaim""#, "RuntimeInstallView(installer: installer"] {
+        for text in [#"Button("Copy command")"#, #"Button("Open Settings""#, #"Button("Open Disk space""#, "RuntimeInstallView(installer: installer"] {
             XCTAssertTrue(views.contains(text), "HealthViews.swift is missing \(text)")
         }
     }

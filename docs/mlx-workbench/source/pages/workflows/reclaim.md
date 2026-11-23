@@ -1,6 +1,6 @@
 # Reclaim
 
-**Reclaim** frees disk space without guessing. **Models** shows this Mac's load, what to remove and why, and where the disk under your scan folders goes. **Quarantine & cleanup** holds suggestions, the quarantine, the Trash and cleanup history. Every move is previewed, rechecked at confirmation and reversible until you empty the Trash.
+**Disk space** frees disk space without guessing. **Models** shows this Mac's load, what to remove and why, and where the disk under your scan folders goes. **Quarantine & cleanup** holds suggestions, the quarantine, the Trash and cleanup history. Every move is previewed, rechecked at confirmation and reversible until you empty the Trash.
 
 ## Models
 

@@ -871,7 +871,7 @@ struct LibraryStripPresentation: Equatable {
         }
         tiles = [
             Tile(name: "Models", symbol: "books.vertical", value: models, caption: snapshot == nil ? "No scan yet" : roots, destination: "Library"),
-            Tile(name: "On disk", symbol: "internaldrive", value: disk, caption: reclaimableBytes > 0 ? "\(Self.gb(reclaimableBytes)) reclaimable" : "Nothing to reclaim", destination: "Reclaim"),
+            Tile(name: "On disk", symbol: "internaldrive", value: disk, caption: reclaimableBytes > 0 ? "\(Self.gb(reclaimableBytes)) reclaimable" : "Nothing to reclaim", destination: "Disk space"),
             Tile(name: "Comparisons", symbol: "chart.bar", value: String(completed.count), caption: lastCaption, destination: "Compare"),
         ]
     }

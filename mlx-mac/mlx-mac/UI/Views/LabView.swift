@@ -22,7 +22,7 @@ struct StudiesNavigationButton: View {
     let onRouteSelection: (AppRoute) -> Void
 
     var body: some View {
-        Button("Open Studies", systemImage: "square.split.2x1") { onRouteSelection(.studies) }
+        Button("Open Experiments", systemImage: "square.split.2x1") { onRouteSelection(.studies) }
             .help("Change one variable at a time and review generated clips blind.")
             .accessibilityIdentifier("open-studies")
     }

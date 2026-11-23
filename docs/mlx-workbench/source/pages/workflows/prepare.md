@@ -1,6 +1,6 @@
 # Prepare and verify
 
-**Prepare** turns local source weights into an MLX model. Every conversion is previewed before it runs, and supported task types are verified before they are marked ready.
+**Convert** turns local source weights into an MLX model. Every conversion is previewed before it runs, and supported task types are verified before they are marked ready.
 
 ## Preview a conversion
 
@@ -10,7 +10,7 @@
 4. Choose whether to move the original source to the Trash after verification. The choice you see is the one recorded. A source outside the model folders in **Settings** cannot be moved, so the choice is off and says the original stays.
 5. **Confirm conversion** runs exactly the reviewed plan.
 
-Prepare follows the job while it runs: a progress ring tracks bytes written against the intake estimate (indeterminate while the converter loads), and the job log sits in a collapsible section. Only one conversion runs at a time.
+Convert follows the job while it runs: a progress ring tracks bytes written against the intake estimate (indeterminate while the converter loads), and the job log sits in a collapsible section. Only one conversion runs at a time.
 
 ## The quality gate
 
@@ -31,13 +31,13 @@ A notification announces each terminal state: completed, verified, verification 
 
 After a text LLM passes, the gate checks whether coding agents can use it. It serves the model through a temporary JIT gateway, with reasoning off and temperature 0, and runs one tool-call round trip through each agent protocol: Chat Completions, Anthropic Messages and OpenAI Responses. The model must call `get_weather` with arguments that match its schema and a call id, then answer with the tool result; agents return results by that id. One more request checks recall at the start of a 16,384-token prompt, the size of an agent's opening request. A model is agent-ready for a protocol only when its round trip and the context check both pass.
 
-Prepare and the Library inspector show the result under **Agent tools**, with each failed check and its reason. Agent readiness is saved on the verification report for the same bytes and never changes the verified or failed verdict. A changed model file makes it stale with the rest of the report.
+Convert and the Library inspector show the result under **Agent tools**, with each failed check and its reason. Agent readiness is saved on the verification report for the same bytes and never changes the verified or failed verdict. A changed model file makes it stale with the rest of the report.
 
 ## Activity
 
 **Activity** puts active comparisons and in-flight conversions before older records. Study and training work that is queued, running, failed or in an unknown state stays prominent; successful and cancelled jobs remain in expandable history. Failed conversions appear under **Needs attention**. Other conversion records stay grouped by creation day. Each conversion has a stage track, its state and one action.
 
-Empty study and training sections are omitted. Their status failures stay visible with the latest available records, rather than appearing as empty history. **Open Studies** and **Open Training** lead to their full workflows.
+Empty study and training sections are omitted. Their status failures stay visible with the latest available records, rather than appearing as empty history. **Open Experiments** and **Open Training** lead to their full workflows.
 
 **Refresh** reads conversion, serving, study, training and queue status without starting work. A successful conversion read does not clear a training failure. If serving status is unavailable, existing server rows are labeled as last known and Activity does not claim that no server is running.
 
@@ -51,8 +51,8 @@ The engine owns the shared conversion queue. It is collapsed when empty; queued 
 
 ## Clean up the source
 
-A verified conversion can reclaim the files it was made from. Prepare's **Preview source cleanup** and Reclaim's **Original sources after verification** list eligible originals: receipt-owned GGUF files, or Hugging Face cache repositories with a single revision. Changed outputs, active or preferred models, other revisions and blobs shared with other models are protected. **Move originals to Trash** moves only what the preview showed. See [Reclaim](reclaim.md) for restore.
+A verified conversion can reclaim the files it was made from. Convert's **Preview source cleanup** and Disk space's **Original sources after verification** list eligible originals: receipt-owned GGUF files, or Hugging Face cache repositories with a single revision. Changed outputs, active or preferred models, other revisions and blobs shared with other models are protected. **Move originals to Trash** moves only what the preview showed. See [Reclaim](reclaim.md) for restore.
 
-## Run from Prepare
+## Run from Convert
 
 A verified chat or vision-language model offers **Serve**. Choosing it opens Run with that model selected and leaves the conversion record unchanged. Non-servable task types do not offer Serve.

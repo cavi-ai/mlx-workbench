@@ -171,7 +171,8 @@ struct ServeView: View {
                             Button("Monitor") { onRouteSelection(.monitor) }
                             if !inventory.snapshot.sourceErrors.isEmpty {
                                 Button { showsSourceIssues = true } label: { Image(systemName: "info.circle") }
-                                    .accessibilityLabel("Connection issues")
+                                    .accessibilityLabel(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
+                                    .help(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
                             }
                         }.padding(WorkbenchSpacing.md)
                         Divider()
