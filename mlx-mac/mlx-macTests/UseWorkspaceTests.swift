@@ -314,6 +314,21 @@ final class UseWorkspaceTests: XCTestCase {
         XCTAssertEqual(coordinator.selected?.turns.count, 1)
     }
 
+    func testLibraryIndexLooksUpAModelOncePerSnapshot() {
+        let model = Self.readyChatModel(path: "/Models/moondream", storedName: "a49db27f5d4190db44ee3e38db8cd2f864b75af4", displayName: "moondream3-preview-mlx-4bit")
+        let skipped = LibraryModel(item: model.item, displayName: "Not ready", readiness: .needsConversion)
+        let first = LibraryModel(item: model.item, displayName: "First name", readiness: .ready)
+        let second = LibraryModel(item: model.item, displayName: "Second name", readiness: .ready)
+        let index = UseLibraryIndex([skipped, first, second])
+        let session = UseSession(title: UseSession.defaultChatTitle, modelPath: model.item.path, modelName: "a49db27f5d4190db44ee3e38db8cd2f864b75af4", mode: .chat)
+        XCTAssertEqual(index.usable.map(\.displayName), ["First name", "Second name"])
+        XCTAssertEqual(index.model(for: model.item.path)?.displayName, "First name")
+        XCTAssertEqual(index.displayName(for: session), "First name")
+        let missing = UseSession(title: "Kept", modelPath: "/Models/missing", modelName: "Stored name", mode: .chat)
+        XCTAssertEqual(index.displayName(for: missing), "Stored name")
+        XCTAssertNil(index.model(for: missing.modelPath))
+    }
+
     static func readyChatModel(path: String, storedName: String, displayName: String) -> LibraryModel {
         let item = ModelItem(path: path, name: storedName, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
             architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,
