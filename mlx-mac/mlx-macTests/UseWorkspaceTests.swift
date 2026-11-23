@@ -273,6 +273,70 @@ final class UseWorkspaceTests: XCTestCase {
         XCTAssertNil(coordinator.error)
     }
 
+    @MainActor
+    func testNewChatTakesTheModelNameAsItsTitle() async throws {
+        let fixture = Fixture(); defer { fixture.remove() }
+        let coordinator = fixture.coordinator(Recorder(store: fixture.store))
+        try await coordinator.create(modelPath: "/Models/chat", modelName: "Local chat", mode: .chat)
+        XCTAssertEqual(coordinator.selected?.title, "Local chat")
+    }
+
+    @MainActor
+    func testOpeningASnapshotSessionAdoptsTheLibraryName() async throws {
+        let fixture = Fixture(); defer { fixture.remove() }
+        let hash = "a49db27f5d4190db44ee3e38db8cd2f864b75af4"
+        let session = UseSession(title: UseSession.defaultChatTitle, modelPath: "/Models/moondream", modelName: hash, mode: .chat)
+        try await fixture.store.save(session)
+        let coordinator = fixture.coordinator(Recorder(store: fixture.store))
+        try await coordinator.open(model: Self.readyChatModel(path: "/Models/moondream", storedName: hash, displayName: "moondream3-preview-mlx-4bit"))
+        XCTAssertEqual(coordinator.selected?.id, session.id)
+        XCTAssertEqual(coordinator.selected?.modelName, "moondream3-preview-mlx-4bit")
+        XCTAssertEqual(coordinator.selected?.title, "moondream3-preview-mlx-4bit")
+        let stored = try await fixture.store.record(id: session.id)
+        XCTAssertEqual(stored?.modelName, "moondream3-preview-mlx-4bit")
+        XCTAssertEqual(stored?.title, "moondream3-preview-mlx-4bit")
+    }
+
+    @MainActor
+    func testATitledSessionWithTurnsKeepsItsTitleWhenTheLibraryNameChanges() async throws {
+        let fixture = Fixture(); defer { fixture.remove() }
+        let hash = "a49db27f5d4190db44ee3e38db8cd2f864b75af4"
+        var session = UseSession(title: "Ceiling height", modelPath: "/Models/moondream", modelName: hash, mode: .chat)
+        var turn = UseTurn(prompt: "What is a reasonable ceiling height?", images: [], endpoint: Self.server(), settings: UseRequestDefaults())
+        turn.answer = "Nine feet"
+        turn.state = .complete
+        session.turns = [turn]
+        try await fixture.store.save(session)
+        let coordinator = fixture.coordinator(Recorder(store: fixture.store))
+        try await coordinator.open(model: Self.readyChatModel(path: "/Models/moondream", storedName: hash, displayName: "moondream3-preview-mlx-4bit"))
+        XCTAssertEqual(coordinator.selected?.title, "Ceiling height")
+        XCTAssertEqual(coordinator.selected?.modelName, "moondream3-preview-mlx-4bit")
+        XCTAssertEqual(coordinator.selected?.turns.count, 1)
+    }
+
+    func testLibraryIndexLooksUpAModelOncePerSnapshot() {
+        let model = Self.readyChatModel(path: "/Models/moondream", storedName: "a49db27f5d4190db44ee3e38db8cd2f864b75af4", displayName: "moondream3-preview-mlx-4bit")
+        let skipped = LibraryModel(item: model.item, displayName: "Not ready", readiness: .needsConversion)
+        let first = LibraryModel(item: model.item, displayName: "First name", readiness: .ready)
+        let second = LibraryModel(item: model.item, displayName: "Second name", readiness: .ready)
+        let index = UseLibraryIndex([skipped, first, second])
+        let session = UseSession(title: UseSession.defaultChatTitle, modelPath: model.item.path, modelName: "a49db27f5d4190db44ee3e38db8cd2f864b75af4", mode: .chat)
+        XCTAssertEqual(index.usable.map(\.displayName), ["First name", "Second name"])
+        XCTAssertEqual(index.model(for: model.item.path)?.displayName, "First name")
+        XCTAssertEqual(index.displayName(for: session), "First name")
+        let missing = UseSession(title: "Kept", modelPath: "/Models/missing", modelName: "Stored name", mode: .chat)
+        XCTAssertEqual(index.displayName(for: missing), "Stored name")
+        XCTAssertNil(index.model(for: missing.modelPath))
+    }
+
+    static func readyChatModel(path: String, storedName: String, displayName: String) -> LibraryModel {
+        let item = ModelItem(path: path, name: storedName, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
+            architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,
+            readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
+            task: ModelTask(type: .textLLM, useCases: [], source: "test", confidence: "known"))
+        return LibraryModel(item: item, displayName: displayName, readiness: .ready)
+    }
+
     static func server(runtime: String = "mlx_lm") -> ServerInfo {
         ServerInfo(path: "/Models/chat", runtime: runtime, port: 8085, pid: 51, state: "running",
                    startedAt: "2026-11-10T12:00:00Z", receipt: "/state/.mlx-agent-receipts/serve/8085.json",

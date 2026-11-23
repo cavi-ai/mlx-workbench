@@ -21,10 +21,16 @@ struct UseWorkspaceView: View {
         _workflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _servedTasks = ObservedObject(wrappedValue: appHost.servedTasks)
     }
-    private var models: [LibraryModel] { (appHost.librarySnapshot?.models ?? []).filter { !UseMode.modes(for: $0).isEmpty } }
-    private var selectedModel: LibraryModel? {
-        guard let path = coordinator.selected?.modelPath else { return nil }
-        return models.first { Quarantine.resolve($0.item.path) == Quarantine.resolve(path) }
+    private var libraryIndex: UseLibraryIndex { UseLibraryIndex(appHost.librarySnapshot?.models ?? []) }
+    private func sendBlockReason(_ session: UseSession, index: UseLibraryIndex) -> String? {
+        guard session.mode == .chat else { return nil }
+        if let serversError = workflow.serversError { return serversError }
+        guard session.endpoint == nil, index.model(for: session.modelPath) != nil else { return nil }
+        return "\(index.displayName(for: session)) is not running. Choose a server, or set one up. Your message stays here."
+    }
+    private func adoptSelectedLibraryName() async {
+        guard let session = coordinator.selected, let model = libraryIndex.model(for: session.modelPath) else { return }
+        await coordinator.adoptLibraryName(model.displayName, modelPath: model.item.path)
     }
     private var choices: [UseConnectionChoice] {
         guard let session = coordinator.selected else { return [] }
@@ -37,27 +43,28 @@ struct UseWorkspaceView: View {
     }
 
     var body: some View {
+        let index = libraryIndex
         GeometryReader { geometry in
             let wide = geometry.size.width >= WorkbenchSize.Use.historyBreakpoint
             let showContext = wide && coordinator.selected?.mode == .chat
             HStack(spacing: 0) {
                 if wide && !showContext {
-                    history
+                    history(index)
                         .frame(width: WorkbenchSize.Use.historyWidth)
                     Divider()
                 }
                 VStack(spacing: 0) {
-                    header(showHistoryButton: !wide || showContext, showContext: showContext)
+                    header(showHistoryButton: !wide || showContext, showContext: showContext, index: index)
                     Divider()
                     if let session = coordinator.selected {
-                        if session.mode == .chat { chat(session) }
-                        else { tasks(session) }
+                        if session.mode == .chat { chat(session, index: index) }
+                        else { tasks(session, index: index) }
                     } else { emptyState }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if showContext, let session = coordinator.selected {
                     Divider()
-                    modelContext(session)
+                    modelContext(session, index: index)
                         .frame(width: min(300, geometry.size.width * 0.25))
                 }
             }
@@ -68,6 +75,7 @@ struct UseWorkspaceView: View {
             await servedTasks.load()
             if !coordinator.isSending { await refreshServers() }
             await consumeHandoff()
+            await adoptSelectedLibraryName()
         }
         .onChange(of: controlsPresented, initial: true) { _, value in coordinator.isPresentingPanel = value }
         .onChange(of: isRouteActive) { _, active in
@@ -76,7 +84,7 @@ struct UseWorkspaceView: View {
         .sheet(isPresented: gated($showHistory)) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 HStack { Text("Work sessions").font(WorkbenchTypography.title); Spacer(); Button("Done") { showHistory = false } }
-                history
+                history(libraryIndex)
             }.padding(WorkbenchSpacing.md)
                 .frame(width: WorkbenchSize.Use.settingsWidth, height: WorkbenchSize.Use.historyHeight)
         }
@@ -86,7 +94,7 @@ struct UseWorkspaceView: View {
 
     }
 
-    private func header(showHistoryButton: Bool, showContext: Bool) -> some View {
+    private func header(showHistoryButton: Bool, showContext: Bool, index: UseLibraryIndex) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack(spacing: WorkbenchSpacing.sm) {
                 if showHistoryButton {
@@ -97,11 +105,11 @@ struct UseWorkspaceView: View {
                     Text(coordinator.selected?.title ?? "Choose a model")
                         .font(WorkbenchTypography.inspectorTitle).lineLimit(1)
                     if !showContext, let session = coordinator.selected {
-                        Text(session.modelName).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
+                        Text(index.displayName(for: session)).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
                     }
                 }
                 Spacer(minLength: WorkbenchSpacing.xs)
-                newMenu
+                newMenu(index)
                 if coordinator.selected?.mode == .chat {
                     if !showContext {
                         Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
@@ -116,7 +124,7 @@ struct UseWorkspaceView: View {
                 }
             }
             if !showContext, let session = coordinator.selected, session.mode == .chat {
-                connection(session)
+                connection(session, index: index)
             }
             if let error = coordinator.error {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
@@ -129,31 +137,35 @@ struct UseWorkspaceView: View {
         }
         .padding(WorkbenchSpacing.md)
     }
-    private var newMenu: some View {
+    private func newMenu(_ index: UseLibraryIndex) -> some View {
         Menu {
-            ForEach(models, id: \.item.path) { model in
-                Button(model.item.name) { Task { await create(model) } }
+            ForEach(index.usable, id: \.item.path) { model in
+                Button(model.displayName) { Task { await create(model) } }
             }
-            if let model = selectedModel, UseMode.modes(for: model).count > 1, coordinator.selected?.mode == .chat {
+            if let path = coordinator.selected?.modelPath, let model = index.model(for: path),
+               UseMode.modes(for: model).count > 1, coordinator.selected?.mode == .chat {
                 Button("New model task") { Task { await create(model, mode: .tasks) } }
             }
-            if models.isEmpty { Button("Open Library") { onRouteSelection(.library) } }
+            if index.usable.isEmpty { Button("Open Library") { onRouteSelection(.library) } }
         } label: { Label("New", systemImage: "square.and.pencil") }
         .disabled(!coordinator.canChange)
         .accessibilityIdentifier("use-new")
     }
-    private var history: some View {
+    private func history(_ index: UseLibraryIndex) -> some View {
         List(selection: Binding(get: { coordinator.selected?.id }, set: { id in
             guard let id else { return }
             Task {
-                do { try await coordinator.select(id: id); showHistory = false }
-                catch { coordinator.showError(error) }
+                do {
+                    try await coordinator.select(id: id)
+                    showHistory = false
+                    await adoptSelectedLibraryName()
+                } catch { coordinator.showError(error) }
             }
         })) {
             ForEach(coordinator.sessions) { session in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     Text(session.title).font(WorkbenchTypography.emphasis).lineLimit(2)
-                    Label(session.modelName, systemImage: session.mode == .chat ? "bubble.left" : "tray.full")
+                    Label(index.displayName(for: session), systemImage: session.mode == .chat ? "bubble.left" : "tray.full")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
                 }.tag(session.id).padding(.vertical, WorkbenchSpacing.xxs)
                     .accessibilityIdentifier("use-session-\(session.id)")
@@ -170,24 +182,24 @@ struct UseWorkspaceView: View {
             Button("Open Library") { onRouteSelection(.library) }
         }
     }
-    private func connection(_ session: UseSession) -> some View {
+    private func connection(_ session: UseSession, index: UseLibraryIndex) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: WorkbenchSpacing.sm) { endpointPicker(session); refreshServersButton; manageServer(session) }
+            HStack(spacing: WorkbenchSpacing.sm) { endpointPicker(session); refreshServersButton; manageServer(session, index: index) }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 HStack(spacing: WorkbenchSpacing.sm) { endpointPicker(session); refreshServersButton }
-                manageServer(session)
+                manageServer(session, index: index)
             }
         }
     }
-    private func modelContext(_ session: UseSession) -> some View {
+    private func modelContext(_ session: UseSession, index: UseLibraryIndex) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 Text("Model").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                Text(session.modelName).font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                Text(index.displayName(for: session)).font(WorkbenchTypography.emphasis).textSelection(.enabled)
                 endpointPicker(session)
                 HStack(spacing: WorkbenchSpacing.sm) {
                     refreshServersButton
-                    manageServer(session)
+                    manageServer(session, index: index)
                 }
                 Divider()
                 HStack {
@@ -240,16 +252,17 @@ struct UseWorkspaceView: View {
             }
         }.disabled(!coordinator.canChange).accessibilityIdentifier("use-endpoint")
     }
-    private func manageServer(_ session: UseSession) -> some View {
+    private func manageServer(_ session: UseSession, index: UseLibraryIndex) -> some View {
         Button(session.endpoint == nil ? "Start server…" : "Manage server…") {
             appHost.selectedModelPath = session.modelPath
-            if let model = selectedModel { appHost.modelWorkflow.prepareServe(model: model) }
+            if let model = index.model(for: session.modelPath) { appHost.modelWorkflow.prepareServe(model: model) }
             appHost.handoffs.send(UseServerReviewRequest(sessionID: session.id, modelPath: session.modelPath), as: .returnToUse)
             onRouteSelection(.run)
         }.disabled(coordinator.isSending).accessibilityIdentifier("use-manage-server")
     }
-    private func chat(_ session: UseSession) -> some View {
-        VStack(spacing: 0) {
+    private func chat(_ session: UseSession, index: UseLibraryIndex) -> some View {
+        let modelName = index.displayName(for: session)
+        return VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
@@ -258,7 +271,7 @@ struct UseWorkspaceView: View {
                                 .foregroundStyle(WorkbenchColor.muted).padding(.vertical, WorkbenchSpacing.xl)
                         }
                         ForEach(session.turns) { turn in
-                            UseTurnView(turn: turn, modelName: session.modelName, isLast: session.turns.last?.id == turn.id,
+                            UseTurnView(turn: turn, modelName: modelName, isLast: session.turns.last?.id == turn.id,
                                         canRetry: coordinator.canChange) { coordinator.retryLastTurn() }
                         }
                         Color.clear.frame(height: WorkbenchSpacing.hairline).id("use-tail")
@@ -272,11 +285,12 @@ struct UseWorkspaceView: View {
                 .accessibilityIdentifier("use-transcript")
             }
             Divider()
-            composer(session)
+            composer(session, index: index)
         }
     }
-    private func composer(_ session: UseSession) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+    private func composer(_ session: UseSession, index: UseLibraryIndex) -> some View {
+        let selected = index.model(for: session.modelPath)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if !session.draftImages.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: WorkbenchSpacing.xs) {
@@ -298,6 +312,10 @@ struct UseWorkspaceView: View {
                 .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                 .accessibilityLabel("Message").accessibilityIdentifier("use-message")
                 .disabled(coordinator.isSending || coordinator.isChanging)
+            if let reason = sendBlockReason(session, index: index) {
+                Text(reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("use-send-reason")
+            }
             HStack(spacing: WorkbenchSpacing.sm) {
                 if UseChatClient.supportsImages(session.endpoint) {
                     Button { chooseImage() } label: { Label("Image", systemImage: "photo.badge.plus") }
@@ -312,11 +330,11 @@ struct UseWorkspaceView: View {
                 } else {
                     Button("Send") { coordinator.send() }
                         .buttonStyle(.workbenchPrimary)
-                        .disabled(!isRouteActive || !coordinator.canSend || selectedModel == nil || workflow.serversError != nil)
+                        .disabled(!isRouteActive || !coordinator.canSend || selected == nil || workflow.serversError != nil)
                         .accessibilityIdentifier("use-send")
                 }
             }
-            if selectedModel == nil {
+            if selected == nil {
                 Button("Find this model in Library") { onRouteSelection(.library) }
             }
         }
@@ -325,10 +343,10 @@ struct UseWorkspaceView: View {
         .padding(WorkbenchSpacing.md)
     }
     @ViewBuilder
-    private func tasks(_ session: UseSession) -> some View {
+    private func tasks(_ session: UseSession, index: UseLibraryIndex) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                if let model = selectedModel {
+                if let model = index.model(for: session.modelPath) {
                     if UseMode.modes(for: model).count > 1 {
                         Button("New chat with this model") { Task { await create(model, mode: .chat) } }
                     }
@@ -356,13 +374,13 @@ struct UseWorkspaceView: View {
                 guard UseChatClient.matches(server, modelPath: model.item.path) else { return false }
                 return mode == .chat ? UseChatClient.supports(server) : (try? ServedTaskOrigin(server: server)) != nil
             }
-            try await coordinator.create(modelPath: model.item.path, modelName: model.item.name, mode: mode,
+            try await coordinator.create(modelPath: model.item.path, modelName: model.displayName, mode: mode,
                                          endpoint: servers.count == 1 ? servers.first : nil)
         } catch { coordinator.showError(error) }
     }
     private func consumeHandoff() async {
         guard let request = appHost.handoffs[.useModel], coordinator.hasLoaded, appHost.librarySnapshot != nil else { return }
-        guard let model = models.first(where: { Quarantine.resolve($0.item.path) == Quarantine.resolve(request.modelPath) }) else {
+        guard let model = libraryIndex.model(for: request.modelPath) else {
             coordinator.showError(UseSessionError.modelUnavailable)
             appHost.handoffs.finish(request, as: .useModel)
             return
@@ -397,5 +415,32 @@ struct UseWorkspaceView: View {
                 Task { do { try await coordinator.export(to: url, json: json) } catch { coordinator.showError(error) } }
             }
         }
+    }
+}
+
+struct UseLibraryIndex {
+    let usable: [LibraryModel]
+    private let byPath: [String: LibraryModel]
+
+    init(_ models: [LibraryModel]) {
+        var usable: [LibraryModel] = []
+        var byPath: [String: LibraryModel] = [:]
+        usable.reserveCapacity(models.count)
+        byPath.reserveCapacity(models.count)
+        for model in models where !UseMode.modes(for: model).isEmpty {
+            usable.append(model)
+            let key = HFRepoID.serveIdentity(for: model.item.path)
+            if byPath[key] == nil { byPath[key] = model }
+        }
+        self.usable = usable
+        self.byPath = byPath
+    }
+
+    func model(for path: String) -> LibraryModel? {
+        byPath[HFRepoID.serveIdentity(for: path)]
+    }
+
+    func displayName(for session: UseSession) -> String {
+        model(for: session.modelPath)?.displayName ?? session.modelName
     }
 }

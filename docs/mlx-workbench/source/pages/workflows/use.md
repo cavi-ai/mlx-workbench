@@ -10,9 +10,16 @@ Choose a running connection in **Server**, enter a message and choose **Send**
 (⌘Return). Each request includes the conversation's completed turns. History
 is stored locally and reopens without relying on a server response cache.
 
-If no server is available, **Start server…** opens the existing Run surface.
-Preview and confirm the server there, then choose **Return to Use**. A single
-matching running server is selected; choose a connection when several match. Opening a conversation does not start a server or download weights.
+A new conversation is titled with the model name. The first message replaces
+that title with the question. Opening an older conversation replaces a stored
+snapshot id with the model's current Library name. A conversation that already
+has a title and turns keeps that title.
+
+If no server is available, the conversation shows the model's name and says it
+is not running. **Send** stays unavailable and the draft is kept. **Start server…**
+opens the existing Run surface. Preview and confirm the server there, then choose
+**Return to Use**. A single matching running server is selected; choose a connection
+when several match. Opening a conversation does not start a server or download weights.
 **Manage server…** opens the same controls for memory policy and inference settings.
 
 The server's inference API key is read from Workbench's credential store.
