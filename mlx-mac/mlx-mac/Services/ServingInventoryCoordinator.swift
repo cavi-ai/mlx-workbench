@@ -246,16 +246,25 @@ final class ServingInventoryCoordinator: ObservableObject {
         await refresh()
     }
 
-    func startMonitoring() {
+    func startMonitoring(sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         guard monitoring == nil else { return }
         monitoring = Task { [weak self] in
-            var tick = 0
+            var untilHostRefresh = Duration.zero
             while !Task.isCancelled {
-                await self?.refresh(refreshHosts: tick % 3 == 0)
-                tick += 1
-                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                let refreshHosts = untilHostRefresh <= .zero
+                await self?.refresh(refreshHosts: refreshHosts)
+                guard let idle = self?.discoveryIsIdle else { return }
+                let delay = Duration.seconds(idle ? 30 : 10)
+                let hostInterval = Duration.seconds(idle ? 60 : 30)
+                untilHostRefresh = (refreshHosts ? hostInterval : min(untilHostRefresh, hostInterval)) - delay
+                do { try await sleep(delay) } catch { return }
             }
         }
+    }
+
+    private var discoveryIsIdle: Bool {
+        supportsEngineDiscovery && snapshot.sourceErrors.isEmpty && lastHosts.processIDs.isEmpty
+            && !snapshot.services.contains { $0.isLocal && ($0.server != nil || $0.residency == .loaded) }
     }
 
     func stopMonitoring() { monitoring?.cancel(); monitoring = nil; engineTask?.cancel(); hostTask?.cancel() }

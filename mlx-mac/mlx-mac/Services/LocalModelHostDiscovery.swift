@@ -9,6 +9,8 @@ struct LocalModelHost: Equatable, Sendable {
 
 /// Read-only listener identification. Model identity and residency still come from the provider.
 enum LocalModelHostDiscovery {
+    private static let maximumHosts = 16
+
     static func discover() async throws -> [LocalModelHost] {
         async let listeners = BoundedProcessCapture.runAsync(executable: URL(fileURLWithPath: "/usr/sbin/lsof"),
             arguments: ["-nP", "-a", "-u", String(getuid()), "-iTCP", "-sTCP:LISTEN", "-Fpcnt"], timeout: 3)
@@ -18,10 +20,14 @@ enum LocalModelHostDiscovery {
         guard commands.status == 0, ports.status == 0 || (ports.status == 1 && ports.stdout.isEmpty) else {
             throw WorkflowEvidenceError.invalid("Local server listeners could not be read. Refresh to try again.")
         }
-        return candidates(listeners: ports.stdout, processes: commands.stdout)
+        let hosts = candidates(listeners: ports.stdout, processes: commands.stdout, limit: maximumHosts + 1)
+        guard hosts.count <= maximumHosts else {
+            throw WorkflowEvidenceError.invalid("Too many local servers to verify serving ownership.")
+        }
+        return hosts
     }
 
-    static func candidates(listeners: String, processes: String) -> [LocalModelHost] {
+    static func candidates(listeners: String, processes: String, limit: Int = maximumHosts) -> [LocalModelHost] {
         var commands: [Int: String] = [:]
         for line in processes.split(separator: "\n") {
             let fields = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
@@ -55,7 +61,7 @@ enum LocalModelHostDiscovery {
             default: name = command.contains("strata") ? "Strata" : "Local model server"
             }
             result.append(LocalModelHost(host: ModelHost(id: id, name: name + " · :\(port)", provider: provider, baseURL: base), processID: pid))
-            if result.count == 16 { break }
+            if result.count == limit { break }
         }
         return result
     }

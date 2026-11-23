@@ -229,6 +229,23 @@ final class EndpointFleetTests: XCTestCase {
 
     // MARK: - Supervisor: multi-slot reconcile
 
+    func testExplicitStartLeavesOtherMissingSlotsForTheMonitor() async throws {
+        let world = FakeServeWorld()
+        let lifecycle = LifecycleRecorder()
+        world.recorder = lifecycle
+        let supervisor = makeSupervisor(world: world)
+        await supervisor.addSlot(modelPath: "/Models/first", port: 8766)
+        world.kill(port: 8766)
+        lifecycle.record("before-request")
+
+        await supervisor.addSlot(modelPath: "/Models/requested", port: 8767)
+
+        let requested = lifecycle.events.drop { $0 != "before-request" }.dropFirst()
+        XCTAssertEqual(Array(requested), ["preview:/Models/requested:8767", "start:/Models/requested:8767:hash-1"])
+        await supervisor.reconcile()
+        XCTAssertEqual(try world.status().compactMap(\.port).sorted(), [8766, 8767])
+    }
+
     func testReconcileStartsOnlyTheMissingSlot() async {
         let world = FakeServeWorld()
         world.preload(repo: "/Models/chat", port: 8767)

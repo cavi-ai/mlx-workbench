@@ -159,6 +159,43 @@ final class LaunchAgentManagerTests: XCTestCase {
         }
     }
 
+    func testUnwritableSecondPlistLeavesNoPartiallyInstalledFleet() throws {
+        let manager = LaunchAgentManager(home: try makeHome(), run: recordingRunner().run, uid: 501)
+        let first = plan()
+        let second = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8767, modelPath: "/models/other"),
+                                   fleetURL: first.fleetURL, agentPath: first.agentPath, arguments: first.arguments)
+        let collision = manager.plistURL(for: second.slot.id)
+        try FileManager.default.createDirectory(at: collision, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(try manager.install(plans: [first, second]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: manager.plistURL(for: first.slot.id).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: collision.path))
+    }
+
+    func testSecondBootstrapFailureRestoresThePreviouslyInstalledPlist() throws {
+        let home = try makeHome()
+        let original = plan()
+        let initial = LaunchAgentManager(home: home, run: recordingRunner().run, uid: 501)
+        try initial.install(plan: original)
+        let originalURL = initial.plistURL(for: original.slot.id)
+        let initialData = try Data(contentsOf: originalURL)
+        let replacement = LoginItemPlan(slot: original.slot, fleetURL: original.fleetURL, agentPath: "/new/agent", arguments: original.arguments)
+        let second = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8767, modelPath: "/models/other"),
+                                   fleetURL: original.fleetURL, agentPath: original.agentPath, arguments: original.arguments)
+        let secondPath = initial.plistURL(for: second.slot.id).path
+        let recorder = Recorder()
+        let manager = LaunchAgentManager(home: home, run: { executable, argv in
+            let output = try recorder.run(executable, argv)
+            if argv.first == "bootstrap", argv.last == secondPath { throw LaunchAgentError.launchctlFailed("Second agent refused") }
+            return output
+        }, uid: 501)
+
+        XCTAssertThrowsError(try manager.install(plans: [replacement, second]))
+        XCTAssertEqual(try Data(contentsOf: originalURL), initialData)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondPath))
+        XCTAssertEqual(recorder.commands.last?.argv, ["bootstrap", "gui/501", originalURL.path])
+    }
+
     func testUninstallBootsOutAndRemovesPlist() throws {
         let home = try makeHome()
         let recorder = Recorder()

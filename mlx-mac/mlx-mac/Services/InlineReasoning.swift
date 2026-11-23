@@ -27,13 +27,17 @@ enum InlineReasoning {
         private enum Phase { case opening, reasoning, afterReasoning, answer }
         private var phase = Phase.opening
         private var matched = 0
+        private var bytesRead = 0
+        private var reasoningStart: Int?
+        private var reasoningEnd: Int?
         private(set) var hasAnswer = false
-        private static let opening = Array("<think>".unicodeScalars)
-        private static let closing = Array("</think>".unicodeScalars)
+        private static let opening = Array(InlineReasoning.open.unicodeScalars)
+        private static let closing = Array(InlineReasoning.close.unicodeScalars)
 
         mutating func consume(_ fragment: String) {
             guard !hasAnswer else { return }
             for scalar in fragment.unicodeScalars {
+                bytesRead += scalar.utf8.count
                 switch phase {
                 case .opening:
                     if matched == 0 && scalar.properties.isWhitespace { continue }
@@ -41,11 +45,17 @@ enum InlineReasoning {
                         phase = .answer; hasAnswer = true; return
                     }
                     matched += 1
-                    if matched == Self.opening.count { phase = .reasoning; matched = 0 }
+                    if matched == Self.opening.count {
+                        reasoningStart = bytesRead
+                        phase = .reasoning; matched = 0
+                    }
                 case .reasoning:
                     if scalar == Self.closing[matched] {
                         matched += 1
-                        if matched == Self.closing.count { phase = .afterReasoning; matched = 0 }
+                        if matched == Self.closing.count {
+                            reasoningEnd = bytesRead - Self.closing.count
+                            phase = .afterReasoning; matched = 0
+                        }
                     } else { matched = scalar == Self.closing[0] ? 1 : 0 }
                 case .afterReasoning:
                     if !scalar.properties.isWhitespace { phase = .answer; hasAnswer = true; return }
@@ -53,6 +63,18 @@ enum InlineReasoning {
                     return
                 }
             }
+        }
+
+        /// Slices the accumulated content at the delimiters already seen.
+        func parts(in text: String) -> (reasoning: String, answer: String)? {
+            guard let reasoningStart else { return nil }
+            let bytes = text.utf8
+            let start = bytes.index(bytes.startIndex, offsetBy: reasoningStart)
+            guard let reasoningEnd else { return (String(decoding: bytes[start...], as: UTF8.self), "") }
+            let end = bytes.index(start, offsetBy: reasoningEnd - reasoningStart)
+            let answer = bytes.index(end, offsetBy: Self.closing.count)
+            return (String(decoding: bytes[start..<end], as: UTF8.self),
+                    String(decoding: bytes[answer...], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 }

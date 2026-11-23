@@ -1083,6 +1083,8 @@ final class EndpointSupervisor: ObservableObject {
 
         let running = servers.filter { $0.state?.lowercased() == "running" }
         for slot in enabledSlots {
+            // Explicit starts must not wait behind repairs of other slots.
+            if let userRequestedSlotID, slot.id != userRequestedSlotID { continue }
             guard fleet.slots.contains(slot) else { continue }
             await reconcileSlot(slot, running: running)
         }

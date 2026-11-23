@@ -360,6 +360,47 @@ final class ServeProbeTests: XCTestCase {
         }
     }
 
+    func testIncrementalPartsMatchTheFullParserForEveryPrefix() {
+        let fragments = ["\u{2003}<", "think", ">", "計画 🐈", "<</", "th", "ink>", "\n", "答", "え", " "]
+        var tracker = InlineReasoning.StreamTracker()
+        var text = ""
+        for fragment in fragments {
+            text += fragment
+            tracker.consume(fragment)
+            let incremental = tracker.parts(in: text)
+            let full = InlineReasoning.split(text)
+            XCTAssertEqual(incremental?.reasoning, full?.reasoning, text)
+            XCTAssertEqual(incremental?.answer, full?.answer, text)
+        }
+    }
+
+    func testConversationPublishesFirstAndLatestTextWithoutReplayingTheBurst() async throws {
+        for trailingEvent in ["[DONE]", #"{"error":{"message":"stream failed"}}"#] {
+            let fragments = ["<think>Plan", " continued", "</th", "ink>\n", "Hello", " world"]
+            let events = try fragments.map { content in
+                let data = try JSONSerialization.data(withJSONObject: ["choices": [["delta": ["content": content]]]])
+                return "data: " + String(decoding: data, as: UTF8.self) + "\n"
+            }.joined()
+            let session = stubSession(body: events + "data: " + trailingEvent + "\n")
+            defer { session.invalidateAndCancel() }
+            let updates = ConversationUpdates()
+            let prober = OpenAIEndpointProber(session: session, conversationUpdateInterval: .seconds(60))
+            do {
+                let sample = try await prober.conversation(baseURL: URL(string: "http://127.0.0.1:9999")!,
+                    model: "model", messages: [["role": .string("user"), "content": .string("Hello")]], settings: UseRequestDefaults(),
+                    onUpdate: { text, reasoning in await updates.append(text: text, reasoning: reasoning) })
+                XCTAssertEqual(trailingEvent, "[DONE]")
+                XCTAssertEqual(sample.text, "Hello world")
+                XCTAssertEqual(sample.reasoningText, "Plan continued")
+            } catch ProbeHTTPError.invalidResponse {
+                XCTAssertNotEqual(trailingEvent, "[DONE]")
+            }
+            let published = await updates.values
+            XCTAssertEqual(published.map(\.text), ["", "Hello world"])
+            XCTAssertEqual(published.map(\.reasoning), ["Plan", "Plan continued"])
+        }
+    }
+
     func testFragmentedInlineTagsDoNotRecordReasoningAsAnAnswer() async throws {
         for includeAnswer in [false, true] {
             var fragments = ["<", "thi", "nk>", "Plan the answer.", "</th", "ink>", "\n"]
@@ -1134,6 +1175,11 @@ final class ServeProbeTests: XCTestCase {
 
         override func stopLoading() {}
     }
+}
+
+private actor ConversationUpdates {
+    private(set) var values: [(text: String, reasoning: String)] = []
+    func append(text: String, reasoning: String) { values.append((text, reasoning)) }
 }
 
 private actor ModelListBox {

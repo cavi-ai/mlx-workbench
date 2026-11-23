@@ -773,14 +773,17 @@ struct OpenAIEndpointProber: EndpointProbing {
     private let bearerToken: String?
     private let maximumResponseBytes: Int
     private let maximumLineBytes: Int
+    private let conversationUpdateInterval: Duration
 
     init(session: URLSession = .shared, requestTimeout: TimeInterval = 180, bearerToken: String? = nil,
-         maximumResponseBytes: Int = 8_388_608, maximumLineBytes: Int = 1_048_576) {
+         maximumResponseBytes: Int = 8_388_608, maximumLineBytes: Int = 1_048_576,
+         conversationUpdateInterval: Duration = .milliseconds(50)) {
         self.session = session
         self.requestTimeout = requestTimeout
         self.bearerToken = bearerToken
         self.maximumResponseBytes = max(1, maximumResponseBytes)
         self.maximumLineBytes = max(1, maximumLineBytes)
+        self.conversationUpdateInterval = conversationUpdateInterval
     }
 
     func isReady(baseURL: URL) async -> Bool {
@@ -877,75 +880,92 @@ struct OpenAIEndpointProber: EndpointProbing {
         var firstTokenAt: Date?
         var lastTokenAt: Date?
         var streamedDeltas = 0
+        var lastUpdate: ContinuousClock.Instant?
+        var updatePending = false
+        func publishUpdate() async throws {
+            guard let onUpdate, updatePending else { return }
+            updatePending = false
+            let inline = reasoning.isEmpty ? answerTracker.parts(in: text) : nil
+            try await onUpdate(inline?.answer ?? text, inline?.reasoning ?? reasoning)
+            lastUpdate = ContinuousClock.now
+        }
         // Streamed tool calls arrive as deltas keyed by index; collect the
         // names and accumulate argument fragments per call.
         var toolCallNamesByIndex: [Int: String] = [:]
         var toolCallArgumentsByIndex: [Int: String] = [:]
-        for try await line in BoundedProbeLines(bytes: bytes, maximumBytes: maximumResponseBytes, maximumLineBytes: maximumLineBytes) {
-            guard line.hasPrefix("data:") else { continue }
-            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if payload == "[DONE]" { break }
-            guard let data = payload.data(using: .utf8),
-                  let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                if onUpdate != nil { throw ProbeHTTPError.invalidResponse }
-                continue
-            }
-            if chunk["error"] != nil { throw ProbeHTTPError.invalidResponse }
-            if let usage = chunk["usage"] as? [String: Any] {
-                if let count = usage["completion_tokens"] as? Int {
-                    completionTokens = count
+        do {
+            for try await line in BoundedProbeLines(bytes: bytes, maximumBytes: maximumResponseBytes, maximumLineBytes: maximumLineBytes) {
+                guard line.hasPrefix("data:") else { continue }
+                let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                if payload == "[DONE]" { break }
+                guard let data = payload.data(using: .utf8),
+                      let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    if onUpdate != nil { throw ProbeHTTPError.invalidResponse }
+                    continue
                 }
-                if let count = usage["prompt_tokens"] as? Int {
-                    promptTokens = count
-                }
-                if let timings = chunk["timings"] as? [String: Any],
-                   timings["draft_n"] != nil || timings["draft_n_accepted"] != nil {
-                    if let reported = DraftTokenEvidence(timings: timings), !draftCountsConflict,
-                       draftTokens == nil || draftTokens == reported { draftTokens = reported }
-                    else { draftCountsConflict = true; draftTokens = nil }
-                }
-                if let timings = chunk["timings"] as? [String: Any],
-                   timings["cache_n"] != nil || timings["prompt_n"] != nil || timings["prompt_ms"] != nil {
-                    if let reported = PromptProcessingEvidence(usage: usage, timings: timings), !promptProcessingConflict,
-                       promptProcessing == nil || promptProcessing == reported { promptProcessing = reported }
-                    else { promptProcessingConflict = true; promptProcessing = nil }
-                }
-            }
-            if let choices = chunk["choices"] as? [[String: Any]], let choice = choices.first {
-                if let reason = choice["finish_reason"] as? String { finishReason = reason }
-                guard let delta = choice["delta"] as? [String: Any] else { continue }
-                let thought = (delta["reasoning_content"] ?? delta["reasoning"]) as? String ?? ""
-                let answer = delta["content"] as? String ?? ""
-                if !thought.isEmpty || !answer.isEmpty {
-                    let now = Date()
-                    if firstTokenAt == nil { firstTokenAt = now }
-                    lastTokenAt = now
-                    streamedDeltas += 1
-                    if !answer.isEmpty, firstAnswerAt == nil {
-                        answerTracker.consume(answer)
-                        if answerTracker.hasAnswer { firstAnswerAt = now }
+                if chunk["error"] != nil { throw ProbeHTTPError.invalidResponse }
+                if let usage = chunk["usage"] as? [String: Any] {
+                    if let count = usage["completion_tokens"] as? Int {
+                        completionTokens = count
                     }
-                    reasoning += thought
-                    text += answer
-                    if let onUpdate {
-                        let inline = reasoning.isEmpty ? InlineReasoning.split(text) : nil
-                        try await onUpdate(inline?.answer ?? text, inline?.reasoning ?? reasoning)
+                    if let count = usage["prompt_tokens"] as? Int {
+                        promptTokens = count
+                    }
+                    if let timings = chunk["timings"] as? [String: Any],
+                       timings["draft_n"] != nil || timings["draft_n_accepted"] != nil {
+                        if let reported = DraftTokenEvidence(timings: timings), !draftCountsConflict,
+                           draftTokens == nil || draftTokens == reported { draftTokens = reported }
+                        else { draftCountsConflict = true; draftTokens = nil }
+                    }
+                    if let timings = chunk["timings"] as? [String: Any],
+                       timings["cache_n"] != nil || timings["prompt_n"] != nil || timings["prompt_ms"] != nil {
+                        if let reported = PromptProcessingEvidence(usage: usage, timings: timings), !promptProcessingConflict,
+                           promptProcessing == nil || promptProcessing == reported { promptProcessing = reported }
+                        else { promptProcessingConflict = true; promptProcessing = nil }
                     }
                 }
-                if let calls = delta["tool_calls"] as? [[String: Any]] {
-                    for call in calls {
-                        let index = call["index"] as? Int ?? 0
-                        if let function = call["function"] as? [String: Any] {
-                            if let name = function["name"] as? String, !name.isEmpty {
-                                toolCallNamesByIndex[index] = name
+                if let choices = chunk["choices"] as? [[String: Any]], let choice = choices.first {
+                    if let reason = choice["finish_reason"] as? String { finishReason = reason }
+                    guard let delta = choice["delta"] as? [String: Any] else { continue }
+                    let thought = (delta["reasoning_content"] ?? delta["reasoning"]) as? String ?? ""
+                    let answer = delta["content"] as? String ?? ""
+                    if !thought.isEmpty || !answer.isEmpty {
+                        let now = Date()
+                        if firstTokenAt == nil { firstTokenAt = now }
+                        lastTokenAt = now
+                        streamedDeltas += 1
+                        if !answer.isEmpty, firstAnswerAt == nil {
+                            answerTracker.consume(answer)
+                            if answerTracker.hasAnswer { firstAnswerAt = now }
+                        }
+                        reasoning += thought
+                        text += answer
+                        if onUpdate != nil {
+                            updatePending = true
+                        if lastUpdate.map({ $0.duration(to: ContinuousClock.now) >= conversationUpdateInterval }) ?? true {
+                                try await publishUpdate()
                             }
-                            if let fragment = function["arguments"] as? String {
-                                toolCallArgumentsByIndex[index, default: ""] += fragment
+                        }
+                    }
+                    if let calls = delta["tool_calls"] as? [[String: Any]] {
+                        for call in calls {
+                            let index = call["index"] as? Int ?? 0
+                            if let function = call["function"] as? [String: Any] {
+                                if let name = function["name"] as? String, !name.isEmpty {
+                                    toolCallNamesByIndex[index] = name
+                                }
+                                if let fragment = function["arguments"] as? String {
+                                    toolCallArgumentsByIndex[index, default: ""] += fragment
+                                }
                             }
                         }
                     }
                 }
             }
+        } catch {
+            // Retain the last received text if the transport fails between updates.
+            if !Task.isCancelled, !(error is CancellationError) { try? await publishUpdate() }
+            throw error
         }
 
         let finishedAt = Date()
@@ -953,6 +973,7 @@ struct OpenAIEndpointProber: EndpointProbing {
             reasoning = inline.reasoning
             text = inline.answer
         }
+        if updatePending, let onUpdate { try await onUpdate(text, reasoning) }
         if promptProcessing?.promptTokens != promptTokens { promptProcessing = nil }
         let estimated: Bool
         let tokens: Int?
