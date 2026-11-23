@@ -57,9 +57,10 @@ final class UseWorkspaceCoordinator: ObservableObject {
         let mode: UseMode = server?.runtime == "tasks" && UseMode.modes(for: model).contains(.tasks) ? .tasks : first
         if let recent = sessions.first(where: { Quarantine.resolve($0.modelPath) == Quarantine.resolve(model.item.path) && $0.mode == mode }) {
             try await select(id: recent.id)
+            await adoptLibraryName(model.displayName, modelPath: model.item.path)
             if let server { try await setEndpoint(server) }
         } else {
-            try await create(modelPath: model.item.path, modelName: model.item.name, mode: mode, endpoint: server)
+            try await create(modelPath: model.item.path, modelName: model.displayName, mode: mode, endpoint: server)
         }
     }
 
@@ -70,7 +71,7 @@ final class UseWorkspaceCoordinator: ObservableObject {
         defer { isChanging = false }
         try await flushDraft()
         if let endpoint, !UseChatClient.matches(endpoint, modelPath: modelPath) { throw UseSessionError.changed }
-        var session = UseSession(title: mode == .chat ? "New conversation" : modelName + " tasks", modelPath: modelPath, modelName: modelName, mode: mode, endpoint: endpoint)
+        var session = UseSession(title: mode == .chat ? UseSession.chatTitle(for: modelName) : modelName + " tasks", modelPath: modelPath, modelName: modelName, mode: mode, endpoint: endpoint)
         session.settings = try await store.defaults()
         try await store.save(session)
         try await store.select(session.id)
@@ -88,6 +89,26 @@ final class UseWorkspaceCoordinator: ObservableObject {
         try await store.select(id)
         selected = session; error = nil
     }
+
+    /// Replaces a stored snapshot id with the current Library name, and names a still-empty "New conversation" after that model.
+    func adoptLibraryName(_ name: String, modelPath: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, canChange, var session = selected,
+              Quarantine.resolve(session.modelPath) == Quarantine.resolve(modelPath) else { return }
+        let renamed = session.modelName != trimmed
+        let retitle = session.mode == .chat && session.turns.isEmpty && session.title == UseSession.defaultChatTitle
+        guard renamed || retitle else { return }
+        if renamed { session.modelName = trimmed }
+        if retitle { session.title = UseSession.chatTitle(for: trimmed) }
+        isChanging = true
+        defer { isChanging = false }
+        selected = session
+        do {
+            try await saveSelected()
+            await refreshList()
+        } catch {}
+    }
+
     func setEndpoint(_ server: ServerInfo?) async throws {
         guard canChange, let session = selected else { throw UseSessionError.history }
         if let server {

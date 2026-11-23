@@ -24,7 +24,23 @@ struct UseWorkspaceView: View {
     private var models: [LibraryModel] { (appHost.librarySnapshot?.models ?? []).filter { !UseMode.modes(for: $0).isEmpty } }
     private var selectedModel: LibraryModel? {
         guard let path = coordinator.selected?.modelPath else { return nil }
-        return models.first { Quarantine.resolve($0.item.path) == Quarantine.resolve(path) }
+        return libraryModel(path: path)
+    }
+    private func libraryModel(path: String) -> LibraryModel? {
+        models.first { Quarantine.resolve($0.item.path) == Quarantine.resolve(path) }
+    }
+    private func presentedName(_ session: UseSession) -> String {
+        libraryModel(path: session.modelPath)?.displayName ?? session.modelName
+    }
+    private func sendBlockReason(_ session: UseSession) -> String? {
+        guard session.mode == .chat else { return nil }
+        if let serversError = workflow.serversError { return serversError }
+        guard session.endpoint == nil, selectedModel != nil else { return nil }
+        return "\(presentedName(session)) is not running. Choose a server, or set one up. Your message stays here."
+    }
+    private func adoptSelectedLibraryName() async {
+        guard let session = coordinator.selected, let model = libraryModel(path: session.modelPath) else { return }
+        await coordinator.adoptLibraryName(model.displayName, modelPath: model.item.path)
     }
     private var choices: [UseConnectionChoice] {
         guard let session = coordinator.selected else { return [] }
@@ -68,6 +84,7 @@ struct UseWorkspaceView: View {
             await servedTasks.load()
             if !coordinator.isSending { await refreshServers() }
             await consumeHandoff()
+            await adoptSelectedLibraryName()
         }
         .onChange(of: controlsPresented, initial: true) { _, value in coordinator.isPresentingPanel = value }
         .onChange(of: isRouteActive) { _, active in
@@ -97,7 +114,7 @@ struct UseWorkspaceView: View {
                     Text(coordinator.selected?.title ?? "Choose a model")
                         .font(WorkbenchTypography.inspectorTitle).lineLimit(1)
                     if !showContext, let session = coordinator.selected {
-                        Text(session.modelName).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
+                        Text(presentedName(session)).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
                     }
                 }
                 Spacer(minLength: WorkbenchSpacing.xs)
@@ -132,7 +149,7 @@ struct UseWorkspaceView: View {
     private var newMenu: some View {
         Menu {
             ForEach(models, id: \.item.path) { model in
-                Button(model.item.name) { Task { await create(model) } }
+                Button(model.displayName) { Task { await create(model) } }
             }
             if let model = selectedModel, UseMode.modes(for: model).count > 1, coordinator.selected?.mode == .chat {
                 Button("New model task") { Task { await create(model, mode: .tasks) } }
@@ -146,14 +163,17 @@ struct UseWorkspaceView: View {
         List(selection: Binding(get: { coordinator.selected?.id }, set: { id in
             guard let id else { return }
             Task {
-                do { try await coordinator.select(id: id); showHistory = false }
-                catch { coordinator.showError(error) }
+                do {
+                    try await coordinator.select(id: id)
+                    showHistory = false
+                    await adoptSelectedLibraryName()
+                } catch { coordinator.showError(error) }
             }
         })) {
             ForEach(coordinator.sessions) { session in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     Text(session.title).font(WorkbenchTypography.emphasis).lineLimit(2)
-                    Label(session.modelName, systemImage: session.mode == .chat ? "bubble.left" : "tray.full")
+                    Label(presentedName(session), systemImage: session.mode == .chat ? "bubble.left" : "tray.full")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
                 }.tag(session.id).padding(.vertical, WorkbenchSpacing.xxs)
                     .accessibilityIdentifier("use-session-\(session.id)")
@@ -183,7 +203,7 @@ struct UseWorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 Text("Model").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                Text(session.modelName).font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                Text(presentedName(session)).font(WorkbenchTypography.emphasis).textSelection(.enabled)
                 endpointPicker(session)
                 HStack(spacing: WorkbenchSpacing.sm) {
                     refreshServersButton
@@ -258,7 +278,7 @@ struct UseWorkspaceView: View {
                                 .foregroundStyle(WorkbenchColor.muted).padding(.vertical, WorkbenchSpacing.xl)
                         }
                         ForEach(session.turns) { turn in
-                            UseTurnView(turn: turn, modelName: session.modelName, isLast: session.turns.last?.id == turn.id,
+                            UseTurnView(turn: turn, modelName: presentedName(session), isLast: session.turns.last?.id == turn.id,
                                         canRetry: coordinator.canChange) { coordinator.retryLastTurn() }
                         }
                         Color.clear.frame(height: WorkbenchSpacing.hairline).id("use-tail")
@@ -298,6 +318,10 @@ struct UseWorkspaceView: View {
                 .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                 .accessibilityLabel("Message").accessibilityIdentifier("use-message")
                 .disabled(coordinator.isSending || coordinator.isChanging)
+            if let reason = sendBlockReason(session) {
+                Text(reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("use-send-reason")
+            }
             HStack(spacing: WorkbenchSpacing.sm) {
                 if UseChatClient.supportsImages(session.endpoint) {
                     Button { chooseImage() } label: { Label("Image", systemImage: "photo.badge.plus") }
@@ -356,7 +380,7 @@ struct UseWorkspaceView: View {
                 guard UseChatClient.matches(server, modelPath: model.item.path) else { return false }
                 return mode == .chat ? UseChatClient.supports(server) : (try? ServedTaskOrigin(server: server)) != nil
             }
-            try await coordinator.create(modelPath: model.item.path, modelName: model.item.name, mode: mode,
+            try await coordinator.create(modelPath: model.item.path, modelName: model.displayName, mode: mode,
                                          endpoint: servers.count == 1 ? servers.first : nil)
         } catch { coordinator.showError(error) }
     }

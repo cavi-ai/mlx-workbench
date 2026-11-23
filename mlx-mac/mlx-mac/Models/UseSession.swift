@@ -66,11 +66,20 @@ struct UseTurn: Codable, Identifiable, Equatable, Sendable {
 }
 
 struct UseSession: Codable, Identifiable, Equatable, Sendable {
+    static let defaultChatTitle = "New conversation"
+
+    /// A chat starts under the model name. A blank name keeps the historical title so the record stays valid.
+    static func chatTitle(for modelName: String) -> String {
+        let name = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return defaultChatTitle }
+        return String(name.prefix(200))
+    }
+
     var id = UUID()
     var schema: Int = 1
     var title: String
     let modelPath: String
-    let modelName: String
+    var modelName: String
     var mode: UseMode
     var endpoint: ServerInfo?
     var settings = UseRequestDefaults()
