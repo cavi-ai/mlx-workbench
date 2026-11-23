@@ -250,9 +250,15 @@ struct ServeView: View {
             await discovery
         }
         .onChange(of: selectedSplashPresetName) { _, name in
-            if !name.isEmpty { newSlotLoadOnRequest = true }
+            if !name.isEmpty { newSlotLoadOnRequest = true; inferenceOptions.sharedPrefixCacheMiB = nil }
             inferenceOptions = inferenceContext.normalized(inferenceOptions)
             modelWorkflow.invalidateServePreview()
+        }
+        .onChange(of: newSlotLoadOnRequest) { _, enabled in
+            if !enabled { inferenceOptions.sharedPrefixCacheMiB = nil }
+        }
+        .onChange(of: requireAPIKey) { _, required in
+            if !required { inferenceOptions.sharedPrefixCacheMiB = nil }
         }
         .onChange(of: selectedModel?.item.path) { _, _ in selectedSplashPresetName = "" }
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
@@ -268,7 +274,7 @@ struct ServeView: View {
             modelWorkflow.invalidateServePreview()
         }
         .onChange(of: mode) { _, value in
-            if value == .startNow { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil }
+            if value == .startNow { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil; inferenceOptions.sharedPrefixCacheMiB = nil }
             inferenceOptions = inferenceContext.normalized(inferenceOptions)
             modelWorkflow.invalidateServePreview()
         }
@@ -409,6 +415,7 @@ struct ServeView: View {
                             ServingStatusLabel(row: row, states: endpoint.slotStates)
                         }
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        servingObservabilityBadges(row, server: server)
                         if let reason = ServingWorkspacePresentation.attentionReason(row) {
                             Label {
                                 Text(reason + " " + ServingWorkspacePresentation.attentionNextStep).textSelection(.enabled)
@@ -468,12 +475,28 @@ struct ServeView: View {
             }
             if let server, server.runtime == "splash" {
                 if let effective = server.splashEffectiveContextTokens {
-                    LabeledContent("Context", value: "\(effective.formatted()) tokens reported")
+                    LabeledContent("Effective context", value: "\(effective.formatted()) tokens")
                 } else {
-                    LabeledContent("Context", value: "Not reported")
+                    LabeledContent("Effective context", value: "Not reported")
                 }
-                if let configured = server.splashConfiguredContextTokens, configured != server.splashEffectiveContextTokens {
+                if let configured = server.splashConfiguredContextTokens {
                     LabeledContent("Configured context", value: "\(configured.formatted()) tokens")
+                }
+                if case .endpoint(let slot, _, _) = row,
+                   let presetName = slot.splashPresetName,
+                   let preset = splashPresets.first(where: { $0.name == presetName }) {
+                    if let cachedStates = preset.tuning.cachedStates {
+                        LabeledContent("Cached states", value: cachedStates)
+                    }
+                    if preset.tuning.persistentCache == true {
+                        LabeledContent("Persistent SSD cache", value: "Enabled")
+                    }
+                    if let maxDiskGB = preset.tuning.maxCacheDiskGB {
+                        LabeledContent("SSD cache quota", value: maxDiskGB == 0 ? "Off" : "\(maxDiskGB.formatted()) GB")
+                    }
+                    if let wait = preset.executionWaitSeconds, wait > 0 {
+                        LabeledContent("Execution wait", value: "\(wait) s")
+                    }
                 }
                 if server.modelState == "failed" {
                     InlineMessage(kind: .error, text: "Splash failed to load. Review the server log for details.")
@@ -878,9 +901,90 @@ struct ServeView: View {
     }
 
     @ViewBuilder
+    private func servingObservabilityBadges(_ row: ServingRow, server: ServerInfo?) -> some View {
+        let slot: EndpointSlot? = {
+            if case .endpoint(let s, _, _) = row { return s }
+            return nil
+        }()
+        let preset = slot?.splashPresetName.flatMap { name in splashPresets.first { $0.name == name } }
+        let badges: [String] = {
+            var items: [String] = []
+            if server?.runtime == "splash" || slot?.splashPresetName != nil {
+                if let effective = server?.splashEffectiveContextTokens, let configured = server?.splashConfiguredContextTokens, effective != configured {
+                    items.append("Context \(effective.formatted()) / \(configured.formatted())")
+                } else if let effective = server?.splashEffectiveContextTokens {
+                    items.append("Context \(effective.formatted())")
+                } else if let configured = server?.splashConfiguredContextTokens ?? preset?.contextTokens {
+                    items.append("Context \(configured.formatted()) configured")
+                }
+                if let cachedStates = preset?.tuning.cachedStates {
+                    items.append("States \(cachedStates)")
+                }
+                if preset?.tuning.persistentCache == true {
+                    if let disk = preset?.tuning.maxCacheDiskGB, disk > 0 {
+                        items.append("SSD cache \(disk.formatted()) GB · persistent")
+                    } else {
+                        items.append("Persistent SSD cache")
+                    }
+                } else if let disk = preset?.tuning.maxCacheDiskGB {
+                    items.append(disk == 0 ? "SSD cache off" : "SSD cache \(disk.formatted()) GB")
+                }
+            }
+            if let mib = slot?.inferenceOptions.sharedPrefixCacheMiB {
+                items.append("Prefix cache \(mib) MiB")
+            }
+            let wait = server?.memoryPolicy?.executionWaitSeconds ?? slot?.memoryPolicy?.executionWaitSeconds ?? preset?.executionWaitSeconds
+            if let wait, wait > 0 {
+                items.append("Queue wait \(wait) s")
+            }
+            return items
+        }()
+        if !badges.isEmpty {
+            ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xs) {
+                ForEach(badges, id: \.self) { badge in
+                    Text(badge)
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .padding(.horizontal, WorkbenchSpacing.xs)
+                        .padding(.vertical, 2)
+                        .background(WorkbenchColor.well, in: Capsule())
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var inferenceSettings: some View {
         ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest)
             .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
+        if mode == .saveEndpoint && newSlotLoadOnRequest && requireAPIKey && selectedSplashPreset == nil && modelWorkflow.servingProfile == nil && !inferenceContext.isStrata && !inferenceContext.isSplash {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Toggle("Shared prefix cache (MLX-LM)", isOn: Binding(
+                        get: { inferenceOptions.sharedPrefixCacheMiB != nil },
+                        set: { enabled in inferenceOptions.sharedPrefixCacheMiB = enabled ? 256 : nil }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .disabled(inferenceOptions.accelerationRequested || !inferenceOptions.systemPrompt.isEmpty)
+                    if let mib = inferenceOptions.sharedPrefixCacheMiB {
+                        Picker("Budget", selection: Binding(
+                            get: { mib },
+                            set: { inferenceOptions.sharedPrefixCacheMiB = $0 }
+                        )) {
+                            ForEach([64, 128, 256, 512, 1024, 2048], id: \.self) { value in
+                                Text("\(value) MiB").tag(value)
+                            }
+                            if ![64, 128, 256, 512, 1024, 2048].contains(mib) {
+                                Text("\(mib) MiB").tag(mib)
+                            }
+                        }
+                        .frame(maxWidth: 140)
+                    }
+                }
+                Text("Reuses identical system-prompt prefixes across multi-agent requests on keyed MLX-LM endpoints (16–2048 MiB).")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
         if mode == .saveEndpoint && ServingInferenceContext.supportsSavedSplashPreset(model: selectedModel, profile: modelWorkflow.servingProfile) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 HStack {
@@ -1274,6 +1378,29 @@ struct ServeView: View {
                         .frame(maxWidth: WorkbenchSize.Run.reservePickerMaximum)
                     }
                 }
+                HStack {
+                    Picker("Execution wait", selection: Binding(
+                        get: { policy.executionWaitSeconds ?? 0 },
+                        set: { value in
+                            var updated = policy
+                            updated.executionWaitSeconds = value == 0 ? nil : value
+                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
+                        })) {
+                        Text("Off (0 s)").tag(0)
+                        Text("30 seconds").tag(30)
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
+                        Text("30 minutes").tag(1800)
+                        Text("1 hour").tag(3600)
+                        if let current = policy.executionWaitSeconds, ![0, 30, 60, 120, 300, 600, 1800, 3600].contains(current) {
+                            Text(verbatim: "\(current) seconds").tag(current)
+                        }
+                    }
+                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
+                    .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
+                }
                 Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
@@ -1656,6 +1783,9 @@ struct EndpointChanges {
         guard let model else { return .noModel }
         if let error = inference.validationError { return .portRejected(error) }
         if splashPreset != nil && (!loadOnRequest || profile != nil) { return .portRejected("Splash presets require a load-on-request endpoint.") }
+        if inference.sharedPrefixCacheRequested && !ServeLaunch.sharedPrefixCacheIsLegal(runtime: "mlx_lm", jit: loadOnRequest, hasAPIKey: requireKey, hasSplashPreset: splashPreset != nil, hasServingProfile: profile != nil, options: inference) {
+            return .portRejected("Shared prefix cache requires a keyed MLX-LM load-on-request endpoint with a 16–2048 MiB budget and no incompatible options.")
+        }
         if let profile, !profile.hasPassedVerification || profile.modelPath != model.item.path {
             return .portRejected("Verify the selected serving profile for this model before adding the endpoint.")
         }
@@ -1802,6 +1932,35 @@ private struct EndpointInferenceEditor: View {
                         InlineMessage(kind: .info, text: "Stop this endpoint to change its inference settings.")
                     }
                     ServingInferenceControls(options: $options, context: context, allowRequestDefaults: slot.usesJIT).disabled(slot.enabled)
+                    if slot.usesJIT && slot.apiKeySHA256 != nil && slot.splashPresetName == nil && slot.servingProfile == nil && !slot.isTrainedAdapter {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            HStack(spacing: WorkbenchSpacing.sm) {
+                                Toggle("Shared prefix cache (MLX-LM)", isOn: Binding(
+                                    get: { options.sharedPrefixCacheMiB != nil },
+                                    set: { enabled in options.sharedPrefixCacheMiB = enabled ? 256 : nil }
+                                ))
+                                .toggleStyle(.checkbox)
+                                .disabled(slot.enabled || options.accelerationRequested || !options.systemPrompt.isEmpty)
+                                if let mib = options.sharedPrefixCacheMiB {
+                                    Picker("Budget", selection: Binding(
+                                        get: { mib },
+                                        set: { options.sharedPrefixCacheMiB = $0 }
+                                    )) {
+                                        ForEach([64, 128, 256, 512, 1024, 2048], id: \.self) { value in
+                                            Text("\(value) MiB").tag(value)
+                                        }
+                                        if ![64, 128, 256, 512, 1024, 2048].contains(mib) {
+                                            Text("\(mib) MiB").tag(mib)
+                                        }
+                                    }
+                                    .frame(maxWidth: 140)
+                                    .disabled(slot.enabled)
+                                }
+                            }
+                            Text("Reuses identical system-prompt prefixes on keyed MLX-LM endpoints (16–2048 MiB). Requires no acceleration or default system prompt.")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
                     if let profile = slot.servingProfile {
                         Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary)
                         if let onManageProfile {
@@ -1865,6 +2024,7 @@ private struct SplashPresetEditor: View {
     @State private var context = ""
     @State private var headroom = "2"
     @State private var idle = "300"
+    @State private var executionWait = ""
     @State private var keepLoaded = false
     @State private var releaseAfterRequest = false
     @State private var pressure = true
@@ -1911,6 +2071,7 @@ private struct SplashPresetEditor: View {
                 Section("Residency") {
                     TextField("Headroom reserve in GB", text: $headroom)
                     TextField("Idle timeout in seconds", text: $idle).disabled(keepLoaded || releaseAfterRequest)
+                    TextField("Execution wait in seconds (optional, 0–3600)", text: $executionWait)
                     Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in
                         if value { pressure = false; releaseAfterRequest = false }
                     }
@@ -1939,8 +2100,12 @@ private struct SplashPresetEditor: View {
     private func save() async {
         guard let reserve = Double(headroom), let seconds = Int(idle),
               memory.isEmpty || Double(memory) != nil, context.isEmpty || Int(context) != nil,
-              thinkingBudget.isEmpty || Int(thinkingBudget) != nil, cacheQuota.isEmpty || Double(cacheQuota) != nil else {
+              thinkingBudget.isEmpty || Int(thinkingBudget) != nil, cacheQuota.isEmpty || Double(cacheQuota) != nil,
+              executionWait.isEmpty || Int(executionWait) != nil else {
             error = "Enter numbers for the values you set, a headroom reserve, and an idle timeout."; return
+        }
+        if let wait = Int(executionWait), !(0...3600).contains(wait) {
+            error = "Execution wait must be between 0 and 3,600 seconds."; return
         }
         var chosen = tuning
         chosen.thinkingBudget = Int(thinkingBudget)
@@ -1949,6 +2114,7 @@ private struct SplashPresetEditor: View {
         var values: [String: Any] = ["min_headroom_gb": reserve, "idle_timeout": seconds,
                                      "keep_loaded": keepLoaded, "unload_under_pressure": pressure]
         if releaseAfterRequest { values["release_after_request"] = true }
+        if let wait = Int(executionWait) { values["execution_wait_seconds"] = wait }
         if let value = Double(memory) { values["splash_max_memory_gb"] = value }
         if let value = Int(context) { values["splash_max_context_tokens"] = value }
         values.merge(chosen.settings) { _, tuned in tuned }

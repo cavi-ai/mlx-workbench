@@ -954,7 +954,8 @@ actor WorkbenchAPI {
     static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
                                jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                                previewHash: String? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil) -> [String] {
+                               maximumTokens: Int? = nil, apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil,
+                               sharedPrefixCacheMiB: Int? = nil, apiKeyFile: String? = nil) -> [String] {
         var args = ["serve", "start"] + serveModelArguments(for: model)
             + ["--runtime", runtime, "--receipts-dir", receipts]
         if let port { args += ["--port", String(port)] }
@@ -968,13 +969,17 @@ actor WorkbenchAPI {
         if m5Prefill { args += ["--m5-prefill"] }
         if promptLookup { args += ["--prompt-lookup"] }
         if visionCache { args += ["--vision-cache"] }
+        if let mib = sharedPrefixCacheMiB ?? requestDefaults?.sharedPrefixCacheMiB {
+            args += ["--shared-prefix-cache-mib", String(mib)]
+        }
         if let maximumTokens { args += ["--max-tokens", String(maximumTokens)] }
         if let defaults = requestDefaults {
             if !defaults.systemPrompt.isEmpty { args += ["--system-prompt", defaults.systemPrompt] }
             if let value = defaults.temperature { args += ["--default-temperature", String(value)] }
             if let value = defaults.topP { args += ["--default-top-p", String(value)] }
         }
-        if let apiKeySHA256 { args += ["--api-key-sha256", apiKeySHA256] }
+        if let apiKeyFile { args += ["--api-key-file", apiKeyFile] }
+        else if let apiKeySHA256 { args += ["--api-key-sha256", apiKeySHA256] }
         if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
         return args
     }
@@ -994,7 +999,7 @@ actor WorkbenchAPI {
                 arguments: Self.trainedAdapterArguments(receipt: receipt, port: slot.port, receipts: receiptDirectory, previewHash: hash))
         }
         let capturedAgent = agentPath
-        let launch = try ServeLaunch.saved(splashPresetName: slot.splashPresetName, hasServingProfile: slot.servingProfile != nil, jit: slot.usesJIT, accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff)
+        let launch = try ServeLaunch.saved(splashPresetName: slot.splashPresetName, hasServingProfile: slot.servingProfile != nil, jit: slot.usesJIT, accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff, sharedPrefixCacheMiB: slot.inferenceOptions.sharedPrefixCacheMiB, hasAPIKey: slot.apiKeySHA256 != nil, systemPrompt: slot.inferenceOptions.systemPrompt)
         let runtime = launch.runtime
         let options = slot.servingProfile?.options
         let preview: [String: Any]
@@ -1004,14 +1009,14 @@ actor WorkbenchAPI {
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
                 jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, thinkingOff: slot.inferenceOptions.thinkingOff, maximumTokens: slot.inferenceOptions.maximumTokens,
-                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName)
+                m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName, sharedPrefixCacheMiB: slot.inferenceOptions.sharedPrefixCacheMiB)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName)
+            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName, sharedPrefixCacheMiB: slot.inferenceOptions.sharedPrefixCacheMiB)
         if let options { args += options.arguments }
         if slot.inferenceOptions.thinkingOff { args += ["--thinking", "off"] }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
@@ -1020,9 +1025,27 @@ actor WorkbenchAPI {
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
                       thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                      apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil) async throws -> [String: Any] {
+                      apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil,
+                      sharedPrefixCacheMiB: Int? = nil, apiKeyFile: String? = nil) async throws -> [String: Any] {
+        let effectivePrefixCacheMiB = sharedPrefixCacheMiB ?? requestDefaults?.sharedPrefixCacheMiB
+        if let mib = effectivePrefixCacheMiB {
+            let checkOptions = LocalInferenceOptions(
+                m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache,
+                thinkingOff: thinkingOff, maximumTokens: maximumTokens,
+                systemPrompt: requestDefaults?.systemPrompt ?? "",
+                temperature: requestDefaults?.temperature, topP: requestDefaults?.topP,
+                sharedPrefixCacheMiB: mib
+            )
+            guard ServeLaunch.sharedPrefixCacheIsLegal(
+                runtime: runtime, jit: jit, hasAPIKey: apiKeyFile != nil || apiKeySHA256 != nil,
+                hasSplashPreset: profileName != nil, hasServingProfile: strataOptions != nil,
+                hasTrainingReceipt: false, options: checkOptions
+            ) else {
+                throw BridgeError.remote(code: "invalid_arguments", message: "Shared prefix cache requires a keyed MLX-LM JIT endpoint and a 16–2048 MiB budget.", remediation: "Use an API key and remove incompatible runtime options.")
+            }
+        }
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults, profileName: profileName)
+                                      jit: jit, memoryPolicy: memoryPolicy, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults, profileName: profileName, sharedPrefixCacheMiB: effectivePrefixCacheMiB, apiKeyFile: apiKeyFile)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -1033,6 +1056,12 @@ actor WorkbenchAPI {
             guard (256...65536).contains(maximumTokens), let resolvedRuntime = plan.string("runtime"), ["mlx_lm", "strata"].contains(resolvedRuntime),
                   plan.int("max_tokens") == maximumTokens else {
                 throw WorkflowEvidenceError.invalid("Default output length is supported by MLX-LM and Strata. Set output length in the client for other runtimes.")
+            }
+        }
+        if let mib = effectivePrefixCacheMiB {
+            let configuredPrefix = plan["shared_prefix_cache"] as? [String: Any]
+            guard configuredPrefix?.int("mib") == mib else {
+                throw WorkflowEvidenceError.invalid("The engine did not confirm the requested shared prefix cache budget.")
             }
         }
         if let defaults = requestDefaults, defaults.hasRequestDefaults {
@@ -1051,9 +1080,10 @@ actor WorkbenchAPI {
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
                     thinkingOff: Bool = false, maximumTokens: Int? = nil, m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false,
-                    apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil) async throws -> [String: Any] {
+                    apiKeySHA256: String? = nil, requestDefaults: LocalInferenceOptions? = nil, profileName: String? = nil,
+                    sharedPrefixCacheMiB: Int? = nil, apiKeyFile: String? = nil) async throws -> [String: Any] {
         var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
-                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults, profileName: profileName)
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash, m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache, maximumTokens: maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: requestDefaults, profileName: profileName, sharedPrefixCacheMiB: sharedPrefixCacheMiB, apiKeyFile: apiKeyFile)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -1086,6 +1116,7 @@ actor WorkbenchAPI {
         argv += preset.tuning.arguments
         if preset.keepLoaded { argv.append("--keep-loaded") }
         if let release = preset.releaseAfterRequest { argv.append(release ? "--release-after-request" : "--no-release-after-request") }
+        if let wait = preset.executionWaitSeconds { argv += ["--execution-wait", String(wait)] }
         argv.append(preset.unloadUnderPressure ? "--unload-under-pressure" : "--no-unload-under-pressure")
         if replace { argv.append("--replace") }
         _ = try await raw(argv)

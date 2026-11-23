@@ -52,8 +52,8 @@ struct ServingProfileComparisonEvidence: Identifiable {
         guard profile.isValid, profile.sourceRunID == run.id, let laneID = profile.sourceLaneID,
               run.state == .completed, run.effectiveMode == .chat, run.results.filter({ $0.id == laneID }).count == 1,
               let result = run.results.first(where: { $0.id == laneID }), result.error == nil, result.modelPath == profile.modelPath,
-              let serving = result.servingEvidence, serving.runtime == "strata",
-              profile.options.matches(serving) else {
+              let serving = result.servingEvidence, serving.runtime == profile.effectiveRuntime,
+              (profile.isSplash || profile.options.matches(serving)) else {
             throw WorkflowEvidenceError.invalid("The source comparison no longer matches this profile's model, lane or settings.")
         }
         if let proof = profile.verification {
@@ -81,11 +81,18 @@ struct ServingProfileMemoryReview: Identifiable {
     var id: UUID { profile.id }
 
     init(profile: ServingProfile, plan: [String: Any], memory: MemorySnapshot?, capturedAt: Date) throws {
+        let estimatedBytesValue: Int?
+        if profile.isSplash {
+            estimatedBytesValue = plan.int("splash_weight_bytes")
+                ?? (plan["splash_max_memory_gb"] as? NSNumber).map { Int($0.doubleValue * 1_000_000_000) }
+        } else {
+            estimatedBytesValue = plan.int("strata_memory_estimate_bytes")
+        }
         guard profile.isValid, plan.string("path") == profile.modelPath,
-              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
+              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == profile.effectiveRuntime,
               evidence.modelFingerprint?.isEmpty == false, evidence.runtimeFingerprint?.isEmpty == false,
-              profile.options.matches(evidence),
-              let bytes = plan.int("strata_memory_estimate_bytes"), bytes > 0 else {
+              (profile.isSplash || profile.options.matches(evidence)),
+              let bytes = estimatedBytesValue, bytes > 0 else {
             throw WorkflowEvidenceError.invalid("The runtime preview did not return a memory estimate for this profile's model and settings.")
         }
         self.profile = profile; estimatedBytes = Int64(bytes); self.capturedAt = capturedAt
@@ -112,6 +119,8 @@ struct ServingProfileVerification: Codable, Equatable, Sendable {
 }
 
 struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
+    static let supportedRuntimes: Set<String> = ["strata", "splash"]
+
     let id: UUID
     var name: String
     let modelPath: String
@@ -119,11 +128,18 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
     var verification: ServingProfileVerification? = nil
     var sourceRunID: UUID? = nil
     var sourceLaneID: String? = nil
+    /// Runtime this profile targets ("strata" or "splash"). Absent in legacy profiles, which target Strata.
+    var runtime: String? = nil
+
+    var effectiveRuntime: String { runtime ?? "strata" }
+    var isSplash: Bool { effectiveRuntime == "splash" }
+    var isStrata: Bool { effectiveRuntime == "strata" }
 
     var isValid: Bool {
         Self.nameValidationError(name) == nil
+            && Self.supportedRuntimes.contains(effectiveRuntime)
             && modelPath.hasPrefix("/") && !modelPath.unicodeScalars.contains { $0.value < 32 }
-            && options.validationError == nil
+            && (isSplash || options.validationError == nil)
     }
     static func nameValidationError(_ name: String) -> String? {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Enter a profile name." }
@@ -135,18 +151,20 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
 
     func validate(plan: [String: Any]) throws {
         guard hasPassedVerification, let proof = verification,
-              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
+              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == effectiveRuntime,
               evidence.modelFingerprint == proof.modelFingerprint, evidence.runtimeFingerprint == proof.runtimeFingerprint,
-              options.matches(evidence) else {
+              (isSplash || options.matches(evidence)) else {
             throw WorkflowEvidenceError.invalid("This serving profile needs verification for the current model, runtime and settings.")
         }
     }
 
     func preview(api: WorkbenchAPI, port: Int?, jit: Bool = false, policy: EndpointMemoryPolicy? = nil, apiKeySHA256: String? = nil, inference: LocalInferenceOptions = .init()) async throws -> [String: Any] {
         guard hasPassedVerification else { throw WorkflowEvidenceError.invalid("Verify the serving profile before previewing it.") }
-        guard inference.validationError == nil, !inference.accelerationRequested, !inference.thinkingOff else { throw WorkflowEvidenceError.invalid("Strata profiles use their own decoding controls.") }
-        let plan = try await api.servePreview(repo: modelPath, runtime: "strata", port: port,
-                                              jit: jit, memoryPolicy: policy, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: inference)
+        guard inference.validationError == nil, ServeLaunch.profileAllows(accelerationRequested: inference.accelerationRequested, thinkingOff: inference.thinkingOff, sharedPrefixCacheRequested: inference.sharedPrefixCacheRequested) else {
+            throw WorkflowEvidenceError.invalid("Serving profiles use their own decoding controls.")
+        }
+        let plan = try await api.servePreview(repo: modelPath, runtime: effectiveRuntime, port: port,
+                                              jit: jit, memoryPolicy: policy, strataOptions: isStrata ? options : nil, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: inference)
         try validate(plan: plan)
         return plan
     }
@@ -156,8 +174,8 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
         guard plan.string("preview_hash") == hash else {
             throw WorkflowEvidenceError.invalid("The serving profile preview changed. Preview it again before confirming.")
         }
-        return try await api.serveStart(repo: modelPath, runtime: "strata", port: port, previewHash: hash,
-                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: inference)
+        return try await api.serveStart(repo: modelPath, runtime: effectiveRuntime, port: port, previewHash: hash,
+                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: isStrata ? options : nil, maximumTokens: inference.maximumTokens, apiKeySHA256: apiKeySHA256, requestDefaults: inference)
     }
 
     /// Receipt ownership is established by serve status; bind its exact confirmed plan as well.
@@ -178,7 +196,7 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
 
 extension ServeLifecycle {
     static func verifiedProfile(_ profile: ServingProfile, api: WorkbenchAPI, apiKeySHA256: String? = nil, inference: LocalInferenceOptions = .init()) -> ServeLifecycle {
-        var lifecycle = live(api: api, runtime: "strata", strataOptions: profile.options, acceleration: inference, apiKeySHA256: apiKeySHA256)
+        var lifecycle = live(api: api, runtime: profile.effectiveRuntime, strataOptions: profile.isStrata ? profile.options : nil, acceleration: inference, apiKeySHA256: apiKeySHA256)
         lifecycle.authenticated = { digest in .verifiedProfile(profile, api: api, apiKeySHA256: digest, inference: inference) }
         lifecycle.configured = { options in .verifiedProfile(profile, api: api, apiKeySHA256: apiKeySHA256, inference: options) }
         lifecycle.reviewedPreview = { path, port in
@@ -237,16 +255,24 @@ final class ServingProfileCoordinator: ObservableObject {
         do {
             guard run.state == .completed, run.effectiveMode == .chat,
                   let result = run.results.first(where: { $0.id == laneID }), result.error == nil,
-                  let evidence = result.servingEvidence, evidence.runtime == "strata",
-                  let speculation = evidence.speculation, let context = evidence.contextTokens else {
-                throw WorkflowEvidenceError.invalid("Select a successful Strata lane with recorded serving settings.")
+                  let evidence = result.servingEvidence, ServingProfile.supportedRuntimes.contains(evidence.runtime) else {
+                throw WorkflowEvidenceError.invalid("Select a successful Strata or Splash lane with recorded serving settings.")
             }
-            let profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: result.modelPath,
-                options: run.laneConfigurations?.first(where: { $0.id == laneID })?.strataOptions
-                    ?? run.strataOptions?[result.modelPath]
-                    ?? StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context, decoding: speculation ? nil : evidence.decoding),
-                sourceRunID: run.id, sourceLaneID: result.id)
-            guard profile.isValid, profile.options.matches(evidence) else { throw WorkflowEvidenceError.invalid("Enter a profile name of 1–80 characters and valid settings matching the recorded lane.") }
+            let profile: ServingProfile
+            if evidence.runtime == "splash" {
+                profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: result.modelPath,
+                    options: StrataComparisonOptions(), sourceRunID: run.id, sourceLaneID: result.id, runtime: "splash")
+            } else {
+                guard let speculation = evidence.speculation, let context = evidence.contextTokens else {
+                    throw WorkflowEvidenceError.invalid("Select a successful Strata lane with recorded serving settings.")
+                }
+                profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: result.modelPath,
+                    options: run.laneConfigurations?.first(where: { $0.id == laneID })?.strataOptions
+                        ?? run.strataOptions?[result.modelPath]
+                        ?? StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context, decoding: speculation ? nil : evidence.decoding),
+                    sourceRunID: run.id, sourceLaneID: result.id)
+            }
+            guard profile.isValid, (profile.isSplash || profile.options.matches(evidence)) else { throw WorkflowEvidenceError.invalid("Enter a profile name of 1–80 characters and valid settings matching the recorded lane.") }
             try store.upsert(profile, id: \.id)
             profiles = try store.load()
             lastError = nil
@@ -575,9 +601,9 @@ final class ServingProfileCoordinator: ObservableObject {
             var selectedProbe = probe(original.options)
             selectedProbe.expectedServingEvidence = expectedEvidence
             let outcome = try await selectedProbe.run(modelPath: original.modelPath, prompts: prompts)
-            guard let evidence = outcome.servingEvidence, evidence.runtime == "strata",
+            guard let evidence = outcome.servingEvidence, evidence.runtime == original.effectiveRuntime,
                   let model = evidence.modelFingerprint, let runtime = evidence.runtimeFingerprint,
-                  original.options.matches(evidence) else {
+                  (original.isSplash || original.options.matches(evidence)) else {
                 throw WorkflowEvidenceError.invalid("The verification server did not record the selected settings and fingerprints.")
             }
             let canaries = CanarySuite.cases.map { kase -> CanaryResult in
