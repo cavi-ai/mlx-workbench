@@ -53,7 +53,9 @@ struct TrainedAdapterServingAPI {
     static func live(_ api: WorkbenchAPI) -> Self {
         Self(preview: { try await api.trainedAdapterPreview(receipt: $0, port: $1) },
             start: { try await api.trainedAdapterStart(receipt: $0, port: $1, hash: $2) },
-            status: { try await api.serveStatus() })
+            status: { try await api.serveStatus() },
+            jitPreview: { try await api.trainedAdapterPreview(receipt: $0, port: $1, runtime: "mlx_lm", jit: true, memoryPolicy: $2, apiKeySHA256: $3) },
+            jitStart: { try await api.trainedAdapterStart(receipt: $0, port: $1, hash: $2, runtime: "mlx_lm", jit: true, memoryPolicy: $3, apiKeySHA256: $4) })
     }
 }
 
@@ -64,6 +66,7 @@ struct TrainedAdapterServePreview {
     let plan: [String: Any]
     let loadOnRequest: Bool
     let requireAPIKey: Bool
+    let apiKeySHA256: String?
 
     init(
         binding: TrainedAdapterBinding,
@@ -71,7 +74,8 @@ struct TrainedAdapterServePreview {
         hash: String,
         plan: [String: Any],
         loadOnRequest: Bool = false,
-        requireAPIKey: Bool = false
+        requireAPIKey: Bool = false,
+        apiKeySHA256: String? = nil
     ) {
         self.binding = binding
         self.port = port
@@ -79,6 +83,7 @@ struct TrainedAdapterServePreview {
         self.plan = plan
         self.loadOnRequest = loadOnRequest
         self.requireAPIKey = requireAPIKey
+        self.apiKeySHA256 = apiKeySHA256
     }
 }
 
@@ -111,12 +116,25 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
         }
     }
     private let api: TrainedAdapterServingAPI
+    private let generateAPIKey: () throws -> String
+    private let saveAPIKey: (String) throws -> Void
+    private let removeAPIKey: (String) throws -> Void
     private var revision = 0
     private var confirmed: (preview: TrainedAdapterServePreview, pid: Int, startedAt: String)?
     private var activeTask: Task<Void, Never>?
     private var activeTaskID: UUID?
 
-    init(api: TrainedAdapterServingAPI) { self.api = api }
+    init(
+        api: TrainedAdapterServingAPI,
+        generateAPIKey: @escaping () throws -> String = EndpointCredentialStore.generate,
+        saveAPIKey: @escaping (String) throws -> Void = EndpointCredentialStore.save,
+        removeAPIKey: @escaping (String) throws -> Void = EndpointCredentialStore.remove
+    ) {
+        self.api = api
+        self.generateAPIKey = generateAPIKey
+        self.saveAPIKey = saveAPIKey
+        self.removeAPIKey = removeAPIKey
+    }
     deinit { activeTask?.cancel() }
 
     func cancel() {
@@ -170,13 +188,22 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                 }
             }
             guard let self else { return }
+            var savedKeyDigest: String?
             do {
+                var keyDigest: String?
+                if requestedAPIKey {
+                    let token = try self.generateAPIKey()
+                    let digest = EndpointCredentialStore.digest(token)
+                    try self.saveAPIKey(token)
+                    savedKeyDigest = digest
+                    keyDigest = digest
+                }
                 let plan: [String: Any]
                 if requestedJIT {
                     guard let jitPreview = self.api.jitPreview, self.api.jitStart != nil else {
                         throw WorkflowEvidenceError.invalid("Load-on-request and API-key serving for trained adapters are unavailable in this runtime.")
                     }
-                    plan = try await jitPreview(job.receipt, requestedPort, .automatic, nil)
+                    plan = try await jitPreview(job.receipt, requestedPort, .automatic, keyDigest)
                 } else {
                     plan = try await self.api.preview(job.receipt, requestedPort)
                 }
@@ -195,7 +222,8 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                     hash: hash,
                     plan: plan,
                     loadOnRequest: requestedJIT,
-                    requireAPIKey: requestedAPIKey
+                    requireAPIKey: requestedAPIKey,
+                    apiKeySHA256: keyDigest
                 )
                 let servers = try await self.api.status()
                 guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
@@ -207,6 +235,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                 }
                 self.preview = reviewed
             } catch {
+                if let savedKeyDigest { try? self.removeAPIKey(savedKeyDigest) }
                 guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
                 self.errorMessage = AppHost.render(error)
             }
@@ -238,7 +267,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                     guard let jitStart = self.api.jitStart else {
                         throw WorkflowEvidenceError.invalid("Load-on-request and API-key serving for trained adapters are unavailable in this runtime.")
                     }
-                    response = try await jitStart(job.receipt, reviewed.port, reviewed.hash, .automatic, nil)
+                    response = try await jitStart(job.receipt, reviewed.port, reviewed.hash, .automatic, reviewed.apiKeySHA256)
                 } else {
                     response = try await self.api.start(job.receipt, reviewed.port, reviewed.hash)
                 }

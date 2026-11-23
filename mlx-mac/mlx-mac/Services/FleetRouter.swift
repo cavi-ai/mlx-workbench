@@ -243,13 +243,14 @@ enum FleetRouter {
                 || (first.value >= 97 && first.value <= 122) else {
             return nil
         }
-        return "local/\(slug)"
+        return slug
     }
 
-    /// Environment variable name used to document API-key auth for a protected
-    /// endpoint without ever emitting a raw secret.
+    /// Environment variable name emitted by `mlx-agent fleet` for authenticated routes.
+    static let localAPIKeyEnvVar = "MLX_AGENT_LOCAL_API_KEY"
+
     static func authEnvVarName(forPort port: Int) -> String {
-        "MLX_ENDPOINT_API_KEY_\(port)"
+        localAPIKeyEnvVar
     }
 
     static func plan(
@@ -257,11 +258,13 @@ enum FleetRouter {
         states: [UUID: EndpointState],
         servers: [ServerInfo] = [],
         frontDoor: FrontDoorSettings? = nil,
+        frontDoorRoutes: Set<String> = [],
         targetPath: String = defaultTargetPath
     ) -> Plan {
         var assignments: [Assignment] = []
         var skipped: [SkippedRole] = []
         var assignedRoles = Set<RouteRole>()
+        var seenLocalAuthDigest: String?
 
         for slot in slots {
             let matchingServer = servers.first(where: { $0.port == slot.port })
@@ -297,6 +300,10 @@ enum FleetRouter {
             if let hfRepo = HFRepoID.forPath(slot.modelPath) {
                 routeID = hfRepo
                 isLocal = false
+            } else if let identity = matchingServer?.modelIdentity, !identity.isEmpty,
+                      let publicIdentity = safeLocalRouteIdentifier(for: identity) {
+                routeID = publicIdentity
+                isLocal = true
             } else if let localRepo = safeLocalRouteIdentifier(for: slot.modelPath) {
                 routeID = localRepo
                 isLocal = true
@@ -309,17 +316,30 @@ enum FleetRouter {
                 continue
             }
 
-            let isAuthenticated = slot.apiKeySHA256 != nil || matchingServer?.apiKeySHA256 != nil
+            let slotDigest = slot.apiKeySHA256 ?? matchingServer?.apiKeySHA256
+            let isAuthenticated = slotDigest != nil
             let authMode: AuthMode
             let effectivePort: Int
             if isAuthenticated {
+                let publicName = FrontDoorCoordinator.publicModelName(for: slot.modelPath)
+                let frontDoorAdvertisesModel = frontDoorRoutes.isEmpty || frontDoorRoutes.contains(routeID) || frontDoorRoutes.contains(publicName)
                 if let frontDoor,
-                   let slotDigest = slot.apiKeySHA256 ?? matchingServer?.apiKeySHA256,
-                   slotDigest == frontDoor.apiKeySHA256 {
+                   let slotDigest,
+                   slotDigest == frontDoor.apiKeySHA256,
+                   frontDoorAdvertisesModel {
                     authMode = .frontDoor(port: frontDoor.port)
                     effectivePort = frontDoor.port
                 } else {
-                    authMode = .envVar(name: authEnvVarName(forPort: slot.port))
+                    if let existingDigest = seenLocalAuthDigest, let slotDigest, existingDigest != slotDigest {
+                        skipped.append(SkippedRole(
+                            routeRole: resolvedRouteRole,
+                            role: slot.role,
+                            reason: "distinct API key conflicts with MLX_AGENT_LOCAL_API_KEY; share the Front Door key"
+                        ))
+                        continue
+                    }
+                    if let slotDigest { seenLocalAuthDigest = slotDigest }
+                    authMode = .envVar(name: localAPIKeyEnvVar)
                     effectivePort = slot.port
                 }
             } else {

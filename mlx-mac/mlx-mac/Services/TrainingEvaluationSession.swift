@@ -36,7 +36,7 @@ final class TrainingEvaluationSession: ObservableObject {
     @Published private(set) var reviewNotice: String?
     @Published var selectedPromptID = ""
     let isRetainedOnly: Bool
-    static let maxSinglePromptTokens = 2048
+    static let maxSinglePromptTokens = 512
     private let receipt: String
     private let request: (LabRequest) async throws -> LabResponse
     private var revision = 0

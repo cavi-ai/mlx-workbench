@@ -34,7 +34,8 @@ struct FleetRouterSheet: View {
             slots: appHost.endpoint.fleet.slots,
             states: appHost.endpoint.slotStates,
             servers: appHost.modelWorkflow.servers,
-            frontDoor: appHost.endpoint.fleet.frontDoor
+            frontDoor: appHost.frontDoor.isRunning ? appHost.endpoint.fleet.frontDoor : nil,
+            frontDoorRoutes: Set(appHost.frontDoor.listening?.routes.map(\.id) ?? [])
         )
     }
 

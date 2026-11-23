@@ -22,12 +22,8 @@ split keeps its count when another check fails. **Fix field** returns to the
 relevant input; a missing runtime offers **Open Health**.
 
 **Create dataset…** beside Dataset path opens a chat-example editor. Write user
-requests and desired assistant replies with an optional shared **system prompt**
-(emitted as a leading `system` message when non-empty), choosing **Training** or
-**Validation** explicitly. You can also import examples from local JSONL files
-(enforcing 1 MiB per record and 64 MiB per file, and refusing symlinks) or
-completed text-only chat turns from saved Use sessions, and partition unique
-examples deterministically into non-overlapping training and validation splits.
+requests and desired assistant replies, choosing **Training** or **Validation**
+explicitly.
 Each split needs at least the selected batch size; the editor rejects blank
 fields and exact examples shared across both splits (ignoring surrounding
 whitespace). Other overlap still needs human review. The editor supports up to
@@ -84,7 +80,7 @@ unsupported, Workbench fails closed with a clear validation message.
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
 
-Choose **Single prompt** and a token limit (1–2,048 tokens, giving thinking
+Choose **Single prompt** and a token limit (1–512 tokens, giving thinking
 models room to finish without truncation), or capture an existing chat prompt
 set. In-flight preview, evaluation, and review-save requests can be canceled
 cleanly. Sets are managed in **Compare**, support 1–16 text-only prompts and

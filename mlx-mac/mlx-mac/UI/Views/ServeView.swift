@@ -245,59 +245,79 @@ struct ServeView: View {
         .sheet(item: $splashPresetSlot) { slot in
             SplashPresetApplySheet(slot: slot, endpoint: endpoint, api: appHost.api)
         }
-        .task {
-            await loadSplashPresets()
-            await refreshAgentMemoryBudget()
-        }
-        .task(id: isRouteActive) {
-            guard isRouteActive else { return }
-            async let discovery: Void = refreshDiscovery()
-            async let budget: Void = refreshAgentMemoryBudget()
-            await modelWorkflow.refreshServers()
-            await discovery
-            await budget
-        }
-        .onChange(of: selectedSplashPresetName) { _, name in
-            if !name.isEmpty { newSlotLoadOnRequest = true; inferenceOptions.sharedPrefixCacheMiB = nil }
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-            modelWorkflow.invalidateServePreview()
-        }
-        .onChange(of: newSlotLoadOnRequest) { _, enabled in
-            if !enabled { inferenceOptions.sharedPrefixCacheMiB = nil }
-        }
-        .onChange(of: requireAPIKey) { _, required in
-            if !required { inferenceOptions.sharedPrefixCacheMiB = nil }
-        }
-        .onChange(of: selectedModel?.item.path) { _, _ in selectedSplashPresetName = "" }
-        .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
-        .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
-        .onChange(of: isRouteActive) { _, active in
-            if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime() }
-            else { closePrompt() }
-        }
-        .onDisappear(perform: closePrompt)
-        .onChange(of: inferenceOptions) { _, _ in modelWorkflow.invalidateServePreview() }
-        .onChange(of: runtime) { _, _ in
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-            modelWorkflow.invalidateServePreview()
-        }
-        .onChange(of: mode) { _, value in
-            if value == .startNow { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil; inferenceOptions.sharedPrefixCacheMiB = nil }
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-            modelWorkflow.invalidateServePreview()
-        }
-        .onChange(of: modelWorkflow.servingProfile) { _, _ in
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-        }
-        .onChange(of: newSlotLoadOnRequest) { _, value in
-            if !value { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil }
-        }
-        .onChange(of: portText) { _, _ in modelWorkflow.invalidateServePreview() }
-        .onAppear {
-            if endpointPortText.isEmpty {
-                endpointPortText = String(suggestedPort)
+        .modifier(ServeViewLifecycleModifier(
+            isRouteActive: isRouteActive,
+            selectedSplashPresetName: selectedSplashPresetName,
+            newSlotLoadOnRequest: newSlotLoadOnRequest,
+            requireAPIKey: requireAPIKey,
+            selectedModelPath: selectedModel?.item.path,
+            servers: modelWorkflow.servers,
+            serversError: modelWorkflow.serversError,
+            inferenceOptions: inferenceOptions,
+            runtime: runtime,
+            mode: mode,
+            servingProfile: modelWorkflow.servingProfile,
+            portText: portText,
+            onTask: {
+                await loadSplashPresets()
+                await refreshAgentMemoryBudget()
+            },
+            onRouteTask: {
+                async let discovery: Void = refreshDiscovery()
+                async let budget: Void = refreshAgentMemoryBudget()
+                await modelWorkflow.refreshServers()
+                await discovery
+                await budget
+            },
+            onSplashPresetChanged: { name in
+                if !name.isEmpty { newSlotLoadOnRequest = true; inferenceOptions.sharedPrefixCacheMiB = nil }
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+                modelWorkflow.invalidateServePreview()
+            },
+            onLoadOnRequestChanged: { enabled in
+                if !enabled {
+                    inferenceOptions.systemPrompt = ""
+                    inferenceOptions.temperature = nil
+                    inferenceOptions.topP = nil
+                    inferenceOptions.sharedPrefixCacheMiB = nil
+                }
+            },
+            onRequireAPIKeyChanged: { required in
+                if !required { inferenceOptions.sharedPrefixCacheMiB = nil }
+            },
+            onSelectedModelChanged: { selectedSplashPresetName = "" },
+            onServersChanged: { servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) },
+            onServersErrorChanged: { error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) },
+            onRouteActiveChanged: { active in
+                if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime() }
+                else { closePrompt() }
+            },
+            onDisappear: closePrompt,
+            onInferenceOptionsChanged: { modelWorkflow.invalidateServePreview() },
+            onRuntimeChanged: {
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+                modelWorkflow.invalidateServePreview()
+            },
+            onModeChanged: { value in
+                if value == .startNow {
+                    inferenceOptions.systemPrompt = ""
+                    inferenceOptions.temperature = nil
+                    inferenceOptions.topP = nil
+                    inferenceOptions.sharedPrefixCacheMiB = nil
+                }
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+                modelWorkflow.invalidateServePreview()
+            },
+            onServingProfileChanged: {
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+            },
+            onPortChanged: { modelWorkflow.invalidateServePreview() },
+            onAppear: {
+                if endpointPortText.isEmpty {
+                    endpointPortText = String(suggestedPort)
+                }
             }
-        }
+        ))
     }
 
 
@@ -596,23 +616,12 @@ struct ServeView: View {
 
     private func quickConnectFrontDoorTarget(for row: ServingRow) -> QuickConnectTarget? {
         let modelID = ServingWorkspacePresentation.modelID(row)
-        guard !modelID.isEmpty else { return nil }
-        if let listener = frontDoor.listening {
-            if let route = listener.routes.first(where: { $0.id == modelID }) {
-                return QuickConnectTarget.frontDoor(listener, modelID: route.id)
-            }
-            if case .endpoint(let slot, _, _) = row,
-               let door = endpoint.fleet.frontDoor,
-               slot.apiKeySHA256 == door.apiKeySHA256 {
-                return QuickConnectTarget.frontDoor(listener, modelID: modelID)
-            }
-        } else if case .endpoint(let slot, _, _) = row,
-                  let door = endpoint.fleet.frontDoor,
-                  slot.apiKeySHA256 == door.apiKeySHA256 {
-            let taskKinds = ServingWorkspacePresentation.server(row)?.taskKinds ?? []
-            return QuickConnectTarget.frontDoor(settings: door, modelID: modelID, taskKinds: taskKinds)
+        guard !modelID.isEmpty, let listener = frontDoor.listening else { return nil }
+        let publicName = FrontDoorCoordinator.publicModelName(for: modelID)
+        guard let route = listener.routes.first(where: { $0.id == modelID || $0.id == publicName }) else {
+            return nil
         }
-        return nil
+        return QuickConnectTarget.frontDoor(listener, modelID: route.id)
     }
 
     @ViewBuilder
@@ -2324,5 +2333,60 @@ private struct SplashPresetApplySheet: View {
         busy = true; defer { busy = false }
         do { review = try await endpoint.previewSplashPreset(slot: slot, preset: preset); error = nil }
         catch { self.error = AppHost.render(error) }
+    }
+}
+
+private struct ServeViewLifecycleModifier<Runtime: Equatable, Mode: Equatable>: ViewModifier {
+    let isRouteActive: Bool
+    let selectedSplashPresetName: String
+    let newSlotLoadOnRequest: Bool
+    let requireAPIKey: Bool
+    let selectedModelPath: String?
+    let servers: [ServerInfo]
+    let serversError: String?
+    let inferenceOptions: LocalInferenceOptions
+    let runtime: Runtime
+    let mode: Mode
+    let servingProfile: ServingProfile?
+    let portText: String
+
+    let onTask: () async -> Void
+    let onRouteTask: () async -> Void
+    let onSplashPresetChanged: (String) -> Void
+    let onLoadOnRequestChanged: (Bool) -> Void
+    let onRequireAPIKeyChanged: (Bool) -> Void
+    let onSelectedModelChanged: () -> Void
+    let onServersChanged: ([ServerInfo]) -> Void
+    let onServersErrorChanged: (String?) -> Void
+    let onRouteActiveChanged: (Bool) -> Void
+    let onDisappear: () -> Void
+    let onInferenceOptionsChanged: () -> Void
+    let onRuntimeChanged: () -> Void
+    let onModeChanged: (Mode) -> Void
+    let onServingProfileChanged: () -> Void
+    let onPortChanged: () -> Void
+    let onAppear: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .task { await onTask() }
+            .task(id: isRouteActive) {
+                guard isRouteActive else { return }
+                await onRouteTask()
+            }
+            .onChange(of: selectedSplashPresetName) { _, name in onSplashPresetChanged(name) }
+            .onChange(of: newSlotLoadOnRequest) { _, enabled in onLoadOnRequestChanged(enabled) }
+            .onChange(of: requireAPIKey) { _, required in onRequireAPIKeyChanged(required) }
+            .onChange(of: selectedModelPath) { _, _ in onSelectedModelChanged() }
+            .onChange(of: servers) { _, value in onServersChanged(value) }
+            .onChange(of: serversError) { _, value in onServersErrorChanged(value) }
+            .onChange(of: isRouteActive) { _, active in onRouteActiveChanged(active) }
+            .onDisappear(perform: onDisappear)
+            .onChange(of: inferenceOptions) { _, _ in onInferenceOptionsChanged() }
+            .onChange(of: runtime) { _, _ in onRuntimeChanged() }
+            .onChange(of: mode) { _, value in onModeChanged(value) }
+            .onChange(of: servingProfile) { _, _ in onServingProfileChanged() }
+            .onChange(of: portText) { _, _ in onPortChanged() }
+            .onAppear(perform: onAppear)
     }
 }

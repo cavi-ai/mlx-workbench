@@ -29,3 +29,4 @@ default.profraw
 .code-review-graphignore
 .specs/
 .tmp/
+.openclaw/

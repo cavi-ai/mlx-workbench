@@ -103,7 +103,7 @@ struct ComfyWorkflow: Codable, Equatable, Sendable {
 
     static let supportedOutputClasses: Set<String> = [
         "SaveImage", "SaveAnimatedWEBP", "SaveAnimatedPNG",
-        "SaveWEBM", "SaveVideo", "VHS_VideoCombine"
+        "SaveVideo", "VHS_VideoCombine"
     ]
 
     static let supportedSamplerClasses: Set<String> = [
@@ -143,7 +143,7 @@ struct ComfyWorkflow: Codable, Equatable, Sendable {
         // Image & video I/O
         "LoadImage", "ImageScale", "ImageScaleBy",
         "CreateVideo", "SaveImage", "SaveAnimatedWEBP", "SaveAnimatedPNG",
-        "SaveWEBM", "SaveVideo", "VHS_VideoCombine"
+        "SaveVideo", "VHS_VideoCombine"
     ]
 
     func parsedGraph() throws -> [String: [String: Any]] {

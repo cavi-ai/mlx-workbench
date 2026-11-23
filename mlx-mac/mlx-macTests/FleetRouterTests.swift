@@ -68,7 +68,7 @@ final class FleetRouterTests: XCTestCase {
         )
         XCTAssertTrue(plan.skipped.isEmpty)
         XCTAssertEqual(plan.assignments.map(\.routeRole), [.audio, .media, .embedding])
-        XCTAssertEqual(plan.assignments.first(where: { $0.routeRole == .media })?.repo, "local/local-MLX-4bit")
+        XCTAssertEqual(plan.assignments.first(where: { $0.routeRole == .media })?.repo, "local-MLX-4bit")
         XCTAssertEqual(plan.cliAssignments.map(\.routeRole), [.embedding])
         XCTAssertEqual(plan.multimodalAssignments.map(\.routeRole), [.audio, .media])
     }
@@ -93,11 +93,21 @@ final class FleetRouterTests: XCTestCase {
         let reasoning = plan.assignments.first(where: { $0.routeRole == .reasoning })
         XCTAssertEqual(coding?.authMode, .frontDoor(port: 8700))
         XCTAssertEqual(coding?.port, 8700)
-        XCTAssertEqual(reasoning?.authMode, .envVar(name: "MLX_ENDPOINT_API_KEY_8767"))
+        XCTAssertEqual(reasoning?.authMode, .envVar(name: "MLX_AGENT_LOCAL_API_KEY"))
         XCTAssertEqual(reasoning?.port, 8767)
         // Never emit raw keys or digests into route guidance.
         XCTAssertFalse(coding?.authMode.guidance?.contains(digest) ?? false)
         XCTAssertFalse(reasoning?.authMode.guidance?.contains(otherDigest) ?? false)
+
+        // When frontDoorRoutes is supplied and does not advertise the model, do not switch ports to Front Door.
+        let unadvertisedPlan = FleetRouter.plan(
+            slots: [slot(port: 8766, modelPath: hfPath, role: .coding, apiKeySHA256: digest, id: frontDoorID)],
+            states: [frontDoorID: .running(modelPath: hfPath, port: 8766)],
+            frontDoor: frontDoor,
+            frontDoorRoutes: ["other/model"]
+        )
+        XCTAssertEqual(unadvertisedPlan.assignments.first?.port, 8766)
+        XCTAssertEqual(unadvertisedPlan.assignments.first?.authMode, .envVar(name: "MLX_AGENT_LOCAL_API_KEY"))
     }
 
     func testUnassignedChatSlotsAreIgnoredNotSkipped() {
@@ -134,7 +144,7 @@ final class FleetRouterTests: XCTestCase {
         )
         XCTAssertTrue(plan.skipped.isEmpty)
         XCTAssertEqual(plan.assignments.count, 1)
-        XCTAssertEqual(plan.assignments[0].repo, "local/local-MLX-4bit")
+        XCTAssertEqual(plan.assignments[0].repo, "local-MLX-4bit")
         XCTAssertTrue(plan.assignments[0].isLocalRoute)
     }
 

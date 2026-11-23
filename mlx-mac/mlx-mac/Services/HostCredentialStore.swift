@@ -49,6 +49,20 @@ enum EndpointCredentialStore {
         }
     }
 
+    static func ensurePrivateKeyFile(for hash: String, directory: URL? = nil) throws -> String {
+        let value = try token(for: hash)
+        let baseDir = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("mlx-workbench", isDirectory: true)
+            .appendingPathComponent("keys", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let safeHash = String(hash.prefix(64).filter { $0.isHexDigit })
+        let fileURL = baseDir.appendingPathComponent("\(safeHash).key")
+        let data = Data((value + "\n").utf8)
+        try data.write(to: fileURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        return fileURL.path
+    }
+
     static func remove(_ hash: String) throws {
         try withoutInteraction {
             let result = SecItemDelete(try identity(hash) as CFDictionary)

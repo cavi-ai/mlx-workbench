@@ -247,6 +247,24 @@ class AppHost {
                 },
                 start: { receipt, port, hash in
                     _ = try await api.trainedAdapterStart(receipt: receipt, port: port, hash: hash, runtime: "mlx_lm")
+                },
+                jitPreview: { receipt, base, port, policy, apiKeySHA256 in
+                    let plan = try await api.trainedAdapterPreview(
+                        receipt: receipt, port: port, runtime: "mlx_lm",
+                        jit: true, memoryPolicy: policy, apiKeySHA256: apiKeySHA256
+                    )
+                    guard let binding = TrainedAdapterBinding.decode(plan["training_binding"]),
+                          binding.receiptPath == receipt, binding.basePath == base, binding.isValid,
+                          let hash = plan["preview_hash"] as? String, TrainedAdapterBinding.isHash(hash) else {
+                        throw WorkflowEvidenceError.invalid("The engine did not return this adapter's pinned MLX-LM plan.")
+                    }
+                    return (hash, binding)
+                },
+                jitStart: { receipt, port, hash, policy, apiKeySHA256 in
+                    _ = try await api.trainedAdapterStart(
+                        receipt: receipt, port: port, hash: hash, runtime: "mlx_lm",
+                        jit: true, memoryPolicy: policy, apiKeySHA256: apiKeySHA256
+                    )
                 }
             )
         }
@@ -390,14 +408,21 @@ class AppHost {
             .sink { [weak self] fleet in
                 self?.frontDoor.updateCollisions(slots: fleet.slots, frontDoorKeySHA256: fleet.frontDoor?.apiKeySHA256)
             }
+        var frontDoorFollowUpTask: Task<Void, Never>?
         self.frontDoorSyncMonitoring = self.endpoint.$slotStates
             .dropFirst()
             .removeDuplicates()
             .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
             .sink { [weak self] _ in
-                guard let self, self.frontDoor.isRunning, !self.frontDoor.busy else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, self.frontDoor.isRunning, !self.frontDoor.busy else { return }
+                guard let self, self.frontDoor.isRunning else { return }
+                frontDoorFollowUpTask?.cancel()
+                frontDoorFollowUpTask = Task { @MainActor [weak self] in
+                    guard let self, self.frontDoor.isRunning else { return }
+                    if !self.frontDoor.busy {
+                        await self.frontDoor.refresh()
+                    }
+                    try? await Task.sleep(for: .milliseconds(1200))
+                    guard !Task.isCancelled, self.frontDoor.isRunning, !self.frontDoor.busy else { return }
                     await self.frontDoor.refresh()
                 }
             }
