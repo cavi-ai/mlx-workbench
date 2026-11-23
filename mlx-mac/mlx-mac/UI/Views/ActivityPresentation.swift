@@ -231,7 +231,7 @@ enum ActivityJobPriority {
 
 enum ActivityPoll {
     static let interval: Duration = .seconds(5)
-    static let maximumTicks = 120
+    static let recoveryInterval: Duration = .seconds(20)
 
     /// The owned records that require conversion status reads.
     static func inFlightIDs(workflow: ConversionWorkflow, history: [ConversionWorkflow]) -> Set<UUID> {

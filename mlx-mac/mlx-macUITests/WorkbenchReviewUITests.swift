@@ -4912,7 +4912,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.windows.firstMatch.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 10))
         XCTAssertNotEqual(app.state, .notRunning)
-        let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
+        let menu = app.menuBarItems["MLX Workbench"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
         menu.click()
         XCTAssertTrue(app.buttons["Live Monitor"].waitForExistence(timeout: 10))
@@ -4946,7 +4946,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.buttons["Done"].click()
         let saved = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: state.appendingPathComponent("endpoint-fleet.json"))) as? [[String: Any]])
         XCTAssertEqual((saved.first?["roleDefaults"] as? [String: String])?["coding"]?.lowercased(), slotID.lowercased())
-        let menu = app.descendants(matching: .any).matching(identifier: "workbench-menu-bar").firstMatch
+        let menu = app.menuBarItems["MLX Workbench"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10)); menu.click()
         XCTAssertTrue(app.buttons["serving-menu-role-coding"].waitForExistence(timeout: 10))
         let endpointAction = app.descendants(matching: .any).matching(identifier: "serving-menu-endpoint-endpoint-\(slotID)").firstMatch

@@ -12,9 +12,12 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
 ### Changed
+- Activity: a toolbar control shows live conversion, queue, verification and comparison states and opens Activity from any workspace.
+- Serving: the native macOS menu bar item can be shown again from Settings.
 - Serving: the login item starts every enabled endpoint at login, one `RunAtLoad` agent each, and refuses a won't-fit fleet until **Install anyway**.
 - Training: a reviewed adapter can be saved as an unverified MLX-LM endpoint without inheriting the base model's verdict.
 ### Fixed
+- Activity: conversion status stays current across workspaces and after the previous polling limit. Unreadable status keeps the last known state visible.
 - Reclaim: a local server that has stopped listening drops out of removal checks after successful discovery.
 - Serving: explicit starts wait only for the requested endpoint, failed login-item installs roll back, and background discovery polls less often while idle.
 - Use: long inline reasoning streams are parsed incrementally and displayed in batches.

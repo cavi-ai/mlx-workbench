@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import XCTest
 
@@ -351,16 +352,66 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertEqual(counter.count("scan"), 1)
     }
 
-    func testActivityPollingUsesVisibleRouteAndBoundedConversionReads() throws {
-        let source = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("mlx-mac/UI/Views/JobsView.swift")
-        let text = try String(contentsOf: source, encoding: .utf8)
-        XCTAssertTrue(text.contains(".task(id: isRouteActive && !inFlight.isEmpty && statusError == nil)"))
-        XCTAssertTrue(text.contains("ActivityPoll.maximumTicks"))
-        XCTAssertTrue(text.contains("try await appHost.refreshConversionStatus()"))
-        XCTAssertEqual(ActivityPoll.interval, .seconds(5))
-        XCTAssertEqual(ActivityPoll.maximumTicks, 120)
+    func testConversionMonitoringRecoversAndContinuesPastTheOldPageLimit() async {
+        let counter = Counter()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/agent", command: { _, argv, _, _ in
+            let command = argv.prefix(2).joined(separator: " ")
+            counter.hit(command)
+            guard command == "convert status" else { return [:] }
+            let read = counter.count(command)
+            if read == 1 { return ["unexpected": []] }
+            let state = read == 122 ? "failed" : "running"
+            return ["jobs": [["receipt": "r1", "out": "/models/atlas-MLX-4bit", "state": state]]]
+        })
+        let host = AppHost(config: Config.defaults(),
+                           modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }),
+                           workbenchAPI: api)
+        await host.modelWorkflow.waitForHistory()
+        let finished = expectation(description: "Activity observes completion without a page")
+        let observation = host.modelWorkflow.$workflow.filter { $0.state == .failed }.first().sink { _ in finished.fulfill() }
+        defer { observation.cancel() }
+        var sleeps: [Duration] = []
+        host.startConversionMonitoring(sleep: { delay in sleeps.append(delay) })
+        XCTAssertTrue(sleeps.isEmpty)
+        host.modelWorkflow.restore(Fixture.workflow(state: .running, receipt: "r1", agentState: "running"))
+        await fulfillment(of: [finished], timeout: 8)
+
+        XCTAssertEqual(counter.count("convert status"), 122)
+        XCTAssertEqual(counter.count("serve status"), 0)
+        XCTAssertEqual(Array(sleeps.prefix(3)), [.seconds(5), .seconds(20), .seconds(5)])
+        XCTAssertNil(host.conversionStatusError)
+    }
+
+    func testActivityToolbarShowsOwnedConversionsWithoutCountingTheSelectionTwice() {
+        let running = Fixture.workflow(state: .running)
+        let queued = Fixture.workflow(state: .queued)
+        let idle = Fixture.workflow(state: .idle)
+        let active = ActivityToolbarStatus(workflow: queued, history: [running, queued])
+        XCTAssertEqual(active.kind, .working)
+        XCTAssertEqual(active.detail, "Converting · 1 queued")
+        XCTAssertEqual(ActivityToolbarStatus(workflow: running, history: [], statusUnavailable: true).detail, "Status unavailable")
+        XCTAssertEqual(ActivityToolbarStatus(workflow: idle, history: [], verifying: true).detail, "Verifying")
+        XCTAssertEqual(ActivityToolbarStatus(workflow: idle, history: [], comparing: true).detail, "Comparing")
+        XCTAssertNil(ActivityToolbarStatus(workflow: idle, history: []).detail)
+    }
+
+    func testActivityToolbarFitsTheCompactIconAndRendersTheLiveLabel() throws {
+        let status = ActivityToolbarStatus(workflow: Fixture.workflow(state: .running), history: [])
+        let control = ActivityToolbarButton(status: status, selected: false, action: {})
+            .workbenchTheme()
+        let regular = ImageRenderer(content: control)
+        let compact = ImageRenderer(content: ActivityToolbarButton(status: status, selected: false, compact: true, action: {}).workbenchTheme())
+        let fullImage = try XCTUnwrap(regular.nsImage)
+        let compactImage = try XCTUnwrap(compact.nsImage)
+        XCTAssertGreaterThan(fullImage.size.width, 85)
+        XCTAssertLessThanOrEqual(compactImage.size.width, 40)
+        XCTAssertEqual(compactImage.size.height, fullImage.size.height)
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_ACTIVITY_CAPTURE"] {
+            let image = try XCTUnwrap(fullImage.tiffRepresentation)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: image))
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     func testActivityViewAnchorsTopWithoutScrollingCode() throws {

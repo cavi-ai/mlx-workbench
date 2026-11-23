@@ -77,6 +77,7 @@ struct SettingsView: View {
     @StateObject private var engineDetection = SettingsEngineDetection()
     @StateObject private var duplication: DuplicationPolicyCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
+    @AppStorage(WorkbenchMenuBarItem.storageKey) private var showsMenuBarItem = true
     private let probe: SettingsDirectoryProbe
     private let onRouteSelection: (AppRoute) -> Void
 
@@ -376,6 +377,9 @@ struct SettingsView: View {
             SettingsRow(label: "Model endpoints", stacked: layout.stacksRows) {
                 Button("Open Run") { onRouteSelection(.run) }
             }
+            SettingsSeparator()
+            SettingsToggleRow(title: "Show in macOS menu bar", isOn: $showsMenuBarItem, stacked: layout.stacksRows)
+                .accessibilityIdentifier("settings-show-menu-bar-item")
             SettingsSeparator()
             SettingsRow(label: "Agent memory limit", hint: "Shared by MLX Agent model workers and included agent processes.", stacked: layout.stacksRows) {
                 HStack {
