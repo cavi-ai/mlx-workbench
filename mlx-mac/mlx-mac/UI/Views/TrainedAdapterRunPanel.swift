@@ -2,7 +2,10 @@ import SwiftUI
 
 struct TrainedAdapterRunPanel: View {
     @ObservedObject var coordinator: TrainedAdapterServingCoordinator
+    var saveAsEndpoint: ((TrainedAdapterServePreview) async -> String?)? = nil
     let refresh: () async -> Void
+    @State private var confirmingSave = false
+    @State private var saveError: String?
 
     var body: some View {
         if let job = coordinator.selectedJob {
@@ -29,6 +32,10 @@ struct TrainedAdapterRunPanel: View {
                     }
                     ErrorBanner(text: coordinator.portError)
                     ErrorBanner(text: coordinator.errorMessage)
+                    ErrorBanner(text: saveError)
+                    if confirmingSave, let preview = coordinator.preview {
+                        InlineMessage(kind: .warning, text: "This adapter does not inherit \(URL(fileURLWithPath: preview.binding.basePath).lastPathComponent)'s quality verdict. Saving enables an unverified MLX-LM endpoint on port \(preview.port).")
+                    }
                     if coordinator.isBusy {
                         ProgressView(coordinator.operation == .previewing ? "Checking training artifacts…" : "Starting reviewed adapter server…")
                             .font(WorkbenchTypography.secondary)
@@ -49,6 +56,15 @@ struct TrainedAdapterRunPanel: View {
                             previewButton.buttonStyle(.bordered)
                             Button("Confirm and run adapter") { perform(coordinator.confirmServe()) }
                                 .buttonStyle(.borderedProminent).accessibilityIdentifier("trained-adapter-confirm")
+                            if saveAsEndpoint != nil {
+                                if confirmingSave {
+                                    Button("Save unverified endpoint") { saveEndpoint() }
+                                        .accessibilityIdentifier("trained-adapter-save-endpoint")
+                                } else {
+                                    Button("Save as endpoint…") { saveError = nil; confirmingSave = true }
+                                        .accessibilityIdentifier("trained-adapter-save-endpoint")
+                                }
+                            }
                         } else {
                             previewButton.buttonStyle(.borderedProminent)
                         }
@@ -60,7 +76,7 @@ struct TrainedAdapterRunPanel: View {
     }
 
     private var previewButton: some View {
-        Button("Preview adapter serve") { perform(coordinator.previewServe()) }
+        Button("Preview adapter serve") { confirmingSave = false; saveError = nil; perform(coordinator.previewServe()) }
             .disabled(!coordinator.canPreview).accessibilityIdentifier("trained-adapter-preview")
             .help("Recheck the completed receipt, pinned base and adapter before serving.")
     }
@@ -74,5 +90,13 @@ struct TrainedAdapterRunPanel: View {
     private func perform(_ task: Task<Void, Never>?) {
         guard let task else { return }
         Task { await task.value; await refresh() }
+    }
+    private func saveEndpoint() {
+        guard let preview = coordinator.preview, let saveAsEndpoint else { return }
+        confirmingSave = false
+        Task {
+            saveError = await saveAsEndpoint(preview)
+            await refresh()
+        }
     }
 }

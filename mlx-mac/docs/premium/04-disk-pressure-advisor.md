@@ -1,6 +1,17 @@
 # 04 — Disk Pressure Advisor
 
-**Status:** implemented (stale / superseded / cross-root detectors, batched quarantine apply, HF-cache reclaim via doctor prune preview/confirm) · **Tier:** Premium
+**Status:** implemented. Removal suggestions are identical copies, version groups the user chooses, and comparison-backed replacement. Usage age and quantization bits never suggest removal. `reclaim_stale_days` only feeds the informational **Not used recently** filter. Incomplete Hugging Face cache cleanup stays on `doctor models --prune` with preview and confirm. · **Tier:** Premium
+
+## Shipped behavior
+
+Operator page: `docs/mlx-workbench/source/pages/workflows/reclaim.md`.
+
+- **Suggested removals** are identical copies and other versions of a model the user chose to keep. Serving, preferred, and in-use copies stay.
+- **Superseded** means a replacement with comparable reviewed task quality and no worse speed, latency, estimated memory, or disk use. `ReclaimAdvisor.supersededVariants` returns nothing: verification and quant bits are not that evidence. Comparison-backed replacements come from `ComparisonInsights`.
+- **Not used recently** is a table filter. It does not create a reclaim row.
+- Cross-root identical copies are grouped. Quant-only groups stay informational.
+
+The detector sketch below is the original design. Stale windows and equal-or-higher quant bits were not shipped.
 
 ## Problem
 
@@ -97,10 +108,11 @@ Reuse, don't reinvent:
 
 ```json
 {
-  "reclaim_stale_days": 60,
-  "reclaim_badge_threshold_gb": 20
+  "reclaim_stale_days": 60
 }
 ```
+
+`reclaim_stale_days` is the **Stale after** control (2–365, default 60). It does not change removal suggestions. `reclaim_badge_threshold_gb` is not a config key.
 
 ## Failure modes & edges
 

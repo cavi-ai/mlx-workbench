@@ -16,6 +16,11 @@ import Foundation
 // state — `serve status` is the authority. Crash-loop guard: at most
 // `maxRestarts` starts per slot inside `restartWindow`, then degraded.
 
+struct AdapterEndpointLaunch: Sendable {
+    var preview: @Sendable (_ receipt: String, _ basePath: String, _ port: Int) async throws -> (hash: String, binding: TrainedAdapterBinding)
+    var start: @Sendable (_ receipt: String, _ port: Int, _ hash: String) async throws -> Void
+}
+
 @MainActor
 final class EndpointSupervisor: ObservableObject {
     @Published private(set) var fleet: EndpointFleetConfig
@@ -52,6 +57,8 @@ final class EndpointSupervisor: ObservableObject {
     var inferenceLifecycle: ((LocalInferenceOptions) throws -> ServeLifecycle)?
     var splashLifecycle: ((String) throws -> ServeLifecycle)?
     var splashPresetLookup: ((String) async throws -> SplashPreset)?
+    /// Explicit MLX-LM launch for a trained-adapter endpoint. Nil in tests that do not serve adapters.
+    var adapterLaunch: AdapterEndpointLaunch?
     var generateAPIKey: () throws -> String = EndpointCredentialStore.generate
     var saveAPIKey: (String) throws -> Void = EndpointCredentialStore.save
     var removeAPIKey: (String) throws -> Void = EndpointCredentialStore.remove
@@ -277,6 +284,25 @@ final class EndpointSupervisor: ObservableObject {
         await reconcile(userRequestedSlotID: candidate.id)
     }
 
+    /// Save a reviewed adapter as an enabled endpoint. The base model's verdict is never consulted;
+    /// `allowUnverified` is the explicit override.
+    func addTrainedAdapterSlot(binding: TrainedAdapterBinding, port: Int, allowUnverified: Bool) async {
+        guard beginUserOperation() else { return }
+        defer { activeUserOperations -= 1 }
+        guard allowUnverified else {
+            lastError = "This adapter does not inherit the base model's quality verdict. Save it only with the unverified override."
+            return
+        }
+        guard binding.isValid, (1...65535).contains(port) else {
+            lastError = "Historical training receipts without a pinned base identity cannot be saved as endpoints."
+            return
+        }
+        var candidate = EndpointSlot(enabled: true, port: port, modelPath: binding.basePath, loadOnRequest: false)
+        candidate.trainingReceipt = binding.receiptPath
+        guard validate(candidate, isNew: true), commit(replacing: candidate) else { return }
+        await reconcile(userRequestedSlotID: candidate.id)
+    }
+
     /// Change a slot's model/port/role without toggling its enabled flag.
     func updateSlot(id: UUID, modelPath: String, port: Int, role: UseCase?) async {
         guard beginUserOperation() else { return }
@@ -285,6 +311,10 @@ final class EndpointSupervisor: ObservableObject {
         var candidate = old
         if candidate.splashPresetName != nil && candidate.port != port {
             lastError = "Review the Splash preset again before changing this endpoint port."; return
+        }
+        if candidate.isTrainedAdapter && candidate.modelPath != modelPath {
+            lastError = "A trained adapter endpoint stays on its pinned base. Remove it before choosing another model."
+            return
         }
         if candidate.modelPath != modelPath {
             candidate.servingProfile = nil; candidate.splashPresetName = nil; candidate.profilePreviewHash = nil
@@ -322,8 +352,12 @@ final class EndpointSupervisor: ObservableObject {
     func swapSlot(id: UUID, to modelPath: String, allowUnverified: Bool = false) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
-        guard let old = fleet.slots.first(where: { $0.id == id }),
-              passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
+        guard let old = fleet.slots.first(where: { $0.id == id }) else { return }
+        if old.isTrainedAdapter {
+            lastError = "A trained adapter endpoint stays on its pinned base. Remove it before choosing another model."
+            return
+        }
+        guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         var slot = old
         if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
         slot.modelPath = modelPath; slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
@@ -367,6 +401,10 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         guard Set(expected.map(\.id)).count == expected.count, expected.allSatisfy({ fleet.slots.contains($0) }) else {
             lastError = "Endpoint settings changed. Review the model update again."
+            return false
+        }
+        if expected.contains(where: \.isTrainedAdapter) {
+            lastError = "A trained adapter endpoint stays on its pinned base. Remove it before switching that base."
             return false
         }
         if expected.isEmpty || expected.contains(where: { $0.servingProfile == nil }) {
@@ -520,6 +558,10 @@ final class EndpointSupervisor: ObservableObject {
         }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }),
               fleet.slots[index].usesJIT != enabled else { return }
+        guard !fleet.slots[index].isTrainedAdapter else {
+            lastError = "A trained adapter endpoint uses explicit MLX-LM serving."
+            return
+        }
         guard enabled || fleet.slots[index].splashPresetName == nil else {
             lastError = "Splash presets require Load on request."; return
         }
@@ -1052,6 +1094,17 @@ final class EndpointSupervisor: ObservableObject {
                 slotStates[slot.id] = .degraded(reason: "Endpoint authentication differs from its configuration. Stop it and review authentication before restarting.")
                 return
             }
+            if slot.isTrainedAdapter {
+                guard matchesTrainedAdapter(ours, slot: slot) else {
+                    pendingUserServeBySlot.removeValue(forKey: slot.id)
+                    let name = ours.modelIdentity.isEmpty ? "unknown" : URL(fileURLWithPath: ours.modelIdentity).lastPathComponent
+                    slotStates[slot.id] = .modelMismatch(servedModel: ours.adapterSummary.map { name + " · " + $0 } ?? name, port: slot.port)
+                    return
+                }
+                slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
+                recordIntentionalServe(slot)
+                return
+            }
             if ours.matchesUnadaptedModel(slot.modelPath) {
                 do {
                     if let hash = try await confirmedAccelerationHash(ours, slot: slot), hash != slot.accelerationPreviewHash {
@@ -1119,6 +1172,19 @@ final class EndpointSupervisor: ObservableObject {
         slotAttemptTimestamps[slot.id] = attempts
         slotRestartAttempts[slot.id] = attempts.count
         do {
+            if slot.isTrainedAdapter {
+                guard let receipt = slot.trainingReceipt, let launch = adapterLaunch else {
+                    throw WorkflowEvidenceError.invalid("Trained adapter serving is unavailable.")
+                }
+                let reviewed = try await launch.preview(receipt, slot.modelPath, slot.port)
+                guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath, reviewed.binding.isValid,
+                      TrainedAdapterBinding.isHash(reviewed.hash), fleet.slots.contains(slot) else {
+                    throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
+                }
+                try await launch.start(receipt, slot.port, reviewed.hash)
+                slotStates[slot.id] = .waitingForServer
+                return
+            }
             let lifecycle = try servingLifecycle(slot)
             let preview: @Sendable (String, Int) async throws -> String
             let start: @Sendable (String, Int, String) async throws -> Void
@@ -1286,7 +1352,9 @@ final class EndpointSupervisor: ObservableObject {
             let servers = try await statusProvider()
             if let current = servers.first(where: { $0.state?.lowercased() == "running" && $0.port == slot.port }) {
                 let matches: Bool
-                if slot.servingProfile != nil || slot.splashPresetName != nil {
+                if slot.isTrainedAdapter {
+                    matches = matchesTrainedAdapter(current, slot: slot)
+                } else if slot.servingProfile != nil || slot.splashPresetName != nil {
                     matches = ServingProfile.matchesReceipt(current, previewHash: slot.profilePreviewHash)
                 } else {
                     matches = current.matchesUnadaptedModel(slot.modelPath)
@@ -1312,6 +1380,12 @@ final class EndpointSupervisor: ObservableObject {
             lastError = reason
             return false
         }
+    }
+
+    private func matchesTrainedAdapter(_ server: ServerInfo, slot: EndpointSlot) -> Bool {
+        guard let receipt = slot.trainingReceipt, let binding = server.trainingBinding else { return false }
+        return server.runtime == "mlx_lm" && binding.receiptPath == receipt && binding.basePath == slot.modelPath
+            && binding.isValid && HFRepoID.matches(server.modelIdentity, slot.modelPath)
     }
 
     private func confirmedAccelerationHash(_ server: ServerInfo, slot: EndpointSlot) async throws -> String? {

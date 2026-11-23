@@ -222,11 +222,28 @@ class AppHost {
             locations: .live,
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
         )
-        self.endpoint = endpoint ?? EndpointSupervisor(
+        let supervised = endpoint ?? EndpointSupervisor(
             lifecycle: .live(api: api),
             statusProvider: { try await api.serveStatus() },
             store: JSONStore<EndpointConfig>(fileURL: JSONStore<EndpointConfig>.defaultFileURL("endpoint-config.json"))
         )
+        if endpoint == nil {
+            supervised.adapterLaunch = AdapterEndpointLaunch(
+                preview: { receipt, base, port in
+                    let plan = try await api.trainedAdapterPreview(receipt: receipt, port: port, runtime: "mlx_lm")
+                    guard let binding = TrainedAdapterBinding.decode(plan["training_binding"]),
+                          binding.receiptPath == receipt, binding.basePath == base, binding.isValid,
+                          let hash = plan["preview_hash"] as? String, TrainedAdapterBinding.isHash(hash) else {
+                        throw WorkflowEvidenceError.invalid("The engine did not return this adapter's pinned MLX-LM plan.")
+                    }
+                    return (hash, binding)
+                },
+                start: { receipt, port, hash in
+                    _ = try await api.trainedAdapterStart(receipt: receipt, port: port, hash: hash, runtime: "mlx_lm")
+                }
+            )
+        }
+        self.endpoint = supervised
         self.usage = usage ?? UsageTracker(
             store: JSONStore<UsageStamp>(fileURL: JSONStore<UsageStamp>.defaultFileURL("usage-stamps.json"))
         )

@@ -18,12 +18,12 @@ format, or chat surface.
 | 01 | [Conversion Quality Gate](01-conversion-quality-gate.md) | Premium | Auto-verify every conversion with a canary suite before it's marked ready |
 | 02 | [Cross-client Wiring](02-cross-client-wiring.md) | Premium | "Make this my model everywhere" — atomic multi-client config writes with rollback |
 | 03 | [Measured Comparisons](03-measured-comparisons.md) | Premium | Replay real prompt sets across quant variants; measured tok/s + output diffs |
-| 04 | [Disk Pressure Advisor](04-disk-pressure-advisor.md) | Premium | Ranked reclaim opportunities (stale / superseded / cross-root) via batched quarantine |
+| 04 | [Disk Pressure Advisor](04-disk-pressure-advisor.md) | Premium | Ranked reclaim from identical copies and comparison-backed replacement; age and quant bits do not suggest removal |
 | 05 | [Memory-fit Advisor](05-memory-fit-advisor.md) | **Free** | Fits/tight/won't-fit verdict before serving, with suggested max context |
-| 06 | [Always-on Endpoint + Menu Bar](06-always-on-endpoint.md) | Premium | launchd-backed stable port, auto-restart, hot-swap, minimal menu-bar status |
+| 06 | [Always-on Endpoint + Menu Bar](06-always-on-endpoint.md) | Premium | Stable loopback ports, in-app restart, RunAtLoad login item (no KeepAlive), menu-bar status |
 | 07 | [Model Lineage](07-model-lineage.md) | Premium | One provenance timeline per model, assembled from existing stores, exportable |
 | 08 | [Watch & Regression Alerts](08-watch-regression-alerts.md) | Premium | Upstream change digests + re-verify prompts on macOS/MLX drift |
-| 09 | [Fleet Endpoints + Role Router](09-fleet-endpoints.md) | Premium | Multiple supervised endpoints (one model per stable port) + one-click per-role router via `mlx-agent fleet` — **design stage** |
+| 09 | [Fleet Endpoints + Role Router](09-fleet-endpoints.md) | Premium | Multiple supervised endpoints (one model per stable port, cap 4) + one-click per-role router via `mlx-agent fleet` — shipped |
 
 ## Shared components (build once)
 
@@ -45,7 +45,7 @@ format, or chat surface.
                   ├── 06 Always-on (verified-models default)
                   └── 08 Watch (re-verification target)
 02 Wiring ◄── 06 (stable endpoint as wire target)
-04 Disk Advisor (standalone; consumes 01's verified state for supersede rules)
+04 Disk Advisor (standalone; replacement suggestions use comparison evidence, not verification or quant bits)
 07 Lineage (indexes 01–04 stores — ship after them)
 09 Fleet ◄── 06 (multi-slot supervisor) + 05 (fleet memory budget) ──► mlx-agent fleet (role router)
 ```

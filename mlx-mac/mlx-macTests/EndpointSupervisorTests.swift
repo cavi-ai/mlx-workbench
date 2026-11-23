@@ -1533,11 +1533,12 @@ final class EndpointSupervisorTests: XCTestCase {
     func testPlistPreviewContainsLabelArgumentsAndRunAtLoad() throws {
         let home = try makeHome()
         let manager = LaunchAgentManager(home: home, run: { _, _ in "" }, uid: 501)
-        let plan = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4"), fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4")
+        let plan = LoginItemPlan(slot: slot, fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
 
         let plist = try manager.plistPreview(plan: plan)
 
-        XCTAssertTrue(plist.contains("<string>ai.cavi.mlxworkbench.endpoint</string>"))
+        XCTAssertTrue(plist.contains("<string>\(LaunchAgentManager.label(for: slot.id))</string>"))
         XCTAssertTrue(plist.contains("<string>/opt/mlx-agent/scripts/mlx-agent</string>"))
         XCTAssertTrue(plist.contains("<string>--path</string>"))
         XCTAssertTrue(plist.contains("<string>/Models/q4</string>"))
@@ -1553,7 +1554,8 @@ final class EndpointSupervisorTests: XCTestCase {
             invocations.record(executable: executable, argv: argv)
             return ""
         }, uid: 501)
-        let plan = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4"), fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4")
+        let plan = LoginItemPlan(slot: slot, fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
 
         try manager.install(plan: plan)
 
@@ -1562,7 +1564,7 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(calls.last?.executable, "/bin/launchctl")
         XCTAssertEqual(calls.last?.argv, [
             "bootstrap", "gui/501",
-            home.appendingPathComponent("Library/LaunchAgents/ai.cavi.mlxworkbench.endpoint.plist").path,
+            manager.plistURL(for: slot.id).path,
         ])
     }
 
@@ -1573,16 +1575,104 @@ final class EndpointSupervisorTests: XCTestCase {
             invocations.record(executable: executable, argv: argv)
             return ""
         }, uid: 501)
-        let plan = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4"), fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4")
+        let plan = LoginItemPlan(slot: slot, fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
         try manager.install(plan: plan)
 
         try manager.uninstall()
 
         XCTAssertFalse(manager.isInstalled)
-        XCTAssertTrue(invocations.values.contains { $0.argv == ["bootout", "gui/501/ai.cavi.mlxworkbench.endpoint"] })
+        XCTAssertTrue(invocations.values.contains { $0.argv == ["bootout", "gui/501/\(LaunchAgentManager.label(for: slot.id))"] })
+        XCTAssertTrue(invocations.values.contains { $0.argv == ["bootout", "gui/501/\(LaunchAgentManager.legacyLabel)"] })
+    }
+
+    func testTrainedAdapterEndpointDoesNotInheritTheBaseVerdict() async throws {
+        let binding = try XCTUnwrap(TrainedAdapterBinding.decode(TrainedAdapterEndpointFixture.binding))
+        let world = FakeServeWorld()
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        supervisor.isVerified = { _ in true }
+        supervisor.adapterLaunch = AdapterEndpointLaunch(
+            preview: { receipt, base, _ in
+                XCTAssertEqual(receipt, binding.receiptPath)
+                XCTAssertEqual(base, binding.basePath)
+                return (TrainedAdapterEndpointFixture.hash, binding)
+            },
+            start: { receipt, port, hash in
+                XCTAssertEqual(receipt, binding.receiptPath)
+                XCTAssertEqual(port, 8766)
+                XCTAssertEqual(hash, TrainedAdapterEndpointFixture.hash)
+            }
+        )
+        await supervisor.addTrainedAdapterSlot(binding: binding, port: 8766, allowUnverified: false)
+        XCTAssertTrue(supervisor.fleet.slots.isEmpty)
+        XCTAssertEqual(supervisor.lastError, "This adapter does not inherit the base model's quality verdict. Save it only with the unverified override.")
+        await supervisor.addTrainedAdapterSlot(binding: binding, port: 8766, allowUnverified: true)
+        let slot = try XCTUnwrap(supervisor.fleet.slots.first)
+        guard case .waitingForServer = supervisor.slotStates[slot.id] else {
+            return XCTFail("Expected the adapter launch to be requested, got \(String(describing: supervisor.slotStates[slot.id])) \(supervisor.lastError ?? "")")
+        }
+        XCTAssertEqual(slot.trainingReceipt, binding.receiptPath)
+        XCTAssertEqual(slot.modelPath, binding.basePath)
+        XCTAssertFalse(slot.usesJIT)
+        let kept = await supervisor.replaceModelForUpdate(expected: [slot], modelPath: "/Models/other")
+        XCTAssertFalse(kept)
+        XCTAssertEqual(supervisor.fleet.slots.first?.modelPath, binding.basePath)
+        let invalid = TrainedAdapterBinding(receiptPath: "relative", receiptSHA256: "no", runID: nil, baseRepo: "",
+            basePath: "relative", baseFingerprint: "no", adapterPath: "relative", adapterIdentity: .object([:]))
+        await supervisor.addTrainedAdapterSlot(binding: invalid, port: 8767, allowUnverified: true)
+        XCTAssertEqual(supervisor.fleet.slots.count, 1)
+    }
+
+    func testRunningAdapterIsTheEndpointAndABaseServerIsNot() async throws {
+        let binding = try XCTUnwrap(TrainedAdapterBinding.decode(TrainedAdapterEndpointFixture.binding))
+        let adapter = try TrainedAdapterEndpointFixture.server()
+        let supervisor = EndpointSupervisor(lifecycle: FakeServeWorld().lifecycle, statusProvider: { [adapter] },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        supervisor.adapterLaunch = AdapterEndpointLaunch(
+            preview: { _, _, _ in XCTFail("A matching adapter server must be adopted"); return ("", binding) },
+            start: { _, _, _ in XCTFail("A matching adapter server must be adopted") }
+        )
+        await supervisor.addTrainedAdapterSlot(binding: binding, port: 8766, allowUnverified: true)
+        let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+        guard case .running = supervisor.slotStates[id] else {
+            return XCTFail("Expected the pinned adapter server, got \(String(describing: supervisor.slotStates[id]))")
+        }
+    }
+
+    func testAdapterLoginItemStaysOnExplicitMLXLM() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertEqual(argv[argv.firstIndex(of: "--runtime")! + 1], "mlx_lm")
+            XCTAssertEqual(argv[argv.firstIndex(of: "--training-receipt")! + 1], "/receipts/trained.json")
+            XCTAssertFalse(argv.contains("auto"))
+            return ["plan": TrainedAdapterEndpointFixture.plan]
+        })
+        var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/base", loadOnRequest: false)
+        slot.trainingReceipt = "/receipts/trained.json"
+        let login = try await api.loginItemPlan(slot: slot, fleetURL: URL(fileURLWithPath: "/state/fleet.json"))
+        XCTAssertEqual(login.arguments[login.arguments.firstIndex(of: "--runtime")! + 1], "mlx_lm")
+        XCTAssertEqual(login.arguments[login.arguments.firstIndex(of: "--training-receipt")! + 1], "/receipts/trained.json")
+        XCTAssertEqual(login.arguments[login.arguments.firstIndex(of: "--preview-hash")! + 1], TrainedAdapterEndpointFixture.hash)
+        XCTAssertFalse(login.arguments.contains("--path"))
+        XCTAssertFalse(login.arguments.contains("auto"))
     }
 
     // MARK: - Helpers
+
+    private enum TrainedAdapterEndpointFixture {
+        static let hash = String(repeating: "e", count: 64)
+        static let identity: [String: Any] = ["adapter_config.json": ["sha256": String(repeating: "a", count: 64), "bytes": 2],
+            "adapters.safetensors": ["sha256": String(repeating: "b", count: 64), "bytes": 100]]
+        static let binding: [String: Any] = ["training_receipt": "/receipts/trained.json", "training_receipt_sha256": String(repeating: "c", count: 64),
+            "training_run_id": "run-a", "base_repo": "org/base", "base_path": "/models/base", "base_fingerprint": String(repeating: "d", count: 64),
+            "adapter_path": "/adapters/tuned", "adapter_identity": identity]
+        static var plan: [String: Any] { ["runtime": "mlx_lm", "port": 8766, "path": "/models/base", "adapter_path": "/adapters/tuned",
+            "adapter_identity": identity, "training_binding": binding, "preview_hash": hash] }
+        static func server() throws -> ServerInfo {
+            let row = plan.merging(["state": "running", "pid": 77]) { _, new in new }
+            return try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        }
+    }
 
     private var storeURL: URL!
 

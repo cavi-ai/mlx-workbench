@@ -46,6 +46,19 @@ extension AppHost {
             reserveGB: config.fitReserveGB
         )
     }
+
+    /// Fit of every enabled endpoint as it will start at login, when nothing is already resident.
+    func loginFleetVerdict() -> FitVerdict? {
+        RunFleet.verdict(
+            slots: endpoint.fleet.slots,
+            servers: [],
+            models: librarySnapshot?.models ?? [],
+            adding: nil,
+            memory: resources.memory,
+            contextTokens: resources.contextTokens,
+            reserveGB: config.fitReserveGB
+        )
+    }
 }
 
 // MARK: - Runway

@@ -82,7 +82,8 @@ struct ServeView: View {
     @State private var showFleetRouter = false
     @State private var showsRoleDefaults = false
     @State private var showLoginItemPreview = false
-    @State private var loginPlan: LoginItemPlan?
+    @State private var loginPlans: [LoginItemPlan] = []
+    @State private var loginFitOverride = false
     @State private var inferenceSlot: EndpointSlot?
     @State private var memoryReviewSlot: EndpointSlot?
     @State private var loginPlist = ""
@@ -339,7 +340,11 @@ struct ServeView: View {
                     }
                 }
                 if trainedAdapters.selectedJob != nil {
-                    TrainedAdapterRunPanel(coordinator: trainedAdapters) { await modelWorkflow.refreshServers() }
+                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview in
+                        await endpoint.addTrainedAdapterSlot(binding: preview.binding, port: preview.port, allowUnverified: true)
+                        await modelWorkflow.refreshServers()
+                        return endpoint.lastError
+                    }) { await modelWorkflow.refreshServers() }
                 } else if let row = selectedWorkspaceRow {
                     selectedWorkspace(row)
                 } else {
@@ -1455,7 +1460,7 @@ struct ServeView: View {
                     }
                 }
             } else {
-                Button("Install login item…") { loginPlan = nil; loginPlist = ""; showLoginItemPreview = true }
+                Button("Install login item…") { loginPlans = []; loginPlist = ""; loginFitOverride = false; showLoginItemPreview = true }
             }
         }
         .buttonStyle(.bordered)
@@ -1468,10 +1473,13 @@ struct ServeView: View {
     private var loginItemPreviewSheet: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text("Login item preview").font(WorkbenchTypography.emphasis)
-            Text("This LaunchAgent starts the endpoint once at login (RunAtLoad). The app keeps reconciling while it runs; mlx-agent receipts remain the process authority.")
+            Text("One LaunchAgent per enabled endpoint starts that endpoint once at login (RunAtLoad). The preview lists every command. The app keeps reconciling while it runs; mlx-agent receipts remain the process authority.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
             if loginBusy { ProgressView("Reviewing endpoint startup…") }
+            if let refusal = loginFitRefusal {
+                InlineMessage(kind: .warning, text: "Fleet memory: \(refusal). Install anyway?")
+            }
             if let loginItemMessage, loginItemMessageIsError { InlineMessage(kind: .error, text: loginItemMessage) }
             ScrollView {
                 Text(loginPlist)
@@ -1482,9 +1490,13 @@ struct ServeView: View {
             HStack {
                 Button("Cancel") { showLoginItemPreview = false }.disabled(loginBusy)
                 Spacer()
+                if loginFitRefusal != nil {
+                    Button("Install anyway") { installLoginItem(fitOverride: true) }
+                        .disabled(loginBusy || loginPlans.isEmpty)
+                }
                 Button("Confirm install") { installLoginItem() }
                     .buttonStyle(.workbenchPrimary)
-                    .disabled(loginBusy || loginPlan == nil)
+                    .disabled(loginBusy || loginPlans.isEmpty || loginFitRefusal != nil)
             }
         }
         .padding(WorkbenchSpacing.md)
@@ -1497,29 +1509,56 @@ struct ServeView: View {
         appHost.config.mlxAgentPath.isEmpty ? appHost.vendorAgentPath : appHost.config.mlxAgentPath
     }
 
+    private var loginFitRefusal: String? {
+        LoginFleetInstall.refusal(verdict: appHost.loginFleetVerdict(), overridden: loginFitOverride)
+    }
+
+    private func loginPlansAreCurrent(_ plans: [LoginItemPlan]) -> Bool {
+        let slots = endpoint.fleet.slots.filter(\.enabled)
+        guard plans.count == slots.count, !plans.isEmpty else { return false }
+        return zip(plans, slots).allSatisfy { plan, slot in
+            plan.slot == slot && plan.agentPath == agentRootPath && plan.fleetURL == endpoint.fleetFileURL
+        }
+    }
+
     private func prepareLoginItem() async {
-        loginBusy = true; loginItemMessage = nil
+        loginBusy = true; loginItemMessage = nil; loginFitOverride = false
         defer { loginBusy = false }
         do {
-            guard let slot = endpoint.fleet.slots.first else { throw WorkflowEvidenceError.invalid("Choose an endpoint first.") }
-            let plan = try await appHost.api.loginItemPlan(slot: slot, fleetURL: endpoint.fleetFileURL)
-            let plist = try await WorkbenchIO.perform { Result { try LaunchAgentManager().plistPreview(plan: plan) } }.get()
+            let slots = endpoint.fleet.slots.filter(\.enabled)
+            guard !slots.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
+            var plans: [LoginItemPlan] = []
+            var texts: [String] = []
+            for slot in slots {
+                let plan = try await appHost.api.loginItemPlan(slot: slot, fleetURL: endpoint.fleetFileURL)
+                let plist = try await WorkbenchIO.perform { Result { try LaunchAgentManager().plistPreview(plan: plan) } }.get()
+                let name = URL(fileURLWithPath: slot.modelPath).lastPathComponent
+                plans.append(plan)
+                texts.append("Endpoint \(slot.port) · \(name)\n\(plist)")
+            }
             try Task.checkCancellation()
-            guard endpoint.fleet.slots.first == slot, agentRootPath == plan.agentPath else {
+            guard loginPlansAreCurrent(plans) else {
                 throw WorkflowEvidenceError.invalid("Endpoint settings changed. Open the login preview again.")
             }
-            loginPlan = plan; loginPlist = plist
+            loginPlans = plans; loginPlist = texts.joined(separator: "\n\n")
         } catch { loginItemMessageIsError = true; loginItemMessage = AppHost.render(error) }
     }
 
-    private func installLoginItem() {
-        guard let plan = loginPlan, endpoint.fleet.slots.first == plan.slot, agentRootPath == plan.agentPath else {
-            loginPlan = nil; loginItemMessageIsError = true
+    private func installLoginItem(fitOverride: Bool = false) {
+        let plans = loginPlans
+        guard loginPlansAreCurrent(plans) else {
+            loginPlans = []; loginItemMessageIsError = true
             loginItemMessage = "Endpoint settings changed. Open the login preview again."; return
+        }
+        if fitOverride { loginFitOverride = true }
+        if let refusal = LoginFleetInstall.refusal(verdict: appHost.loginFleetVerdict(), overridden: fitOverride || loginFitOverride) {
+            loginItemMessageIsError = true
+            loginItemMessage = "Fleet memory: \(refusal). Install anyway?"
+            return
         }
         loginBusy = true
         Task {
-            let result = await WorkbenchIO.perform { Result { try LaunchAgentManager().install(plan: plan) } }
+            let result = await WorkbenchIO.perform { Result { try LaunchAgentManager().install(plans: plans) } }
             do {
                 try result.get()
                 endpoint.markLoginItemInstalled(true)

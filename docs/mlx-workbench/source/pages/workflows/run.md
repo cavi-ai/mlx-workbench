@@ -166,9 +166,11 @@ existing server controls to stop it. **Use Library model** returns to the regula
 Run controls without stopping servers.
 
 Trained adapters use explicit MLX-LM serving. They do not inherit the base
-model's quality verdict and cannot be added as Always-on endpoints from this
-panel. Historical training receipts without a pinned base identity cannot be
-used here.
+model's quality verdict. After the preview, **Save as endpoint…** then
+**Save unverified endpoint** adds an always-on endpoint for that pinned base
+and adapter. Historical training receipts without a pinned base identity cannot
+be previewed or saved. A later update of the base model does not retarget this
+endpoint.
 
 ## Serve models to other apps
 
@@ -200,7 +202,7 @@ Saved endpoints in **Served models** keep chosen models serving on stable ports.
 - The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
-The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
+The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item installs one `RunAtLoad` agent per enabled endpoint, `ai.cavi.mlxworkbench.endpoint.<slot id>`, and each runs `mlx-agent serve start` once at login. The preview lists every command before confirmation. Each captured command preserves that endpoint's local path, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent that endpoint's login startup; a change to any included endpoint requires a fresh preview. Remove and reinstall the login item after changing endpoint settings. Installing is refused when the enabled fleet will not fit, until you choose **Install anyway**, the same override as enabling an endpoint. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority. An older single-agent plist, `ai.cavi.mlxworkbench.endpoint`, is removed when you install or remove the login item.
 
 ### Inference settings for saved endpoints
 
@@ -211,7 +213,7 @@ endpoints retain runtime defaults until changed. Changing the model clears its
 inference settings; Strata decoding stays in its verified profile.
 
 The settings apply to eager servers, load-on-request workers, automatic restarts
-and the first endpoint's generated login command. Reinstall an existing login
+and each enabled endpoint's generated login command. Reinstall an existing login
 item after changing them. The endpoint row summarizes its saved choices; live
 adapter details distinguish configured options from native fallback. Adoption
 requires matching accelerator metadata and a confirmed receipt or fresh preview.
