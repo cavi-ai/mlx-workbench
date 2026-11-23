@@ -171,7 +171,8 @@ struct ServeView: View {
                             Button("Monitor") { onRouteSelection(.monitor) }
                             if !inventory.snapshot.sourceErrors.isEmpty {
                                 Button { showsSourceIssues = true } label: { Image(systemName: "info.circle") }
-                                    .accessibilityLabel("Connection issues")
+                                    .accessibilityLabel(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
+                                    .help(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
                             }
                         }.padding(WorkbenchSpacing.md)
                         Divider()
@@ -1406,9 +1407,16 @@ struct ServeView: View {
     }
 
     /// Rechecks the reviewed change against current state, then performs it.
-    private func apply(_ pending: EndpointChangeReview) async {
+    private func apply(_ pending: EndpointChangeReview, overrideMemory: Bool = false) async {
         action = nil; actionError = nil
-        actionError = await changes.confirm(pending, holdForOverride: fleetHold.hold)
+        switch await changes.confirm(pending, overrideMemory: overrideMemory) {
+        case .completed:
+            break
+        case .memoryHold(let summary):
+            fleetHold.hold(summary) { Task { await apply(pending, overrideMemory: true) } }
+        case .refused(let message):
+            actionError = message
+        }
     }
 
     private func prepareAuthentication(_ slot: EndpointSlot, required: Bool, frontDoorKey: Bool = false) {
@@ -1616,11 +1624,21 @@ struct EndpointChanges {
         case noModel
     }
 
+    enum Confirmation: Equatable {
+        case completed
+        case memoryHold(String)
+        case refused(String)
+    }
+
     private var models: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
 
     /// Workbench's servers plus the local servers other tools run, whose ports a new endpoint must not take.
     private var occupiedServers: [ServerInfo] {
         appHost.modelWorkflow.servers + appHost.servingInventory.snapshot.services.compactMap(\.server)
+    }
+
+    func nextAvailablePort() -> Int? {
+        ServedModelsSelection.nextPort(slots: appHost.endpoint.fleet.slots, servers: occupiedServers)
     }
 
     func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: UseCase?, loadOnRequest: Bool,
@@ -1673,47 +1691,58 @@ struct EndpointChanges {
         return nil
     }
 
-    /// Performs the reviewed change when current state still matches it; returns why it did not.
-    /// A change that would exceed fleet memory goes to `holdForOverride` instead of running.
-    func confirm(_ review: EndpointChangeReview, holdForOverride: (String, @escaping () -> Void) -> Void) async -> String? {
+    /// Rechecks the review before changing the fleet, including after a memory override.
+    func confirm(_ review: EndpointChangeReview, overrideMemory: Bool = false) async -> Confirmation {
         let endpoint = appHost.endpoint
         if let slot = review.slot {
-            guard endpoint.fleet.slots.contains(slot) else { return "Endpoint changed; review it again." }
+            guard endpoint.fleet.slots.contains(slot) else { return .refused("Endpoint changed; review it again.") }
             if review.remove {
-                if let refusal = stopRefusal(slot) { return refusal }
+                if let refusal = stopRefusal(slot) { return .refused(refusal) }
                 await endpoint.removeSlot(id: slot.id)
-                return nil
+                return endpoint.lastError.map(Confirmation.refused) ?? .completed
             }
-            guard review.memoryWarning == memoryWarning(for: slot.modelPath) else { return "Memory conditions changed; review the endpoint again." }
-            guard review.unverified == !appHost.isModelVerified(slot.modelPath) else { return "Verification changed; review the endpoint again." }
-            await run(adding: slot.modelPath, holdForOverride: holdForOverride) { await endpoint.setSlotEnabled(id: slot.id, true) }
-        } else if let model = review.model {
-            guard ServedModelsSelection.canConfirm(model: model, models: models),
-                  ServedModelsSelection.candidates(models: models, slots: endpoint.fleet.slots, query: "").contains(where: { $0.item.path == model.item.path }),
-                  ServeView.isUsablePort(review.port, slots: endpoint.fleet.slots, servers: occupiedServers),
-                  review.memoryWarning == memoryWarning(for: model.item.path),
-                  review.unverified == !appHost.isModelVerified(model.item.path) else {
-                return "Model, port or memory conditions changed; review the endpoint again."
+            guard review.memoryWarning == memoryWarning(for: slot.modelPath) else { return .refused("Memory conditions changed; review the endpoint again.") }
+            guard review.unverified == !appHost.isModelVerified(slot.modelPath) else { return .refused("Verification changed; review the endpoint again.") }
+            if !overrideMemory, let hold = memoryHold(for: slot.modelPath) { return .memoryHold(hold) }
+            guard await endpoint.setSlotEnabled(id: slot.id, true) else {
+                return .refused(endpoint.lastError ?? "The endpoint could not be enabled.")
             }
-            await run(adding: model.item.path, holdForOverride: holdForOverride) {
-                await endpoint.addSlot(modelPath: model.item.path, port: review.port, role: review.role, allowUnverified: review.unverified,
-                    loadOnRequest: review.loadOnRequest,
-                    memoryPolicy: review.loadOnRequest ? EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: review.keepLoaded,
-                        minimumHeadroomGB: 2, releaseAfterRequest: !review.keepLoaded) : nil,
-                    requireAPIKey: review.requireKey, inference: review.inference, profile: review.profile, splashPreset: review.splashPreset)
-            }
+            return startResult(slotID: slot.id)
         }
-        return nil
+        guard let model = review.model, ServedModelsSelection.canConfirm(model: model, models: models),
+              ServedModelsSelection.candidates(models: models, slots: endpoint.fleet.slots, query: "").contains(where: { $0.item.path == model.item.path }),
+              ServeView.isUsablePort(review.port, slots: endpoint.fleet.slots, servers: occupiedServers),
+              review.memoryWarning == memoryWarning(for: model.item.path),
+              review.unverified == !appHost.isModelVerified(model.item.path) else {
+            return .refused("Model, port or memory conditions changed; review the endpoint again.")
+        }
+        if !overrideMemory, let hold = memoryHold(for: model.item.path) { return .memoryHold(hold) }
+        let slotID = await endpoint.addSlot(modelPath: model.item.path, port: review.port, role: review.role, allowUnverified: review.unverified,
+            loadOnRequest: review.loadOnRequest,
+            memoryPolicy: review.loadOnRequest ? EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: review.keepLoaded,
+                minimumHeadroomGB: 2, releaseAfterRequest: !review.keepLoaded) : nil,
+            requireAPIKey: review.requireKey, inference: review.inference, profile: review.profile, splashPreset: review.splashPreset)
+        guard let slotID else { return .refused(endpoint.lastError ?? "The endpoint could not be saved.") }
+        return startResult(slotID: slotID)
     }
 
-    /// Adding a model that tips the fleet past wont-fit needs the explicit override; tight is warned in place.
-    private func run(adding path: String, holdForOverride: (String, @escaping () -> Void) -> Void,
-                     _ work: @escaping @MainActor () async -> Void) async {
-        if let verdict = appHost.runFleetVerdict(adding: path), case .wontFit = verdict {
-            holdForOverride(URL(fileURLWithPath: path).lastPathComponent + ": " + verdict.summary) { _ = Task { await work() } }
-            return
+    private func memoryHold(for path: String) -> String? {
+        guard let verdict = appHost.runFleetVerdict(adding: path), case .wontFit = verdict else { return nil }
+        return URL(fileURLWithPath: path).lastPathComponent + ": " + verdict.summary
+    }
+
+    private func startResult(slotID: UUID) -> Confirmation {
+        let endpoint = appHost.endpoint
+        switch endpoint.slotStates[slotID] {
+        case .degraded(let reason):
+            return .refused(reason)
+        case .modelMismatch(let served, let port):
+            return .refused(EndpointState.modelMismatch(servedModel: served, port: port).summary)
+        case .running, .waitingForServer:
+            return .completed
+        default:
+            return .refused(endpoint.lastError ?? "The endpoint did not start.")
         }
-        await work()
     }
 }
 

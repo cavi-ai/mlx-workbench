@@ -496,7 +496,7 @@ final class SetupAssistantUITests: XCTestCase {
         print("Library inspector bounds: window=\(window.frame), screen=\(screen)")
         XCTAssertGreaterThanOrEqual(window.frame.minX, screen.minX, file: file, line: line)
         XCTAssertLessThanOrEqual(window.frame.maxX, screen.maxX, file: file, line: line)
-        for name in ["Library", "Prepare", "Run"] {
+        for name in ["Library", "Convert", "Run"] {
             let button = app.buttons[name].firstMatch
             XCTAssertTrue(button.exists, name, file: file, line: line)
             XCTAssertTrue(window.frame.contains(button.frame), "\(name) lies outside the window: \(button.frame)", file: file, line: line)

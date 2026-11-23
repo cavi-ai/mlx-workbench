@@ -27,21 +27,21 @@ screen's title.
 
 ## Screens
 
-The sidebar groups seventeen screens. **Models** rows open the Library table, filtered to all models, one kind of model or **Needs converting**.
+The sidebar groups seventeen screens. **Models** rows open the Library table, filtered to all models, one kind of model or **To convert**.
 
 | Group | Screen | Purpose |
 |---|---|---|
 | Models | **Library** | One row per local model with size, fit and state; search or paste a Hugging Face link; an inspector led by Chat, Serve and Compare |
 | Sources | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
 | | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
-| Attention | **Reclaim** | Disk by model, suggested removals, duplicate files, quarantine, Trash, source cleanup and restore |
+| Attention | **Disk space** | Disk by model, suggested removals, duplicate files, quarantine, Trash, source cleanup and restore |
 | Workspaces | **Use** | Persistent conversations, selected model servers and typed task results |
 | | **Serving** | Model APIs, authentication, inference settings, memory, media reuse and client connections |
 | | **Monitor** | Live serving status, reported token usage and response throughput |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
-| | **Prepare** | Preview and confirm conversions; follow verification |
+| | **Convert** | Preview and confirm conversions; follow verification |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
-| | **Studies** | Controlled experiments, generation jobs and blind review |
+| | **Experiments** | Controlled experiments, generation jobs and blind review |
 | | **Terminal** | OpenCode or a shell in a chosen folder, run through your login shell |
 | System | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
 | | **Activity** | Conversion, server, experiment and training jobs on one timeline |

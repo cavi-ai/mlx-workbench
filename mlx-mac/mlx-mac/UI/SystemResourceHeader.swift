@@ -232,7 +232,7 @@ enum ResourceHeaderPresentation {
     static func memoryText(availableBytes: Int64, tally: ServingTally?, compact: Bool) -> String {
         let available = "~\(gigabytes(availableBytes)) GB available"
         guard let tally else { return available }
-        let attention = tally.attention > 0 ? "\(tally.attention) need\(tally.attention == 1 ? "s" : "") attention" : nil
+        let attention = Self.attentionPhrase(tally.attention)
         if compact { return attention ?? available }
         let parts = [attention,
                      tally.loaded > 0 ? "\(tally.loaded) loaded" : nil,
@@ -247,7 +247,7 @@ enum ResourceHeaderPresentation {
     /// Models that need attention ride in a badge; the rest names serving counts and headroom.
     static func lines(availableBytes: Int64, tally: ServingTally?) -> [ResourceHeaderLine] {
         let attention = tally?.attention ?? 0
-        let badge = attention > 0 ? "\(attention) need\(attention == 1 ? "s" : "") attention" : nil
+        let badge = Self.attentionPhrase(attention)
         let free = "~\(gigabytes(availableBytes)) GB free"
         let counts = [(tally?.loaded ?? 0) > 0 ? "\(tally?.loaded ?? 0) loaded" : nil,
                       (tally?.loading ?? 0) > 0 ? "\(tally?.loading ?? 0) loading" : nil,
@@ -257,7 +257,13 @@ enum ResourceHeaderPresentation {
         let medium = ResourceHeaderLine(badge: badge, text: free)
         return [counts.isEmpty ? medium : ResourceHeaderLine(badge: badge, text: (counts + [free]).joined(separator: " · ")),
                 medium,
-                ResourceHeaderLine(badge: attention > 0 ? "\(attention)" : nil, text: "\(gigabytes(availableBytes)) GB")]
+                ResourceHeaderLine(badge: nil, text: attention > 0 ? "Load failed" : "\(gigabytes(availableBytes)) GB")]
+    }
+
+    /// Wide toolbar copy names the failure. The narrow rung keeps a short sentence that still fits.
+    static func attentionPhrase(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1 ? "A model failed to load" : "\(count) models failed to load"
     }
 
     static func accessibilityLabel(availableBytes: Int64?, tally: ServingTally?, attention: EndpointState?) -> String {

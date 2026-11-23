@@ -1225,6 +1225,7 @@ enum ServingWorld {
     /// `extraModels` adds Library models by name and size in bytes.
     static func host(populated: Bool = true, serversError: Bool = false, accelerated: Bool = false,
                      verification: VerificationCoordinator? = nil, extraModels: [(String, Int64)] = [],
+                     discoveredServers: [ServerInfo] = [], initialSlots: [EndpointSlot]? = nil,
                      onEngineFetch: @escaping @Sendable () -> Void = {}) async throws -> AppHost {
         let root = WorkbenchStatePaths.hostedTestRoot
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
@@ -1238,7 +1239,7 @@ enum ServingWorld {
         let world = FakeServeWorld()
         if populated { world.preload(repo: slot.modelPath, port: slot.port) }
         let fleet = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("serving-fleet-\(UUID().uuidString).json"))
-        try fleet.replaceAll([EndpointFleetConfig(slots: populated ? [slot] : [], installedAtLogin: false)])
+        try fleet.replaceAll([EndpointFleetConfig(slots: initialSlots ?? (populated ? [slot] : []), installedAtLogin: false)])
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore(fileURL: root.appendingPathComponent("serving-endpoint-\(UUID().uuidString).json")), fleetStore: fleet)
         let workflowServers = populated ? [endpointServer, bare] : []
@@ -1250,7 +1251,7 @@ enum ServingWorld {
         let inventory = ServingInventoryCoordinator(managedReceipts: managed,
             fetchEngine: {
                 onEngineFetch()
-                return ServingEngineSnapshot(servers: populated ? [endpointServer, bare, third] : [],
+                return ServingEngineSnapshot(servers: (populated ? [endpointServer, bare, third] : []) + discoveredServers,
                     errors: serversError ? ["engine:\(other)": "Receipts are unreadable."] : [:])
             },
             readMemory: { _ in nil })
@@ -1464,6 +1465,68 @@ extension RunRemodelTests {
 
     // MARK: Endpoint changes
 
+    func testChatServerReviewSkipsStandaloneServers() async throws {
+        let port = EndpointConfig.defaultPort
+        let standalone = ServingWorld.server("Standalone", port: port, pid: 104, managedByWorkbench: false)
+        let app = try await ServingWorld.host(populated: false, discoveredServers: [standalone])
+        let model = try libraryModel(app, ServingWorld.selectedModel)
+        guard case .review(let review) = UseChatServerSetup.review(model: model, appHost: app) else {
+            return XCTFail("The next free port should be offered")
+        }
+        XCTAssertEqual(review.port, port + 1)
+    }
+
+    func testChatServerReviewStartsTheSavedSlot() async throws {
+        let app = try await ServingWorld.host()
+        let original = try XCTUnwrap(app.endpoint.fleet.slots.first)
+        await app.endpoint.setSlotEnabled(id: original.id, false)
+        let model = try libraryModel(app, original.modelPath)
+        guard case .review(let review) = UseChatServerSetup.review(model: model, appHost: app) else {
+            return XCTFail("The stopped slot should be offered")
+        }
+        XCTAssertEqual(review.slot?.id, original.id)
+        XCTAssertEqual(review.port, original.port)
+    }
+
+    func testChatServerConfirmationReportsFullFleet() async throws {
+        let slots = (0..<EndpointFleetConfig.maxSlots).map { index in
+            EndpointSlot(enabled: false, port: 9100 + index, modelPath: "/models/Existing-\(index)")
+        }
+        let app = try await ServingWorld.host(populated: false, initialSlots: slots)
+        let review = try addReview(app, model: ServingWorld.selectedModel, port: "9200")
+        let result = await EndpointChanges(appHost: app).confirm(review)
+        XCTAssertEqual(result, .refused(EndpointFleetValidation.tooManySlots(slots.count + 1).localizedDescription))
+        XCTAssertEqual(try persistedSlots(app), slots)
+    }
+
+    func testChatServerConfirmationReportsLaunchFailureAfterSaving() async throws {
+        let app = try await ServingWorld.host(populated: false)
+        let review = try addReview(app, model: ServingWorld.selectedModel, port: "9200")
+        let result = await EndpointChanges(appHost: app).confirm(review)
+        guard case .refused(let message) = result else { return XCTFail("Expected startup to fail") }
+        XCTAssertTrue(message.contains("JIT serving is unavailable in this runtime"), message)
+        let saved = try XCTUnwrap(persistedSlots(app).first)
+        XCTAssertEqual(saved.port, 9200)
+        XCTAssertEqual(app.endpoint.slotStates[saved.id], .degraded(reason: message))
+    }
+
+    func testChatServerMemoryOverrideReturnsTheStartupResult() async throws {
+        let path = "/models/Whale"
+        let app = try await ServingWorld.host(populated: false, extraModels: [("Whale", 900_000_000_000)])
+        await app.resources.refreshMemory()
+        let changes = EndpointChanges(appHost: app)
+        let model = try libraryModel(app, path)
+        guard case .review(let review) = changes.reviewAdd(model: model, portText: "9200", suggestedPort: 9200,
+            role: nil, loadOnRequest: false, keepLoaded: false, requireKey: false) else {
+            return XCTFail("Expected an endpoint review")
+        }
+        guard case .memoryHold = await changes.confirm(review) else { return XCTFail("Expected a memory override") }
+        XCTAssertTrue(try persistedSlots(app).isEmpty)
+        let result = await changes.confirm(review, overrideMemory: true)
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), [path])
+    }
+
     private func persistedSlots(_ app: AppHost) throws -> [EndpointSlot] {
         try JSONStore<EndpointFleetConfig>(fileURL: app.endpoint.fleetFileURL).load().first?.slots ?? []
     }
@@ -1516,8 +1579,8 @@ extension RunRemodelTests {
         let review = try addReview(app, model: ServingWorld.selectedModel, port: "9100")
         XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"], "Reviewing saves nothing")
         try replaceLibrary(app) { $0.filter { $0.item.path != ServingWorld.selectedModel } }
-        let error = await EndpointChanges(appHost: app).confirm(review) { _, _ in }
-        XCTAssertEqual(error, "Model, port or memory conditions changed; review the endpoint again.")
+        let result = await EndpointChanges(appHost: app).confirm(review)
+        XCTAssertEqual(result, .refused("Model, port or memory conditions changed; review the endpoint again."))
         XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
     }
 
@@ -1527,8 +1590,8 @@ extension RunRemodelTests {
         await app.comparison.waitForHistory()
         let review = try addReview(app, model: "/models/Whale", port: "9100")
         await app.resources.refreshMemory()
-        let error = await EndpointChanges(appHost: app).confirm(review) { _, _ in }
-        XCTAssertEqual(error, "Model, port or memory conditions changed; review the endpoint again.")
+        let result = await EndpointChanges(appHost: app).confirm(review)
+        XCTAssertEqual(result, .refused("Model, port or memory conditions changed; review the endpoint again."))
         XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
     }
 
@@ -1560,8 +1623,8 @@ extension RunRemodelTests {
         await settle()
         XCTAssertEqual(window.sheets.count, 1, "The removal waits on its confirmation sheet")
         XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
-        let error = await changes.confirm(review) { _, _ in }
-        XCTAssertNil(error)
+        let result = await changes.confirm(review)
+        XCTAssertEqual(result, .completed)
         XCTAssertEqual(try persistedSlots(app), [])
     }
 
@@ -1579,14 +1642,14 @@ extension RunRemodelTests {
         let stale = changes.review(slot: stopped, remove: false)
         XCTAssertFalse(stale.unverified)
         try replaceLibrary(app) { $0.map { $0.item.path == "/models/Alder" ? ServingWorld.model("Alder", path: "/models/Alder", signature: "weights-Alder-changed") : $0 } }
-        let refused = await changes.confirm(stale) { _, _ in }
-        XCTAssertEqual(refused, "Verification changed; review the endpoint again.")
+        let refused = await changes.confirm(stale)
+        XCTAssertEqual(refused, .refused("Verification changed; review the endpoint again."))
         XCTAssertEqual(try persistedSlots(app).first?.enabled, false)
 
         let current = changes.review(slot: stopped, remove: false)
         XCTAssertTrue(current.unverified)
-        let started = await changes.confirm(current) { _, _ in }
-        XCTAssertNil(started)
+        let started = await changes.confirm(current)
+        XCTAssertEqual(started, .completed)
         XCTAssertEqual(try persistedSlots(app).first?.enabled, true)
     }
 
@@ -1604,8 +1667,8 @@ extension RunRemodelTests {
         let message = "Finish the operation using this model before stopping or removing its endpoint."
         let stopped = await changes.stop(alder)
         XCTAssertEqual(stopped, message)
-        let removed = await changes.confirm(changes.review(slot: alder, remove: true)) { _, _ in }
-        XCTAssertEqual(removed, message)
+        let removed = await changes.confirm(changes.review(slot: alder, remove: true))
+        XCTAssertEqual(removed, .refused(message))
         XCTAssertEqual(try persistedSlots(app).map(\.enabled), [true])
 
         await gate.open()

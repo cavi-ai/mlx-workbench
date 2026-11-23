@@ -75,9 +75,13 @@ enum ServedModelsSelection {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return models.filter { model in
             model.readiness == .ready && ModelTaskPresentation.supportsEndpoint(model)
-                && !slots.contains { $0.modelPath == model.item.path || model.outputPaths.contains($0.modelPath) }
+                && !slots.contains { matches($0, model: model) }
                 && (query.isEmpty || model.displayName.localizedCaseInsensitiveContains(query))
         }.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    static func matches(_ slot: EndpointSlot, model: LibraryModel) -> Bool {
+        slot.modelPath == model.item.path || model.outputPaths.contains(slot.modelPath)
     }
 
     static func canConfirm(model: LibraryModel?, models: [LibraryModel]) -> Bool {

@@ -53,7 +53,7 @@ struct ActivityStudySection: View {
                     HStack {
                         Text(historical ? "Earlier study jobs" : "Study jobs").font(WorkbenchTypography.cardTitle)
                         Spacer()
-                        Button("Open Studies", action: onOpen).buttonStyle(.bordered)
+                        Button("Open Experiments", action: onOpen).buttonStyle(.bordered)
                     }
                     if let error {
                         ActivityStatusRecovery(error: error, context: "study", isRefreshing: isRefreshing,

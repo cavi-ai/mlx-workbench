@@ -95,7 +95,7 @@ struct PrepareWorkflowPresentation: Equatable {
     var destinationNote: String {
         isRepoSource
             ? "The destination is the configured output directory, which the Library scans."
-            : "The destination is the coordinator-approved same-directory path. It cannot be overridden in Prepare."
+            : "The destination is the coordinator-approved same-directory path. It cannot be overridden in Convert."
     }
 
     var primaryAction: PreparePrimaryAction {

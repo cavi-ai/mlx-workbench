@@ -217,9 +217,10 @@ final class MenuBarTests: XCTestCase {
     func testToolbarLinesPutAttentionInABadgeAndShortenInOrder() {
         let twelve: Int64 = 12_000_000_000
         let lines = ResourceHeaderPresentation.lines(availableBytes: twelve, tally: ServingTally(attention: 1, loaded: 2, onRequest: 2))
-        XCTAssertEqual(lines, [ResourceHeaderLine(badge: "1 needs attention", text: "2 loaded · 2 on request · ~12.0 GB free"),
-                               ResourceHeaderLine(badge: "1 needs attention", text: "~12.0 GB free"),
-                               ResourceHeaderLine(badge: "1", text: "12.0 GB")])
+        XCTAssertEqual(lines, [ResourceHeaderLine(badge: "A model failed to load", text: "2 loaded · 2 on request · ~12.0 GB free"),
+                               ResourceHeaderLine(badge: "A model failed to load", text: "~12.0 GB free"),
+                               ResourceHeaderLine(badge: nil, text: "Load failed")])
+        XCTAssertEqual(ResourceHeaderPresentation.attentionPhrase(2), "2 models failed to load")
         XCTAssertEqual(ResourceHeaderPresentation.lines(availableBytes: twelve, tally: nil).map(\.badge), [nil, nil, nil])
     }
 

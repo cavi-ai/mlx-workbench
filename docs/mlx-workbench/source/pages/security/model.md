@@ -17,7 +17,7 @@ Serving endpoints bind to loopback, such as `127.0.0.1`. Load-on-request gateway
 
 - State stores, client config writes and the config file are replaced atomically. Stores refuse a symbolic link in place of their file.
 - Client wiring writes only to each client's own config file, in its standard folder or one the user chose, at the real location its symbolic links reach when setup is reviewed. It backs each file up, rechecks it for changes before writing, and refuses a symbolic link that appears at the reviewed config, backup or restore path.
-- Reclaim previews recheck paths, contents, file identity and protection rules before every move. Protected models, shared cache references, changed items and symbolic links refuse destructive actions. Moves go to quarantine or the macOS Trash, never to permanent deletion.
+- Disk space previews recheck paths, contents, file identity and protection rules before every move. Protected models, shared cache references, changed items and symbolic links refuse destructive actions. Moves go to quarantine or the macOS Trash, never to permanent deletion.
 - Comparison outputs are stored under fenced folders named by run; artifact names containing `/`, `..` or a leading dot are refused, and links are never followed. Your original input files are never changed or removed.
 
 ## Experiments

@@ -649,7 +649,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
         resizeWindow(width: 1050, height: 720)
-        let destinations = ["doctor": "Health", "models": "Library", "training-studio": "Training", "settings": "Settings", "studies": "Studies"]
+        let destinations = ["doctor": "Health", "models": "Library", "training-studio": "Training", "settings": "Settings", "studies": "Experiments"]
         if let destination = destinations[route] { select(destination) }
     }
 
@@ -762,19 +762,19 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private var routes: [String] {
-        ["Overview", "Library", "Prepare", "Compare", "Run", "Activity", "Reclaim", "Clients",
-         "Health", "Discover", "Studies", "Training", "Settings"]
+        ["Overview", "Library", "Convert", "Compare", "Run", "Activity", "Disk space", "Clients",
+         "Health", "Discover", "Experiments", "Training", "Settings"]
     }
 
     private func assertPageContent(_ route: String) {
-        let titles = ["Library": "No models found", "Prepare": "Choose a model to prepare",
-                      "Run": "Serve a model", "Activity": "Servers", "Reclaim": "Quarantine",
+        let titles = ["Library": "No models found", "Convert": "Choose a model to prepare",
+                      "Run": "Serve a model", "Activity": "Servers", "Disk space": "Quarantine",
                       "Clients": "Client wiring", "Health": "Model inventory findings",
                       "Discover": "Discovery", "Training": "LoRA fine-tune"]
         let element: XCUIElement
         if let title = titles[route] { element = app.staticTexts[title].firstMatch }
         else if route == "Settings" { element = app.staticTexts["Engine status"].firstMatch }
-        else if route == "Studies" { element = app.buttons["New experiment…"] }
+        else if route == "Experiments" { element = app.buttons["New experiment…"] }
         else if route == "Overview" { element = app.buttons["Open Health"] }
         else { element = app.buttons["New set…"] }
         XCTAssertTrue(element.waitForExistence(timeout: 20), "Missing \(route) content")
@@ -2244,10 +2244,10 @@ final class WorkbenchReviewUITests: XCTestCase {
             expectContent(recommendation, "still receive verification prompts")
             capture("Discover-recommendation-guidance-\(appearance)")
             resizeWindow(width: 1050, height: 900)
-            select("Studies")
+            select("Experiments")
             let create = app.buttons["New experiment…"]
             XCTAssertTrue(create.waitForExistence(timeout: 15))
-            XCTAssertEqual(app.buttons["Studies"].value as? String, "Selected")
+            XCTAssertEqual(app.buttons["Experiments"].value as? String, "Selected")
             resizeWindow(width: 740, height: 612)
             XCTAssertTrue(create.isHittable)
             create.click()
@@ -2565,7 +2565,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             try Data().write(to: root.appendingPathComponent("study-review-enabled"))
             let clips = ["review-left.mp4", "review-right.mp4"].map { root.appendingPathComponent($0) }
             for clip in clips { try Data("Invalid video".utf8).write(to: clip) }
-            select("Library"); select("Studies")
+            select("Library"); select("Experiments")
             resizeWindow(width: 1050, height: 900)
             let review = app.buttons["Blind review…"]
             XCTAssertTrue(review.waitForExistence(timeout: 15))
@@ -5095,7 +5095,7 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     func testReclaimSuggestionActionsAlignAtWideAndNarrowWidths() throws {
         launch(appearance: "Dark", route: "duplicates", isolatedHome: true)
-        select("Reclaim")
+        select("Disk space")
         app.radioButtons["Quarantine & cleanup"].click()
         let analyze = app.buttons["Analyze"]
         let review = app.buttons["Review model folder…"]

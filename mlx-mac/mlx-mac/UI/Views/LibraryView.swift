@@ -1074,7 +1074,7 @@ struct LibraryView: View {
         } else if let family = selectedFamily {
             ContentUnavailableView(family.name, systemImage: "square.stack.3d.up", description: Text("\(family.detail) · \(LibraryTablePresentation.byteCount(family.bytes)). Select a variant to inspect it."))
         } else {
-            ContentUnavailableView("No model selected", systemImage: "square.and.pencil", description: Text("Choose a row to inspect its evidence and route it to Prepare, Compare, or Run."))
+            ContentUnavailableView("No model selected", systemImage: "square.and.pencil", description: Text("Choose a row to inspect its evidence and route it to Convert, Compare, or Run."))
         }
     }
 

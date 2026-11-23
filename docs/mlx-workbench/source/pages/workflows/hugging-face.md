@@ -3,21 +3,21 @@
 The **Add from Hugging Face** window resolves a Hugging Face Hub repository before anything downloads. Open it three ways:
 
 - ⇧⌘V anywhere with a model link on the clipboard
-- ⌘V on the Library table or the Prepare view
-- Paste into the field in Prepare, or choose **Add from Hugging Face…** in Discover or Adopt
+- ⌘V on the Library table or the Convert view
+- Paste into the field in Convert, or choose **Add from Hugging Face…** in Discover or Adopt
 
 ## Verdicts
 
 | Verdict | What happens |
 |---|---|
-| Convertible | Download, then the usual Prepare preview and confirmation |
+| Convertible | Download, then the usual Convert preview and confirmation |
 | Convertible after install | One click installs the backend (mlx-vlm or mlx-audio) into its own environment first |
 | Already MLX | Install its declared backend if needed, then download into the managed model folder |
-| GGUF repository | Pick a quant file; it downloads into the managed model folder and opens in Prepare |
+| GGUF repository | Pick a quant file; it downloads into the managed model folder and opens in Convert |
 | No MLX converter | Shows which parts already exist in MLX and which are missing; a locally served model can draft a porting plan |
 | Blocked or Hub unreachable | Gated, private or offline; nothing is downloaded |
 
-The window shows the verdict once, with key figures: estimated output size from the repository's headers, fit on this Mac for that output or for the selected GGUF file, and an **In Library** mark when a matching model is already on disk. Model type and use cases come from the engine's task labels. When intake allows only some quantization widths, Prepare offers only those.
+The window shows the verdict once, with key figures: estimated output size from the repository's headers, fit on this Mac for that output or for the selected GGUF file, and an **In Library** mark when a matching model is already on disk. Model type and use cases come from the engine's task labels. When intake allows only some quantization widths, Convert offers only those.
 
 Before fetching, intake checks your current ready models and matching conversion history, so a model you already have is not downloaded again. When the Hugging Face cache already holds every file the download would fetch, the verdict says it is already downloaded and the download size reads **Already cached**.
 

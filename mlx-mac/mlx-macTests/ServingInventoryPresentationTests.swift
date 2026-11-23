@@ -112,8 +112,10 @@ final class ServingInventoryPresentationTests: XCTestCase {
         XCTAssertEqual(tally.attention + tally.loaded + tally.loading + tally.onRequest,
                        rows.filter(ServingWorkspacePresentation.isRunning).count, "the toolbar counts what Monitor lists")
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: false),
-                       "1 needs attention · 1 loaded · 1 ready on request · ~12.0 GB available")
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: true), "1 needs attention")
+                       "A model failed to load · 1 loaded · 1 ready on request · ~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: true), "A model failed to load")
+        XCTAssertEqual(ServingWorkspacePresentation.sourceIssueTitle(1), "1 source did not answer the latest refresh.")
+        XCTAssertEqual(ServingWorkspacePresentation.sourceIssueTitle(18), "18 sources did not answer the latest refresh.")
 
         let attention = try XCTUnwrap(rows.first { ServingWorkspacePresentation.server($0)?.port == 8766 })
         XCTAssertEqual(ServingWorkspacePresentation.status(attention), "Needs attention")

@@ -497,7 +497,7 @@ enum HealthDoctor {
     }
 
     static func prunableText(_ count: Int) -> String {
-        "\(ReclaimFormat.count(count, "incomplete download")) can be removed in Reclaim"
+        "\(ReclaimFormat.count(count, "incomplete download")) can be removed in Disk space"
     }
 
     /// What a clean run covered; empty when the report carried no summary.

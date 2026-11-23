@@ -15,6 +15,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 - Serving: the login item starts every enabled endpoint at login, one `RunAtLoad` agent each, and refuses a won't-fit fleet until **Install anyway**.
 - Training: a reviewed adapter can be saved as an unverified MLX-LM endpoint without inheriting the base model's verdict.
 ### Fixed
+- Use: the message field is a canvas field with a hairline, and the token limit stays in **Request settings**. **Start server…** reviews a loopback server in the chat; **More settings…** opens Serving. The toolbar says a model failed to load. Sidebar labels are **To convert**, **Disk space**, **Convert** and **Experiments**. Serving names sources that missed the latest refresh.
 - Library: **Classify** sends choice criteria as labels with descriptions, which Kev models require.
 - Library: the inspector fits its 320 pt minimum column without clipping; a task model's panel sits under its actions, music settings wrap, and the empty-caption hint is muted until typing starts.
 - Terminal: **Launch OpenCode** checks OpenCode's merged global config for a Workbench provider served by a running chat server; otherwise it shows **OpenCode has no Workbench models.** with **Set up OpenCode** (or **Open Run** when nothing is serving) and **Launch anyway**. OpenCode wiring keeps the models already listed for the same port.

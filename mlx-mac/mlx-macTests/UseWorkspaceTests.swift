@@ -329,6 +329,31 @@ final class UseWorkspaceTests: XCTestCase {
         XCTAssertNil(index.model(for: missing.modelPath))
     }
 
+    @MainActor
+    func testEndpointSelectionRejectsADifferentSessionForTheSameModel() async throws {
+        let fixture = Fixture(); defer { fixture.remove() }
+        let coordinator = fixture.coordinator(Recorder(store: fixture.store))
+        let path = "/Models/chat"
+        try await coordinator.create(modelPath: path, modelName: "Local chat", mode: .chat)
+        let original = try XCTUnwrap(coordinator.selected?.id)
+        try await coordinator.create(modelPath: path, modelName: "Local chat", mode: .chat)
+        let other = try XCTUnwrap(coordinator.selected?.id)
+
+        do {
+            try await coordinator.setEndpoint(Self.server(), forSessionID: original)
+            XCTFail("A late startup must not set the endpoint in the newly selected chat")
+        } catch UseSessionError.changed {}
+        XCTAssertEqual(coordinator.selected?.id, other)
+        XCTAssertNil(coordinator.selected?.endpoint)
+        let stored = try await fixture.store.record(id: other)
+        XCTAssertNil(stored?.endpoint)
+
+        try await coordinator.select(id: original)
+        try await coordinator.setEndpoint(Self.server(), forSessionID: original)
+        let connected = try await fixture.store.record(id: original)
+        XCTAssertEqual(connected?.endpoint?.port, Self.server().port)
+    }
+
     static func readyChatModel(path: String, storedName: String, displayName: String) -> LibraryModel {
         let item = ModelItem(path: path, name: storedName, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
             architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,

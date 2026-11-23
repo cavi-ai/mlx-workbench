@@ -1,6 +1,6 @@
 # Compare
 
-**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. **Open Studies** opens the separate [controlled studies](training.md#controlled-studies) workspace in the Workspaces sidebar group.
+**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. **Open Experiments** opens the separate [controlled studies](training.md#controlled-studies) workspace in the Workspaces sidebar group.
 
 When the selected mode has no results, setup comes first, followed by compact history and empty-state guidance. Existing results remain above setup when a run is available.
 
@@ -151,17 +151,17 @@ New streamed inline reasoning is separated before recording. Streaming examines 
 
 Shorter clips hold at their end. Missing outputs are excluded and labeled.
 
-## Showdowns from Reclaim
+## Showdowns from Disk space
 
-**Prepare showdown…** in Reclaim selects two to four related variants in Compare.
+**Prepare showdown…** in Disk space selects two to four related variants in Compare.
 The handoff rechecks every selected model's identity and readiness; a changed or
 missing entrant requires a fresh selection. An active comparison or editor keeps
 the request pending until **Use selected showdown models** can apply it.
 
 Choose prompts relevant to the models' intended purposes, run the comparison and
-rate every lane's task quality. Current, finished chat results can support Reclaim's
+rate every lane's task quality. Current, finished chat results can support Disk space's
 task-scoped replacement advice. Different tasks may justify retaining different
-models. Reclaim's task cards keep quality leaders and recorded speed leaders
+models. Disk space's task cards keep quality leaders and recorded speed leaders
 separate, preserve ties and identify variants not included in that run. Every
 entrant must be reviewed before a task verdict; incomplete timing cannot establish
 a speed winner or replacement. **Review saved outputs…** returns to the exact

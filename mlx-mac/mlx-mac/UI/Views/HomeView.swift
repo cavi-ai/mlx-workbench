@@ -15,10 +15,10 @@ struct HomeNextAction: Equatable {
         case .configure: return route == AppRoute.health.rawValue ? "Open Health" : "Open Settings"
         case .scan: return "Open Library"
         case .activity: return "Open Activity"
-        case .prepare: return "Prepare"
+        case .prepare: return "Convert"
         case .run: return "Run"
         case .openModel: return "Open Library"
-        case .library: return route == AppRoute.reclaim.rawValue ? "Open Reclaim" : "Open Library"
+        case .library: return route == AppRoute.reclaim.rawValue ? "Open Disk space" : "Open Library"
         }
     }
 
@@ -92,7 +92,7 @@ struct HomeNextAction: Equatable {
             guard convertRuntimeReady else {
                 return .init(kind: .configure, title: "Repair the Prepare runtime", reason: "\(name) needs conversion, but the conversion runtime is unavailable. Review its setup in Health.", route: AppRoute.health.rawValue)
             }
-            return .init(kind: .prepare(path), title: "Prepare selected model", reason: "\(name) needs MLX conversion. Review its conversion plan in Prepare.", route: AppRoute.prepare.rawValue)
+            return .init(kind: .prepare(path), title: "Prepare selected model", reason: "\(name) needs MLX conversion. Review its conversion plan in Convert.", route: AppRoute.prepare.rawValue)
         case .ready:
             if model.item.backend?.installed == false {
                 return .init(kind: .openModel(path), title: "Repair the selected model's runtime", reason: "\(name) needs its declared backend. Open the model in Library to review runtime repair.", route: AppRoute.library.rawValue)

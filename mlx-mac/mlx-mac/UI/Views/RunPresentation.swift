@@ -73,7 +73,7 @@ struct RunPresentation: Equatable {
     }
 
     /// A ready Library selection can become an unsaved serving target. Its own
-    /// unsettled or failed conversion must still be resolved in Prepare.
+    /// unsettled or failed conversion must still be resolved in Convert.
     var canPrepareSelection: Bool {
         stage == .notEligible && model?.readiness == .ready && isServable && !needsWorkflowReview
             && !serveInFlight && workflow.serveState != .previewing
@@ -117,8 +117,8 @@ struct RunPresentation: Equatable {
         guard stage == .notEligible, !canPrepareSelection else { return nil }
         if needsWorkflowReview {
             return workflow.state.isInFlight
-                ? "This model's conversion or verification is still in progress. Review it in Prepare."
-                : "This model belongs to a failed workflow. Review verification or recovery in Prepare before serving."
+                ? "This model's conversion or verification is still in progress. Review it in Convert."
+                : "This model belongs to a failed workflow. Review verification or recovery in Convert before serving."
         }
         if serveInFlight || workflow.serveState == .previewing { return "Wait for the current serving request to finish." }
         return "This model is not ready to serve. Review its setup in Library."

@@ -38,7 +38,7 @@ The app reads `~/.config/mlx-workbench/config.json`. A missing or unreadable fil
 | `mlx_roots` | Model locations → MLX roots | `[]` | Folders scanned for MLX models, up to 32 |
 | `output_dir` | Storage → Output directory | `~/models/mlx` | Where conversions are written; also scanned as an MLX root |
 | `mlx_agent_path` | Engine → mlx-agent checkout | Discovered | Engine checkout containing `scripts/mlx-agent`, not the script itself |
-| `quarantine_dir` | Storage → Quarantine directory | `~/.local/share/mlx-workbench/quarantine` | Where Reclaim moves quarantined files |
+| `quarantine_dir` | Storage → Quarantine directory | `~/.local/share/mlx-workbench/quarantine` | Where Disk space moves quarantined files |
 | `q_bits` | Conversion defaults → Default bits | `4` | Default output choice for new previews: 2, 3, 4, 5, 6, 8, 16 or 32; actual availability depends on the converter |
 | `signatures` | Conversion defaults → Sign converted outputs | `true` | When off, scans pass `--no-signature` |
 | `verification_enabled` | Advisors → Verify conversions | `true` | Runs the conversion quality gate |

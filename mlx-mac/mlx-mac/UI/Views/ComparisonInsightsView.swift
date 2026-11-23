@@ -25,7 +25,7 @@ struct ModelReplacementChainCard: View {
                 }
                 DisclosureGroup("Review \(ByteCountFormatter.string(fromByteCount: chain.replaced.reduce(0) { $0 + $1.diskBytes }, countStyle: .file)) · evidence and paths") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. Review those uses before quarantining a model folder in Reclaim.")
+                        Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. Review those uses before quarantining a model folder in Disk space.")
                             .font(WorkbenchTypography.secondary)
                         Text(chain.source).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
                         ForEach([chain.keeper] + chain.replaced, id: \.path) { member in
@@ -111,7 +111,7 @@ struct ComparisonInsightsView: View {
                 ForEach(replacements) { item in
                     if let chain = item.replacement { ModelReplacementChainCard(chain: chain) }
                 }
-                Button("Review space in Reclaim") { appHost.analyzeReclaim(); onReclaim() }
+                Button("Review Disk space") { appHost.analyzeReclaim(); onReclaim() }
             }
             DisclosureGroup("Workflow reports and agent evidence") {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {

@@ -90,7 +90,7 @@ final class StandaloneReclaimUITests: XCTestCase {
         application.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
         application.launch()
         XCTAssertTrue(application.windows.firstMatch.waitForExistence(timeout: 30))
-        let reclaim = application.buttons["Reclaim"].firstMatch
+        let reclaim = application.buttons["Disk space"].firstMatch
         XCTAssertTrue(reclaim.waitForExistence(timeout: 20)); reclaim.click()
         let compare = application.buttons["Compare model files"]
         XCTAssertTrue(compare.waitForExistence(timeout: 60))

@@ -44,7 +44,7 @@ To build from source instead, run `make start` in the checkout after `make insta
 
 ## First model
 
-1. The app opens on **Library**: one row per GGUF or MLX model on disk with its size, whether it fits in memory now and its state. The sidebar filters by kind of model or to **Needs converting**; **Model sources** shows local providers and registered cache folders.
+1. The app opens on **Library**: one row per GGUF or MLX model on disk with its size, whether it fits in memory now and its state. The sidebar filters by kind of model or to **To convert**; **Model sources** shows local providers and registered cache folders.
 2. Paste a Hugging Face link into the Library search field and press **Add**, or anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
 3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
 4. Select the model and choose **Chat** to try it, or **Serve** to preview and start a loopback server. **Monitor** shows live status, token usage and response throughput.
@@ -79,8 +79,8 @@ Strata and Splash are optional installations. Splash requires an M3 or newer Mac
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Models | Library, Model sources, Discover, Reclaim | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
-| Workspaces | Use, Serving, Monitor, Compare, Prepare, Training, Studies, Terminal | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token, throughput and memory-owner monitoring, measured comparisons in ten modes, previewed conversion from FP32 to 2-bit with quality gate canaries, text LoRA training with evaluation, controlled studies, OpenCode or a shell in a chosen folder |
+| Models | Library, Model sources, Discover, Disk space | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
+| Workspaces | Use, Serving, Monitor, Compare, Convert, Training, Experiments, Terminal | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token, throughput and memory-owner monitoring, measured comparisons in ten modes, previewed conversion from FP32 to 2-bit with quality gate canaries, text LoRA training with evaluation, controlled studies, OpenCode or a shell in a chosen folder |
 | System | Overview, Activity, Clients, Health | Model budget, job timeline, guided client setup with connection tests and undo, runtime readiness |
 
 Served music models also generate sound effects and ambience.
