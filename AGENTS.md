@@ -108,6 +108,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `FrontDoorCoordinator` (`Services/FrontDoor.swift`) owns one `mlx-agent serve front-door` child (`--watch-parent`) on the
   fleet's `frontDoor` port and shared key; `EndpointSupervisor` creates that key once and offers it in the authentication review.
   `FrontDoorEditor` (Settings → Serving) presents it; `ClientSetupSession` offers it to OpenCode as one address for every routed model.
+  `QuickConnectSnippets` builds the copyable curl and Python calls shown by `QuickConnectStrip`; protected routes reference `MLX_AGENT_API_KEY`.
 - Use: `UseWorkspaceCoordinator`, `UseSessionStore` (`RecordArchive` on a serial I/O queue),
   `UseChatClient` and `UseImageStore`; `UseWorkspaceView` composes conversation views and the
   existing typed-task panels. `AppHost.handoffs` carries model/server selection. Chat owns

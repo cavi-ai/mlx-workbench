@@ -59,7 +59,7 @@ including its fresh scan and verification gate, still applies. Repeated retries 
 the read is in progress. Health opens the existing engine and runtime checks;
 installation still requires its separate confirmation.
 
-Activity shows in-flight work and recent conversions first; older conversion, training and study records are available in their history sections. While Activity or Convert is visible, active conversions are checked every five seconds for up to ten minutes. Use **Refresh** in Activity to check again after that window or after a read fails.
+Activity shows in-flight work and recent conversions first; older conversion, training and study records are available in their history sections. While Workbench runs, active conversions are checked every five seconds from any page. After a failed read, the last known state stays visible and checks continue every 20 seconds until one succeeds. Use **Refresh** in Activity to check at once.
 
 Previously loaded jobs remain visible when a status read fails. Those records
 may have changed since the last successful read. A successful retry replaces

@@ -11,26 +11,47 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
+
+## [0.12.0] - 2026-11-23
+### Added
+
+- Serving: **Settings → Serving → Front door** runs `mlx-agent serve front-door` on one loopback port with a shared Keychain key; **Use front door key…** adds a stopped endpoint, and **Connect app…** wires OpenCode to the front door with every routed model. The front door also routes typed `/v1/embeddings` and `/v1/systemone` endpoints, refreshes its routes when an endpoint starts, stops, swaps or is removed, and answers `409 ambiguous_model` for a model name two endpoints advertise.
+- Serving: **Quick Connect** on each running endpoint in Serving and Clients copies curl (Chat Completions, Responses, Messages, Embeddings) and Python (OpenAI, Anthropic) snippets for the endpoint or the front door; protected snippets read `MLX_AGENT_API_KEY` and never contain a key.
+- Serving: **Serving defaults** assign Coding and Utility roles to load-on-request endpoints. OpenCode setup uses the Coding endpoint, Utility can release weights after each request, including with a Splash preset, and the menu bar lists each role's endpoint.
+- Serving: up to eight saved endpoints, with a **Fleet co-residency budget** bar that combines per-modality estimates, dormant load-on-request endpoints, Splash memory caps and the shared agent memory limit. Keyed MLX-LM load-on-request endpoints take a 16–2048 MiB shared prefix cache, load-on-request endpoints an execution wait of 0–3600 seconds, and Splash endpoints show the effective context beside the configured limit.
+- Clients: **Test connection** for OpenCode, OpenClaw and Hermes also checks that the model returns a tool call, within 10 seconds, and reports it apart from the text result without running the tool.
+- Library: **Classify** opens on the first built-in test set entry, ready to start; **Test set** lists built-in sets, then classification sets saved in Compare, then **Custom**, and **Score on this set** opens Compare with the model and set selected. Validation messages appear after an edit or a start attempt, and choice options take descriptions.
+- Compare: classification prompt sets show scored questions, options never expected, and each model's latest accuracy on the set.
+- Compare: imported ComfyUI image workflows can use local Flux, SD3, UNET, dual and triple CLIP, custom sampler, model-only LoRA and ControlNet nodes.
+- Prepare: linked outputs and related ready models in Library show before conversion, with **Open in Library**.
+- Monitor: a system headroom panel shows available and total memory.
+
 ### Changed
-- Activity: a toolbar control shows live conversion, queue, verification and comparison states and opens Activity from any workspace.
+
+- Engine: `mlx-agent` advances from 0.14.0 to 0.16.0 (`c7bd6f7`) with OpenClaw wiring, Ollama cloud models excluded from the local scan, Splash effective context reporting and project-scoped caches, bounded JIT gateway and front door waits, front door routes refreshed before answering, and conversion queues scoped to the selected receipts folder.
+- Activity: a toolbar control shows live conversion, queue, verification and comparison states and opens Activity from any workspace; in-flight work and recent conversions come first, with job diagnostics in **Details**.
+- Library: models are grouped by family by default, **View options → View as table** shows sortable columns, and details sit beside the list on wide windows or open in a sheet on narrow ones.
+- Use: wide conversations keep model and connection controls beside the transcript.
+- Model sources: Ollama tags with the same digest appear once with every connection in the details, and Ollama models that run remotely show as Cloud and stay out of local Sources, memory and unload actions.
+- Clients: OpenClaw setup writes `${MLX_AGENT_API_KEY}` instead of the endpoint key, updates an existing `mlx-agent` provider in place and lists every model the endpoint serves.
+- Serving: the **Agent sessions** Splash preset starts with reasoning effort none and a thinking budget of 0.
 - Serving: the native macOS menu bar item can be shown again from Settings.
 - Serving: the login item starts every enabled endpoint at login, one `RunAtLoad` agent each, and refuses a won't-fit fleet until **Install anyway**.
-- Training: a reviewed adapter can be saved as an unverified MLX-LM endpoint without inheriting the base model's verdict.
+- Training: a reviewed adapter can be saved as an unverified MLX-LM endpoint without inheriting the base model's verdict; when the engine supports it, the endpoint can load on request and require an API key.
+
 ### Fixed
+
 - Activity: conversion status stays current across workspaces and after the previous polling limit. Unreadable status keeps the last known state visible.
-- Reclaim: a local server that has stopped listening drops out of removal checks after successful discovery.
-- Serving: explicit starts wait only for the requested endpoint, failed login-item installs roll back, and background discovery polls less often while idle.
+- Engine calls: a command writing more than the 8 MiB capture limit finishes instead of stalling on a full pipe, and a status worker that fails to start retries after a cooldown.
+- Reclaim: a local server that has stopped listening drops out of removal checks after successful discovery; removal waits for comparison history and model purposes to load, and a removal error names the source that could not be checked.
+- Serving: explicit starts wait only for the requested endpoint, failed login-item installs roll back, and background discovery polls less often while idle. **Start now**, saved endpoints and the login item refuse Splash, profile, acceleration and memory-policy combinations that cannot run together.
 - Use: long inline reasoning streams are parsed incrementally and displayed in batches.
 - Use: the message field is a canvas field with a hairline, and the token limit stays in **Request settings**. **Start server…** reviews a loopback server in the chat; **More settings…** opens Serving. The toolbar says a model failed to load. Sidebar labels are **To convert**, **Disk space**, **Convert** and **Experiments**. Serving names sources that missed the latest refresh.
 - Library: **Classify** sends choice criteria as labels with descriptions, which Kev models require.
 - Library: the inspector fits its 320 pt minimum column without clipping; a task model's panel sits under its actions, music settings wrap, and the empty-caption hint is muted until typing starts.
+- Settings: `config.json` numbers 0 and 1, such as `fit_reserve_gb: 1`, read as numbers, and booleans in numeric fields are refused.
 - Terminal: **Launch OpenCode** checks OpenCode's merged global config for a Workbench provider served by a running chat server; otherwise it shows **OpenCode has no Workbench models.** with **Set up OpenCode** (or **Open Run** when nothing is serving) and **Launch anyway**. OpenCode wiring keeps the models already listed for the same port.
-### Added
-
-- Library: **Classify** opens on the first built-in test set entry, ready to start; **Test set** lists built-in sets, then classification sets saved in Compare, then **Custom**, and **Score on this set** opens Compare with the model and set selected. Validation messages appear after an edit or a start attempt, and choice options take descriptions.
-- Compare: classification prompt sets show scored questions, options never expected, and each model's latest accuracy on the set.
-- Serving: **Settings → Serving → Front door** runs `mlx-agent serve front-door` on one loopback port with a shared Keychain key; **Use front door key…** adds a stopped endpoint, and **Connect app…** wires OpenCode to the front door with every routed model.
-
+- Compatibility tools: Quarantine purge passes paths with quotes or backslashes to Finder intact and reports a Finder timeout, GGUF architecture detection reads past large tokenizer arrays, and `serve-presets.json` loading skips malformed or duplicate presets.
 
 ## [0.11.0] - 2026-11-18
 ### Added
@@ -598,7 +619,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.12.0
 [0.11.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.11.0
 [0.10.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.10.0
 [0.9.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.9.0
