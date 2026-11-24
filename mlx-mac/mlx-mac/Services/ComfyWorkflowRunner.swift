@@ -11,9 +11,13 @@ struct ComfyWorkflowOutput: Sendable {
     let queueInclusive: Bool
 }
 
-/// Submits an explicit local image workflow and observes only its returned job.
+/// Submits an explicit local image or video workflow and observes only its returned job.
 /// Cancellation stops local observation; it never interrupts a shared host.
 struct ComfyWorkflowRunner: Sendable {
+    private static let maxImageBytes = 32 * 1024 * 1024
+    private static let maxVideoBytes = 128 * 1024 * 1024
+    private static let allowedExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "mp4"]
+
     private let http: HostHTTPClient
     private let pollIntervalNanoseconds: UInt64
     private let timeoutSeconds: TimeInterval
@@ -26,6 +30,7 @@ struct ComfyWorkflowRunner: Sendable {
     }
 
     func run(host: ModelHost, token: String?, modelID: String, prompt: String, workflow: ComfyWorkflow,
+             overrides: ComfyWorkflowOverrides? = nil,
              onSubmitted: @escaping @Sendable (String, Data) async throws -> Void) async throws -> ComfyWorkflowOutput {
         guard host.provider == .comfyUI else { throw ComfyWorkflowError.invalid("Choose a ComfyUI host.") }
         guard timeoutSeconds.isFinite, timeoutSeconds > 0, timeoutSeconds <= 86_400 else {
@@ -33,7 +38,7 @@ struct ComfyWorkflowRunner: Sendable {
         }
         try Task.checkCancellation()
         _ = try host.validatedURL()
-        let graphData = try workflow.submittedGraph(modelID: modelID, prompt: prompt)
+        let graphData = try workflow.submittedGraph(modelID: modelID, prompt: prompt, overrides: overrides)
         let graph = try dictionary(graphData)
         let deadline = ProcessInfo.processInfo.systemUptime + timeoutSeconds
         let definitions = try dictionary(await request(host: host, path: "/object_info", token: token, deadline: deadline))
@@ -64,14 +69,15 @@ struct ComfyWorkflowRunner: Sendable {
                 }
                 if status["completed"] as? Bool == true, status["status_str"] as? String == "success" {
                     let elapsed = ProcessInfo.processInfo.systemUptime - started
-                    let reference = try imageReference(owned, outputNodeID: workflow.outputNodeID, promptID: promptID)
-                    let image = try await request(host: host, path: "/view", token: token,
+                    let reference = try mediaReference(owned, outputNodeID: workflow.outputNodeID, promptID: promptID)
+                    let maxBytes = reference.fileExtension == "mp4" ? Self.maxVideoBytes : Self.maxImageBytes
+                    let media = try await request(host: host, path: "/view", token: token,
                         query: [URLQueryItem(name: "filename", value: reference.filename),
                                 URLQueryItem(name: "subfolder", value: reference.subfolder),
                                 URLQueryItem(name: "type", value: "output")],
-                        maximumBytes: 32 * 1024 * 1024, deadline: deadline, promptID: promptID)
-                    try validateImage(image, fileExtension: reference.fileExtension)
-                    return ComfyWorkflowOutput(imageData: image, fileExtension: reference.fileExtension,
+                        maximumBytes: maxBytes, deadline: deadline, promptID: promptID)
+                    try validateMedia(media, fileExtension: reference.fileExtension)
+                    return ComfyWorkflowOutput(imageData: media, fileExtension: reference.fileExtension,
                         promptID: promptID, submittedGraph: graphData, durationSeconds: elapsed, queueInclusive: true)
                 }
             }
@@ -96,7 +102,10 @@ struct ComfyWorkflowRunner: Sendable {
                 throw timeout(promptID)
             }
             defer { group.cancelAll() }
-            return try await group.next()!
+            guard let data = try await group.next() else {
+                throw timeout(promptID)
+            }
+            return data
         }
     }
 
@@ -115,8 +124,10 @@ struct ComfyWorkflowRunner: Sendable {
     private func validateAdvertisedGraph(_ graph: [String: Any], definitions: [String: Any],
                                          workflow: ComfyWorkflow, modelID: String) throws {
         for value in graph.values {
-            let node = value as! [String: Any]
-            let classType = node["class_type"] as! String
+            guard let node = value as? [String: Any],
+                  let classType = node["class_type"] as? String else {
+                throw ComfyWorkflowError.invalid("The workflow contains a malformed node definition.")
+            }
             guard let definition = definitions[classType] as? [String: Any],
                   definition["api_node"] as? Bool != true,
                   !(definition["category"] as? String ?? "").lowercased().contains("api"),
@@ -126,7 +137,9 @@ struct ComfyWorkflowRunner: Sendable {
                 throw ComfyWorkflowError.invalid("ComfyUI does not advertise all required local workflow nodes.")
             }
             let optional = advertisedInputs["optional"] as? [String: Any] ?? [:]
-            let inputs = node["inputs"] as! [String: Any]
+            guard let inputs = node["inputs"] as? [String: Any] else {
+                throw ComfyWorkflowError.invalid("The workflow node is missing an inputs dictionary.")
+            }
             guard required.keys.allSatisfy({ inputs[$0] != nil }) else {
                 throw ComfyWorkflowError.invalid("The workflow is missing a required node input.")
             }
@@ -162,31 +175,48 @@ struct ComfyWorkflowRunner: Sendable {
                 } else { throw ComfyWorkflowError.invalid("ComfyUI returned an unsupported input definition.") }
             }
         }
-        let checkpoint = graph[workflow.checkpointNodeID] as! [String: Any]
-        let checkpointDefinition = definitions[checkpoint["class_type"] as! String] as! [String: Any]
-        let checkpointInput = ((checkpointDefinition["input"] as? [String: Any])?["required"] as? [String: Any])?["ckpt_name"] as? [Any]
-        let promptDefinition = definitions["CLIPTextEncode"] as? [String: Any]
-        let promptInput = ((promptDefinition?["input"] as? [String: Any])?["required"] as? [String: Any])?["text"] as? [Any]
-        guard (checkpointInput?.first as? [String])?.contains(modelID) == true,
+
+        guard let modelNode = graph[workflow.checkpointNodeID] as? [String: Any],
+              let modelClassType = modelNode["class_type"] as? String,
+              let modelKey = ComfyWorkflow.modelInputKey(for: modelClassType),
+              let modelDefinition = definitions[modelClassType] as? [String: Any],
+              let promptNode = graph[workflow.promptNodeID] as? [String: Any],
+              let promptClassType = promptNode["class_type"] as? String,
+              let promptDefinition = definitions[promptClassType] as? [String: Any],
+              let outputNode = graph[workflow.outputNodeID] as? [String: Any],
+              let outputClassType = outputNode["class_type"] as? String,
+              let outputDefinition = definitions[outputClassType] as? [String: Any] else {
+            throw ComfyWorkflowError.invalid("ComfyUI does not advertise the bound model, prompt, or output nodes.")
+        }
+
+        let modelInput = ((modelDefinition["input"] as? [String: Any])?["required"] as? [String: Any])?[modelKey] as? [Any]
+        let promptInput = ((promptDefinition["input"] as? [String: Any])?["required"] as? [String: Any])?["text"] as? [Any]
+        guard (modelInput?.first as? [String])?.contains(modelID) == true,
               promptInput?.first as? String == "STRING",
-              (definitions["SaveImage"] as? [String: Any])?["output_node"] as? Bool == true else {
-            throw ComfyWorkflowError.invalid("ComfyUI does not advertise the selected checkpoint, text binding or image output.")
+              outputDefinition["output_node"] as? Bool == true else {
+            throw ComfyWorkflowError.invalid("ComfyUI does not advertise the selected checkpoint, text binding or media output.")
         }
     }
 
-    private func imageReference(_ history: [String: Any], outputNodeID: String, promptID: String) throws
+    private func mediaReference(_ history: [String: Any], outputNodeID: String, promptID: String) throws
         -> (filename: String, subfolder: String, fileExtension: String) {
         guard let outputs = history["outputs"] as? [String: Any],
-              let output = outputs[outputNodeID] as? [String: Any],
-              let images = output["images"] as? [[String: Any]], let image = images.first,
-              let filename = image["filename"] as? String,
-              let subfolder = image["subfolder"] as? String,
-              image["type"] as? String == "output",
-              safePath(filename, allowDirectories: false), safePath(subfolder, allowDirectories: true),
-              ["png", "jpg", "jpeg"].contains((filename as NSString).pathExtension.lowercased()) else {
-            throw ComfyWorkflowError.ownedPrompt(id: promptID, reason: "The selected output has no safe PNG or JPEG image.")
+              let output = outputs[outputNodeID] as? [String: Any] else {
+            throw ComfyWorkflowError.ownedPrompt(id: promptID, reason: "The selected output has no safe media artifact.")
         }
-        return (filename, subfolder, (filename as NSString).pathExtension.lowercased())
+        let mediaArrays = ["images", "videos", "gifs"].compactMap { output[$0] as? [[String: Any]] }
+        guard let item = mediaArrays.first(where: { !$0.isEmpty })?.first,
+              let filename = item["filename"] as? String,
+              let subfolder = item["subfolder"] as? String,
+              item["type"] as? String == "output",
+              safePath(filename, allowDirectories: false), safePath(subfolder, allowDirectories: true) else {
+            throw ComfyWorkflowError.ownedPrompt(id: promptID, reason: "The selected output has no safe media artifact.")
+        }
+        let ext = (filename as NSString).pathExtension.lowercased()
+        guard Self.allowedExtensions.contains(ext) else {
+            throw ComfyWorkflowError.ownedPrompt(id: promptID, reason: "The selected output has an unsupported media extension.")
+        }
+        return (filename, subfolder, ext)
     }
 
     private func safePath(_ path: String, allowDirectories: Bool) -> Bool {
@@ -199,12 +229,18 @@ struct ComfyWorkflowRunner: Sendable {
             && components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
-    private func validateImage(_ data: Data, fileExtension: String) throws {
-        guard !data.isEmpty, data.count <= 32 * 1024 * 1024,
+    func validateMedia(_ data: Data, fileExtension: String) throws {
+        let ext = fileExtension.lowercased()
+        if ext == "mp4" {
+            try validateMP4(data)
+            return
+        }
+        guard !data.isEmpty, data.count <= Self.maxImageBytes,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetStatus(source) == .statusComplete,
               let type = CGImageSourceGetType(source),
-              (fileExtension == "png" ? UTType(type as String)?.conforms(to: .png) : UTType(type as String)?.conforms(to: .jpeg)) == true,
+              let utType = UTType(type as String),
+              Self.matchesImageType(utType, fileExtension: ext),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
@@ -212,6 +248,30 @@ struct ComfyWorkflowRunner: Sendable {
               width * height <= 64_000_000,
               CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) != nil else {
             throw ComfyWorkflowError.invalid("ComfyUI returned an invalid or oversized image.")
+        }
+    }
+
+    private static func matchesImageType(_ utType: UTType, fileExtension: String) -> Bool {
+        switch fileExtension {
+        case "png": return utType.conforms(to: .png)
+        case "jpg", "jpeg": return utType.conforms(to: .jpeg)
+        case "webp": return utType.conforms(to: .webP)
+        default: return false
+        }
+    }
+
+    private func validateMP4(_ data: Data) throws {
+        guard data.count >= 12, data.count <= Self.maxVideoBytes else {
+            throw ComfyWorkflowError.invalid("ComfyUI returned an invalid or oversized MP4 video.")
+        }
+        let bytes = [UInt8](data.prefix(12))
+        let boxSize = (UInt32(bytes[0]) << 24) | (UInt32(bytes[1]) << 16) | (UInt32(bytes[2]) << 8) | UInt32(bytes[3])
+        // ISO BMFF ftyp box: size >= 12 and <= data.count (or 1 for 64-bit extended size), type == "ftyp"
+        let validSize = (boxSize >= 12 && Int(boxSize) <= data.count) || (boxSize == 1 && data.count >= 20)
+        let isFtyp = bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70
+        let validBrand = bytes[8..<12].allSatisfy { $0 >= 0x20 && $0 <= 0x7E }
+        guard validSize, isFtyp, validBrand else {
+            throw ComfyWorkflowError.invalid("ComfyUI returned an invalid or oversized MP4 video.")
         }
     }
 }

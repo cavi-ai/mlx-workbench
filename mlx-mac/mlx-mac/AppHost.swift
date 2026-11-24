@@ -10,6 +10,8 @@ class AppHost {
     private var conversionStatusReadOwner = false
     @ObservationIgnored private var conversionMonitoring: AnyCancellable?
     @ObservationIgnored private var conversionPoll: Task<Void, Never>?
+    @ObservationIgnored private var frontDoorSyncMonitoring: AnyCancellable?
+    @ObservationIgnored private var frontDoorFleetMonitoring: AnyCancellable?
     private(set) var conversionStatusError: String?
 
     var config: Config = Config.defaults(ggufRoots: [])
@@ -145,6 +147,7 @@ class AppHost {
         managedModels: ManagedModelInstallStore? = nil,
         inferenceTasks: InferenceTaskCoordinator? = nil,
         endpointTest: EndpointTestCoordinator? = nil,
+        frontDoor: FrontDoorCoordinator? = nil,
         runtimeProbe: @escaping @Sendable () -> RuntimeReport = { RuntimeChecker.report() }
     ) {
         self.configModule = configModule
@@ -169,7 +172,7 @@ class AppHost {
         self.inferenceTasks = inferenceTasks ?? InferenceTaskCoordinator(api: api, artifactRoot: api.taskArtifactsRoot)
         self.endpointTest = endpointTest ?? EndpointTestCoordinator(client: .live(api: api))
         self.tailnetSharing = TailnetSharingCoordinator(api: api)
-        self.frontDoor = FrontDoorCoordinator(api: api)
+        self.frontDoor = frontDoor ?? FrontDoorCoordinator(api: api)
         self.lab = LabCoordinator(api: api)
         self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
         let profiles = ServingProfileCoordinator(store: JSONStore(fileURL: JSONStore<ServingProfile>.defaultFileURL("serving-profiles.json")),
@@ -244,6 +247,24 @@ class AppHost {
                 },
                 start: { receipt, port, hash in
                     _ = try await api.trainedAdapterStart(receipt: receipt, port: port, hash: hash, runtime: "mlx_lm")
+                },
+                jitPreview: { receipt, base, port, policy, apiKeySHA256 in
+                    let plan = try await api.trainedAdapterPreview(
+                        receipt: receipt, port: port, runtime: "mlx_lm",
+                        jit: true, memoryPolicy: policy, apiKeySHA256: apiKeySHA256
+                    )
+                    guard let binding = TrainedAdapterBinding.decode(plan["training_binding"]),
+                          binding.receiptPath == receipt, binding.basePath == base, binding.isValid,
+                          let hash = plan["preview_hash"] as? String, TrainedAdapterBinding.isHash(hash) else {
+                        throw WorkflowEvidenceError.invalid("The engine did not return this adapter's pinned MLX-LM plan.")
+                    }
+                    return (hash, binding)
+                },
+                jitStart: { receipt, port, hash, policy, apiKeySHA256 in
+                    _ = try await api.trainedAdapterStart(
+                        receipt: receipt, port: port, hash: hash, runtime: "mlx_lm",
+                        jit: true, memoryPolicy: policy, apiKeySHA256: apiKeySHA256
+                    )
                 }
             )
         }
@@ -382,6 +403,16 @@ class AppHost {
         self.endpoint.isVerified = { [weak self] path in
             self?.isModelVerified(path) ?? false
         }
+        self.frontDoor.updateCollisions(slots: self.endpoint.fleet.slots, frontDoorKeySHA256: self.endpoint.fleet.frontDoor?.apiKeySHA256)
+        self.frontDoorFleetMonitoring = self.endpoint.$fleet
+            .sink { [weak self] fleet in
+                self?.frontDoor.updateCollisions(slots: fleet.slots, frontDoorKeySHA256: fleet.frontDoor?.apiKeySHA256)
+            }
+        self.frontDoorSyncMonitoring = self.endpoint.$slotStates
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.frontDoor.refreshAfterEndpointChange() }
         // Usage evidence: serve, verify, and measure all count as "used" for
         // the Disk Pressure Advisor's staleness detector.
         self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.recordServed(path) }

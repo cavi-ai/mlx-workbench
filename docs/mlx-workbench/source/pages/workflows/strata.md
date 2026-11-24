@@ -44,7 +44,7 @@ Inspect the preview, then repeat the command with `--confirm --preview-hash HASH
 | `--strata-expert-memory-gb N` | Caps resident expert weights, 0.5–64 decimal GB. Omit for automatic allocation. Smaller budgets page more from disk. |
 | `--strata-context-tokens N` | Context capacity, 512–131,072 tokens |
 
-Load on request supports the same profile and options. The endpoint binds only to `127.0.0.1`, serves the OpenAI chat API and keeps the local model path as its identity. Stop it with `serve stop --port 8084` so the receipt-owned process group is released.
+Load on request supports the same profile and options, including `--execution-wait N` (0–3,600 seconds) to queue requests while waiting for host compute. Shared instruction-prefix caching (`--shared-prefix-cache-mib`, 16–2,048 MiB) is scoped to keyed private MLX-LM load-on-request endpoints and is not combined with Strata profiles or Splash presets. The endpoint binds only to `127.0.0.1`, serves the OpenAI chat API and keeps the local model path as its identity. Stop it with `serve stop --port 8084` so the receipt-owned process group is released.
 
 Startup can take several minutes; Strata gets a 900-second readiness window. Performance depends on prompt length, draft acceptance, available memory and expert paging. Quantization and floating-point execution can change responses. A faster run does not establish equal quality, and there is no universal speedup.
 

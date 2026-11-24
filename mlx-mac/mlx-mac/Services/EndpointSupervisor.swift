@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - EndpointSupervisor
@@ -19,6 +20,10 @@ import Foundation
 struct AdapterEndpointLaunch: Sendable {
     var preview: @Sendable (_ receipt: String, _ basePath: String, _ port: Int) async throws -> (hash: String, binding: TrainedAdapterBinding)
     var start: @Sendable (_ receipt: String, _ port: Int, _ hash: String) async throws -> Void
+    var jitPreview: (@Sendable (_ receipt: String, _ basePath: String, _ port: Int, _ memoryPolicy: EndpointMemoryPolicy?, _ apiKeySHA256: String?) async throws -> (hash: String, binding: TrainedAdapterBinding))? = nil
+    var jitStart: (@Sendable (_ receipt: String, _ port: Int, _ hash: String, _ memoryPolicy: EndpointMemoryPolicy?, _ apiKeySHA256: String?) async throws -> Void)? = nil
+
+    var supportsJIT: Bool { jitPreview != nil && jitStart != nil }
 }
 
 @MainActor
@@ -77,8 +82,38 @@ final class EndpointSupervisor: ObservableObject {
     /// and automatic restarts never emit this intentional-usage evidence.
     var onUserServeStarted: ((String) -> Void)?
 
+    private struct FleetFileStamp: Equatable {
+        let exists: Bool
+        let dev: Int32
+        let ino: UInt64
+        let size: Int64
+        let mtimeSec: Int
+        let mtimeNsec: Int
+        let ctimeSec: Int
+        let ctimeNsec: Int
+
+        static func capture(at url: URL) -> FleetFileStamp {
+            var st = stat()
+            guard stat(url.path, &st) == 0 else {
+                return FleetFileStamp(exists: false, dev: 0, ino: 0, size: 0, mtimeSec: 0, mtimeNsec: 0, ctimeSec: 0, ctimeNsec: 0)
+            }
+            return FleetFileStamp(
+                exists: true,
+                dev: st.st_dev,
+                ino: st.st_ino,
+                size: st.st_size,
+                mtimeSec: st.st_mtimespec.tv_sec,
+                mtimeNsec: st.st_mtimespec.tv_nsec,
+                ctimeSec: st.st_ctimespec.tv_sec,
+                ctimeNsec: st.st_ctimespec.tv_nsec
+            )
+        }
+    }
+
     private var slotAttemptTimestamps: [UUID: [Date]] = [:]
     private var pendingUserServeBySlot: [UUID: (modelPath: String, port: Int)] = [:]
+    private var queuedUserReconcileIDs: [UUID] = []
+    private var cachedFleetLoad: (fleetStamp: FleetFileStamp, legacyStamp: FleetFileStamp, load: EndpointFleetLoad)?
     private var monitorTask: Task<Void, Never>?
 
     init(
@@ -102,6 +137,11 @@ final class EndpointSupervisor: ObservableObject {
         let loaded = self.fleetStore.load()
         self.fleet = loaded.config
         self.persistenceError = loaded.problem
+        self.cachedFleetLoad = (
+            FleetFileStamp.capture(at: self.fleetStore.fleetStore.url),
+            FleetFileStamp.capture(at: self.fleetStore.legacyStore.url),
+            loaded
+        )
     }
 
     // MARK: - User actions (single-slot shim)
@@ -112,7 +152,7 @@ final class EndpointSupervisor: ObservableObject {
         guard activeUserOperations == 0, !isReconciling, !isUnloading else {
             throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish before removing a profile.")
         }
-        let persisted = fleetStore.load()
+        let persisted = loadPersistedFleet()
         guard persisted.problem == nil, persistenceError == nil else {
             throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable. The profile was kept.")
         }
@@ -266,7 +306,7 @@ final class EndpointSupervisor: ObservableObject {
             guard validate(candidate, isNew: true) else { return nil }
             if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
-                let hash = try await accelerationPreviewHash(candidate)
+                let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
                 guard !hash.isEmpty, fleet == before else { throw WorkflowEvidenceError.invalid("Endpoint configuration changed. Review the new endpoint again.") }
                 if inference.requested { candidate.accelerationPreviewHash = hash }
                 if profile != nil || splashPreset != nil { candidate.profilePreviewHash = hash }
@@ -288,8 +328,18 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     /// Save a reviewed adapter as an enabled endpoint. The base model's verdict is never consulted;
-    /// `allowUnverified` is the explicit override.
-    func addTrainedAdapterSlot(binding: TrainedAdapterBinding, port: Int, allowUnverified: Bool) async {
+    /// allowUnverified is the explicit override. Eager serving remains the safe default; optional JIT
+    /// and API-key serving require engine JIT adapter support and fail closed when unavailable.
+    func addTrainedAdapterSlot(
+        binding: TrainedAdapterBinding,
+        port: Int,
+        allowUnverified: Bool,
+        loadOnRequest: Bool = false,
+        requireAPIKey: Bool = false,
+        memoryPolicy: EndpointMemoryPolicy? = nil,
+        reviewedHash: String? = nil,
+        reviewedKey: String? = nil
+    ) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard allowUnverified else {
@@ -300,9 +350,50 @@ final class EndpointSupervisor: ObservableObject {
             lastError = "Historical training receipts without a pinned base identity cannot be saved as endpoints."
             return
         }
-        var candidate = EndpointSlot(enabled: true, port: port, modelPath: binding.basePath, loadOnRequest: false)
+        let usesJIT = loadOnRequest || requireAPIKey
+        if usesJIT && adapterLaunch?.supportsJIT != true {
+            lastError = "Load-on-request serving for trained adapters is unavailable in this runtime."
+            return
+        }
+        var candidate = EndpointSlot(
+            enabled: true,
+            port: port,
+            modelPath: binding.basePath,
+            loadOnRequest: usesJIT,
+            memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil
+        )
         candidate.trainingReceipt = binding.receiptPath
-        guard validate(candidate, isNew: true), commit(replacing: candidate) else { return }
+        var savedKey: String?
+        do {
+            var token: String?
+            if requireAPIKey {
+                guard reviewedHash == nil || reviewedKey != nil else {
+                    throw WorkflowEvidenceError.invalid("The reviewed adapter key is missing. Preview serving again.")
+                }
+                let key = try reviewedKey ?? generateAPIKey()
+                token = key
+                candidate.apiKeySHA256 = EndpointCredentialStore.digest(key)
+            }
+            guard validate(candidate, isNew: true) else { return }
+            if let reviewedHash {
+                let current = try await reviewTrainedAdapter(candidate)
+                guard current.hash == reviewedHash, current.binding == binding else {
+                    throw WorkflowEvidenceError.invalid("The trained adapter plan changed. Preview serving again.")
+                }
+            }
+            if let token {
+                try saveAPIKey(token)
+                savedKey = candidate.apiKeySHA256
+            }
+            guard validate(candidate, isNew: true), commit(replacing: candidate) else {
+                if let savedKey { try? removeAPIKey(savedKey) }
+                return
+            }
+        } catch {
+            if let savedKey { try? removeAPIKey(savedKey) }
+            lastError = AppHost.render(error)
+            return
+        }
         await reconcile(userRequestedSlotID: candidate.id)
     }
 
@@ -563,9 +654,15 @@ final class EndpointSupervisor: ObservableObject {
         }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }),
               fleet.slots[index].usesJIT != enabled else { return }
-        guard !fleet.slots[index].isTrainedAdapter else {
-            lastError = "A trained adapter endpoint uses explicit MLX-LM serving."
-            return
+        if fleet.slots[index].isTrainedAdapter {
+            if enabled && adapterLaunch?.supportsJIT != true {
+                lastError = "Load-on-request serving for trained adapters is unavailable in this runtime."
+                return
+            }
+            if !enabled && fleet.slots[index].apiKeySHA256 != nil {
+                lastError = "API-key protected endpoints require Load on request."
+                return
+            }
         }
         guard enabled || fleet.slots[index].splashPresetName == nil else {
             lastError = "Splash presets require Load on request."; return
@@ -576,11 +673,18 @@ final class EndpointSupervisor: ObservableObject {
             let slot = fleet.slots[index]
             let current = try await statusProvider().first { $0.port == slot.port && $0.state?.lowercased() == "running" }
             if let current {
-                guard current.matchesUnadaptedModel(slot.modelPath) else {
-                    lastError = "A different model is serving on this port. Refresh before changing load mode."
-                    return
+                if slot.isTrainedAdapter {
+                    guard matchesTrainedAdapter(current, slot: slot) else {
+                        lastError = "A different model is serving on this port. Refresh before changing load mode."
+                        return
+                    }
+                } else {
+                    guard current.matchesUnadaptedModel(slot.modelPath) else {
+                        lastError = "A different model is serving on this port. Refresh before changing load mode."
+                        return
+                    }
+                    _ = try await confirmedAccelerationHash(current, slot: slot)
                 }
-                _ = try await confirmedAccelerationHash(current, slot: slot)
                 guard (current.activeRequests ?? 0) == 0 else {
                     lastError = "Finish active requests before changing load mode."
                     return
@@ -589,7 +693,8 @@ final class EndpointSupervisor: ObservableObject {
             var candidate = fleet
             candidate.slots[index].loadOnRequest = enabled
             if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic }
-            guard commit(candidate) else { return }
+            if !enabled && candidate.slots[index].isTrainedAdapter { candidate.slots[index].memoryPolicy = nil }
+            guard validate(candidate.slots[index], isNew: false), commit(candidate) else { return }
             if let current, (current.jit == true) != enabled {
                 if let stop = lifecycle.stopObserved { try await stop(current) }
                 else { try await lifecycle.stop(slot.port) }
@@ -818,7 +923,7 @@ final class EndpointSupervisor: ObservableObject {
         var candidate = slot
         candidate.apiKeySHA256 = frontDoorKey ? fleet.frontDoor?.apiKeySHA256 : token.map(EndpointCredentialStore.digest)
         if required { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-        let hash = try await accelerationPreviewHash(candidate)
+        let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
         return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, token: token, previewHash: hash)
     }
@@ -832,7 +937,7 @@ final class EndpointSupervisor: ObservableObject {
             var candidate = review.slot
             candidate.apiKeySHA256 = review.keySHA256
             if review.keySHA256 != nil { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-            let hash = try await accelerationPreviewHash(candidate)
+            let hash = try await accelerationPreviewHash(candidate, pendingKey: review.token)
             guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
             }
@@ -873,8 +978,38 @@ final class EndpointSupervisor: ObservableObject {
         }
     }
 
-    private func accelerationPreviewHash(_ slot: EndpointSlot) async throws -> String {
+    private func reviewTrainedAdapter(_ slot: EndpointSlot) async throws -> (hash: String, binding: TrainedAdapterBinding) {
+        guard let receipt = slot.trainingReceipt, let launch = adapterLaunch else {
+            throw WorkflowEvidenceError.invalid("Trained adapter serving is unavailable.")
+        }
+        let reviewed: (hash: String, binding: TrainedAdapterBinding)
+        if slot.usesJIT || slot.apiKeySHA256 != nil {
+            guard let preview = launch.jitPreview, launch.jitStart != nil else {
+                throw WorkflowEvidenceError.invalid("Load-on-request serving for trained adapters is unavailable in this runtime.")
+            }
+            reviewed = try await preview(receipt, slot.modelPath, slot.port, slot.memoryPolicy, slot.apiKeySHA256)
+        } else {
+            reviewed = try await launch.preview(receipt, slot.modelPath, slot.port)
+        }
+        guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath,
+              reviewed.binding.isValid, TrainedAdapterBinding.isHash(reviewed.hash) else {
+            throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
+        }
+        return reviewed
+    }
+
+    private func accelerationPreviewHash(_ slot: EndpointSlot, pendingKey: String? = nil) async throws -> String {
+        if slot.isTrainedAdapter { return try await reviewTrainedAdapter(slot).hash }
         let selected = try servingLifecycle(slot)
+        if slot.inferenceOptions.sharedPrefixCacheRequested, let pendingKey {
+            guard EndpointCredentialStore.digest(pendingKey) == slot.apiKeySHA256,
+                  let preview = selected.jitPreviewWithKeyFile else {
+                throw WorkflowEvidenceError.invalid("The shared prefix cache requires the reviewed endpoint key.")
+            }
+            let file = try EndpointCredentialStore.materializePrivateKeyFile(pendingKey)
+            defer { if file.created { try? FileManager.default.removeItem(atPath: file.path) } }
+            return try await preview(slot.modelPath, slot.port, slot.memoryPolicy, file.path)
+        }
         if slot.usesJIT {
             guard let preview = selected.jitPreview else { throw WorkflowEvidenceError.invalid("JIT serving is unavailable in this runtime.") }
             return try await preview(slot.modelPath, slot.port, slot.memoryPolicy)
@@ -1054,14 +1189,30 @@ final class EndpointSupervisor: ObservableObject {
         await reconcile(userRequestedSlotID: nil)
     }
 
-    private func reconcile(userRequestedSlotID: UUID?) async {
+    func reconcile(userRequestedSlotID: UUID?) async {
         if let id = userRequestedSlotID,
            let slot = fleet.slots.first(where: { $0.id == id && $0.enabled && !$0.modelPath.isEmpty }) {
             pendingUserServeBySlot[id] = (slot.modelPath, slot.port)
         }
-        guard !isUnloading, !isReconciling else { return }
+        guard !isUnloading else { return }
+        if isReconciling {
+            if let id = userRequestedSlotID, !queuedUserReconcileIDs.contains(id) {
+                queuedUserReconcileIDs.append(id)
+            }
+            return
+        }
         isReconciling = true
         defer { isReconciling = false }
+
+        var nextTarget: UUID? = userRequestedSlotID
+        while true {
+            await performReconcilePass(userRequestedSlotID: nextTarget)
+            guard !isUnloading, !queuedUserReconcileIDs.isEmpty else { break }
+            nextTarget = queuedUserReconcileIDs.removeFirst()
+        }
+    }
+
+    private func performReconcilePass(userRequestedSlotID: UUID?) async {
         let enabledSlots = fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
         guard !enabledSlots.isEmpty else {
             for slot in fleet.slots where pendingStops[slot.id] == nil { slotStates[slot.id] = .disabled }
@@ -1077,22 +1228,50 @@ final class EndpointSupervisor: ObservableObject {
             // last known state instead of guessing (mirrors the workflow
             // coordinator's rule).
             lastError = "Serve status unavailable: \(AppHost.render(error))"
-            pendingUserServeBySlot.removeAll()
+            if let userRequestedSlotID {
+                pendingUserServeBySlot.removeValue(forKey: userRequestedSlotID)
+            } else {
+                let queued = Set(queuedUserReconcileIDs)
+                pendingUserServeBySlot = pendingUserServeBySlot.filter { queued.contains($0.key) }
+            }
             return
         }
 
         let running = servers.filter { $0.state?.lowercased() == "running" }
-        for slot in enabledSlots {
-            // Explicit starts must not wait behind repairs of other slots.
-            if let userRequestedSlotID, slot.id != userRequestedSlotID { continue }
-            guard fleet.slots.contains(slot) else { continue }
-            await reconcileSlot(slot, running: running)
+        // Explicit starts must not wait behind repairs of other slots.
+        let targetSlots = enabledSlots.filter { slot in
+            if let userRequestedSlotID, slot.id != userRequestedSlotID { return false }
+            return fleet.slots.contains(slot)
+        }
+        if targetSlots.count <= 1 {
+            if let slot = targetSlots.first {
+                await reconcileSlot(slot, running: running)
+            }
+        } else {
+            let maxConcurrency = 4
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = targetSlots.makeIterator()
+                for _ in 0..<min(maxConcurrency, targetSlots.count) {
+                    if let slot = iterator.next() {
+                        group.addTask {
+                            await self.reconcileSlot(slot, running: running)
+                        }
+                    }
+                }
+                while await group.next() != nil {
+                    if let slot = iterator.next() {
+                        group.addTask {
+                            await self.reconcileSlot(slot, running: running)
+                        }
+                    }
+                }
+            }
         }
         syncShim()
     }
 
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
-        guard pendingStops[slot.id] == nil else { return }
+        guard pendingStops[slot.id] == nil, fleet.slots.contains(slot) else { return }
         if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath || slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
@@ -1107,6 +1286,25 @@ final class EndpointSupervisor: ObservableObject {
                     let name = ours.modelIdentity.isEmpty ? "unknown" : URL(fileURLWithPath: ours.modelIdentity).lastPathComponent
                     slotStates[slot.id] = .modelMismatch(servedModel: ours.adapterSummary.map { name + " · " + $0 } ?? name, port: slot.port)
                     return
+                }
+                slotResidencies[slot.id] = ours.residencySummary
+                slotMemoryPolicies[slot.id] = ours.memoryPolicy
+                slotLoadBlockedReasons[slot.id] = ours.loadBlockedReason
+                guard (ours.jit == true) == slot.usesJIT else {
+                    slotStates[slot.id] = .degraded(reason: "Endpoint load mode differs. Disable and enable it to apply the selected mode.")
+                    return
+                }
+                if slot.usesJIT, let policy = slot.memoryPolicy, ours.memoryPolicy != policy {
+                    do {
+                        guard let configure = lifecycle.configureMemory, let pid = ours.pid, pid > 0 else {
+                            throw WorkflowEvidenceError.invalid("Memory management is unavailable in this runtime.")
+                        }
+                        try await configure(slot.port, pid, policy)
+                        slotMemoryPolicies[slot.id] = policy
+                    } catch {
+                        slotStates[slot.id] = .degraded(reason: "Could not apply memory policy: \(AppHost.render(error))")
+                        return
+                    }
                 }
                 slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
                 recordIntentionalServe(slot)
@@ -1183,12 +1381,18 @@ final class EndpointSupervisor: ObservableObject {
                 guard let receipt = slot.trainingReceipt, let launch = adapterLaunch else {
                     throw WorkflowEvidenceError.invalid("Trained adapter serving is unavailable.")
                 }
-                let reviewed = try await launch.preview(receipt, slot.modelPath, slot.port)
-                guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath, reviewed.binding.isValid,
-                      TrainedAdapterBinding.isHash(reviewed.hash), fleet.slots.contains(slot) else {
-                    throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
+                let reviewed = try await reviewTrainedAdapter(slot)
+                guard fleet.slots.contains(slot) else {
+                    throw WorkflowEvidenceError.invalid("The trained adapter endpoint changed. Review it again.")
                 }
-                try await launch.start(receipt, slot.port, reviewed.hash)
+                if slot.usesJIT || slot.apiKeySHA256 != nil {
+                    guard let start = launch.jitStart else {
+                        throw WorkflowEvidenceError.invalid("Load-on-request serving for trained adapters is unavailable in this runtime.")
+                    }
+                    try await start(receipt, slot.port, reviewed.hash, slot.memoryPolicy, slot.apiKeySHA256)
+                } else {
+                    try await launch.start(receipt, slot.port, reviewed.hash)
+                }
                 slotStates[slot.id] = .waitingForServer
                 return
             }
@@ -1320,10 +1524,27 @@ final class EndpointSupervisor: ObservableObject {
         return commit(candidate)
     }
 
+    private func loadPersistedFleet() -> EndpointFleetLoad {
+        let fleetStamp = FleetFileStamp.capture(at: fleetStore.fleetStore.url)
+        let legacyStamp = FleetFileStamp.capture(at: fleetStore.legacyStore.url)
+        if let cached = cachedFleetLoad,
+           cached.fleetStamp == fleetStamp,
+           cached.legacyStamp == legacyStamp {
+            return cached.load
+        }
+        let loaded = fleetStore.load()
+        cachedFleetLoad = (
+            FleetFileStamp.capture(at: fleetStore.fleetStore.url),
+            FleetFileStamp.capture(at: fleetStore.legacyStore.url),
+            loaded
+        )
+        return loaded
+    }
+
     /// Publish desired state only after the durable configuration accepts it.
     private func commit(_ candidate: EndpointFleetConfig) -> Bool {
         do {
-            let saved = fleetStore.load()
+            let saved = loadPersistedFleet()
             guard saved.problem == nil, saved.config == fleet else {
                 throw WorkflowEvidenceError.invalid("Saved endpoint settings changed or are unavailable. Reopen Workbench before editing them.")
             }
@@ -1331,8 +1552,14 @@ final class EndpointSupervisor: ObservableObject {
             fleet = candidate
             persistenceError = nil
             lastError = nil
+            cachedFleetLoad = (
+                FleetFileStamp.capture(at: fleetStore.fleetStore.url),
+                FleetFileStamp.capture(at: fleetStore.legacyStore.url),
+                EndpointFleetLoad(config: candidate, problem: nil)
+            )
             return true
         } catch {
+            cachedFleetLoad = nil
             persistenceError = "Endpoint fleet could not be saved: \(AppHost.render(error))"
             lastError = persistenceError
             return false

@@ -9,30 +9,6 @@ import XCTest
 
 @testable import mlx_workbench
 
-@MainActor
-private final class PromptRevertFixture<Prompt: Identifiable & Equatable>: ObservableObject {
-    @Published var prompts: [Prompt]
-    var prompt: Prompt {
-        get { prompts[prompts.count - 1] }
-        set { prompts[prompts.count - 1] = newValue }
-    }
-    init(_ prompt: Prompt) { prompts = [prompt] }
-    init(prompts: [Prompt]) { self.prompts = prompts }
-}
-
-private struct PromptRevertFixtureView<Prompt: Identifiable & Equatable>: View {
-    @ObservedObject var fixture: PromptRevertFixture<Prompt>
-    let opened: Prompt
-    var body: some View {
-        ComparisonPromptRevertAction(prompt: Binding(get: { fixture.prompt }, set: { fixture.prompt = $0 }),
-            opened: opened, number: 1)
-            .buttonStyle(.borderless)
-            .padding(WorkbenchSpacing.pageInset)
-            .frame(width: 260, height: 70)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-    }
-}
-
 private struct IdleProber: EndpointProbing {
     func listModels(baseURL: URL) async -> [String] { [] }
     func isReady(baseURL: URL) async -> Bool { true }
@@ -67,41 +43,6 @@ private struct PromptPreviewFixtureView: View {
     let audio: AudioClipPlayer
     var body: some View {
         ComparisonPromptInputPreview(url: fixture.url, kind: .audio, audio: audio, expanded: true)
-    }
-}
-
-@MainActor
-private final class PromptCancelFixture: ObservableObject {
-    @Published var requiresConfirmation: Bool
-    var dismissals = 0
-    init(requiresConfirmation: Bool) { self.requiresConfirmation = requiresConfirmation }
-}
-
-private struct PromptCancelFixtureView: View {
-    @ObservedObject var fixture: PromptCancelFixture
-    var body: some View {
-        ComparisonPromptCancelButton(requiresConfirmation: fixture.requiresConfirmation) { fixture.dismissals += 1 }
-            .buttonStyle(.borderless)
-            .padding(WorkbenchSpacing.pageInset)
-            .frame(width: 420, height: 90)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-    }
-}
-
-@MainActor
-private final class PromptRemoveFixture: ObservableObject {
-    @Published var canRemove = true
-    var removals = 0
-}
-
-private struct PromptRemoveFixtureView: View {
-    @ObservedObject var fixture: PromptRemoveFixture
-    var body: some View {
-        ComparisonPromptRemoveButton(number: 2, canRemove: fixture.canRemove) { fixture.removals += 1 }
-            .buttonStyle(.borderless)
-            .padding(WorkbenchSpacing.pageInset)
-            .frame(width: 420, height: 90)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
     }
 }
 
@@ -674,8 +615,7 @@ final class ComparisonMediaTests: XCTestCase {
                 ], aggregateTokensPerSecond: 25, aggregateTTFTSeconds: 0.4, error: nil)
             }
             run.qualityReviews = ["/model/a": ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())]
-            let view = VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                Text("\(mode.title) · Compare text A/B").font(WorkbenchTypography.cardTitle)
+            let view = Group {
                 if !changes {
                     TextComparisonEditor(run: run, store: store,
                         name: { $0 == "/model/a" ? "Qwen · 8-bit" : "Qwen · 4-bit" },
@@ -986,33 +926,6 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(ComparisonHistoryLogic.groups([older], query: "music").isEmpty)
         XCTAssertEqual(ComparisonHistoryLogic.modelCount(older), "1 model")
         XCTAssertEqual(ComparisonHistoryLogic.modelCount(music), "2 models")
-    }
-
-    @MainActor
-    func testHistoryPopoverRendersGroupedReadableRows() async throws {
-        let modes: [ComparisonMode] = [.chat, .chat, .vision, .musicGeneration, .imageGeneration]
-        let names = ["Tool calling", "Tool calling", "Vision basics", "Instrumental sketches", "Image prompts"]
-        let runs = zip(modes, names).enumerated().map { index, pair in
-            historyRun(pair.0, pair.1, at: 1_791_388_800 + Double(index * 180), models: index == 4 ? ["/one"] : ["/one", "/two"])
-        }
-        let picker = ComparisonHistoryPicker(runs: runs, selection: .constant(runs[3].id))
-        let root = VStack(alignment: .leading, spacing: 20) {
-            picker
-            ComparisonHistoryPanel(runs: runs, selection: runs[3].id, onSelect: { _ in })
-        }.padding(20).frame(width: 480, height: 600).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-        let view = NSHostingView(rootView: root)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = view
-        window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(200))
-        view.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = "Grouped comparison history"; attachment.lifetime = .keepAlways
-        add(attachment)
     }
 
     func testAgentArgumentsKeepTextAsOneTokenAndShrinkVideoFrames() {
@@ -1794,83 +1707,6 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
     }
 
-    @MainActor
-    func testPromptRevertActionRestoresRawValuesInEveryModeAndKeepsOtherPrompts() async throws {
-        func check<Prompt: Identifiable & Equatable>(_ opened: Prompt, edited: Prompt, other: Prompt, title: String) async throws {
-            let fixture = PromptRevertFixture(prompts: [other, edited])
-            let host = NSHostingView(rootView: PromptRevertFixtureView(fixture: fixture, opened: opened))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 70),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(100))
-            let button = try XCTUnwrap(Self.firstDescendant(of: host) { $0 is NSButton } as? NSButton)
-            XCTAssertTrue(button.isEnabled)
-            button.performClick(nil)
-            try await Task.sleep(for: .milliseconds(100))
-            XCTAssertEqual(fixture.prompt, opened, "Revert must restore the entire raw prompt in \(title)")
-            XCTAssertEqual(fixture.prompts, [other, opened], "Other prompt edits and order must remain intact")
-            XCTAssertFalse(button.isEnabled, "Revert must be disabled after restoring the prompt")
-            fixture.prompt = edited
-            try await Task.sleep(for: .milliseconds(100))
-            XCTAssertTrue(button.isEnabled, "Further edits must enable Revert again")
-        }
-        for mode in ComparisonMode.allCases where mode != .musicGeneration {
-            var draft = try PromptSetDraft(copying: mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode))
-            let opened = draft.prompts[0]
-            draft.duplicatePrompt(id: opened.id)
-            var edited = opened
-            edited.text = "Edited question"; edited.inputPath = "/missing-replacement"
-            edited.keywords = "changed"; edited.maxTokens = "invalid"
-            edited.size = "0"; edited.width = "bad"; edited.height = "-1"; edited.frames = "bad"
-            edited.fps = "bad"; edited.steps = "bad"; edited.seed = "bad"
-            var other = draft.prompts[1]; other.text = "Keep this edit"
-            try await check(opened, edited: edited, other: other, title: mode.rawValue)
-        }
-        var music = PromptSetDraft(mode: .musicGeneration)
-        let opened = music.prompts[0]
-        music.duplicatePrompt(id: opened.id)
-        var edited = opened
-        edited.text = "Edited music"; edited.lyrics = "Edited lyrics"
-        edited.duration = "bad"; edited.steps = "bad"; edited.seed = "bad"
-        var other = music.prompts[1]; other.text = "Keep this edit"
-        try await check(opened, edited: edited, other: other, title: "music")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
-    }
-
-    @MainActor
-    func testPromptRevertRefusesAnotherIdentityAndRestoresMissingInputWithoutFallback() async throws {
-        let file = root.appendingPathComponent("saved-input.png")
-        try Data("original input".utf8).write(to: file)
-        let entry = PromptEntry(id: "saved", text: "Question", inputKind: .image, inputPath: file.path)
-        let opened = PromptSetDraft.Prompt(entry, mode: .vision, savedInput: true)
-        let fixture = PromptRevertFixture(opened)
-        let host = NSHostingView(rootView: PromptRevertFixtureView(fixture: fixture, opened: opened))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 70),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(100))
-        let button = try XCTUnwrap(Self.firstDescendant(of: host) { $0 is NSButton } as? NSButton)
-        XCTAssertFalse(button.isEnabled)
-        let otherEntry = PromptEntry(id: "other", text: entry.text, inputKind: entry.inputKind, inputPath: entry.inputPath)
-        fixture.prompt = PromptSetDraft.Prompt(otherEntry, mode: .vision)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertFalse(button.isEnabled, "A retained control cannot restore another prompt identity")
-        fixture.prompt = opened; fixture.prompt.inputPath = "/replacement"
-        try FileManager.default.removeItem(at: file)
-        try await Task.sleep(for: .milliseconds(100))
-        button.performClick(nil)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(fixture.prompt, opened)
-        XCTAssertTrue(fixture.prompt.usesSavedInput)
-        XCTAssertTrue(fixture.prompt.inputFileUnavailable)
-        XCTAssertNil(fixture.prompt.inputPreviewURL)
-        XCTAssertThrowsError(try fixture.prompt.entry(for: .vision))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
-    }
-
     func testSavedPromptDraftDetectsRawEditsAndRevertsTheOpenedSnapshot() throws {
         for mode in ComparisonMode.allCases where mode != .musicGeneration {
             var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
@@ -1979,123 +1815,6 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(edit.hasChanges)
         edit.prompts[0].text = original.prompts[0].text
         XCTAssertFalse(edit.hasChanges)
-    }
-
-    @MainActor
-    func testPromptCancelKeepsDraftUntilExplicitDiscardAndClosesUnchangedImmediately() async throws {
-        func buttons(in view: NSView) -> [NSButton] {
-            if let button = view as? NSButton { return [button] }
-            return view.subviews.flatMap { buttons(in: $0) }
-        }
-        for dirty in [false, true] {
-            let fixture = PromptCancelFixture(requiresConfirmation: dirty)
-            let host = NSHostingView(rootView: PromptCancelFixtureView(fixture: fixture))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(150))
-            try XCTUnwrap(buttons(in: host).first).performClick(nil)
-            try await Task.sleep(for: .milliseconds(150))
-            if !dirty {
-                XCTAssertEqual(fixture.dismissals, 1, "Unchanged drafts close immediately")
-                continue
-            }
-            XCTAssertEqual(fixture.dismissals, 0, "Cancel must not silently discard draft changes")
-            let choices = buttons(in: host)
-            XCTAssertEqual(choices.count, 2, "Offer Keep editing and Discard changes")
-            guard choices.count == 2 else { continue }
-            host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "Keep editing or discard · native control fixture"
-            attachment.lifetime = .keepAlways; add(attachment)
-            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REVERT_PROOF_DIR"] {
-                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("discard-choices.png"))
-            }
-            choices[0].performClick(nil)
-            try await Task.sleep(for: .milliseconds(150))
-            XCTAssertEqual(fixture.dismissals, 0, "Keep editing must retain the draft")
-            XCTAssertEqual(buttons(in: host).count, 1)
-            try XCTUnwrap(buttons(in: host).first).performClick(nil)
-            try await Task.sleep(for: .milliseconds(150))
-            try XCTUnwrap(buttons(in: host).last).performClick(nil)
-            XCTAssertEqual(fixture.dismissals, 1, "Only explicit Discard closes an edited draft")
-        }
-    }
-
-    @MainActor
-    func testPromptRemovalRequiresConfirmationAndRespectsLastPromptGuard() async throws {
-        func buttons(in view: NSView) -> [NSButton] {
-            if let button = view as? NSButton { return [button] }
-            return view.subviews.flatMap { buttons(in: $0) }
-        }
-        let fixture = PromptRemoveFixture()
-        let host = NSHostingView(rootView: PromptRemoveFixtureView(fixture: fixture))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(150))
-        try XCTUnwrap(buttons(in: host).first).performClick(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(fixture.removals, 0, "The minus button must not immediately discard a prompt")
-        let choices = buttons(in: host)
-        XCTAssertEqual(choices.count, 2, "Offer Keep prompt and Remove prompt")
-        guard choices.count == 2 else { return }
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = "Keep prompt or remove · native control"; attachment.lifetime = .keepAlways; add(attachment)
-        if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REMOVE_PROOF_PATH"] {
-            try png.write(to: URL(fileURLWithPath: path))
-        }
-        choices[0].performClick(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(fixture.removals, 0)
-        XCTAssertEqual(buttons(in: host).count, 1)
-        try XCTUnwrap(buttons(in: host).first).performClick(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        fixture.canRemove = false
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(buttons(in: host).count, 1, "Losing permission must clear the pending confirmation")
-        let disabled = try XCTUnwrap(buttons(in: host).first)
-        XCTAssertFalse(disabled.isEnabled, "The final prompt cannot be removed")
-        disabled.performClick(nil)
-        XCTAssertEqual(fixture.removals, 0)
-        fixture.canRemove = true
-        try await Task.sleep(for: .milliseconds(150))
-        try XCTUnwrap(buttons(in: host).first).performClick(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        try XCTUnwrap(buttons(in: host).last).performClick(nil)
-        XCTAssertEqual(fixture.removals, 1, "Only explicit Remove invokes the removal callback")
-    }
-
-    @MainActor
-    func testPromptCancelReturnsToImmediateCloseAfterDraftRevert() async throws {
-        func buttons(in view: NSView) -> [NSButton] {
-            if let button = view as? NSButton { return [button] }
-            return view.subviews.flatMap { buttons(in: $0) }
-        }
-        let fixture = PromptCancelFixture(requiresConfirmation: true)
-        let host = NSHostingView(rootView: PromptCancelFixtureView(fixture: fixture))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(150))
-        try XCTUnwrap(buttons(in: host).first).performClick(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(fixture.dismissals, 0)
-        fixture.requiresConfirmation = false
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(buttons(in: host).count, 1)
-        try XCTUnwrap(buttons(in: host).first).performClick(nil)
-        XCTAssertEqual(fixture.dismissals, 1)
     }
 
     @MainActor

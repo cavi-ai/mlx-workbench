@@ -1,4 +1,5 @@
 import Darwin
+import os
 import XCTest
 
 @testable import mlx_workbench
@@ -154,5 +155,124 @@ final class AgentWorkerTests: XCTestCase {
         XCTAssertNil(status["calls"])
         XCTAssertEqual(status["argv"] as? [String], ["serve", "status", "--json"])
         XCTAssertNil(worker.processIdentifier)
+    }
+
+    func testHandlesReadOnlyCommandsAndRejectsMutatingFlags() throws {
+        XCTAssertTrue(AgentWorker.handles(["serve", "status"]))
+        XCTAssertTrue(AgentWorker.handles(["serve", "discover"]))
+        XCTAssertTrue(AgentWorker.handles(["serve", "discover", "--receipts-dir", "/tmp/r"]))
+        XCTAssertTrue(AgentWorker.handles(["serve", "duplication-policy"]))
+        XCTAssertTrue(AgentWorker.handles(["serve", "duplication-policy", "--json"]))
+        XCTAssertTrue(AgentWorker.handles(["convert", "status"]))
+        XCTAssertTrue(AgentWorker.handles(["convert", "status", "--receipts-dir", "/tmp/r"]))
+
+        XCTAssertFalse(AgentWorker.handles(["serve", "duplication-policy", "--confirm"]))
+        XCTAssertFalse(AgentWorker.handles(["serve", "duplication-policy", "--clear"]))
+        XCTAssertFalse(AgentWorker.handles(["serve", "duplication-policy", "--allow-model", "/models/a"]))
+        XCTAssertFalse(AgentWorker.handles(["serve", "duplication-policy", "--allow-model=/models/a"]))
+        XCTAssertFalse(AgentWorker.handles(["serve", "start"]))
+        XCTAssertFalse(AgentWorker.handles(["serve", "stop"]))
+        XCTAssertFalse(AgentWorker.handles(["convert", "scan"]))
+        XCTAssertFalse(AgentWorker.handles([]))
+        XCTAssertFalse(AgentWorker.handles(["serve"]))
+
+        let cli = CLIProcess(worker: worker)
+        let status = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        let workerPID = try XCTUnwrap(worker.processIdentifier)
+        let discover = try cli.run(agentPath: root.path, argv: ["serve", "discover"])
+        let policy = try cli.run(agentPath: root.path, argv: ["serve", "duplication-policy"])
+        let convertStatus = try cli.run(agentPath: root.path, argv: ["convert", "status"])
+        XCTAssertEqual(status["calls"] as? Int, 1)
+        XCTAssertEqual(discover["calls"] as? Int, 2)
+        XCTAssertEqual(policy["calls"] as? Int, 3)
+        XCTAssertEqual(convertStatus["calls"] as? Int, 4)
+        XCTAssertEqual(discover["pid"] as? Int, Int(workerPID))
+        XCTAssertEqual(policy["pid"] as? Int, Int(workerPID))
+        XCTAssertEqual(convertStatus["pid"] as? Int, Int(workerPID))
+
+        let confirm = try cli.run(agentPath: root.path, argv: ["serve", "duplication-policy", "--confirm"])
+        XCTAssertNil(confirm["calls"], "mutating duplication-policy must bypass the worker")
+        XCTAssertNotEqual(confirm["pid"] as? Int, Int(workerPID))
+    }
+
+    func testStartupFailureUsesExponentialBackoffAndRecoversAfterTTL() throws {
+        let clock = OSAllocatedUnfairLock(initialState: TimeInterval(100))
+        worker = AgentWorker(initialCooldown: 15, maxCooldown: 60, now: { clock.withLock { $0 } })
+        let cli = CLIProcess(worker: worker)
+        let cliPy = root.appendingPathComponent("src/mlx_agent/cli.py")
+        let healthyCLI = try Data(contentsOf: cliPy)
+
+        // Failure #1 -> 15s cooldown (until t = 115).
+        try Data("raise RuntimeError('transient boot error')\n".utf8).write(to: cliPy)
+        let first = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        XCTAssertNil(first["calls"])
+        XCTAssertNil(worker.processIdentifier)
+
+        // Fix cli.py, but stay within the 15s cooldown: worker must not retry yet.
+        try healthyCLI.write(to: cliPy)
+        clock.withLock { $0 = 114 }
+        let duringCooldown = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        XCTAssertNil(duringCooldown["calls"])
+        XCTAssertNil(worker.processIdentifier)
+
+        // Failure #2 at t = 115 -> 30s cooldown (until t = 145).
+        try Data("raise RuntimeError('still broken')\n".utf8).write(to: cliPy)
+        clock.withLock { $0 = 115 }
+        let secondFailure = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        XCTAssertNil(secondFailure["calls"])
+
+        // Fix cli.py, verify 30s backoff is honored at t = 144.
+        try healthyCLI.write(to: cliPy)
+        clock.withLock { $0 = 144 }
+        let duringSecondCooldown = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        XCTAssertNil(duringSecondCooldown["calls"])
+
+        // At t = 145, cooldown expires and worker recovers cleanly.
+        clock.withLock { $0 = 145 }
+        let recovered = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        XCTAssertEqual(recovered["calls"] as? Int, 1)
+        XCTAssertNotNil(worker.processIdentifier)
+    }
+
+    func testStartupStderrIsCapturedBoundedAndRedacted() throws {
+        try Data("""
+        import sys
+        sys.stderr.write("boot failed: api_key=sk-super-secret-value\n")
+        sys.stderr.write("Authorization: Bearer top-secret-token\n")
+        sys.stderr.write("X" * 8192 + "\n")
+        sys.stderr.flush()
+        raise RuntimeError("boom")
+        """.utf8).write(to: root.appendingPathComponent("src/mlx_agent/cli.py"))
+
+        let cli = CLIProcess(worker: worker)
+        let result = try cli.run(agentPath: root.path, argv: ["serve", "status"])
+        XCTAssertNil(result["calls"])
+
+        let captured = try XCTUnwrap(worker.lastStartupStderr)
+        XCTAssertFalse(captured.isEmpty)
+        XCTAssertLessThanOrEqual(captured.utf8.count, 4 * 1024)
+        XCTAssertFalse(captured.contains("sk-super-secret-value"))
+        XCTAssertFalse(captured.contains("top-secret-token"))
+        XCTAssertTrue(captured.contains("•••"))
+    }
+
+    func testNoisyRuntimeStderrDoesNotBlockWarmWorker() throws {
+        try Data("""
+        import json, os
+        calls = 0
+        def main(argv):
+            global calls
+            calls += 1
+            os.write(2, b"W" * (128 * 1024))
+            print(json.dumps({"status": "ok", "data": {"pid": os.getpid(), "calls": calls}}))
+            return 0
+        """.utf8).write(to: root.appendingPathComponent("src/mlx_agent/cli.py"))
+
+        let cli = CLIProcess(worker: worker)
+        let first = try cli.run(agentPath: root.path, argv: ["serve", "status"], timeout: 5)
+        let second = try cli.run(agentPath: root.path, argv: ["serve", "status"], timeout: 5)
+        XCTAssertEqual(first["calls"] as? Int, 1)
+        XCTAssertEqual(second["calls"] as? Int, 2)
+        XCTAssertEqual(first["pid"] as? Int, second["pid"] as? Int)
     }
 }

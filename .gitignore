@@ -24,3 +24,9 @@ mlx-mac/build/
 /docs/mlx-workbench/v*/
 /.release/
 default.profraw
+
+# Local tooling & scratch hygiene
+.code-review-graphignore
+.specs/
+.tmp/
+.openclaw/

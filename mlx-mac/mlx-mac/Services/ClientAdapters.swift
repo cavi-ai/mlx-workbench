@@ -63,7 +63,8 @@ struct ClientAdapter: Sendable {
     let relativeConfigPath: String?
     let advisoryOnly: Bool
     let advisoryNote: String?
-    /// Native credential destination. nil means keys belong in the client's own credential store.
+    /// Native credential destination. nil means keys belong in the client's own credential store
+    /// or are referenced via an environment variable (e.g. `${MLX_AGENT_API_KEY}`) with `credentialInstruction`.
     var apiKeyPlan: (@Sendable (_ config: String, _ key: String) throws -> String)? = nil
     var credentialInstruction: String? = nil
     var normalizesFormatting = false

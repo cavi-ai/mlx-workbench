@@ -40,6 +40,7 @@ struct ServeView: View {
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var tailnet: TailnetSharingCoordinator
+    @ObservedObject private var frontDoor: FrontDoorCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var tailnetServer: ServerInfo?
     @State private var mode = ServeMode.saveEndpoint
@@ -57,6 +58,7 @@ struct ServeView: View {
     @State private var keepModelLoaded = false
     @State private var requireAPIKey = false
     @State private var splashPresets: [SplashPreset] = []
+    @State private var agentMemoryBudget: AgentMemoryBudget?
     @State private var selectedSplashPresetName = ""
     @State private var showingSplashEditor = false
     @State private var splashPresetSlot: EndpointSlot?
@@ -114,6 +116,7 @@ struct ServeView: View {
         _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _tailnet = ObservedObject(wrappedValue: appHost.tailnetSharing)
+        _frontDoor = ObservedObject(wrappedValue: appHost.frontDoor)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -242,48 +245,79 @@ struct ServeView: View {
         .sheet(item: $splashPresetSlot) { slot in
             SplashPresetApplySheet(slot: slot, endpoint: endpoint, api: appHost.api)
         }
-        .task { await loadSplashPresets() }
-        .task(id: isRouteActive) {
-            guard isRouteActive else { return }
-            async let discovery: Void = refreshDiscovery()
-            await modelWorkflow.refreshServers()
-            await discovery
-        }
-        .onChange(of: selectedSplashPresetName) { _, name in
-            if !name.isEmpty { newSlotLoadOnRequest = true }
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-            modelWorkflow.invalidateServePreview()
-        }
-        .onChange(of: selectedModel?.item.path) { _, _ in selectedSplashPresetName = "" }
-        .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
-        .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
-        .onChange(of: isRouteActive) { _, active in
-            if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime() }
-            else { closePrompt() }
-        }
-        .onDisappear(perform: closePrompt)
-        .onChange(of: inferenceOptions) { _, _ in modelWorkflow.invalidateServePreview() }
-        .onChange(of: runtime) { _, _ in
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-            modelWorkflow.invalidateServePreview()
-        }
-        .onChange(of: mode) { _, value in
-            if value == .startNow { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil }
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-            modelWorkflow.invalidateServePreview()
-        }
-        .onChange(of: modelWorkflow.servingProfile) { _, _ in
-            inferenceOptions = inferenceContext.normalized(inferenceOptions)
-        }
-        .onChange(of: newSlotLoadOnRequest) { _, value in
-            if !value { inferenceOptions.systemPrompt = ""; inferenceOptions.temperature = nil; inferenceOptions.topP = nil }
-        }
-        .onChange(of: portText) { _, _ in modelWorkflow.invalidateServePreview() }
-        .onAppear {
-            if endpointPortText.isEmpty {
-                endpointPortText = String(suggestedPort)
+        .modifier(ServeViewLifecycleModifier(
+            isRouteActive: isRouteActive,
+            selectedSplashPresetName: selectedSplashPresetName,
+            newSlotLoadOnRequest: newSlotLoadOnRequest,
+            requireAPIKey: requireAPIKey,
+            selectedModelPath: selectedModel?.item.path,
+            servers: modelWorkflow.servers,
+            serversError: modelWorkflow.serversError,
+            inferenceOptions: inferenceOptions,
+            runtime: runtime,
+            mode: mode,
+            servingProfile: modelWorkflow.servingProfile,
+            portText: portText,
+            onTask: {
+                await loadSplashPresets()
+                await refreshAgentMemoryBudget()
+            },
+            onRouteTask: {
+                async let discovery: Void = refreshDiscovery()
+                async let budget: Void = refreshAgentMemoryBudget()
+                await modelWorkflow.refreshServers()
+                await discovery
+                await budget
+            },
+            onSplashPresetChanged: { name in
+                if !name.isEmpty { newSlotLoadOnRequest = true; inferenceOptions.sharedPrefixCacheMiB = nil }
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+                modelWorkflow.invalidateServePreview()
+            },
+            onLoadOnRequestChanged: { enabled in
+                if !enabled {
+                    inferenceOptions.systemPrompt = ""
+                    inferenceOptions.temperature = nil
+                    inferenceOptions.topP = nil
+                    inferenceOptions.sharedPrefixCacheMiB = nil
+                }
+            },
+            onRequireAPIKeyChanged: { required in
+                if !required { inferenceOptions.sharedPrefixCacheMiB = nil }
+            },
+            onSelectedModelChanged: { selectedSplashPresetName = "" },
+            onServersChanged: { servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) },
+            onServersErrorChanged: { error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) },
+            onRouteActiveChanged: { active in
+                if active { focusShownModel(); focusRequestedServer(); applyRequestedRuntime() }
+                else { closePrompt() }
+            },
+            onDisappear: closePrompt,
+            onInferenceOptionsChanged: { modelWorkflow.invalidateServePreview() },
+            onRuntimeChanged: {
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+                modelWorkflow.invalidateServePreview()
+            },
+            onModeChanged: { value in
+                if value == .startNow {
+                    inferenceOptions.systemPrompt = ""
+                    inferenceOptions.temperature = nil
+                    inferenceOptions.topP = nil
+                    inferenceOptions.sharedPrefixCacheMiB = nil
+                }
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+                modelWorkflow.invalidateServePreview()
+            },
+            onServingProfileChanged: {
+                inferenceOptions = inferenceContext.normalized(inferenceOptions)
+            },
+            onPortChanged: { modelWorkflow.invalidateServePreview() },
+            onAppear: {
+                if endpointPortText.isEmpty {
+                    endpointPortText = String(suggestedPort)
+                }
             }
-        }
+        ))
     }
 
 
@@ -347,8 +381,12 @@ struct ServeView: View {
                     }
                 }
                 if trainedAdapters.selectedJob != nil {
-                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview in
-                        await endpoint.addTrainedAdapterSlot(binding: preview.binding, port: preview.port, allowUnverified: true)
+                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview, key in
+                        await endpoint.addTrainedAdapterSlot(
+                            binding: preview.binding, port: preview.port, allowUnverified: true,
+                            loadOnRequest: preview.loadOnRequest, requireAPIKey: preview.requireAPIKey,
+                            reviewedHash: preview.hash, reviewedKey: key
+                        )
                         await modelWorkflow.refreshServers()
                         return endpoint.lastError
                     }) { await modelWorkflow.refreshServers() }
@@ -409,6 +447,7 @@ struct ServeView: View {
                             ServingStatusLabel(row: row, states: endpoint.slotStates)
                         }
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        servingObservabilityBadges(row, server: server)
                         if let reason = ServingWorkspacePresentation.attentionReason(row) {
                             Label {
                                 Text(reason + " " + ServingWorkspacePresentation.attentionNextStep).textSelection(.enabled)
@@ -466,14 +505,33 @@ struct ServeView: View {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
+            if let quickTarget = quickConnectTarget(for: row) {
+                QuickConnectStrip(target: quickTarget, frontDoorTarget: quickConnectFrontDoorTarget(for: row))
+            }
             if let server, server.runtime == "splash" {
                 if let effective = server.splashEffectiveContextTokens {
-                    LabeledContent("Context", value: "\(effective.formatted()) tokens reported")
+                    LabeledContent("Effective context", value: "\(effective.formatted()) tokens")
                 } else {
-                    LabeledContent("Context", value: "Not reported")
+                    LabeledContent("Effective context", value: "Not reported")
                 }
-                if let configured = server.splashConfiguredContextTokens, configured != server.splashEffectiveContextTokens {
+                if let configured = server.splashConfiguredContextTokens {
                     LabeledContent("Configured context", value: "\(configured.formatted()) tokens")
+                }
+                if case .endpoint(let slot, _, _) = row,
+                   let presetName = slot.splashPresetName,
+                   let preset = splashPresets.first(where: { $0.name == presetName }) {
+                    if let cachedStates = preset.tuning.cachedStates {
+                        LabeledContent("Cached states", value: cachedStates)
+                    }
+                    if preset.tuning.persistentCache == true {
+                        LabeledContent("Persistent SSD cache", value: "Enabled")
+                    }
+                    if let maxDiskGB = preset.tuning.maxCacheDiskGB {
+                        LabeledContent("SSD cache quota", value: maxDiskGB == 0 ? "Off" : "\(maxDiskGB.formatted()) GB")
+                    }
+                    if let wait = preset.executionWaitSeconds, wait > 0 {
+                        LabeledContent("Execution wait", value: "\(wait) s")
+                    }
                 }
                 if server.modelState == "failed" {
                     InlineMessage(kind: .error, text: "Splash failed to load. Review the server log for details.")
@@ -537,6 +595,37 @@ struct ServeView: View {
         .onAppear(perform: synchronizeConnectionPort)
     }
 
+    private func quickConnectTarget(for row: ServingRow) -> QuickConnectTarget? {
+        let server = ServingWorkspacePresentation.server(row)
+        if let server, let target = QuickConnectTarget.direct(server: server, baseURL: ServingWorkspacePresentation.baseURL(row)) {
+            return target
+        }
+        if case .endpoint(let slot, _, _) = row {
+            return QuickConnectTarget.direct(slot: slot, server: server)
+        }
+        if let baseURL = ServingWorkspacePresentation.baseURL(row) {
+            let modelID = ServingWorkspacePresentation.modelID(row)
+            guard !modelID.isEmpty else { return nil }
+            return QuickConnectTarget(
+                baseURL: baseURL,
+                modelID: modelID,
+                requiresAPIKey: false,
+                isFrontDoor: false,
+                supportsChat: true,
+                statusLabel: ServingWorkspacePresentation.status(row, states: endpoint.slotStates)
+            )
+        }
+        return nil
+    }
+
+    private func quickConnectFrontDoorTarget(for row: ServingRow) -> QuickConnectTarget? {
+        guard let server = ServingWorkspacePresentation.server(row),
+              let listener = frontDoor.listening,
+              let target = QuickConnectTarget.frontDoor(listener, server: server),
+              !frontDoor.collisions.contains(where: { $0.modelName == target.modelID }) else { return nil }
+        return target
+    }
+
     @ViewBuilder
     private func inferenceWorkspace(_ row: ServingRow) -> some View {
         if let server = ServingWorkspacePresentation.server(row), server.runtime == "tasks",
@@ -562,6 +651,7 @@ struct ServeView: View {
     @ViewBuilder
     private func memoryWorkspace(_ row: ServingRow) -> some View {
         ServingSystemHeadroom(resources: appHost.resources)
+        fleetCoResidencyBudgetBar
         if case .endpoint(let slot, _, _) = row {
             Toggle("Load weights on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
                 Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
@@ -878,9 +968,90 @@ struct ServeView: View {
     }
 
     @ViewBuilder
+    private func servingObservabilityBadges(_ row: ServingRow, server: ServerInfo?) -> some View {
+        let slot: EndpointSlot? = {
+            if case .endpoint(let s, _, _) = row { return s }
+            return nil
+        }()
+        let preset = slot?.splashPresetName.flatMap { name in splashPresets.first { $0.name == name } }
+        let badges: [String] = {
+            var items: [String] = []
+            if server?.runtime == "splash" || slot?.splashPresetName != nil {
+                if let effective = server?.splashEffectiveContextTokens, let configured = server?.splashConfiguredContextTokens, effective != configured {
+                    items.append("Context \(effective.formatted()) / \(configured.formatted())")
+                } else if let effective = server?.splashEffectiveContextTokens {
+                    items.append("Context \(effective.formatted())")
+                } else if let configured = server?.splashConfiguredContextTokens ?? preset?.contextTokens {
+                    items.append("Context \(configured.formatted()) configured")
+                }
+                if let cachedStates = preset?.tuning.cachedStates {
+                    items.append("States \(cachedStates)")
+                }
+                if preset?.tuning.persistentCache == true {
+                    if let disk = preset?.tuning.maxCacheDiskGB, disk > 0 {
+                        items.append("SSD cache \(disk.formatted()) GB · persistent")
+                    } else {
+                        items.append("Persistent SSD cache")
+                    }
+                } else if let disk = preset?.tuning.maxCacheDiskGB {
+                    items.append(disk == 0 ? "SSD cache off" : "SSD cache \(disk.formatted()) GB")
+                }
+            }
+            if let mib = slot?.inferenceOptions.sharedPrefixCacheMiB {
+                items.append("Prefix cache \(mib) MiB")
+            }
+            let wait = server?.memoryPolicy?.executionWaitSeconds ?? slot?.memoryPolicy?.executionWaitSeconds ?? preset?.executionWaitSeconds
+            if let wait, wait > 0 {
+                items.append("Queue wait \(wait) s")
+            }
+            return items
+        }()
+        if !badges.isEmpty {
+            ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xs) {
+                ForEach(badges, id: \.self) { badge in
+                    Text(badge)
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .padding(.horizontal, WorkbenchSpacing.xs)
+                        .padding(.vertical, WorkbenchSpacing.xxxs)
+                        .background(WorkbenchColor.well, in: Capsule())
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var inferenceSettings: some View {
         ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest)
             .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
+        if mode == .saveEndpoint && newSlotLoadOnRequest && requireAPIKey && selectedSplashPreset == nil && modelWorkflow.servingProfile == nil && !inferenceContext.isStrata && !inferenceContext.isSplash {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Toggle("Shared prefix cache (MLX-LM)", isOn: Binding(
+                        get: { inferenceOptions.sharedPrefixCacheMiB != nil },
+                        set: { enabled in inferenceOptions.sharedPrefixCacheMiB = enabled ? 256 : nil }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .disabled(inferenceOptions.accelerationRequested || !inferenceOptions.systemPrompt.isEmpty)
+                    if let mib = inferenceOptions.sharedPrefixCacheMiB {
+                        Picker("Budget", selection: Binding(
+                            get: { mib },
+                            set: { inferenceOptions.sharedPrefixCacheMiB = $0 }
+                        )) {
+                            ForEach([64, 128, 256, 512, 1024, 2048], id: \.self) { value in
+                                Text("\(value) MiB").tag(value)
+                            }
+                            if ![64, 128, 256, 512, 1024, 2048].contains(mib) {
+                                Text("\(mib) MiB").tag(mib)
+                            }
+                        }
+                        .frame(maxWidth: 140)
+                    }
+                }
+                Text("Reuses identical system-prompt prefixes across multi-agent requests on keyed MLX-LM endpoints (16–2048 MiB).")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
         if mode == .saveEndpoint && ServingInferenceContext.supportsSavedSplashPreset(model: selectedModel, profile: modelWorkflow.servingProfile) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 HStack {
@@ -1039,6 +1210,96 @@ struct ServeView: View {
     private func refreshServing() async {
         await modelWorkflow.refreshServers()
         await inventory.refresh(refreshHosts: true)
+        await refreshAgentMemoryBudget()
+    }
+
+    private func refreshAgentMemoryBudget() async {
+        agentMemoryBudget = try? await appHost.api.agentMemoryBudget()
+    }
+
+    private var fleetBudgetSummary: FleetFitAdvisor.BudgetSummary? {
+        let enabledSlots = endpoint.fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
+        guard !enabledSlots.isEmpty, let memory = appHost.resources.memory else { return nil }
+        let estimates = enabledSlots.map { slot -> FleetFitAdvisor.Estimate in
+            let model = RunModels.model(for: slot.modelPath, in: models)
+            let server = modelWorkflow.servers.first(where: { $0.port == slot.port })
+            let modality = FleetFitAdvisor.modality(for: model, server: server, role: slot.role)
+            let residency: FleetFitAdvisor.Residency
+            if let presetName = slot.splashPresetName,
+               let cap = splashPresets.first(where: { $0.name == presetName })?.memoryGB,
+               cap > 0 {
+                residency = .splashCapped(maxMemoryGB: cap)
+            } else if slot.usesJIT {
+                let state = server?.modelState?.lowercased()
+                residency = (state == "unloaded" || state == "idle" || server == nil) ? .jitUnloaded : .resident
+            } else {
+                residency = .resident
+            }
+            let modelBytes: Int64? = (model?.item.bytes ?? 0) > 0 ? model?.item.bytes : nil
+            let contextTokens = slot.memoryPolicy?.contextTokens ?? appHost.resources.contextTokens
+            return FleetFitAdvisor.Estimate.slot(
+                modelBytes: modelBytes,
+                contextTokens: contextTokens,
+                parameters: model?.item.parameters,
+                modality: modality,
+                residency: residency
+            )
+        }
+        return FleetFitAdvisor.assess(
+            estimates: estimates,
+            availableBytes: memory.availableBytes,
+            reserveBytes: Int64(max(0, appHost.config.fitReserveGB) * 1e9),
+            agentBudget: agentMemoryBudget
+        )
+    }
+
+    @ViewBuilder
+    private var fleetCoResidencyBudgetBar: some View {
+        if let summary = fleetBudgetSummary {
+            let tint: Color = {
+                switch summary.verdict {
+                case .fits: return WorkbenchColor.success
+                case .tight: return WorkbenchColor.warning
+                case .wontFit: return WorkbenchColor.failure
+                case .unknown: return WorkbenchColor.muted
+                }
+            }()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                HStack {
+                    Text("Fleet co-residency budget")
+                        .font(WorkbenchTypography.label)
+                    Spacer()
+                    Text("\(summary.totalSlotCount)/\(EndpointFleetConfig.maxSlots) slots")
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                ProgressView(value: min(1.0, max(0.0, summary.utilizationFraction)))
+                    .tint(tint)
+                Text(summary.summaryText)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(summary.isPartial ? WorkbenchColor.warning : WorkbenchColor.muted)
+                if !summary.modalityBreakdown.isEmpty {
+                    let breakdown = FleetFitAdvisor.Modality.allCases.compactMap { modality -> String? in
+                        guard let bytes = summary.modalityBreakdown[modality], bytes > 0 else { return nil }
+                        return String(format: "%@ %.1f GB", modality.title, Double(bytes) / 1e9)
+                    }
+                    if !breakdown.isEmpty {
+                        Text(breakdown.joined(separator: " · "))
+                            .font(WorkbenchTypography.metadata)
+                            .foregroundStyle(WorkbenchColor.muted)
+                    }
+                }
+                if let admission = summary.agentAdmissionBytes, let accounted = summary.agentAccountedBytes {
+                    Text(String(format: "Shared agent budget: %.1f GB accounted / %.1f GB admission",
+                                Double(accounted) / 1e9, Double(admission) / 1e9))
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(summary.agentWithinBudget == false ? WorkbenchColor.failure : WorkbenchColor.muted)
+                }
+            }
+            .padding(WorkbenchSpacing.sm)
+            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+            .accessibilityIdentifier("serving-coresidency-budget-bar")
+        }
     }
 
     private func refreshDiscovery() async {
@@ -1273,6 +1534,29 @@ struct ServeView: View {
                         }
                         .frame(maxWidth: WorkbenchSize.Run.reservePickerMaximum)
                     }
+                }
+                HStack {
+                    Picker("Execution wait", selection: Binding(
+                        get: { policy.executionWaitSeconds ?? 0 },
+                        set: { value in
+                            var updated = policy
+                            updated.executionWaitSeconds = value == 0 ? nil : value
+                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
+                        })) {
+                        Text("Off (0 s)").tag(0)
+                        Text("30 seconds").tag(30)
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
+                        Text("30 minutes").tag(1800)
+                        Text("1 hour").tag(3600)
+                        if let current = policy.executionWaitSeconds, ![0, 30, 60, 120, 300, 600, 1800, 3600].contains(current) {
+                            Text(verbatim: "\(current) seconds").tag(current)
+                        }
+                    }
+                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
+                    .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
                 }
                 Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
                     .font(WorkbenchTypography.metadata)
@@ -1656,6 +1940,9 @@ struct EndpointChanges {
         guard let model else { return .noModel }
         if let error = inference.validationError { return .portRejected(error) }
         if splashPreset != nil && (!loadOnRequest || profile != nil) { return .portRejected("Splash presets require a load-on-request endpoint.") }
+        if inference.sharedPrefixCacheRequested && !ServeLaunch.sharedPrefixCacheIsLegal(runtime: "mlx_lm", jit: loadOnRequest, hasAPIKey: requireKey, hasSplashPreset: splashPreset != nil, hasServingProfile: profile != nil, options: inference) {
+            return .portRejected("Shared prefix cache requires a keyed MLX-LM load-on-request endpoint with a 16–2048 MiB budget and no incompatible options.")
+        }
         if let profile, !profile.hasPassedVerification || profile.modelPath != model.item.path {
             return .portRejected("Verify the selected serving profile for this model before adding the endpoint.")
         }
@@ -1802,6 +2089,35 @@ private struct EndpointInferenceEditor: View {
                         InlineMessage(kind: .info, text: "Stop this endpoint to change its inference settings.")
                     }
                     ServingInferenceControls(options: $options, context: context, allowRequestDefaults: slot.usesJIT).disabled(slot.enabled)
+                    if slot.usesJIT && slot.apiKeySHA256 != nil && slot.splashPresetName == nil && slot.servingProfile == nil && !slot.isTrainedAdapter {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            HStack(spacing: WorkbenchSpacing.sm) {
+                                Toggle("Shared prefix cache (MLX-LM)", isOn: Binding(
+                                    get: { options.sharedPrefixCacheMiB != nil },
+                                    set: { enabled in options.sharedPrefixCacheMiB = enabled ? 256 : nil }
+                                ))
+                                .toggleStyle(.checkbox)
+                                .disabled(slot.enabled || options.accelerationRequested || !options.systemPrompt.isEmpty)
+                                if let mib = options.sharedPrefixCacheMiB {
+                                    Picker("Budget", selection: Binding(
+                                        get: { mib },
+                                        set: { options.sharedPrefixCacheMiB = $0 }
+                                    )) {
+                                        ForEach([64, 128, 256, 512, 1024, 2048], id: \.self) { value in
+                                            Text("\(value) MiB").tag(value)
+                                        }
+                                        if ![64, 128, 256, 512, 1024, 2048].contains(mib) {
+                                            Text("\(mib) MiB").tag(mib)
+                                        }
+                                    }
+                                    .frame(maxWidth: 140)
+                                    .disabled(slot.enabled)
+                                }
+                            }
+                            Text("Reuses identical system-prompt prefixes on keyed MLX-LM endpoints (16–2048 MiB). Requires no acceleration or default system prompt.")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
                     if let profile = slot.servingProfile {
                         Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary)
                         if let onManageProfile {
@@ -1865,6 +2181,7 @@ private struct SplashPresetEditor: View {
     @State private var context = ""
     @State private var headroom = "2"
     @State private var idle = "300"
+    @State private var executionWait = ""
     @State private var keepLoaded = false
     @State private var releaseAfterRequest = false
     @State private var pressure = true
@@ -1911,6 +2228,7 @@ private struct SplashPresetEditor: View {
                 Section("Residency") {
                     TextField("Headroom reserve in GB", text: $headroom)
                     TextField("Idle timeout in seconds", text: $idle).disabled(keepLoaded || releaseAfterRequest)
+                    TextField("Execution wait in seconds (optional, 0–3600)", text: $executionWait)
                     Toggle("Keep loaded", isOn: $keepLoaded).onChange(of: keepLoaded) { _, value in
                         if value { pressure = false; releaseAfterRequest = false }
                     }
@@ -1939,8 +2257,12 @@ private struct SplashPresetEditor: View {
     private func save() async {
         guard let reserve = Double(headroom), let seconds = Int(idle),
               memory.isEmpty || Double(memory) != nil, context.isEmpty || Int(context) != nil,
-              thinkingBudget.isEmpty || Int(thinkingBudget) != nil, cacheQuota.isEmpty || Double(cacheQuota) != nil else {
+              thinkingBudget.isEmpty || Int(thinkingBudget) != nil, cacheQuota.isEmpty || Double(cacheQuota) != nil,
+              executionWait.isEmpty || Int(executionWait) != nil else {
             error = "Enter numbers for the values you set, a headroom reserve, and an idle timeout."; return
+        }
+        if let wait = Int(executionWait), !(0...3600).contains(wait) {
+            error = "Execution wait must be between 0 and 3,600 seconds."; return
         }
         var chosen = tuning
         chosen.thinkingBudget = Int(thinkingBudget)
@@ -1949,6 +2271,7 @@ private struct SplashPresetEditor: View {
         var values: [String: Any] = ["min_headroom_gb": reserve, "idle_timeout": seconds,
                                      "keep_loaded": keepLoaded, "unload_under_pressure": pressure]
         if releaseAfterRequest { values["release_after_request"] = true }
+        if let wait = Int(executionWait) { values["execution_wait_seconds"] = wait }
         if let value = Double(memory) { values["splash_max_memory_gb"] = value }
         if let value = Int(context) { values["splash_max_context_tokens"] = value }
         values.merge(chosen.settings) { _, tuned in tuned }
@@ -2012,5 +2335,60 @@ private struct SplashPresetApplySheet: View {
         busy = true; defer { busy = false }
         do { review = try await endpoint.previewSplashPreset(slot: slot, preset: preset); error = nil }
         catch { self.error = AppHost.render(error) }
+    }
+}
+
+private struct ServeViewLifecycleModifier<Runtime: Equatable, Mode: Equatable>: ViewModifier {
+    let isRouteActive: Bool
+    let selectedSplashPresetName: String
+    let newSlotLoadOnRequest: Bool
+    let requireAPIKey: Bool
+    let selectedModelPath: String?
+    let servers: [ServerInfo]
+    let serversError: String?
+    let inferenceOptions: LocalInferenceOptions
+    let runtime: Runtime
+    let mode: Mode
+    let servingProfile: ServingProfile?
+    let portText: String
+
+    let onTask: () async -> Void
+    let onRouteTask: () async -> Void
+    let onSplashPresetChanged: (String) -> Void
+    let onLoadOnRequestChanged: (Bool) -> Void
+    let onRequireAPIKeyChanged: (Bool) -> Void
+    let onSelectedModelChanged: () -> Void
+    let onServersChanged: ([ServerInfo]) -> Void
+    let onServersErrorChanged: (String?) -> Void
+    let onRouteActiveChanged: (Bool) -> Void
+    let onDisappear: () -> Void
+    let onInferenceOptionsChanged: () -> Void
+    let onRuntimeChanged: () -> Void
+    let onModeChanged: (Mode) -> Void
+    let onServingProfileChanged: () -> Void
+    let onPortChanged: () -> Void
+    let onAppear: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .task { await onTask() }
+            .task(id: isRouteActive) {
+                guard isRouteActive else { return }
+                await onRouteTask()
+            }
+            .onChange(of: selectedSplashPresetName) { _, name in onSplashPresetChanged(name) }
+            .onChange(of: newSlotLoadOnRequest) { _, enabled in onLoadOnRequestChanged(enabled) }
+            .onChange(of: requireAPIKey) { _, required in onRequireAPIKeyChanged(required) }
+            .onChange(of: selectedModelPath) { _, _ in onSelectedModelChanged() }
+            .onChange(of: servers) { _, value in onServersChanged(value) }
+            .onChange(of: serversError) { _, value in onServersErrorChanged(value) }
+            .onChange(of: isRouteActive) { _, active in onRouteActiveChanged(active) }
+            .onDisappear(perform: onDisappear)
+            .onChange(of: inferenceOptions) { _, _ in onInferenceOptionsChanged() }
+            .onChange(of: runtime) { _, _ in onRuntimeChanged() }
+            .onChange(of: mode) { _, value in onModeChanged(value) }
+            .onChange(of: servingProfile) { _, _ in onServingProfileChanged() }
+            .onChange(of: portText) { _, _ in onPortChanged() }
+            .onAppear(perform: onAppear)
     }
 }

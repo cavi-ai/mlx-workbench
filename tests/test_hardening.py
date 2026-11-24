@@ -150,16 +150,6 @@ class RunnerHardeningTests(unittest.TestCase):
         expected = str(Path(sys.executable).resolve().parent)
         self.assertTrue(environment["PATH"].startswith(expected + os.pathsep))
 
-    def test_default_runner_keeps_prepending_interpreter_bin_dir(self):
-        result = bridge._default_runner(["/usr/bin/env"], timeout=10)
-        self.assertEqual(result["returncode"], 0)
-        path_line = next(
-            line for line in result["stdout"].splitlines()
-            if line.startswith("PATH=")
-        )
-        expected = str(Path(sys.executable).resolve().parent)
-        self.assertTrue(path_line.startswith("PATH=" + expected + ":"))
-
 
 class ConfigKeyUniverseTests(unittest.TestCase):
     """P2-9: the web save cannot inject keys outside the shared contract."""

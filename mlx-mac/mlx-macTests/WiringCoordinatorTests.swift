@@ -1253,6 +1253,172 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertTrue(diff.contains { $0.text.contains("•••") })
     }
 
+    func testSecretRedactionPreservesEnvVarReferencesWhileRedactingRawSecrets() {
+        let before = "\"apiKey\": \"raw-secret-token-value\","
+        let after = "\"apiKey\": \"${MLX_AGENT_API_KEY}\","
+        let plan = ClientEditPlan(
+            clientID: "openclaw", displayName: "OpenClaw", configPath: "/x",
+            before: before,
+            after: after,
+            summary: "", rewritesFile: true
+        )
+        let diff = plan.redactedDiff
+        XCTAssertTrue(diff.allSatisfy { !$0.text.contains("raw-secret-token-value") })
+        XCTAssertTrue(diff.contains { $0.kind == .removed && $0.text.contains("•••") })
+        XCTAssertTrue(diff.contains { $0.kind == .added && $0.text.contains("${MLX_AGENT_API_KEY}") })
+    }
+
+    func testOpenClawFrontDoorRegistersAllModelsPreservesExistingAndUsesEnvVarRef() async throws {
+        let key = "mlxw_fixture_openclaw_frontdoor_0123456789"
+        let digest = EndpointCredentialStore.digest(key)
+        let home = try makeHome()
+        let configURL = home.appendingPathComponent(".openclaw/openclaw.json")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let existing = """
+        {
+          "models": {
+            "providers": {
+              "workbench": {
+                "baseUrl": "http://127.0.0.1:8080/v1",
+                "apiKey": "old-raw-plaintext-secret",
+                "models": [
+                  { "id": "user/custom-model", "name": "user/custom-model" }
+                ]
+              }
+            }
+          }
+        }
+        """
+        try existing.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore(fileURL: home.appendingPathComponent("history.json")), credential: { _ in key })
+        let door = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3",
+                                apiKeySHA256: digest, models: ["gemma-3", "org/coder", "org/vision"])
+        await coordinator.preview(frontDoor: door, clientIDs: ["openclaw"])
+        let plan = try XCTUnwrap(coordinator.plans.first)
+        XCTAssertFalse(plan.after.contains(key))
+        XCTAssertFalse(plan.after.contains("old-raw-plaintext-secret"))
+        XCTAssertTrue(plan.after.contains("${MLX_AGENT_API_KEY}"))
+        XCTAssertNotNil(plan.credentialInstruction)
+        XCTAssertTrue(plan.redactedDiff.contains { $0.kind == .added && $0.text.contains("${MLX_AGENT_API_KEY}") })
+        XCTAssertTrue(plan.redactedDiff.allSatisfy { !$0.text.contains("old-raw-plaintext-secret") })
+
+        let parsed = try JSONCTolerant.parse(plan.after)
+        XCTAssertNil(parsed["mlx_agent_wire"])
+        let providers = try XCTUnwrap((parsed["models"] as? [String: Any])?["providers"] as? [String: Any])
+        XCTAssertEqual(Set(providers.keys), ["workbench"])
+        let provider = try XCTUnwrap(providers["workbench"] as? [String: Any])
+        XCTAssertEqual(provider["apiKey"] as? String, "${MLX_AGENT_API_KEY}")
+        XCTAssertEqual(provider["authHeader"] as? Bool, true)
+        XCTAssertNil(provider["auth"])
+        let modelIDs = (provider["models"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        XCTAssertEqual(modelIDs, ["user/custom-model", "gemma-3", "org/coder", "org/vision"])
+    }
+
+    func testOpenClawRecognizesAndUpdatesMLXAgentProviderWithoutDuplicating() throws {
+        let existing = """
+        {
+          "models": {
+            "providers": {
+              "mlx-agent": {
+                "baseUrl": "http://127.0.0.1:8090/v1",
+                "api": "openai-completions",
+                "apiKey": "${CUSTOM_MLX_KEY}",
+                "models": [
+                  { "id": "org/existing", "name": "org/existing" }
+                ]
+              }
+            }
+          }
+        }
+        """
+        let reading = AgentClientAdapters.openclaw.read(existing)
+        XCTAssertEqual(reading, .entries([ClientConfigEntry(baseURL: "http://127.0.0.1:8090/v1", models: ["org/existing"])]))
+
+        let key = "mlxw_fixture_openclaw_mlxagent_0123456789"
+        let endpoint = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3",
+                                    apiKeySHA256: EndpointCredentialStore.digest(key),
+                                    models: ["gemma-3", "org/coder"])
+        let after = try AgentClientAdapters.openclaw.authenticatedPlan(existing, endpoint, key: key)
+        XCTAssertFalse(after.contains(key))
+        let parsed = try JSONCTolerant.parse(after)
+        XCTAssertNil(parsed["mlx_agent_wire"])
+        let providers = try XCTUnwrap((parsed["models"] as? [String: Any])?["providers"] as? [String: Any])
+        XCTAssertEqual(Set(providers.keys), ["mlx-agent"])
+        let provider = try XCTUnwrap(providers["mlx-agent"] as? [String: Any])
+        XCTAssertEqual(provider["apiKey"] as? String, "${CUSTOM_MLX_KEY}")
+        let defaults = try XCTUnwrap(((parsed["agents"] as? [String: Any])?["defaults"] as? [String: Any])?["model"] as? [String: Any])
+        XCTAssertEqual(defaults["primary"] as? String, "mlx-agent/gemma-3")
+        XCTAssertEqual(AgentClientAdapters.openclaw.read(after),
+                       .entries([ClientConfigEntry(baseURL: "http://127.0.0.1:8939/v1", models: ["gemma-3"])]))
+
+        XCTAssertThrowsError(try AgentClientAdapters.openclaw.validate?("{\"mlx_agent_wire\": {}}"))
+    }
+
+    func testMatchesAppliedConfigUsesInjectedFileManagerAndRefusesAncestorSymlink() async throws {
+        final class TrackingFileManager: FileManager {
+            var symlinkChecks: [String] = []
+            var attributeChecks: [String] = []
+            var contentReads: [String] = []
+            var forcedSymlinkPath: String?
+
+            override func destinationOfSymbolicLink(atPath path: String) throws -> String {
+                symlinkChecks.append(path)
+                if path == forcedSymlinkPath {
+                    return "/tmp/redirected-target"
+                }
+                return try super.destinationOfSymbolicLink(atPath: path)
+            }
+
+            override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
+                attributeChecks.append(path)
+                return try super.attributesOfItem(atPath: path)
+            }
+
+            override func contents(atPath path: String) -> Data? {
+                contentReads.append(path)
+                return super.contents(atPath: path)
+            }
+        }
+
+        let home = try makeHome()
+        let opencodeConfig = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: opencodeConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{\"theme\": \"dark\"}".write(to: opencodeConfig, atomically: true, encoding: .utf8)
+        let trackingFM = TrackingFileManager()
+        let trashDirectory = trash(home)
+        let coordinator = WiringCoordinator(
+            home: home,
+            fileManager: trackingFM,
+            store: JSONStore<WiringTransaction>(fileURL: temporaryURL("transactions.json")),
+            moveToTrash: { url in
+                try FileManager.default.createDirectory(at: trashDirectory, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: url, to: trashDirectory.appendingPathComponent(url.lastPathComponent))
+            }
+        )
+
+        coordinator.preview(endpoint: endpoint)
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        let transaction = try XCTUnwrap(coordinator.confirm(endpoint: endpoint, previewHash: hash))
+        let receipt = try XCTUnwrap(transaction.receipts.first)
+
+        trackingFM.symlinkChecks.removeAll()
+        trackingFM.attributeChecks.removeAll()
+        trackingFM.contentReads.removeAll()
+
+        let matched = await coordinator.matchesAppliedConfig(receipt, endpoint: endpoint)
+        XCTAssertTrue(matched)
+        XCTAssertTrue(trackingFM.symlinkChecks.contains(receipt.configPath))
+        XCTAssertTrue(trackingFM.symlinkChecks.contains(opencodeConfig.deletingLastPathComponent().path))
+        XCTAssertTrue(trackingFM.attributeChecks.contains(receipt.configPath))
+        XCTAssertTrue(trackingFM.contentReads.contains(receipt.configPath))
+
+        trackingFM.forcedSymlinkPath = opencodeConfig.deletingLastPathComponent().path
+        let matchedWithAncestorSymlink = await coordinator.matchesAppliedConfig(receipt, endpoint: endpoint)
+        XCTAssertFalse(matchedWithAncestorSymlink)
+    }
+
     // MARK: - Helpers
 
     private var storeURL: URL!

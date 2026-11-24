@@ -315,9 +315,13 @@ final class EndpointFleetTests: XCTestCase {
         await supervisor.addSlot(modelPath: "/Models/b", port: 8768, role: .generalChat)
         await supervisor.addSlot(modelPath: "/Models/c", port: 8769, role: .reasoning)
         await supervisor.addSlot(modelPath: "/Models/d", port: 8770, role: .vision)
+        await supervisor.addSlot(modelPath: "/Models/e", port: 8771)
+        await supervisor.addSlot(modelPath: "/Models/f", port: 8772)
+        await supervisor.addSlot(modelPath: "/Models/g", port: 8773)
+        await supervisor.addSlot(modelPath: "/Models/h", port: 8774)
         XCTAssertEqual(supervisor.fleet.slots.count, EndpointFleetConfig.maxSlots)
 
-        await supervisor.addSlot(modelPath: "/Models/e", port: 8771)
+        await supervisor.addSlot(modelPath: "/Models/i", port: 8775)
         XCTAssertNotNil(supervisor.lastError)
         XCTAssertEqual(supervisor.fleet.slots.count, EndpointFleetConfig.maxSlots)
     }

@@ -9,26 +9,34 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var systemPrompt = ""
     var temperature: Double? = nil
     var topP: Double? = nil
+    var sharedPrefixCacheMiB: Int? = nil
     var hasRequestDefaults: Bool { !systemPrompt.isEmpty || temperature != nil || topP != nil }
     var textRequested: Bool { m5Prefill || promptLookup || thinkingOff }
     var accelerationRequested: Bool { m5Prefill || promptLookup || visionCache }
-    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults }
+    var sharedPrefixCacheRequested: Bool { sharedPrefixCacheMiB != nil }
+    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults || sharedPrefixCacheRequested }
     var validationError: String? {
         if systemPrompt.utf8.count > 8192 || systemPrompt.contains("\0") { return "System prompt must fit in 8,192 UTF-8 bytes without null characters." }
         if let temperature, !temperature.isFinite || !(0...2).contains(temperature) { return "Temperature must be from 0 to 2." }
         if let topP, !topP.isFinite || !(0...1).contains(topP) { return "Top-p must be from 0 to 1." }
         if let maximumTokens, !(256...65536).contains(maximumTokens) { return "Default output length must be from 256 to 65536 tokens." }
         if visionCache && (textRequested || maximumTokens != nil) { return "Choose vision feature reuse separately from text-server settings." }
+        if let mib = sharedPrefixCacheMiB {
+            if !(16...2048).contains(mib) { return "Shared prefix cache must be from 16 to 2048 MiB." }
+            if accelerationRequested { return "Shared prefix cache cannot be combined with M5 prefill, prompt lookup, or vision cache." }
+            if !systemPrompt.isEmpty { return "Shared prefix cache cannot be combined with a default system prompt." }
+        }
         return nil
     }
 
-    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil) {
+    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil, sharedPrefixCacheMiB: Int? = nil) {
         self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
         self.thinkingOff = thinkingOff; self.maximumTokens = maximumTokens
         self.systemPrompt = systemPrompt; self.temperature = temperature; self.topP = topP
+        self.sharedPrefixCacheMiB = sharedPrefixCacheMiB
     }
 
-    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP }
+    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP, sharedPrefixCacheMiB }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         m5Prefill = try values.decodeIfPresent(Bool.self, forKey: .m5Prefill) ?? false
@@ -39,6 +47,7 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
         systemPrompt = try values.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
         temperature = try values.decodeIfPresent(Double.self, forKey: .temperature)
         topP = try values.decodeIfPresent(Double.self, forKey: .topP)
+        sharedPrefixCacheMiB = try values.decodeIfPresent(Int.self, forKey: .sharedPrefixCacheMiB)
     }
 }
 
@@ -87,6 +96,7 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
     var unloadUnderPressure: Bool? = nil
     var contextTokens: Int? = nil
     var releaseAfterRequest: Bool? = nil
+    var executionWaitSeconds: Int? = nil
 
     static let automatic = EndpointMemoryPolicy(idleTimeoutSeconds: 600, keepLoaded: false, minimumHeadroomGB: 2)
     static let legacy = EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: false, minimumHeadroomGB: nil)
@@ -99,6 +109,7 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
         case unloadUnderPressure = "unload_under_pressure"
         case contextTokens = "context_tokens"
         case releaseAfterRequest = "release_after_request"
+        case executionWaitSeconds = "execution_wait_seconds"
     }
 
     var isValid: Bool {
@@ -107,7 +118,8 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
         (minimumHeadroomGB.map { $0.isFinite && (0...1024).contains($0) } ?? true) &&
         (modelMemoryBudgetGB.map { $0.isFinite && (1...1024).contains($0) } ?? true) &&
         (unloadUnderPressure != true || (minimumHeadroomGB != nil && !keepLoaded)) &&
-        (contextTokens.map { (1024...1_048_576).contains($0) && minimumHeadroomGB != nil } ?? true)
+        (contextTokens.map { (1024...1_048_576).contains($0) && minimumHeadroomGB != nil } ?? true) &&
+        (executionWaitSeconds.map { (0...3600).contains($0) } ?? true)
     }
 
     var arguments: [String] {
@@ -118,6 +130,7 @@ struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
         if let modelMemoryBudgetGB { result += ["--memory-budget-gb", String(modelMemoryBudgetGB)] }
         if unloadUnderPressure == true { result.append("--unload-under-pressure") }
         if let contextTokens { result += ["--context-tokens", String(contextTokens)] }
+        if let executionWaitSeconds { result += ["--execution-wait", String(executionWaitSeconds)] }
         return result
     }
 }
@@ -232,6 +245,7 @@ struct SplashPreset: Equatable, Identifiable {
     let idleSeconds: Int
     let keepLoaded: Bool
     let releaseAfterRequest: Bool?
+    let executionWaitSeconds: Int?
     let unloadUnderPressure: Bool
     let tuning: SplashTuning
     /// Complete engine settings bind the selection and review to the same source.
@@ -239,16 +253,19 @@ struct SplashPreset: Equatable, Identifiable {
     var id: String { name }
 
     init?(name: String, settings: [String: Any]) {
+        let wait = settings["execution_wait_seconds"] as? Int
         guard settings.keys.contains(where: { $0.hasPrefix("splash_") }),
               let headroom = (settings["min_headroom_gb"] as? NSNumber)?.doubleValue,
               let idle = settings["idle_timeout"] as? Int, let keep = settings["keep_loaded"] as? Bool,
               let pressure = settings["unload_under_pressure"] as? Bool,
+              (wait.map { (0...3600).contains($0) } ?? true),
               let canonical = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys]) else { return nil }
         self.name = name
         self.memoryGB = (settings["splash_max_memory_gb"] as? NSNumber)?.doubleValue
         self.contextTokens = settings["splash_max_context_tokens"] as? Int
         self.headroomGB = headroom; self.idleSeconds = idle; self.keepLoaded = keep; self.unloadUnderPressure = pressure
         self.releaseAfterRequest = settings["release_after_request"] as? Bool
+        self.executionWaitSeconds = wait
         self.tuning = SplashTuning(settings: settings)
         self.sourceSettings = canonical
     }
@@ -257,7 +274,8 @@ struct SplashPreset: Equatable, Identifiable {
         let memory = memoryGB.map { String(format: "%.1f GB memory", $0) } ?? "Default memory"
         let context = contextTokens.map { "\($0.formatted()) context" } ?? "Default context"
         let idle = keepLoaded ? "Keep loaded" : (releaseAfterRequest == true ? "Release after each request" : (idleSeconds == 0 ? "No idle unload" : "Idle \(idleSeconds) s"))
-        return ([memory, context] + tuning.summaryParts + ["Reserve \(headroomGB.formatted()) GB", idle]).joined(separator: " · ")
+        let waitParts = executionWaitSeconds.flatMap { $0 > 0 ? ["Wait \($0) s"] : nil } ?? []
+        return ([memory, context] + tuning.summaryParts + ["Reserve \(headroomGB.formatted()) GB", idle] + waitParts).joined(separator: " · ")
     }
 
 }
@@ -354,7 +372,7 @@ struct EndpointFleetConfig: Codable, Equatable, Sendable {
     /// Absent in older fleets; synthesized decoding keeps them readable.
     var roleDefaults: EndpointRoleDefaults? = nil
 
-    static let maxSlots = 4
+    static let maxSlots = 8
 
     static var empty: EndpointFleetConfig {
         EndpointFleetConfig(slots: [], installedAtLogin: false)
@@ -432,18 +450,21 @@ extension EndpointFleetConfig {
             if let reason = slot.inferenceOptions.validationError {
                 throw EndpointFleetValidation.invalidInference(slot.id, reason)
             }
-            if slot.splashPresetName != nil && !ServeLaunch.splashPresetIsLegal(jit: slot.usesJIT, hasServingProfile: slot.servingProfile != nil, accelerationRequested: slot.inferenceOptions.accelerationRequested) {
+            if slot.splashPresetName != nil && !ServeLaunch.splashPresetIsLegal(jit: slot.usesJIT, hasServingProfile: slot.servingProfile != nil, accelerationRequested: slot.inferenceOptions.accelerationRequested, sharedPrefixCacheRequested: slot.inferenceOptions.sharedPrefixCacheRequested) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
             }
-            if slot.servingProfile != nil && !ServeLaunch.profileAllows(accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff) {
+            if slot.servingProfile != nil && !ServeLaunch.profileAllows(accelerationRequested: slot.inferenceOptions.accelerationRequested, thinkingOff: slot.inferenceOptions.thinkingOff, sharedPrefixCacheRequested: slot.inferenceOptions.sharedPrefixCacheRequested) {
                 throw EndpointFleetValidation.incompatibleAcceleration(slot.id)
+            }
+            if slot.inferenceOptions.sharedPrefixCacheRequested && !ServeLaunch.sharedPrefixCacheIsLegal(runtime: "mlx_lm", jit: slot.usesJIT, hasAPIKey: slot.apiKeySHA256 != nil, hasSplashPreset: slot.splashPresetName != nil, hasServingProfile: slot.servingProfile != nil, hasTrainingReceipt: slot.trainingReceipt != nil, options: slot.inferenceOptions) {
+                throw EndpointFleetValidation.invalidInference(slot.id, "Shared prefix cache requires a keyed MLX-LM load-on-request endpoint with a 16–2048 MiB budget and no incompatible options.")
             }
             if let receipt = slot.trainingReceipt {
                 let pinned = receipt.hasPrefix("/") && receipt != "/" && !receipt.contains("\0") && slot.modelPath.hasPrefix("/")
-                let ordinary = !slot.usesJIT && slot.servingProfile == nil && slot.splashPresetName == nil
-                    && slot.apiKeySHA256 == nil && !slot.inferenceOptions.requested && !slot.inferenceOptions.hasRequestDefaults
-                    && slot.memoryPolicy == nil
-                if !pinned || !ordinary { throw EndpointFleetValidation.invalidAdapterEndpoint(slot.id) }
+                let allowedOptions = slot.servingProfile == nil && slot.splashPresetName == nil
+                    && !slot.inferenceOptions.requested && !slot.inferenceOptions.hasRequestDefaults
+                    && (slot.memoryPolicy == nil || slot.usesJIT)
+                if !pinned || !allowedOptions { throw EndpointFleetValidation.invalidAdapterEndpoint(slot.id) }
             }
             if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }
             guard (1...65535).contains(slot.port) else {

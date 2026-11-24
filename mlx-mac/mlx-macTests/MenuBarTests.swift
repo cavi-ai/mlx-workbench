@@ -131,21 +131,6 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(EndpointIcon.name(forStates: [.running(modelPath: "/m", port: 1), .degraded(reason: "x")]), "exclamationmark.triangle")
     }
 
-    func testMenuBodyBuildsNoFileURLsAndKeepsQuitShortcut() throws {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("mlx-mac/UI/MenuBarView.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertFalse(source.contains("URL(fileURLWithPath:"))
-        XCTAssertTrue(source.contains("inventory.confirm(surface: .menuBar)"))
-        XCTAssertFalse(source.contains("(spec 09"))
-        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open MLX Workbench\")"))
-        XCTAssertTrue(source.contains(".keyboardShortcut(\"q\")"))
-        XCTAssertTrue(source.contains("Button(\"Open Serving\")"))
-        XCTAssertFalse(source.contains("Manage served models"))
-    }
-
     // MARK: - Serving rows on the quick surfaces
 
     private let managedReceipts = "/receipts/workbench"

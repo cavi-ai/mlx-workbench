@@ -1,6 +1,23 @@
 import Foundation
 import Combine
 
+extension ServingClient {
+    /// Clients that can wire directly to the unified Front Door endpoint.
+    var supportsFrontDoor: Bool {
+        switch self {
+        case .opencode, .openclaw, .claude, .codex, .hermes: return true
+        }
+    }
+
+    /// Clients whose chat-completions endpoints are verified with a tool-call probe.
+    var supportsToolCallCheck: Bool {
+        switch self {
+        case .opencode, .openclaw, .hermes: return true
+        case .codex, .claude: return false
+        }
+    }
+}
+
 enum ClientToolCallCheck: Equatable, Sendable { case passed, notVerified, timedOut }
 
 struct ClientConnectionResult: Equatable, Sendable {
@@ -51,7 +68,7 @@ enum ClientConnectionTest {
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw HostHTTPError.invalidResponse }
         var result = ClientConnectionResult(protocolName: name, answer: String(text.prefix(4_000)))
-        if client == .opencode {
+        if client.supportsToolCallCheck {
             do {
                 result.toolCall = try await checkToolCall(baseURL: baseURL, model: endpoint.modelName, token: token, http: http) ? .passed : .notVerified
             } catch {
@@ -102,7 +119,7 @@ final class ClientSetupSession: ObservableObject {
     @Published private(set) var appFound: Bool?
     @Published private(set) var receipt: ClientEditReceipt?
     @Published private(set) var transactionID: UUID?
-    /// The app-owned front door while it routes at least one chat model; offered for OpenCode.
+    /// The app-owned front door while it routes at least one chat model; offered for Front Door-compatible clients.
     @Published private(set) var frontDoor: WireEndpoint?
     static let frontDoorID = "front-door"
     private let wiring: WiringCoordinator
@@ -118,6 +135,10 @@ final class ClientSetupSession: ObservableObject {
     private var activeTask: Task<Void, Never>?
     private var initialServer: ServerInfo?
     private var prefersFrontDoor: Bool
+
+    deinit {
+        activeTask?.cancel()
+    }
 
     init(wiring: WiringCoordinator, client: ServingClient = .opencode, server: ServerInfo? = nil, prefersFrontDoor: Bool = false,
          servers: @escaping () async throws -> [ServerInfo],
@@ -137,8 +158,8 @@ final class ClientSetupSession: ObservableObject {
         readServers = servers; readFrontDoor = frontDoor; readFleet = fleet; testConnection = test; self.testFrontDoor = testFrontDoor; self.detect = detect
     }
     var selected: ServerInfo? { servers.first { $0.id == selectedID } }
-    /// The front door is the chosen target: OpenCode lists every model it routes.
-    var selectedFrontDoor: WireEndpoint? { client == .opencode && selectedID == Self.frontDoorID ? frontDoor : nil }
+    /// The front door is the chosen target for any Front Door-compatible client.
+    var selectedFrontDoor: WireEndpoint? { client.supportsFrontDoor && selectedID == Self.frontDoorID ? frontDoor : nil }
     var supported: Bool { selectedFrontDoor != nil || (selected.map { !client.requiresGateway || $0.jit == true } ?? false) }
     var plan: ClientEditPlan? { wiring.plans.first { $0.clientID == client.rawValue } }
     /// Where setup writes this client's config, at its real location.
@@ -159,7 +180,7 @@ final class ClientSetupSession: ObservableObject {
             servers = try await readServers().filter { WireEndpoint(server: $0) != nil }
             try Task.checkCancellation()
             frontDoor = await readFrontDoor()
-            if prefersFrontDoor, client == .opencode, frontDoor != nil {
+            if prefersFrontDoor, client.supportsFrontDoor, frontDoor != nil {
                 selectedID = Self.frontDoorID; initialServer = nil
             } else if selectedID == Self.frontDoorID, selectedFrontDoor == nil { selectedID = servers.first?.id }
             prefersFrontDoor = false
@@ -178,7 +199,7 @@ final class ClientSetupSession: ObservableObject {
                     }
                     if selectedID == nil { error = "The Coding default is unavailable. Choose a running endpoint or update Serving defaults." }
                 } else {
-                    selectedID = servers.first?.id ?? (client == .opencode && frontDoor != nil ? Self.frontDoorID : nil)
+                    selectedID = servers.first?.id ?? (client.supportsFrontDoor && frontDoor != nil ? Self.frontDoorID : nil)
                 }
             }
             appFound = await detect(client)
@@ -186,11 +207,13 @@ final class ClientSetupSession: ObservableObject {
     }
     func choose(client: ServingClient) {
         guard !busy else { return }
+        activeTask?.cancel()
         self.client = client; reset(); appFound = nil
-        if selectedID == Self.frontDoorID, client != .opencode { selectedID = servers.first?.id }
+        if selectedID == Self.frontDoorID, !client.supportsFrontDoor { selectedID = servers.first?.id }
         activeTask = Task { [weak self] in
             guard let self else { return }
             let found = await detect(client)
+            guard !Task.isCancelled else { return }
             if self.client == client { appFound = found }
         }
     }

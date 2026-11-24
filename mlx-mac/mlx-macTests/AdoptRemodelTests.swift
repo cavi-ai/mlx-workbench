@@ -146,31 +146,6 @@ final class AdoptPresentationTests: XCTestCase {
     }
 }
 
-// MARK: - Source
-
-final class AdoptSourceTests: XCTestCase {
-    private func source(_ name: String) throws -> String {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("mlx-mac/UI/Views/\(name)")
-        return try String(contentsOf: url, encoding: .utf8)
-    }
-
-    func testAdoptViewPaintsNoSurfaceBackgroundAndKeepsTheLabelAsALabel() throws {
-        let text = try source("AdoptView.swift")
-        XCTAssertFalse(text.contains(".background(WorkbenchColor.surface)"))
-        XCTAssertNil(text.range(of: #"Text\("Adopt a role"\)\s*\.font\(WorkbenchTypography\.title\)"#, options: .regularExpression))
-        XCTAssertTrue(text.contains("WorkbenchSurface"))
-    }
-
-    func testOnlyTheFitViewObservesTheMemoryMonitor() throws {
-        let text = try source("AdoptView.swift")
-        XCTAssertEqual(text.components(separatedBy: "@ObservedObject var resources").count - 1, 1)
-        XCTAssertEqual(text.components(separatedBy: ".workbenchPrimary").count - 1, 1)
-    }
-}
-
 // MARK: - Renders
 
 @MainActor

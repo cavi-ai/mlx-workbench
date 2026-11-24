@@ -253,7 +253,7 @@ final class LaunchAgentManagerTests: XCTestCase {
 
     func testInstallRejectsMoreThanTheFleetCap() throws {
         let manager = LaunchAgentManager(home: try makeHome(), run: recordingRunner().run, uid: 501)
-        let plans = (0..<5).map { index in
+        let plans = (0..<(EndpointFleetConfig.maxSlots + 1)).map { index in
             LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8800 + index, modelPath: "/models/\(index)"),
                 fleetURL: URL(fileURLWithPath: "/state/fleet.json"), agentPath: "/opt/agent", arguments: ["serve", "start"])
         }

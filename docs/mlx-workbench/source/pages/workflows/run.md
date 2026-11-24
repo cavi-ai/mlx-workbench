@@ -43,7 +43,7 @@ When a discovered endpoint already serves the selected model, **Open existing en
 
 To run one model on more than one endpoint, open **Settings → Serving → Duplicate serving** and choose **Allow a model…**. Workbench shows the exact model the engine will allow; **Confirm** saves it. **Remove…** returns a model to one endpoint. A change applies to endpoints started after it, and API keys and memory admission stay in effect.
 
-To reach several endpoints through one address, open **Settings → Serving → Front door**, enter a port and choose **Create key and start**. Workbench creates one front door key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The front door routes requests by model name to running load-on-request endpoints that use its key; to add an endpoint, stop it and choose **Use front door key…** in **API & security**, which is previewed and confirmed like other authentication changes. The section shows the base URL and routed chat models, with **Copy key**, **Refresh**, **Set up OpenCode…** and **Stop**. Endpoints keep their own ports, loading and memory admission, and the front door key stays in Keychain when no endpoint uses it.
+To reach several endpoints through one address, open **Settings → Serving → Front door**, enter a port and choose **Create key and start**. Workbench creates one front door key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The front door routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Use front door key…** in **API & security**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the section shows the base URL, chat models and typed routes, with **Copy key**, **Refresh**, **Set up OpenCode…** and **Stop**. Starting, stopping, swapping or removing an endpoint automatically refreshes the front door's route list while it is running. Each model name behind the front door must map to a single endpoint using the front door key: if two enabled endpoints share the key and advertise the same model name, **Settings → Serving → Front door** warns about the collision and the front door omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the front door key for that model. Endpoints keep their own ports, loading and memory admission, and the front door key stays in Keychain when no endpoint uses it.
 
 The endpoint list separates live endpoints, saved configurations and available models from other apps. Each saved configuration shows its current status. The list shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Sources that missed the latest refresh are listed under the endpoint list, with each source and its message in the sheet. They do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 
@@ -157,7 +157,9 @@ prompt and output from the window.
 In Training, choose **Use in Run** on a completed job. This stages the receipt
 without starting a server or changing your selected Library model. **Preview
 adapter serve** rechecks the receipt, pinned base snapshot and adapter files.
-Review the paths and port, then choose **Confirm and run adapter**.
+Choose **Load on request** to start the gateway before loading the adapter.
+**Require API key** also enables load on request. Review the paths and port,
+then choose **Confirm and run adapter**.
 
 Changed or missing artifacts require a fresh preview. Run refuses an occupied
 port or a second server for the same training artifacts. The running server's
@@ -167,8 +169,8 @@ Run controls without stopping servers.
 
 Trained adapters use explicit MLX-LM serving. They do not inherit the base
 model's quality verdict. After the preview, **Save as endpoint…** then
-**Save unverified endpoint** adds an always-on endpoint for that pinned base
-and adapter. Historical training receipts without a pinned base identity cannot
+**Save unverified endpoint** adds an always-on endpoint for that pinned base,
+adapter, load mode and authentication settings. Historical training receipts without a pinned base identity cannot
 be previewed or saved. A later update of the base model does not retarget this
 endpoint.
 
@@ -178,8 +180,8 @@ Select a ready model, then choose **Save as endpoint** in **Serve a model** (**S
 Set the port, role and **Load on request**, and, with load on request, whether weights are
 released after each request or kept loaded. Choose **Add endpoint…** (**Add unverified endpoint…** for a
 model that has not passed verification) and review the model, port, verification and memory warnings, then
-confirm. Up to four endpoints can be saved, each on its own stable port between 1024 and 65535
-that no endpoint or server already uses.
+confirm. Up to eight endpoints can be saved, each on its own stable port between 1024 and 65535
+that no endpoint or server already uses, supporting simultaneous co-resident chat, vision, audio, video/media and embedding servers.
 
 Each endpoint row shows its state and base URL. Chat endpoints use the OpenAI-compatible API; typed endpoints advertise their operations at `/v1/models` and accept jobs at `/v1/tasks`. Use **Copy base URL**
 and, when a matching running server reports it, **Copy model ID** in the other
@@ -197,11 +199,11 @@ model does not establish that one configuration is fastest for every workload.
 Saved endpoints in **Served models** keep chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
 Starting one endpoint checks that endpoint immediately. The background supervisor handles repairs for the rest of the fleet.
 
-- **Add endpoint…** suggests the next free port. Up to four endpoints.
+- **Add endpoint…** suggests the next free port. Up to eight endpoints.
 - Endpoints require a verified model unless you explicitly override for an unverified one.
 - Each endpoint row shows status, restarts, a fit chip, a role, **Stop** or **Start…**, and an overflow menu with the remaining controls.
-- The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
-- **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
+- **Memory** displays a live **Fleet co-residency budget** bar combining per-modality estimates (LLM, Vision, Audio, Video, Image, Embedding), load-on-request dormant state, Splash memory caps and any configured shared agent memory limit. When one or more models lack size data, the bar surfaces the partial known total alongside the unknown slot count without fabricating sizes.
+- **Model router…** (**Wire roles…**) writes routes for running chat, vision and embedding endpoints that serve a `publisher/model` ID. Workbench lists local endpoints with basename-only IDs and typed audio or media endpoints separately from the generated config. A route can use Front door when the listener advertises the model and the endpoint shares its key. The generated `fleet-router.yaml` uses `MLX_AGENT_LOCAL_API_KEY` for protected routes, so a config can include only endpoints that use the same API key.
 
 The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item installs one `RunAtLoad` agent per enabled endpoint, `ai.cavi.mlxworkbench.endpoint.<slot id>`, and each runs `mlx-agent serve start` once at login. The preview lists every command before confirmation. Each captured command preserves that endpoint's local path, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent that endpoint's login startup; a change to any included endpoint requires a fresh preview. Remove and reinstall the login item after changing endpoint settings. Installing is refused when the enabled fleet will not fit, until you choose **Install anyway**, the same override as enabling an endpoint. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority. An older single-agent plist, `ai.cavi.mlxworkbench.endpoint`, is removed when you install or remove the login item.
 
@@ -371,8 +373,7 @@ Protected endpoints require `Authorization: Bearer KEY` or `x-api-key: KEY`
 for model discovery, inference, task history, cancellation and artifacts.
 Requests without a valid key receive HTTP 401 before inference. Internal
 workers require separate credentials over Unix sockets or loopback ports. Workbench's **Try a prompt**
-uses the endpoint key from Keychain. Automatic client wiring and role routing
-skip protected endpoints; configure the copied key directly in each client.
+uses the endpoint key from Keychain. Automatic client wiring skips protected endpoints; role routing includes protected endpoints via Front Door or environment-variable references without writing raw API keys.
 
 Any client holding the key is authorized. Keep it private and reset it if it
 has been shared unintentionally. Loopback limits access to this machine; API

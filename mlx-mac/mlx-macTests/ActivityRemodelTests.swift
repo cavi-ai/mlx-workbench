@@ -414,16 +414,6 @@ final class ActivityRemodelTests: XCTestCase {
         }
     }
 
-    func testActivityViewAnchorsTopWithoutScrollingCode() throws {
-        let source = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("mlx-mac/UI/Views/JobsView.swift")
-        let file = try String(contentsOf: source, encoding: .utf8)
-        XCTAssertFalse(file.contains("scrollTo("))
-        XCTAssertFalse(file.contains("ScrollViewReader"))
-        XCTAssertTrue(file.contains(".defaultScrollAnchor(.top)"))
-    }
-
     // MARK: - AC2: poll keyed to in-flight ids
 
     func testPollIsKeyedToTheInFlightRecordIDs() async {

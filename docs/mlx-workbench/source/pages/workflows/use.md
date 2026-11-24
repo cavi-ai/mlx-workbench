@@ -83,6 +83,13 @@ recorded job to inspect, play or export its verified output. A missing model doe
 not remove recorded results. [Local inference tasks](library.md#local-inference-tasks)
 describes cancellation, input reuse and unconfirmed-submission recovery.
 
+When checking media reuse support across multiple models, capability queries run
+concurrently with bounded parallelism; a failure for one model records its error
+without clearing reuse capabilities already confirmed for other models. Lab
+workspace refreshes fetch workspace snapshots and study lists concurrently while
+preserving workspace revision guards, and study recipe capture validates against
+any model advertised by the engine's recipe catalog.
+
 In wide conversations, model and connection controls appear beside the transcript.
 **Work sessions** opens conversation history separately. Model tasks keep history
 beside the work at wide sizes; at smaller sizes, **Work sessions** opens it

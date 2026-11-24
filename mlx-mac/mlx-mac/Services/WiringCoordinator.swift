@@ -489,20 +489,52 @@ final class WiringCoordinator: ObservableObject {
               let adapter = adapters.first(where: { $0.clientID == receipt.clientID }),
               adapter.configPath(home: home, directory: locations.directory(for: receipt.clientID)) == receipt.configPath else { return false }
         let boundary = home.path
+        let path = receipt.configPath
+        if fileManager !== FileManager.default {
+            return Self.verifyAppliedConfig(
+                path: path,
+                boundary: boundary,
+                expectedSHA256: expected,
+                adapter: adapter,
+                endpoint: endpoint,
+                fileManager: fileManager
+            )
+        }
         return await WorkbenchIO.perform {
-            let url = URL(fileURLWithPath: receipt.configPath)
-            var ancestor = url
-            while ancestor.path != boundary && ancestor.path != "/" {
-                guard (try? FileManager.default.destinationOfSymbolicLink(atPath: ancestor.path)) == nil else { return false }
-                ancestor.deleteLastPathComponent()
-            }
-            guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
-                  let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
-                  bytes.intValue <= ClientConfigFile.sizeLimit,
-                  let data = FileManager.default.contents(atPath: url.path), Self.sha256Hex(data) == expected,
-                  let text = String(data: data, encoding: .utf8),
-                  case .entries(let entries) = adapter.read(text) else { return false }
-            return entries.contains { ClientEndpointURL.port(of: $0.baseURL) == ClientEndpointURL.port(of: endpoint.baseURL) && $0.models.contains(endpoint.modelName) }
+            Self.verifyAppliedConfig(
+                path: path,
+                boundary: boundary,
+                expectedSHA256: expected,
+                adapter: adapter,
+                endpoint: endpoint,
+                fileManager: FileManager.default
+            )
+        }
+    }
+
+    private nonisolated static func verifyAppliedConfig(
+        path: String,
+        boundary: String,
+        expectedSHA256: String,
+        adapter: ClientAdapter,
+        endpoint: WireEndpoint,
+        fileManager: FileManager
+    ) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        var ancestor = url
+        while ancestor.path != boundary && ancestor.path != "/" {
+            guard (try? fileManager.destinationOfSymbolicLink(atPath: ancestor.path)) == nil else { return false }
+            ancestor.deleteLastPathComponent()
+        }
+        guard (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) == nil,
+              let bytes = (try? fileManager.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
+              bytes.intValue <= ClientConfigFile.sizeLimit,
+              let data = fileManager.contents(atPath: url.path), Self.sha256Hex(data) == expectedSHA256,
+              let text = String(data: data, encoding: .utf8),
+              case .entries(let entries) = adapter.read(text) else { return false }
+        return entries.contains {
+            ClientEndpointURL.port(of: $0.baseURL) == ClientEndpointURL.port(of: endpoint.baseURL)
+                && $0.models.contains(endpoint.modelName)
         }
     }
 

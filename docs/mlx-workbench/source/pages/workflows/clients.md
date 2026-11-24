@@ -83,6 +83,24 @@ A partial rollback keeps the action available for retry. Clients already restore
 
 **Wire into clients** in Compare's model guidance opens Clients with that model and port preselected, when a matching endpoint is running. After a successful wiring, **Review report in Compare…** opens Compare's workflow-evidence import with the endpoint and wired clients prefilled. Wiring records configuration context only; it never proves a task used the endpoint. See [Compare](compare.md).
 
+## Quick Connect snippets
+
+Every running endpoint in **Serving** (under **Connection**) and on the **Clients** board exposes a **Quick Connect** strip with a live status pill and one-click copy for ready-to-run API calls:
+
+- **curl**: Chat Completions (`/v1/chat/completions`), Responses (`/v1/responses` on load-on-request gateways and Front door), Anthropic Messages (`/v1/messages`), and Embeddings (`/v1/embeddings` on typed embeddings routes).
+- **Python OpenAI SDK**: `OpenAI(base_url=..., api_key=...)` for chat or embeddings routes.
+- **Python Anthropic SDK**: `Anthropic(base_url=..., api_key=...)` pointed at the gateway root URL.
+
+When an endpoint shares the **Front door** key, the Quick Connect strip includes a **Direct / Front door** route switcher so you can copy snippets for either the single endpoint or the unified Front door listener.
+
+Quick Connect snippets never read or embed raw Keychain secrets. For API-key protected endpoints and Front door routes, shell snippets reference `${MLX_AGENT_API_KEY}` and Python snippets read `os.environ["MLX_AGENT_API_KEY"]`. Export the key into your shell from **Connection & security → Copy API key** before running a protected snippet:
+
+```bash
+export MLX_AGENT_API_KEY="<paste copied key>"
+```
+
+For **OpenClaw** and other multi-model clients using **Front door**, point the provider base URL at `http://127.0.0.1:<front-door-port>/v1`, supply the shared Front door key via `MLX_AGENT_API_KEY` (or let **Connect app…** write the reviewed config), and select any routed model ID advertised at `/v1/models`.
+
 ## Connect from the serving model
 
 In **Serving**, select a running chat endpoint and open **Connect apps**. Choose the app, then **Connect…** to open the same reviewed setup with that endpoint preselected. Address, port, model and authentication stay bound to the selected process.

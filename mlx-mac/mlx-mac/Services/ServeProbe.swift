@@ -351,6 +351,7 @@ struct ServeLifecycle: Sendable {
     var startWithReceipt: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> ComparisonServerReceipt?)? = nil
     var authenticated: (@Sendable (_ keySHA256: String) -> ServeLifecycle)? = nil
     var configured: (@Sendable (LocalInferenceOptions) -> ServeLifecycle)? = nil
+    var jitPreviewWithKeyFile: (@Sendable (String, Int, EndpointMemoryPolicy?, String) async throws -> String)? = nil
 }
 
 extension ServeLifecycle {
@@ -403,7 +404,15 @@ extension ServeLifecycle {
             authenticated: { digest in .live(api: api, runtime: runtime, strataOptions: strataOptions,
                 thinkingOff: thinkingOff, acceleration: acceleration, apiKeySHA256: digest, profileName: profileName) },
             configured: { options in .live(api: api, runtime: runtime, strataOptions: strataOptions,
-                thinkingOff: thinkingOff, acceleration: options, apiKeySHA256: apiKeySHA256, profileName: profileName) }
+                thinkingOff: thinkingOff, acceleration: options, apiKeySHA256: apiKeySHA256, profileName: profileName) },
+            jitPreviewWithKeyFile: { path, port, policy, keyFile in
+                let plan = try await api.servePreview(repo: path, runtime: runtime, port: port, jit: true,
+                    memoryPolicy: policy, strataOptions: strataOptions,
+                    thinkingOff: thinkingOff || acceleration.thinkingOff, maximumTokens: acceleration.maximumTokens,
+                    m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup, visionCache: acceleration.visionCache,
+                    requestDefaults: acceleration, profileName: profileName, apiKeyFile: keyFile)
+                return plan.string("preview_hash") ?? ""
+            }
         )
     }
 }

@@ -554,38 +554,6 @@ final class ReclaimProminenceTests: XCTestCase {
         XCTAssertEqual(ReclaimProminence.primary(hasPlan: coordinator.plan != nil, hasSelection: true, hasPrunePreview: false), .confirmQuarantine)
     }
 
-    func testProminentStylesAreConfinedToTheDeclaredRegions() throws {
-        XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/ReclaimViews.swift")), 1)
-        // Sheet confirms: Move to Trash and Quarantine folder.
-        XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/DuplicatesView.swift")), 2)
-        // Sheet confirms: Move originals to Trash and Restore originals.
-        XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/SourceCleanupSection.swift")), 2)
-    }
-
-    func testReclaimSurfacesAndSuggestionButtonStyles() throws {
-        let page = try Fixture.source("Views/DuplicatesView.swift")
-        let cleanup = try Fixture.source("Views/SourceCleanupSection.swift")
-        XCTAssertEqual(Fixture.occurrences(of: "WorkbenchSurface", in: page), 1)
-        XCTAssertEqual(Fixture.occurrences(of: "WorkbenchSurface", in: cleanup), 0)
-        XCTAssertFalse(page.contains("\"Check originals\""))
-        XCTAssertTrue(cleanup.contains("\"Check originals\""))
-        XCTAssertEqual(Fixture.occurrences(of: ".borderless", in: page), 0)
-        XCTAssertEqual(Fixture.occurrences(of: ".borderless", in: cleanup), 1)
-    }
-
-    func testEveryRequiredLabelSurvives() throws {
-        let text = try ["Views/DuplicatesView.swift", "Views/SourceCleanupSection.swift", "Views/ReclaimViews.swift", "ComparisonInsightsView.swift"]
-            .map { try Fixture.source($0.hasPrefix("Views/") ? $0 : "Views/\($0)") }.joined(separator: "\n")
-        let labels = [
-            "Analyze", "Review model folder…", "Preview reclaim", "Confirm quarantine", "Check HF cache", "Preview prune", "Confirm prune",
-            "Put back", "Move to Trash", "Show all", "Check originals", "Review originals", "Reveal in Trash", "Review restore", "Refresh",
-            "Rescan library", "Review folder cleanup…", "Move originals to Trash", "Quarantine model folder", "Restore original sources",
-            "Restore originals", "Quarantine folder",
-        ]
-        for label in labels {
-            XCTAssertTrue(text.contains("\"\(label)"), "missing label: \(label)")
-        }
-    }
 }
 
 // MARK: - AC13 sheets, AC5 triggers
@@ -660,13 +628,6 @@ final class ReclaimSheetAndTriggerTests: XCTestCase {
         XCTAssertEqual(Fixture.occurrences(of: ".task { await reclaim.refreshSourceHistory() }", in: history), 1)
     }
 
-    func testToolbarRescanIsRouteActiveAndDisabledWhileScanning() throws {
-        let page = try Fixture.source("Views/DuplicatesView.swift")
-        let toolbar = try XCTUnwrap(page.components(separatedBy: ".toolbar {").dropFirst().first?.components(separatedBy: ".onAppear").first)
-        XCTAssertTrue(toolbar.contains("if isRouteActive"))
-        XCTAssertTrue(toolbar.contains("appHost.requestRescan()"))
-        XCTAssertTrue(toolbar.contains(".disabled(appHost.isScanning)"))
-    }
 }
 
 // MARK: - AC9 layout

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct TrainedAdapterRunPanel: View {
     @ObservedObject var coordinator: TrainedAdapterServingCoordinator
-    var saveAsEndpoint: ((TrainedAdapterServePreview) async -> String?)? = nil
+    var saveAsEndpoint: ((TrainedAdapterServePreview, String?) async -> String?)? = nil
     let refresh: () async -> Void
     @State private var confirmingSave = false
     @State private var saveError: String?
@@ -30,6 +30,12 @@ struct TrainedAdapterRunPanel: View {
                             .help("Leave blank to review the runtime's default port.")
                         Spacer()
                     }
+                    if coordinator.supportsJIT {
+                        Toggle("Load on request", isOn: $coordinator.loadOnRequest)
+                            .disabled(coordinator.isBusy || coordinator.runningServer != nil)
+                        Toggle("Require API key", isOn: $coordinator.requireAPIKey)
+                            .disabled(coordinator.isBusy || coordinator.runningServer != nil)
+                    }
                     ErrorBanner(text: coordinator.portError)
                     ErrorBanner(text: coordinator.errorMessage)
                     ErrorBanner(text: saveError)
@@ -50,6 +56,12 @@ struct TrainedAdapterRunPanel: View {
                         Label("Trained adapter running on port \(server.port.map(String.init) ?? "unknown")", systemImage: "server.rack")
                             .font(WorkbenchTypography.emphasis)
                         Text("Stop or unload it in Served models below.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        if let digest = server.apiKeySHA256 {
+                            Button("Copy API key") {
+                                do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: digest)) }
+                                catch { saveError = AppHost.render(error) }
+                            }
+                        }
                     }
                     ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.sm) {
                         if coordinator.canConfirm {
@@ -93,9 +105,11 @@ struct TrainedAdapterRunPanel: View {
     }
     private func saveEndpoint() {
         guard let preview = coordinator.preview, let saveAsEndpoint else { return }
+        let key = coordinator.reviewedAPIKey
         confirmingSave = false
         Task {
-            saveError = await saveAsEndpoint(preview)
+            saveError = await saveAsEndpoint(preview, key)
+            if saveError == nil { coordinator.clear() }
             await refresh()
         }
     }

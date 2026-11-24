@@ -2,20 +2,21 @@ import SwiftUI
 
 // MARK: - FleetRouterSheet
 //
-// "Wire roles…" flow (spec 09 P4): review the role → endpoint plan, render
-// the router config via `fleet render`, review the apply preview diff, then
-// confirm with the exact preview hash. Roles without a running endpoint are
-// listed as skipped, never pointed at a dead port. Every mutating step goes
-// through the agent's preview/confirm transaction — backup, rollback, and
-// receipt stay the agent's discipline.
+// "Wire roles…" flow (spec 09 P4 + Phase 2.3): review the role → endpoint plan,
+// including local/converted models, authenticated endpoints (Front Door or
+// env-var guidance without ever emitting raw API keys), and multimodal typed
+// audio/media endpoints. Renders the CLI-supported router config via
+// `mlx-agent fleet render/apply` with preview/confirm discipline.
 
 struct FleetRouterSheet: View {
     let appHost: AppHost
     @ObservedObject private var endpoint: EndpointSupervisor
+    @ObservedObject private var frontDoor: FrontDoorCoordinator
 
     init(appHost: AppHost) {
         self.appHost = appHost
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+        _frontDoor = ObservedObject(wrappedValue: appHost.frontDoor)
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -31,22 +32,25 @@ struct FleetRouterSheet: View {
     }
 
     private var plan: FleetRouter.Plan {
-        FleetRouter.plan(
+        let listener = frontDoor.listening
+        return FleetRouter.plan(
             slots: appHost.endpoint.fleet.slots,
             states: appHost.endpoint.slotStates,
-            servers: appHost.modelWorkflow.servers
+            servers: appHost.modelWorkflow.servers,
+            frontDoor: listener.map { FrontDoorSettings(port: $0.port, apiKeySHA256: $0.apiKeySHA256) },
+            frontDoorRoutes: Set(listener?.allModelIDs ?? []).subtracting(frontDoor.collisions.map(\.modelName))
         )
     }
 
     private var apiAssignments: [(role: String, repo: String, port: Int)] {
-        plan.assignments.map { (role: $0.fleetRole, repo: $0.repo, port: $0.port) }
+        plan.cliAssignments.map { (role: $0.fleetRole, repo: $0.repo, port: $0.port) }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Wire roles to running endpoints")
                 .font(WorkbenchTypography.emphasis)
-            Text("Renders one router config mapping each role onto its running endpoint's stable port, via mlx-agent fleet.")
+            Text("Wire running endpoints with publisher/model IDs. The config uses one API key for protected routes.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 
@@ -83,34 +87,62 @@ struct FleetRouterSheet: View {
             footer
         }
         .padding(WorkbenchSpacing.pageInset)
-        .frame(width: 560)
+        .frame(width: 600)
     }
 
     @ViewBuilder
     private var planSection: some View {
         if plan.assignments.isEmpty {
-            Text("No roles can be wired right now. Assign roles to endpoints, keep them running, and use models from the Hugging Face cache.")
+            Text("No roles can be wired right now. Assign roles to running endpoints or start typed audio, media, or embedding servers.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
         } else {
             ForEach(plan.assignments) { assignment in
-                HStack {
-                    Text(assignment.fleetRole)
-                        .font(WorkbenchTypography.secondary)
-                        .frame(width: 90, alignment: .leading)
-                    Text(assignment.repo)
-                        .font(WorkbenchTypography.value)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(":\(assignment.port)")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                    HStack {
+                        Text(assignment.fleetRole)
+                            .font(WorkbenchTypography.secondary)
+                            .frame(width: 90, alignment: .leading)
+                        Text(assignment.repo)
+                            .font(WorkbenchTypography.value)
+                            .lineLimit(1)
+                        if assignment.isLocalRoute {
+                            Text("local")
+                                .font(WorkbenchTypography.metadata)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                        Spacer()
+                        Text(":\(assignment.port)")
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
+                    }
+                    if let guidance = assignment.authMode.guidance {
+                        HStack {
+                            Color.clear.frame(width: 90, height: 0)
+                            Text(guidance)
+                                .font(WorkbenchTypography.metadata)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
+                    if case .typedTask(let kinds) = assignment.routeKind, !kinds.isEmpty {
+                        HStack {
+                            Color.clear.frame(width: 90, height: 0)
+                            Text("Typed tasks: \(kinds.joined(separator: ", "))")
+                                .font(WorkbenchTypography.metadata)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
                 }
+            }
+            if !plan.multimodalAssignments.isEmpty {
+                Text("Audio and media routes are active on their loopback ports above; fleet-router.yaml writes chat and embedding roles.")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
         }
         ForEach(plan.skipped) { skipped in
             HStack {
-                Text(FleetRouter.fleetRoleName(for: skipped.role))
+                Text(skipped.fleetRole)
                     .font(WorkbenchTypography.secondary)
                     .frame(width: 90, alignment: .leading)
                 Text("skipped — \(skipped.reason)")
@@ -147,7 +179,7 @@ struct FleetRouterSheet: View {
                 Button("Render preview") { renderPreview() }
                     .buttonStyle(.workbenchPrimary)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(plan.isEmpty)
+                    .disabled(apiAssignments.isEmpty)
             case .working:
                 EmptyView()
             case .preview:

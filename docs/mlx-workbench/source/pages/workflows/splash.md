@@ -47,9 +47,13 @@ Presets are saved by the engine. **New preset…** opens the editor; every value
 | Cache | **Keep the SSD cache across restarts** | Keeps cached prefixes across restarts; needs an SSD cache quota above 0 |
 | Cache | **SSD cache quota** | Gigabytes for cached KV pages and states, 0 to 4,096; 0 turns the SSD cache off |
 | Limits | **Maximum memory**, **Maximum context tokens** | Splash's memory and context limits |
-| Residency | **Headroom reserve**, **Idle timeout**, **Keep loaded**, **Unload under memory pressure** | When the load-on-request endpoint loads and unloads the model |
+| Residency | **Headroom reserve**, **Idle timeout**, **Execution wait**, **Keep loaded**, **Unload under memory pressure** | When the load-on-request endpoint loads, queues for host compute (0–3,600 s), and unloads the model |
 
 A preset needs at least one limit or Splash setting; with none, choose **Default settings**. The preset's summary under the picker and in the review lists each value it sets.
+
+### Context and SSD cache observability
+
+When serving with Splash 1.7, **Serving** reports both the server's **Effective context** (`splash_effective_context_tokens`) and **Configured context** (`splash_configured_context_tokens`) in the Connection tab and header badges, alongside active preset tuning for **Cached states** (`int8` or `exact`), **Persistent SSD cache**, **SSD cache quota**, and **Execution wait**.
 
 ## Compare runtimes
 

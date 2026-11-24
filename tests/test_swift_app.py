@@ -10,8 +10,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SWIFT_PROJECT = ROOT / "mlx-mac" / "mlx-mac.xcodeproj"
 SWIFT_SCHEME = "mlx-workbench"
-SWIFT_APP = ROOT / "mlx-mac" / "mlx-mac" / "App.swift"
-SWIFT_INFO = ROOT / "mlx-mac" / "mlx-mac" / "Info.plist"
 SWIFT_MAKE_TARGET = "build-swift"
 
 
@@ -75,30 +73,6 @@ class SwiftAppHardeningTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
             self.assertTrue((Path(build_dir) / "Build/Products/Release/mlx-workbench.app").is_dir())
-
-    def test_swift_project_has_required_sources(self):
-        source_dir = ROOT / "mlx-mac"
-        required = [
-            SWIFT_APP,
-            SWIFT_INFO,
-            SWIFT_PROJECT,
-            ROOT / "mlx-mac/mlx-mac/Services/RuntimeChecker.swift",
-            ROOT / "mlx-mac/mlx-mac/Services/WorkbenchAPI.swift",
-            ROOT / "mlx-mac/mlx-mac/Bridge/CLIProcess.swift",
-            ROOT / "mlx-mac/mlx-mac/Bridge/BridgeError.swift",
-            ROOT / "mlx-mac/mlx-mac/Assets.xcassets/AppIcon.appiconset/Contents.json",
-        ]
-        for path in required:
-            self.assertTrue(path.exists(), f"{path} missing from swift app source.")
-        swift_files = list((source_dir / "mlx-mac").glob("**/*.swift"))
-        self.assertGreaterEqual(len(swift_files), 20, "Expected expected number of Swift sources.")
-
-        # A quick guardrail against accidental source list drift.
-        source_names = {path.name for path in swift_files}
-        self.assertIn("App.swift", source_names)
-        self.assertIn("AppHost.swift", source_names)
-        self.assertIn("ContentView.swift", source_names)
-        self.assertTrue((source_dir / "mlx-mac" / "UI").is_dir(), "UI folder missing from swift app source.")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ struct FrontDoorEditor: View {
     var body: some View {
         let settings = endpoint.fleet.frontDoor
         let joined = endpoint.fleet.slots.filter { settings != nil && $0.apiKeySHA256 == settings?.apiKeySHA256 }.count
+        let collisions = FrontDoorCoordinator.detectCollisions(slots: endpoint.fleet.slots, frontDoorKeySHA256: settings?.apiKeySHA256)
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 TextField("Port", text: $portText).frame(width: 80)
@@ -30,9 +31,24 @@ struct FrontDoorEditor: View {
             }
             if let listening = coordinator.listening {
                 ServingConnectionField(title: "Base URL", value: listening.apiBase, identifier: "front-door-base-url", compact: true)
-                Text(listening.models.isEmpty ? "No running endpoint uses the front door key." : listening.models.joined(separator: " · "))
-                    .font(WorkbenchTypography.secondary).textSelection(.enabled)
-                    .accessibilityIdentifier("front-door-models")
+                if listening.routes.isEmpty {
+                    Text("No running endpoint uses the front door key.")
+                        .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        .accessibilityIdentifier("front-door-models")
+                } else {
+                    if !listening.chatModels.isEmpty {
+                        Text(listening.typedRoutes.isEmpty
+                             ? listening.chatModels.joined(separator: " · ")
+                             : "Chat: " + listening.chatModels.joined(separator: " · "))
+                            .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                            .accessibilityIdentifier("front-door-models")
+                    }
+                    if !listening.typedRoutes.isEmpty {
+                        Text("Typed: " + listening.typedRoutes.map { "\($0.id) (\($0.taskKinds.joined(separator: ", ")))" }.joined(separator: " · "))
+                            .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                            .accessibilityIdentifier("front-door-typed-routes")
+                    }
+                }
                 HStack {
                     Button("Copy key") {
                         do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: listening.apiKeySHA256)) }
@@ -47,6 +63,10 @@ struct FrontDoorEditor: View {
             if settings != nil {
                 Text("\(joined) of \(endpoint.fleet.slots.count) endpoints use the front door key. Stop an endpoint and choose Use front door key in Serving to add it.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            ForEach(collisions) { collision in
+                InlineMessage(kind: .warning, text: collision.warningMessage)
+                    .accessibilityIdentifier("front-door-collision-\(collision.modelName)")
             }
             if let error = message ?? coordinator.error { InlineMessage(kind: .error, text: error) }
         }

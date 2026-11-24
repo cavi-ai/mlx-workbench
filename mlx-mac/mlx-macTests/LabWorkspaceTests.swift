@@ -310,7 +310,7 @@ final class LabWorkspaceTests: XCTestCase {
             XCTAssertEqual(harness.lab.studies.first?.id, "study_second_1")
             XCTAssertFalse(harness.lab.isRefreshing)
             XCTAssertNil(harness.lab.error)
-            if operation == "snapshot" { XCTAssertEqual(fixture.count("first:study-list"), 0) }
+            if operation == "snapshot" { XCTAssertEqual(fixture.count("first:study-list"), 1) }
         }
     }
 

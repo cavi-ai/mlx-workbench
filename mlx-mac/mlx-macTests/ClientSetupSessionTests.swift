@@ -76,8 +76,15 @@ final class ClientSetupSessionTests: XCTestCase {
             await session.load(); await session.preview()
             XCTAssertEqual(session.stage, .review, session.error ?? client.rawValue)
             let plan = try XCTUnwrap(session.plan)
-            XCTAssertTrue(plan.after.contains(key))
-            XCTAssertFalse(plan.redactedDiff.contains { $0.text.contains(key) })
+            if client == .openclaw {
+                XCTAssertFalse(plan.after.contains(key))
+                XCTAssertTrue(plan.after.contains("${MLX_AGENT_API_KEY}"))
+                XCTAssertTrue(plan.redactedDiff.contains { $0.text.contains("${MLX_AGENT_API_KEY}") })
+                XCTAssertNotNil(plan.credentialInstruction)
+            } else {
+                XCTAssertTrue(plan.after.contains(key))
+                XCTAssertFalse(plan.redactedDiff.contains { $0.text.contains(key) })
+            }
             await session.apply()
             XCTAssertEqual(session.stage, .saved, session.error ?? client.rawValue)
             let receipt = try XCTUnwrap(session.receipt)
@@ -207,9 +214,85 @@ final class ClientSetupSessionTests: XCTestCase {
         let supported = try await ClientConnectionTest.run(client: .opencode, endpoint: supportedEndpoint, token: key, http: transport)
         XCTAssertEqual(supported.answer, "CONNECTED")
         XCTAssertEqual(supported.toolCall, .passed)
-        let other = try await ClientConnectionTest.run(client: .hermes, endpoint: endpoint, token: key, http: transport)
-        XCTAssertEqual(other.answer, "CONNECTED")
-        XCTAssertNil(other.toolCall)
+        for chatClient in [ServingClient.openclaw, ServingClient.hermes] {
+            let unverified = try await ClientConnectionTest.run(client: chatClient, endpoint: endpoint, token: key, http: transport)
+            XCTAssertEqual(unverified.answer, "CONNECTED")
+            XCTAssertEqual(unverified.toolCall, .notVerified, chatClient.rawValue)
+            let verified = try await ClientConnectionTest.run(client: chatClient, endpoint: supportedEndpoint, token: key, http: transport)
+            XCTAssertEqual(verified.answer, "CONNECTED")
+            XCTAssertEqual(verified.toolCall, .passed, chatClient.rawValue)
+        }
+        for nonChatClient in [ServingClient.codex, ServingClient.claude] {
+            let other = try await ClientConnectionTest.run(client: nonChatClient, endpoint: endpoint, token: key, http: transport)
+            XCTAssertEqual(other.answer, "CONNECTED")
+            XCTAssertNil(other.toolCall, nonChatClient.rawValue)
+        }
+    }
+
+    func testAllFiveClientsCanSelectPreviewApplyAndTestFrontDoor() async throws {
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let door = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "gemma-3",
+                                apiKeySHA256: digest, models: ["gemma-3", "org/coder"])
+        for client in ServingClient.allCases {
+            let home = try temporaryHome(), wiring = coordinator(home)
+            var testedClients: [ServingClient] = []
+            let session = ClientSetupSession(wiring: wiring, client: client, prefersFrontDoor: true, servers: { [] },
+                frontDoor: { door }, testFrontDoor: { [key] testedClient, endpoint, token in
+                    XCTAssertEqual(endpoint, door)
+                    XCTAssertEqual(token, key)
+                    testedClients.append(testedClient)
+                    return ClientConnectionResult(protocolName: "Chat Completions", answer: "CONNECTED")
+                }, detect: { _ in true })
+            await session.load()
+            XCTAssertEqual(session.selectedFrontDoor, door, client.rawValue)
+            XCTAssertTrue(session.supported, client.rawValue)
+            await session.preview()
+            XCTAssertEqual(session.stage, .review, session.error ?? client.rawValue)
+            if client == .openclaw {
+                let plan = try XCTUnwrap(session.plan)
+                XCTAssertFalse(plan.after.contains(key))
+                XCTAssertTrue(plan.after.contains("${MLX_AGENT_API_KEY}"))
+                XCTAssertTrue(plan.redactedDiff.contains { $0.text.contains("${MLX_AGENT_API_KEY}") })
+                XCTAssertNotNil(plan.credentialInstruction)
+                let parsed = try JSONCTolerant.parse(plan.after)
+                XCTAssertNil(parsed["mlx_agent_wire"])
+                let provider = try XCTUnwrap(((parsed["models"] as? [String: Any])?["providers"] as? [String: Any])?["workbench"] as? [String: Any])
+                let modelIDs = (provider["models"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+                XCTAssertEqual(modelIDs, ["gemma-3", "org/coder"])
+            }
+            await session.apply()
+            XCTAssertEqual(session.stage, .saved, session.error ?? client.rawValue)
+            await session.test()
+            XCTAssertEqual(session.result?.answer, "CONNECTED", session.error ?? client.rawValue)
+            XCTAssertEqual(testedClients, [client])
+        }
+    }
+
+    func testChooseClientCancelsPriorDetectionTask() async throws {
+        let home = try temporaryHome(), wiring = coordinator(home)
+        let firstStarted = expectation(description: "first detect started")
+        let firstCancelled = expectation(description: "first detect cancelled")
+        let secondFinished = expectation(description: "second detect finished")
+        let session = ClientSetupSession(wiring: wiring, client: .opencode, servers: { [] }, detect: { client in
+            if client == .openclaw {
+                firstStarted.fulfill()
+                do {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                } catch {
+                    firstCancelled.fulfill()
+                }
+                return false
+            }
+            secondFinished.fulfill()
+            return true
+        })
+        session.choose(client: .openclaw)
+        await fulfillment(of: [firstStarted], timeout: 2)
+        session.choose(client: .hermes)
+        await fulfillment(of: [firstCancelled, secondFinished], timeout: 2)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(session.client, .hermes)
+        XCTAssertEqual(session.appFound, true)
     }
 
     func testCaviBridgeDeadlineCancelsHeldResponse() async throws {
