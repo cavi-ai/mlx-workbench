@@ -28,7 +28,7 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ### Changed
 
-- Engine: `mlx-agent` advances from 0.14.0 to 0.16.0 (`c7bd6f7`) with OpenClaw wiring, Ollama cloud models excluded from the local scan, Splash effective context reporting and project-scoped caches, bounded JIT gateway and front door waits, front door routes refreshed before answering, and conversion queues scoped to the selected receipts folder.
+- Engine: `mlx-agent` advances from 0.14.0 to 0.16.0 (`fca9bce`) with OpenClaw wiring, Ollama cloud models excluded from the local scan, Splash effective context reporting and project-scoped caches, bounded JIT gateway and front door waits, front door routes refreshed before answering, conversion queues scoped to the selected receipts folder, and an `image_segmentation` task that writes a PNG mask from a local SAM 2 checkpoint, with a 512 MB task controller memory margin.
 - Activity: a toolbar control shows live conversion, queue, verification and comparison states and opens Activity from any workspace; in-flight work and recent conversions come first, with job diagnostics in **Details**.
 - Library: models are grouped by family by default, **View options → View as table** shows sortable columns, and details sit beside the list on wide windows or open in a sheet on narrow ones.
 - Use: wide conversations keep model and connection controls beside the transcript.
