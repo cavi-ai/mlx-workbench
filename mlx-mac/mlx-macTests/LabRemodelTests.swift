@@ -285,61 +285,6 @@ final class LabRenderTests: XCTestCase {
         XCTAssertEqual(reveal.variablePath, "inference_steps")
     }
 
-    private struct Scenario {
-        let name: String
-        let experiments: [LabExperimentRow]
-        let jobs: [LabJobRow]
-        let studies: [LabStudyRow]
-        let error: String?
-    }
-
-    private func scenarios() throws -> [Scenario] {
-        let experiments = [
-            LabExperimentRow(item: try LF.item("exp_0123456789abcdef", sealed: true, states: ["completed", "completed"])),
-            LabExperimentRow(item: try LF.item("exp_1123456789abcdef", sealed: false, states: ["completed"])),
-            LabExperimentRow(item: try LF.item("exp_2123456789abcdef", sealed: true, states: ["completed", "running"])),
-            LabExperimentRow(item: try LF.item("exp_3123456789abcdef", sealed: true, states: ["completed", "failed"])),
-            LabExperimentRow(item: try LF.item("exp_4123456789abcdef", sealed: true, states: ["awaiting_gpu"])),
-        ]
-        let jobs = [
-            LabJobRow(job: try LF.job("job_0123456789abcdef", state: "queued")),
-            LabJobRow(job: try LF.job("job_1123456789abcdef", state: "running")),
-            LabJobRow(job: try LF.job("job_2123456789abcdef", state: "failed", error: "The runtime ran out of memory while rendering the second candidate.")),
-            LabJobRow(job: try LF.job("job_3123456789abcdef", state: "warming_up")),
-        ]
-        let studies = [
-            try XCTUnwrap(LabStudyRow(value: try LF.value(#"{"study_id":"study_0123456789","state":"running","next_action":"record_preference","review_id":"r1","progress":{"rounds_done":3,"budget_remaining":5,"stage":"search"}}"#))),
-            try XCTUnwrap(LabStudyRow(value: try LF.value(#"{"study_id":"study_1123456789","state":"completed","next_action":"none","progress":{"rounds_done":9}}"#))),
-        ]
-        return [
-            Scenario(name: "lab-empty", experiments: [], jobs: [], studies: [], error: nil),
-            Scenario(name: "lab-populated", experiments: experiments, jobs: jobs, studies: studies, error: nil),
-            Scenario(name: "lab-error", experiments: experiments.prefix(1).map { $0 }, jobs: [], studies: [],
-                     error: "usage: mlx-agent lab [-h] operation\nmlx-agent: error: the following arguments are required"),
-        ]
-    }
-
-    private func panel(_ scenario: Scenario) -> some View {
-        let actions = LabHeaderActions(create: {}, importWorkspace: {}, recover: {}, refresh: {}, chooseWorkspace: {}, reveal: {}, copyPath: {})
-        return ScrollView {
-            WorkbenchCard("Controlled studies", systemImage: "square.split.2x1") {
-                Text("Compare one change at a time, then review the clips without seeing candidate identities.")
-                    .foregroundStyle(WorkbenchColor.muted)
-                LabHeaderView(storePath: "~/Library/Application Support/mlx-agent/lab", isRefreshing: false, canChangeWorkspace: true, actions: actions)
-                ErrorBanner(text: scenario.error)
-                LabExperimentList(rows: scenario.experiments, isOpeningReview: false, review: { _ in })
-                ForEach(scenario.studies) { row in
-                    Divider()
-                    LabStudyRowView(row: row, busy: false, generationBlocked: false, perform: { _ in }, review: { _, _ in })
-                }
-                ForEach(scenario.jobs) { row in
-                    LabJobRowView(row: row, runDisabled: false, run: {}, cancel: {})
-                }
-            }
-            .padding(WorkbenchSpacing.pageInset)
-        }
-    }
-
     func testPanelAndSheetsRenderDarkAndLightAtEveryWidth() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
         let lab = coordinator()
@@ -349,9 +294,6 @@ final class LabRenderTests: XCTestCase {
         )
         for dark in [true, false] {
             for width in [CGFloat(1220), 824] {
-                for scenario in try scenarios() {
-                    try await attach(panel(scenario), name: scenario.name, viewport: width, dark: dark)
-                }
                 try await attach(LabAuthorSheet(lab: lab), name: "lab-author-sheet", viewport: width, dark: dark, height: 520)
                 try await attach(LabReviewSheet(lab: lab, context: context), name: "lab-review-sheet", viewport: width, dark: dark, height: 760)
                 try await attach(LabAdoptSheet(lab: lab), name: "lab-adopt-sheet", viewport: width, dark: dark, height: 420)

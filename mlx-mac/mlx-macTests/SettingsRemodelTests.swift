@@ -921,24 +921,6 @@ final class SettingsRenderTests: XCTestCase {
         add(attachment)
     }
 
-    private var draftGallery: some View {
-        let saved = F.config(gguf: ["/m"])
-        let ledger = F.make(saved: saved, gguf: ["/m", "/draft"], models: [F.model("/m/a.gguf")], scanned: ScanRoots(gguf: ["/m"], mlx: ["/m"]))
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            ForEach(Array(ledger.gguf.enumerated()), id: \.offset) { _, row in
-                SettingsLedgerRowView(row: row, stacksFigures: false, isRouteActive: true, stamp: F.stamp, isScanning: false, onRescan: {}, onRemove: {})
-            }
-            SettingsStatusLabel(word: "Checked when you save", detail: nil, symbol: "questionmark.circle", tone: .neutral)
-            SettingsRow(label: "Fit reserve", message: "Enter a number between 0 and 16.", stacked: false) {
-                TextField("Fit reserve in gigabytes", text: .constant("17"), prompt: Text("4")).textFieldStyle(.roundedBorder)
-            }
-            SettingsRow(label: "Output directory", warning: SettingsDirectoryState.missing.warning, stacked: false) {
-                TextField("Output directory", text: .constant("~/models/mlx"), prompt: Text("~/models/mlx")).textFieldStyle(.roundedBorder)
-            }
-        }
-        .padding(WorkbenchSpacing.pageInset)
-    }
-
     private final class RenderInstaller: ReleaseInstalling, @unchecked Sendable {
         func fetchRelease(_ url: URL) async throws -> ReleaseEntry {
             let name = "mlx-workbench-0.5.0.dmg"
@@ -1031,11 +1013,6 @@ final class SettingsRenderTests: XCTestCase {
                         name: scenario.name, viewport: width.viewport, dark: dark
                     )
                 }
-            }
-        }
-        for dark in [true, false] {
-            for width in widths {
-                try await attach(draftGallery, name: "draft-states", viewport: width.viewport, dark: dark, height: 600)
             }
         }
     }

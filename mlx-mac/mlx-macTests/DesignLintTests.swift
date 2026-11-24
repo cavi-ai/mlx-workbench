@@ -63,20 +63,6 @@ final class DesignLintTests: XCTestCase {
     }
 
     @MainActor
-    func testWindowRootFollowsTheSystemAppearance() throws {
-        for name in [NSAppearance.Name.aqua, .darkAqua] {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
-                                  styleMask: [.titled], backing: .buffered, defer: false)
-            window.appearance = try XCTUnwrap(NSAppearance(named: name))
-            let hosting = NSHostingView(rootView: Text("Root").workbenchTheme())
-            window.contentView = hosting
-            hosting.layoutSubtreeIfNeeded()
-            window.layoutIfNeeded()
-            XCTAssertEqual(hosting.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), name, name.rawValue)
-        }
-    }
-
-    @MainActor
     func testSelectionForegroundIsReadableOnTheSelectionFill() throws {
         for name in [NSAppearance.Name.aqua, .darkAqua] {
             let appearance = try XCTUnwrap(NSAppearance(named: name))

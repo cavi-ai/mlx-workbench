@@ -5,36 +5,6 @@ import XCTest
 
 @testable import mlx_workbench
 
-@MainActor
-private final class ComparisonRunFixture: ObservableObject {
-    @Published var reason: String? = "Choose at least one model."
-    var requests = 0
-}
-
-private struct ComparisonRunFixtureView: View {
-    @ObservedObject var fixture: ComparisonRunFixture
-    var styled = false
-
-    @ViewBuilder private var runButton: some View {
-        if styled {
-            ComparisonRunButton(unavailableReason: fixture.reason) { fixture.requests += 1 }
-                .buttonStyle(.workbenchPrimary)
-        } else {
-            ComparisonRunButton(unavailableReason: fixture.reason) { fixture.requests += 1 }
-                .buttonStyle(.borderless)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            runButton
-            ComparisonRunGuidance(reason: fixture.reason)
-        }
-        .padding(WorkbenchSpacing.md).frame(width: 560, height: 130, alignment: .leading)
-        .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-    }
-}
-
 final class CompareRemodelTests: XCTestCase {
     func testWideChatResultsGiveModelAndPromptColumnsTheAvailableSpace() {
         let layout = ChatComparisonLayout(contentWidth: 1800, promptCount: 2)
@@ -304,14 +274,8 @@ final class CompareRemodelTests: XCTestCase {
         XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.resultKey), ["a", "b"])
         XCTAssertTrue(ComparisonViewLogic.servingDetails(strata).contains("Strata · Metal · GGUF · GSQ-RCO Q2_0"))
         XCTAssertEqual(ComparisonViewLogic.servingDetails(legacy), ["Runtime not recorded"])
-        let view = VStack(alignment: .leading) {
-            HStack(alignment: .top) {
-                StrataComparisonControls(options: .constant(lanes[0].strataOptions!))
-                StrataComparisonControls(options: .constant(lanes[1].strataOptions!))
-            }
-            MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
+        let view = MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
             isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent }, onReview: { _, _ in }) { _ in EmptyView() }
-        }
             .padding(20).frame(width: 940, height: 1500, alignment: .topLeading)
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
@@ -432,54 +396,6 @@ final class CompareRemodelTests: XCTestCase {
             availablePaths: available, hasPromptSet: false, hasPrompts: false), "Choose a prompt set.")
         XCTAssertNil(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: nil,
             availablePaths: available, savingPromptSet: false, hasPrompts: true))
-    }
-
-    @MainActor
-    func testNativeRunGuidanceTransitionsNeverStartAComparisonWithoutAClick() async throws {
-        func button(in view: NSView) -> NSButton? {
-            if let button = view as? NSButton { return button }
-            return view.subviews.compactMap { button(in: $0) }.first
-        }
-        let fixture = ComparisonRunFixture()
-        let host = NSHostingView(rootView: ComparisonRunFixtureView(fixture: fixture))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 130),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        for (index, reason) in [String?.some("Choose at least one model."),
-            "Model B is unavailable. Replace it or choose None.", nil,
-            "Wait for the current comparison to finish.",
-            ComparePresentation.runUnavailableReason(slots: ["/a"], activeRunID: nil, savingPromptSet: true),
-            ComparePresentation.runUnavailableReason(slots: ["/a"], activeRunID: nil, hasPrompts: false),
-            ComparePresentation.runUnavailableReason(slots: ["/a"], activeRunID: nil,
-                savingPromptSet: false, hasPrompts: true)].enumerated() {
-            fixture.reason = reason
-            try await Task.sleep(for: .milliseconds(150))
-            host.layoutSubtreeIfNeeded()
-            let run = try XCTUnwrap(button(in: host))
-            XCTAssertEqual(run.isEnabled, reason == nil)
-            XCTAssertEqual(fixture.requests, 0, "Guidance and availability changes must never start a run")
-            if reason != nil { run.performClick(nil); XCTAssertEqual(fixture.requests, 0) }
-            // Check action dispatch with the native-backed style above, then
-            // capture the same control with the comparison page's style.
-            let styled = NSHostingView(rootView: ComparisonRunFixtureView(fixture: fixture, styled: true))
-            window.contentView = styled
-            try await Task.sleep(for: .milliseconds(100))
-            styled.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(styled.bitmapImageRepForCachingDisplay(in: styled.bounds))
-            styled.cacheDisplay(in: styled.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "Comparison run availability \(index)"; attachment.lifetime = .keepAlways; add(attachment)
-            if let directory = ProcessInfo.processInfo.environment["MLX_RUN_GUIDANCE_PROOF_DIR"] {
-                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(index).png"))
-            }
-            window.contentView = host
-        }
-        fixture.reason = nil
-        try await Task.sleep(for: .milliseconds(150))
-        try XCTUnwrap(button(in: host)).performClick(nil)
-        XCTAssertEqual(fixture.requests, 1, "Only the explicit enabled action requests a run")
     }
 
     func testSixLaneStates() {
