@@ -157,7 +157,9 @@ prompt and output from the window.
 In Training, choose **Use in Run** on a completed job. This stages the receipt
 without starting a server or changing your selected Library model. **Preview
 adapter serve** rechecks the receipt, pinned base snapshot and adapter files.
-Review the paths and port, then choose **Confirm and run adapter**.
+Choose **Load on request** to start the gateway before loading the adapter.
+**Require API key** also enables load on request. Review the paths and port,
+then choose **Confirm and run adapter**.
 
 Changed or missing artifacts require a fresh preview. Run refuses an occupied
 port or a second server for the same training artifacts. The running server's
@@ -167,8 +169,8 @@ Run controls without stopping servers.
 
 Trained adapters use explicit MLX-LM serving. They do not inherit the base
 model's quality verdict. After the preview, **Save as endpoint…** then
-**Save unverified endpoint** adds an always-on endpoint for that pinned base
-and adapter. Historical training receipts without a pinned base identity cannot
+**Save unverified endpoint** adds an always-on endpoint for that pinned base,
+adapter, load mode and authentication settings. Historical training receipts without a pinned base identity cannot
 be previewed or saved. A later update of the base model does not retarget this
 endpoint.
 
@@ -201,7 +203,7 @@ Starting one endpoint checks that endpoint immediately. The background superviso
 - Endpoints require a verified model unless you explicitly override for an unverified one.
 - Each endpoint row shows status, restarts, a fit chip, a role, **Stop** or **Start…**, and an overflow menu with the remaining controls.
 - **Memory** displays a live **Fleet co-residency budget** bar combining per-modality estimates (LLM, Vision, Audio, Video, Image, Embedding), load-on-request dormant state, Splash memory caps and any configured shared agent memory limit. When one or more models lack size data, the bar surfaces the partial known total alongside the unknown slot count without fabricating sizes.
-- **Model router…** (**Wire roles…**) maps running chat, vision, embedding, audio and media endpoints onto role routes. Local and converted models outside the Hugging Face cache receive safe `local/<name>` identifiers (rejecting path traversal and control characters). Authenticated endpoints route through the shared Front Door when matching its key, or document environment-variable auth (`MLX_ENDPOINT_API_KEY_<port>`) without ever writing raw API keys into `fleet-router.yaml`.
+- **Model router…** (**Wire roles…**) writes routes for running chat, vision and embedding endpoints that serve a `publisher/model` ID. Workbench lists local endpoints with basename-only IDs and typed audio or media endpoints separately from the generated config. A route can use Front door when the listener advertises the model and the endpoint shares its key. The generated `fleet-router.yaml` uses `MLX_AGENT_LOCAL_API_KEY` for protected routes, so a config can include only endpoints that use the same API key.
 
 The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item installs one `RunAtLoad` agent per enabled endpoint, `ai.cavi.mlxworkbench.endpoint.<slot id>`, and each runs `mlx-agent serve start` once at login. The preview lists every command before confirmation. Each captured command preserves that endpoint's local path, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent that endpoint's login startup; a change to any included endpoint requires a fresh preview. Remove and reinstall the login item after changing endpoint settings. Installing is refused when the enabled fleet will not fit, until you choose **Install anyway**, the same override as enabling an endpoint. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority. An older single-agent plist, `ai.cavi.mlxworkbench.endpoint`, is removed when you install or remove the login item.
 

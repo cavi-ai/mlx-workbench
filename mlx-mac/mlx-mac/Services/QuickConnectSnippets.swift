@@ -145,7 +145,7 @@ struct QuickConnectTarget: Equatable, Hashable, Sendable {
     static func frontDoor(_ listener: FrontDoorListener, modelID: String? = nil) -> QuickConnectTarget? {
         let route: FrontDoorRoute?
         if let modelID, !modelID.isEmpty {
-            route = listener.routes.first(where: { $0.id == modelID }) ?? FrontDoorRoute(id: modelID)
+            route = listener.routes.first(where: { $0.id == modelID })
         } else {
             route = listener.routes.first(where: { $0.isChat }) ?? listener.routes.first
         }
@@ -165,27 +165,14 @@ struct QuickConnectTarget: Equatable, Hashable, Sendable {
         )
     }
 
-    /// Build a Front Door target from saved FrontDoorSettings and a routed model ID.
-    static func frontDoor(
-        settings: FrontDoorSettings,
-        modelID: String,
-        taskKinds: [String] = [],
-        statusLabel: String = "Front door"
-    ) -> QuickConnectTarget {
-        let embeddings = hasEmbeddingsTaskKind(taskKinds)
-        let chat = taskKinds.isEmpty
-        return QuickConnectTarget(
-            baseURL: "http://127.0.0.1:\(settings.port)/v1",
-            modelID: modelID,
-            requiresAPIKey: true,
-            isFrontDoor: true,
-            supportsChat: chat,
-            supportsResponses: chat,
-            supportsAnthropic: chat,
-            supportsEmbeddings: embeddings,
-            statusLabel: statusLabel
-        )
+    static func frontDoor(_ listener: FrontDoorListener, server: ServerInfo) -> QuickConnectTarget? {
+        guard server.state == "running", server.apiKeySHA256 == listener.apiKeySHA256,
+              server.jit == true || server.runtime == "tasks",
+              let modelID = server.path.map(FrontDoorCoordinator.publicModelName(for:)) ?? server.repo,
+              !modelID.isEmpty else { return nil }
+        return frontDoor(listener, modelID: modelID)
     }
+
 }
 
 /// One generated, copy-ready Quick Connect snippet.

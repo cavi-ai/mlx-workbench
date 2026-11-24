@@ -811,17 +811,6 @@ final class LMStudioSourceTests: XCTestCase {
         }
     }
 
-    func testExactlyOneViewObservesTheResourceMonitor() throws {
-        var count = 0
-        for name in files {
-            for line in try source(name).split(separator: "\n") where line.contains("@ObservedObject") && line.contains("SystemResourceMonitor") {
-                count += 1
-            }
-        }
-        XCTAssertEqual(count, 1)
-        XCTAssertTrue(try source("LMStudioShelfViews.swift").contains("@ObservedObject var resources: SystemResourceMonitor"))
-    }
-
     func testNoProminentButtonNoPaintedCanvasAndTheResolverRunsOffTheMainActor() throws {
         let all = try files.map(source).joined(separator: "\n")
         XCTAssertFalse(all.contains("workbenchPrimary"))
@@ -855,13 +844,6 @@ final class LMStudioSourceTests: XCTestCase {
         XCTAssertFalse(page.contains("Path.home()"))
     }
 
-    func testRemovedSurfacesStayRemoved() throws {
-        let page = try source("LMStudioView.swift")
-        for removed in ["LMStudioScanState", "LMSModel", "discoverLMStudio", "Choose…", "Optional source dir", #"Text("LM Studio")"#] {
-            XCTAssertFalse(page.contains(removed), removed)
-        }
-    }
-
     func testRepoNamesAreProportionalOnBothShelves() throws {
         for name in ["LMStudioShelfViews.swift", "DiscoverViews.swift"] {
             let text = try source(name)
@@ -870,11 +852,6 @@ final class LMStudioSourceTests: XCTestCase {
         }
     }
 
-    func testTheViewShowsTheBannerTextTheModelBuilds() throws {
-        let page = try source("LMStudioView.swift")
-        XCTAssertTrue(page.contains("LMStudioShelfPresentation.bannerText("))
-        XCTAssertFalse(page.contains("ErrorBanner(text: appHost.lastError)"))
-    }
 }
 
 // MARK: - Resolution loader

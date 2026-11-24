@@ -167,6 +167,12 @@ struct ComfyWorkflow: Codable, Equatable, Sendable {
             guard Self.supportedClasses.contains(classType) else {
                 throw ComfyWorkflowError.invalid("This workflow uses an unsupported node (\(classType)). Use a local supported workflow.")
             }
+            if classType == "VHS_VideoCombine" {
+                let formats: Set<String> = ["image/webp", "video/h264-mp4", "video/h265-mp4", "video/av1-mp4"]
+                guard let format = inputs["format"] as? String, formats.contains(format) else {
+                    throw ComfyWorkflowError.invalid("Choose WebP or MP4 output for Video Combine.")
+                }
+            }
             for value in inputs.values where value is [Any] {
                 guard let link = Self.link(value), graph[link.nodeID] != nil else {
                     throw ComfyWorkflowError.invalid("The workflow contains an invalid node link.")

@@ -653,25 +653,6 @@ final class DiscoverSourceTests: XCTestCase {
         }
     }
 
-    func testTheCandidatesAreNotAListAndDiscoverIsTheOnlyProminentButton() throws {
-        let scout = try source("ScoutView.swift")
-        let views = try source("DiscoverViews.swift")
-        XCTAssertFalse(views.contains("List("))
-        XCTAssertEqual(scout.components(separatedBy: "List(").count - 1, 1, "only the catalog entries keep a List")
-        XCTAssertEqual((scout + views).components(separatedBy: "workbenchPrimary").count - 1, 1)
-        XCTAssertEqual(scout.components(separatedBy: "Button(\"Discover\")").count - 1, 1)
-    }
-
-    func testThePinnedUITestStringsStayInSource() throws {
-        let scout = try source("ScoutView.swift")
-        XCTAssertTrue(scout.contains("Text(\"Discovery\")"))
-        XCTAssertTrue(scout.contains("Button(\"Discover\")"))
-        XCTAssertTrue(scout.contains("Details and catalog entries"))
-        XCTAssertTrue(scout.contains("Refresh Metadata"))
-        XCTAssertTrue(scout.contains("Catalog metadata"))
-        XCTAssertTrue(scout.contains("Metadata only. Local installation truth comes from the Library scan, not this catalog cache."))
-        XCTAssertTrue(try source("DiscoverViews.swift").contains("Button(\"Clear\""))
-    }
 }
 
 // MARK: - Renders

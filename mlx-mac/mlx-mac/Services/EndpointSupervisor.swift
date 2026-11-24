@@ -306,7 +306,7 @@ final class EndpointSupervisor: ObservableObject {
             guard validate(candidate, isNew: true) else { return nil }
             if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
-                let hash = try await accelerationPreviewHash(candidate)
+                let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
                 guard !hash.isEmpty, fleet == before else { throw WorkflowEvidenceError.invalid("Endpoint configuration changed. Review the new endpoint again.") }
                 if inference.requested { candidate.accelerationPreviewHash = hash }
                 if profile != nil || splashPreset != nil { candidate.profilePreviewHash = hash }
@@ -336,7 +336,9 @@ final class EndpointSupervisor: ObservableObject {
         allowUnverified: Bool,
         loadOnRequest: Bool = false,
         requireAPIKey: Bool = false,
-        memoryPolicy: EndpointMemoryPolicy? = nil
+        memoryPolicy: EndpointMemoryPolicy? = nil,
+        reviewedHash: String? = nil,
+        reviewedKey: String? = nil
     ) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
@@ -365,11 +367,20 @@ final class EndpointSupervisor: ObservableObject {
         do {
             var token: String?
             if requireAPIKey {
-                let created = try generateAPIKey()
-                token = created
-                candidate.apiKeySHA256 = EndpointCredentialStore.digest(created)
+                guard reviewedHash == nil || reviewedKey != nil else {
+                    throw WorkflowEvidenceError.invalid("The reviewed adapter key is missing. Preview serving again.")
+                }
+                let key = try reviewedKey ?? generateAPIKey()
+                token = key
+                candidate.apiKeySHA256 = EndpointCredentialStore.digest(key)
             }
             guard validate(candidate, isNew: true) else { return }
+            if let reviewedHash {
+                let current = try await reviewTrainedAdapter(candidate)
+                guard current.hash == reviewedHash, current.binding == binding else {
+                    throw WorkflowEvidenceError.invalid("The trained adapter plan changed. Preview serving again.")
+                }
+            }
             if let token {
                 try saveAPIKey(token)
                 savedKey = candidate.apiKeySHA256
@@ -912,7 +923,7 @@ final class EndpointSupervisor: ObservableObject {
         var candidate = slot
         candidate.apiKeySHA256 = frontDoorKey ? fleet.frontDoor?.apiKeySHA256 : token.map(EndpointCredentialStore.digest)
         if required { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-        let hash = try await accelerationPreviewHash(candidate)
+        let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
         return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, token: token, previewHash: hash)
     }
@@ -926,7 +937,7 @@ final class EndpointSupervisor: ObservableObject {
             var candidate = review.slot
             candidate.apiKeySHA256 = review.keySHA256
             if review.keySHA256 != nil { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-            let hash = try await accelerationPreviewHash(candidate)
+            let hash = try await accelerationPreviewHash(candidate, pendingKey: review.token)
             guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
             }
@@ -967,8 +978,38 @@ final class EndpointSupervisor: ObservableObject {
         }
     }
 
-    private func accelerationPreviewHash(_ slot: EndpointSlot) async throws -> String {
+    private func reviewTrainedAdapter(_ slot: EndpointSlot) async throws -> (hash: String, binding: TrainedAdapterBinding) {
+        guard let receipt = slot.trainingReceipt, let launch = adapterLaunch else {
+            throw WorkflowEvidenceError.invalid("Trained adapter serving is unavailable.")
+        }
+        let reviewed: (hash: String, binding: TrainedAdapterBinding)
+        if slot.usesJIT || slot.apiKeySHA256 != nil {
+            guard let preview = launch.jitPreview, launch.jitStart != nil else {
+                throw WorkflowEvidenceError.invalid("Load-on-request serving for trained adapters is unavailable in this runtime.")
+            }
+            reviewed = try await preview(receipt, slot.modelPath, slot.port, slot.memoryPolicy, slot.apiKeySHA256)
+        } else {
+            reviewed = try await launch.preview(receipt, slot.modelPath, slot.port)
+        }
+        guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath,
+              reviewed.binding.isValid, TrainedAdapterBinding.isHash(reviewed.hash) else {
+            throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
+        }
+        return reviewed
+    }
+
+    private func accelerationPreviewHash(_ slot: EndpointSlot, pendingKey: String? = nil) async throws -> String {
+        if slot.isTrainedAdapter { return try await reviewTrainedAdapter(slot).hash }
         let selected = try servingLifecycle(slot)
+        if slot.inferenceOptions.sharedPrefixCacheRequested, let pendingKey {
+            guard EndpointCredentialStore.digest(pendingKey) == slot.apiKeySHA256,
+                  let preview = selected.jitPreviewWithKeyFile else {
+                throw WorkflowEvidenceError.invalid("The shared prefix cache requires the reviewed endpoint key.")
+            }
+            let file = try EndpointCredentialStore.materializePrivateKeyFile(pendingKey)
+            defer { if file.created { try? FileManager.default.removeItem(atPath: file.path) } }
+            return try await preview(slot.modelPath, slot.port, slot.memoryPolicy, file.path)
+        }
         if slot.usesJIT {
             guard let preview = selected.jitPreview else { throw WorkflowEvidenceError.invalid("JIT serving is unavailable in this runtime.") }
             return try await preview(slot.modelPath, slot.port, slot.memoryPolicy)
@@ -1340,25 +1381,18 @@ final class EndpointSupervisor: ObservableObject {
                 guard let receipt = slot.trainingReceipt, let launch = adapterLaunch else {
                     throw WorkflowEvidenceError.invalid("Trained adapter serving is unavailable.")
                 }
+                let reviewed = try await reviewTrainedAdapter(slot)
+                guard fleet.slots.contains(slot) else {
+                    throw WorkflowEvidenceError.invalid("The trained adapter endpoint changed. Review it again.")
+                }
                 if slot.usesJIT || slot.apiKeySHA256 != nil {
-                    guard let jitPreview = launch.jitPreview, let jitStart = launch.jitStart else {
+                    guard let start = launch.jitStart else {
                         throw WorkflowEvidenceError.invalid("Load-on-request serving for trained adapters is unavailable in this runtime.")
                     }
-                    let reviewed = try await jitPreview(receipt, slot.modelPath, slot.port, slot.memoryPolicy, slot.apiKeySHA256)
-                    guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath, reviewed.binding.isValid,
-                          TrainedAdapterBinding.isHash(reviewed.hash), fleet.slots.contains(slot) else {
-                        throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
-                    }
-                    try await jitStart(receipt, slot.port, reviewed.hash, slot.memoryPolicy, slot.apiKeySHA256)
-                    slotStates[slot.id] = .waitingForServer
-                    return
+                    try await start(receipt, slot.port, reviewed.hash, slot.memoryPolicy, slot.apiKeySHA256)
+                } else {
+                    try await launch.start(receipt, slot.port, reviewed.hash)
                 }
-                let reviewed = try await launch.preview(receipt, slot.modelPath, slot.port)
-                guard reviewed.binding.receiptPath == receipt, reviewed.binding.basePath == slot.modelPath, reviewed.binding.isValid,
-                      TrainedAdapterBinding.isHash(reviewed.hash), fleet.slots.contains(slot) else {
-                    throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.")
-                }
-                try await launch.start(receipt, slot.port, reviewed.hash)
                 slotStates[slot.id] = .waitingForServer
                 return
             }

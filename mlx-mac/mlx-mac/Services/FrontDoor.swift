@@ -75,6 +75,7 @@ final class FrontDoorCoordinator: ObservableObject {
     private let fetchRoutes: Routes
     private let portInUse: @Sendable (Int) async -> Bool
     private var session: Task<Void, Never>?
+    private var endpointRefresh: Task<Void, Never>?
     private var generation = UUID()
     private var stopping = false
 
@@ -162,6 +163,25 @@ final class FrontDoorCoordinator: ObservableObject {
         } catch { self.error = "The front door model list is unavailable: \(AppHost.render(error))" }
     }
 
+    func refreshAfterEndpointChange() {
+        endpointRefresh?.cancel()
+        guard listening != nil else { return }
+        let id = generation
+        endpointRefresh = Task { [weak self] in
+            // A model-list read can start discovery and still return cached routes.
+            // Give the engine's five-second cache and twelve-second discovery wait time to elapse.
+            let delays: [Duration] = [.zero, .milliseconds(5_100), .seconds(1), .seconds(12)]
+            for delay in delays {
+                if delay != .zero {
+                    do { try await Task.sleep(for: delay) }
+                    catch { return }
+                }
+                guard !Task.isCancelled, let self, self.generation == id else { return }
+                await self.refresh()
+            }
+        }
+    }
+
     func stop() async {
         guard !busy, session != nil else { return }
         busy = true; defer { busy = false }
@@ -171,6 +191,7 @@ final class FrontDoorCoordinator: ObservableObject {
 
     private func end() async {
         let running = session
+        endpointRefresh?.cancel(); endpointRefresh = nil
         stopping = true; generation = UUID(); session = nil; listening = nil
         running?.cancel()
         await running?.value
@@ -178,6 +199,7 @@ final class FrontDoorCoordinator: ObservableObject {
     }
 
     private func ended(_ failure: Error?) {
+        endpointRefresh?.cancel(); endpointRefresh = nil
         session = nil; listening = nil
         guard !stopping else { return }
         if let failure, !(failure is CancellationError) {

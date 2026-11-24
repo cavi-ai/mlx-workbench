@@ -181,11 +181,12 @@ final class FrontDoorTests: XCTestCase {
         )
 
         let calls = FrontDoorCalls()
+        let cacheExpiresAt = ProcessInfo.processInfo.systemUptime + 5
         let coordinator = FrontDoorCoordinator(api: Self.unusedAPI(), token: { [token] _ in token }, run: { _, _ in
             try await Task.sleep(nanoseconds: 3_600_000_000_000)
         }, routes: { _, _ in
             calls.record("routes")
-            return calls.count("routes") == 1
+            return ProcessInfo.processInfo.systemUptime < cacheExpiresAt
                 ? [FrontDoorRoute(id: "gemma-3")]
                 : [FrontDoorRoute(id: "gemma-3"), FrontDoorRoute(id: "bge-small", taskKinds: ["embedding"])]
         }, portInUse: { _ in false })
@@ -206,8 +207,8 @@ final class FrontDoorTests: XCTestCase {
         XCTAssertEqual(coordinator.listening?.routes, [FrontDoorRoute(id: "gemma-3")])
 
         await supervisor.reconcile()
-        let deadline = Date().addingTimeInterval(2.0)
-        while calls.count("routes") < 2 && Date() < deadline {
+        let deadline = Date().addingTimeInterval(8)
+        while coordinator.listening?.typedRoutes.isEmpty == true && Date() < deadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
 

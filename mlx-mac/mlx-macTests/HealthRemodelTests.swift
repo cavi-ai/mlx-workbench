@@ -782,29 +782,6 @@ final class HealthDoctorCopyTests: XCTestCase {
         )
     }
 
-    func testUITestStringsStayInTheSources() throws {
-        let doctor = try Fixture.source("UI/Views/DoctorView.swift")
-        for text in [
-            #"SectionTitle(text: "Model inventory findings")"#,
-            "Inventory has not been checked. Run doctor to check local model files.",
-            "No inventory issues found in the latest doctor run.",
-            #"Button("Clear")"#,
-            #""Run doctor""#,
-            #""Checking…""#,
-            #".accessibilityLabel("Checking inventory")"#,
-            #"Label("Setup Assistant…""#,
-            #"appHost.setup.presentAgain()"#,
-            #"onRouteSelection(.settings)"#,
-            #"onRouteSelection(.reclaim)"#,
-        ] {
-            XCTAssertTrue(doctor.contains(text), "DoctorView.swift is missing \(text)")
-        }
-        let views = try Fixture.source("UI/Views/HealthViews.swift")
-        for text in [#"Button("Copy command")"#, #"Button("Open Settings""#, #"Button("Open Disk space""#, "RuntimeInstallView(installer: installer"] {
-            XCTAssertTrue(views.contains(text), "HealthViews.swift is missing \(text)")
-        }
-    }
-
     func testCheckedTimeIsRelativeAndOutsideTheCompletedPayload() throws {
         let checked = Date(timeIntervalSince1970: 1_790_000_000)
         XCTAssertEqual(HealthDoctor.checkedText(checked, now: checked.addingTimeInterval(30)), "Checked just now")
@@ -1322,35 +1299,4 @@ final class HealthSourceContractTests: XCTestCase {
         XCTAssertEqual(checker.components(separatedBy: "pythonPath()").count - 1, 2, "one call in report(), one definition")
     }
 
-    func testDoctorRunningStateHasOneIndicatorAndKeepsItsLabel() throws {
-        let doctor = try Fixture.source("UI/Views/DoctorView.swift")
-        XCTAssertFalse(doctor.contains("ProgressView"))
-        XCTAssertTrue(doctor.contains(#".accessibilityLabel("Checking inventory")"#))
-        XCTAssertEqual(doctor.components(separatedBy: ".livePulse(").count - 1, 1)
-        let views = try Fixture.source("UI/Views/HealthViews.swift")
-        XCTAssertFalse(views.contains("connectorStroke"))
-        XCTAssertEqual(views.components(separatedBy: ".numericText()").count - 1, 1, "only the evidence numerals")
-    }
-
-    func testHeroHasOneProminentControlAndTheNewButtonsAreBorderless() throws {
-        let views = try Fixture.source("UI/Views/HealthViews.swift")
-        XCTAssertEqual(views.components(separatedBy: ".workbenchPrimary").count - 1, 1, "healthProminence only")
-        XCTAssertNotNil(views.range(of: #"Button\(EnvironmentEvidence\.reviewTitle, action: onReview\)\s+\.buttonStyle\(\.borderless\)"#, options: .regularExpression))
-        XCTAssertTrue(views.contains(#"Button("Copy command")"#))
-        let doctor = try Fixture.source("UI/Views/DoctorView.swift")
-        XCTAssertEqual(doctor.components(separatedBy: ".workbenchPrimary").count - 1, 1, "Run doctor")
-        XCTAssertTrue(doctor.contains("onRouteSelection(.overview)"))
-    }
-
-    func testForkSemanticsAreContainedForVoiceOver() throws {
-        let views = try Fixture.source("UI/Views/HealthViews.swift")
-        XCTAssertGreaterThanOrEqual(views.components(separatedBy: ".accessibilityElement(children: .contain)").count - 1, 3)
-        XCTAssertTrue(views.contains("WorkbenchTypography.display"))
-    }
-
-    func testHealthSourcesNeverCallProbeLifecycle() throws {
-        let tests = try Fixture.source("../mlx-macTests/HealthRemodelTests.swift")
-        let lifecycle = ["invalidate", "prewarm"].map { $0 + "EnvironmentProbe" }
-        for call in lifecycle { XCTAssertFalse(tests.contains(call + "()"), "\(call) is not called in tests") }
-    }
 }

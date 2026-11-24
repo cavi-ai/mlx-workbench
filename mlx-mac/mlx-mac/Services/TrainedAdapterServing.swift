@@ -118,7 +118,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
     private let api: TrainedAdapterServingAPI
     private let generateAPIKey: () throws -> String
     private let saveAPIKey: (String) throws -> Void
-    private let removeAPIKey: (String) throws -> Void
+    private(set) var reviewedAPIKey: String?
     private var revision = 0
     private var confirmed: (preview: TrainedAdapterServePreview, pid: Int, startedAt: String)?
     private var activeTask: Task<Void, Never>?
@@ -127,13 +127,11 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
     init(
         api: TrainedAdapterServingAPI,
         generateAPIKey: @escaping () throws -> String = EndpointCredentialStore.generate,
-        saveAPIKey: @escaping (String) throws -> Void = EndpointCredentialStore.save,
-        removeAPIKey: @escaping (String) throws -> Void = EndpointCredentialStore.remove
+        saveAPIKey: @escaping (String) throws -> Void = EndpointCredentialStore.save
     ) {
         self.api = api
         self.generateAPIKey = generateAPIKey
         self.saveAPIKey = saveAPIKey
-        self.removeAPIKey = removeAPIKey
     }
     deinit { activeTask?.cancel() }
 
@@ -142,6 +140,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
         activeTask = nil
         activeTaskID = nil
         operation = nil
+        invalidate()
     }
 
     var supportsJIT: Bool { api.supportsJIT }
@@ -166,7 +165,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
         invalidate(); selectedJob = nil
     }
     private func invalidate() {
-        revision += 1; preview = nil; runningServer = nil; confirmed = nil; errorMessage = nil
+        revision += 1; preview = nil; reviewedAPIKey = nil; runningServer = nil; confirmed = nil; errorMessage = nil
     }
 
     @discardableResult
@@ -178,7 +177,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
         let taskID = UUID()
         activeTask?.cancel()
         activeTaskID = taskID
-        preview = nil; runningServer = nil; confirmed = nil; errorMessage = nil; operation = .previewing
+        preview = nil; reviewedAPIKey = nil; runningServer = nil; confirmed = nil; errorMessage = nil; operation = .previewing
         let task = Task { [weak self] in
             defer {
                 if let self, self.activeTaskID == taskID {
@@ -188,16 +187,9 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                 }
             }
             guard let self else { return }
-            var savedKeyDigest: String?
             do {
-                var keyDigest: String?
-                if requestedAPIKey {
-                    let token = try self.generateAPIKey()
-                    let digest = EndpointCredentialStore.digest(token)
-                    try self.saveAPIKey(token)
-                    savedKeyDigest = digest
-                    keyDigest = digest
-                }
+                let key = requestedAPIKey ? try self.generateAPIKey() : nil
+                let keyDigest = key.map(EndpointCredentialStore.digest)
                 let plan: [String: Any]
                 if requestedJIT {
                     guard let jitPreview = self.api.jitPreview, self.api.jitStart != nil else {
@@ -211,7 +203,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                 guard let binding = TrainedAdapterBinding.decode(plan["training_binding"]),
                       binding.receiptPath == job.receipt, binding.baseRepo == job.repo, binding.adapterIdentity == job.adapterIdentity,
                       let declared = WorkbenchAPI.servers(from: ["servers": [plan]])?.first, binding.matches(declared),
-                      (!requestedJIT || declared.jit == true),
+                      (!requestedJIT || declared.jit == true), declared.apiKeySHA256 == keyDigest,
                       let port = plan["port"] as? Int, (1...65535).contains(port), requestedPort == nil || requestedPort == port,
                       let hash = plan["preview_hash"] as? String, TrainedAdapterBinding.isHash(hash) else {
                     throw WorkflowEvidenceError.invalid("The engine did not return the selected training receipt's pinned serving plan. Refresh Training and preview again.")
@@ -233,9 +225,9 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                 if servers.contains(where: { $0.port == port && $0.state == "running" }) {
                     throw WorkflowEvidenceError.invalid("Port \(port) is already used by another serving configuration. Choose another port.")
                 }
+                self.reviewedAPIKey = key
                 self.preview = reviewed
             } catch {
-                if let savedKeyDigest { try? self.removeAPIKey(savedKeyDigest) }
                 guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
                 self.errorMessage = AppHost.render(error)
             }
@@ -251,7 +243,8 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
         let taskID = UUID()
         activeTask?.cancel()
         activeTaskID = taskID
-        preview = nil; errorMessage = nil; operation = .starting
+        let key = reviewedAPIKey
+        preview = nil; reviewedAPIKey = nil; errorMessage = nil; operation = .starting
         let task = Task { [weak self] in
             defer {
                 if let self, self.activeTaskID == taskID {
@@ -267,6 +260,12 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                     guard let jitStart = self.api.jitStart else {
                         throw WorkflowEvidenceError.invalid("Load-on-request and API-key serving for trained adapters are unavailable in this runtime.")
                     }
+                    if reviewed.requireAPIKey {
+                        guard let key, EndpointCredentialStore.digest(key) == reviewed.apiKeySHA256 else {
+                            throw WorkflowEvidenceError.invalid("The reviewed adapter key is missing. Preview serving again.")
+                        }
+                        try self.saveAPIKey(key)
+                    }
                     response = try await jitStart(job.receipt, reviewed.port, reviewed.hash, .automatic, reviewed.apiKeySHA256)
                 } else {
                     response = try await self.api.start(job.receipt, reviewed.port, reviewed.hash)
@@ -274,7 +273,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
                 guard !Task.isCancelled, self.revision == revision, self.activeTaskID == taskID else { return }
                 guard let receipt = response["receipt"] as? [String: Any],
                       let declared = WorkbenchAPI.servers(from: ["servers": [receipt]])?.first, reviewed.binding.matches(declared),
-                      (!reviewed.loadOnRequest || declared.jit == true),
+                      (!reviewed.loadOnRequest || declared.jit == true), declared.apiKeySHA256 == reviewed.apiKeySHA256,
                       receipt["preview_hash"] as? String == reviewed.hash,
                       receipt["port"] as? Int == reviewed.port,
                       TrainedAdapterBinding.decode(receipt["training_binding"]) == reviewed.binding,
@@ -301,6 +300,7 @@ final class TrainedAdapterServingCoordinator: ObservableObject {
         if error != nil { runningServer = nil; return }
         guard let confirmed else { return }
         runningServer = servers.first { $0.state == "running" && $0.port == confirmed.preview.port && $0.pid == confirmed.pid
-            && $0.startedAt == confirmed.startedAt && confirmed.preview.binding.matches($0) }
+            && $0.startedAt == confirmed.startedAt && $0.apiKeySHA256 == confirmed.preview.apiKeySHA256
+            && confirmed.preview.binding.matches($0) }
     }
 }

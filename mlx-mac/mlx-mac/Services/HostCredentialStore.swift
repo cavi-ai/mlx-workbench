@@ -49,18 +49,46 @@ enum EndpointCredentialStore {
         }
     }
 
-    static func ensurePrivateKeyFile(for hash: String, directory: URL? = nil) throws -> String {
-        let value = try token(for: hash)
-        let baseDir = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("mlx-workbench", isDirectory: true)
-            .appendingPathComponent("keys", isDirectory: true)
-        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let safeHash = String(hash.prefix(64).filter { $0.isHexDigit })
-        let fileURL = baseDir.appendingPathComponent("\(safeHash).key")
-        let data = Data((value + "\n").utf8)
-        try data.write(to: fileURL, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        return fileURL.path
+    static func ensurePrivateKeyFile(for hash: String) throws -> String {
+        try materializePrivateKeyFile(token(for: hash)).path
+    }
+
+    private static func keyFileURL(for hash: String, directory: URL? = nil) -> URL {
+        let base = directory ?? WorkbenchStatePaths.applicationSupport().appendingPathComponent("keys", isDirectory: true)
+        return base.appendingPathComponent("\(hash).key")
+    }
+
+    /// Use the same path for draft previews and confirmed launches, since the engine hashes it into the plan.
+    static func materializePrivateKeyFile(_ token: String, directory: URL? = nil) throws -> (path: String, created: Bool) {
+        guard token.range(of: "^[A-Za-z0-9._~-]{32,256}$", options: .regularExpression) == token.startIndex..<token.endIndex else {
+            throw WorkflowEvidenceError.invalid("Shared prefix cache needs a 32–256 character URL-safe API key.")
+        }
+        let file = keyFileURL(for: digest(token), directory: directory)
+        let base = file.deletingLastPathComponent()
+        let manager = FileManager.default
+        try manager.createDirectory(at: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var directoryInfo = stat()
+        guard lstat(base.path, &directoryInfo) == 0, directoryInfo.st_mode & S_IFMT == S_IFDIR,
+              directoryInfo.st_uid == getuid(), directoryInfo.st_mode & 0o077 == 0 else {
+            throw WorkflowEvidenceError.invalid("The shared prefix cache key directory must be private.")
+        }
+        let data = Data((token + "\n").utf8)
+        var fileInfo = stat()
+        if lstat(file.path, &fileInfo) == 0 {
+            guard fileInfo.st_mode & S_IFMT == S_IFREG, fileInfo.st_uid == getuid(),
+                  fileInfo.st_mode & 0o777 == 0o600, fileInfo.st_nlink == 1, fileInfo.st_size == data.count,
+                  try Data(contentsOf: file) == data else {
+                throw WorkflowEvidenceError.invalid("The existing shared prefix cache key file is unavailable or not private.")
+            }
+            return (file.path, false)
+        }
+        guard errno == ENOENT else {
+            throw WorkflowEvidenceError.invalid("The shared prefix cache key file is unavailable.")
+        }
+        try data.write(to: file, options: .withoutOverwriting)
+        do { try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        catch { try? manager.removeItem(at: file); throw error }
+        return (file.path, true)
     }
 
     static func remove(_ hash: String) throws {
@@ -68,6 +96,9 @@ enum EndpointCredentialStore {
             let result = SecItemDelete(try identity(hash) as CFDictionary)
             guard result == errSecSuccess || result == errSecItemNotFound else { throw unavailable }
         }
+        let file = keyFileURL(for: hash)
+        do { try FileManager.default.removeItem(at: file) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {}
     }
 
     private static let interactionLock = NSLock()

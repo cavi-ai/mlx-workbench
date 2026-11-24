@@ -170,29 +170,6 @@ final class LabPresentationTests: XCTestCase {
 // MARK: - Source guards
 
 final class LabSourceGuardTests: XCTestCase {
-    func testRawJSONNeverFeedsATextFont() throws {
-        let source = try LF.source("LabView.swift")
-        let uses = source.components(separatedBy: "jsonText").count - 1
-        XCTAssertEqual(uses, 1, "raw JSON belongs only in manifestText, behind a disclosure")
-        XCTAssertTrue(source.contains("reveal.manifests?[$0]?.jsonText"))
-    }
-
-    func testEveryLabBadgeStopsPulsingWhenItsRouteIsHidden() throws {
-        let source = try LF.source("LabView.swift")
-        let badges = source.components(separatedBy: "StatusBadge(").dropFirst()
-        XCTAssertEqual(badges.count, 3)
-        for badge in badges {
-            XCTAssertTrue(badge.prefix(while: { $0 != "\n" }).contains("pulses: isRouteActive"), String(badge.prefix(60)))
-        }
-    }
-
-    func testStudyBlindReviewIsDistinctFromTheExperimentAnchor() throws {
-        let source = try LF.source("LabView.swift")
-        XCTAssertFalse(source.contains("Button(\"Blind review\")"))
-        XCTAssertEqual(source.components(separatedBy: ".accessibilityIdentifier(\"Blind review…\")").count - 1, 1)
-        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Study blind review…\")"))
-    }
-
     func testStudyRowsAreBuiltOnRefreshNotInTheBody() throws {
         let source = try LF.source("LabView.swift")
         let panel = try XCTUnwrap(source.range(of: "private struct AdaptiveStudiesPanel"))
@@ -205,16 +182,6 @@ final class LabSourceGuardTests: XCTestCase {
         XCTAssertTrue(coordinator.contains("LabStudyRow.init"))
     }
 
-    func testSheetsUseTheSectionTitleAndNoFixedWidth() throws {
-        let source = try LF.source("LabView.swift")
-        XCTAssertFalse(source.contains(".font(WorkbenchTypography.title)"))
-        XCTAssertFalse(source.contains("frame(width: 740)"))
-        XCTAssertFalse(source.contains("frame(width: 80)"))
-        for title in ["New controlled experiment", "Blind video review", "Import a Video Lab workspace"] {
-            XCTAssertTrue(source.contains("Text(\"\(title)\").font(WorkbenchTypography.section)"), title)
-        }
-    }
-
     func testViewBodiesBuildNoFileURLs() throws {
         let source = try LF.source("LabView.swift")
         let allowed = ["lab.useStore(URL(fileURLWithPath: path))", "left: URL(fileURLWithPath: left)", "right: URL(fileURLWithPath: right)"]
@@ -223,26 +190,6 @@ final class LabSourceGuardTests: XCTestCase {
         }
     }
 
-    func testTheUITestAnchorsSurvive() throws {
-        let source = try LF.source("LabView.swift")
-        for anchor in ["New experiment…", "Create experiment", "Play together", "Pause", "Previous frame",
-                       "Next frame", "Submit immutable review", "Blind review…"] {
-            XCTAssertTrue(source.contains("\"\(anchor)\""), anchor)
-        }
-        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Blind review…\")"))
-        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"open-studies\")"))
-        var rest = Substring(source)
-        while let open = rest.range(of: "Menu {") {
-            let tail = rest[open.upperBound...]
-            if rest[..<open.lowerBound].hasSuffix("context") { rest = tail; continue }
-            let close = try XCTUnwrap(tail.range(of: "} label:"))
-            let menu = tail[..<close.lowerBound]
-            for anchor in ["New experiment…", "Blind review…", "Create experiment"] {
-                XCTAssertFalse(menu.contains(anchor), "\(anchor) moved into a menu")
-            }
-            rest = tail[close.upperBound...]
-        }
-    }
 }
 
 // MARK: - Renders

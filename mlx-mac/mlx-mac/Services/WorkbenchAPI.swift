@@ -31,6 +31,7 @@ actor WorkbenchAPI {
     private let cli: CLIProcess
     private let command: AgentCommand?
     private let taskEnvelopeCommand: TaskEnvelopeCommand?
+    private let endpointKeyFile: @Sendable (String) throws -> String
     private var agentPath: String
     private let receiptDirectory: String
     private var engineGeneration = UUID()
@@ -51,7 +52,8 @@ actor WorkbenchAPI {
         receiptDirectory: String = WorkbenchStatePaths.applicationSupport().path,
         command: AgentCommand? = nil,
         taskEnvelopeCommand: TaskEnvelopeCommand? = nil,
-        taskStateDirectory: URL? = nil
+        taskStateDirectory: URL? = nil,
+        endpointKeyFile: @escaping @Sendable (String) throws -> String = { try EndpointCredentialStore.ensurePrivateKeyFile(for: $0) }
     ) {
         self.cli = cli
         self.command = command
@@ -59,6 +61,7 @@ actor WorkbenchAPI {
         self.agentPath = agentPath
         self.receiptDirectory = receiptDirectory
         self.taskStateDirectory = taskStateDirectory
+        self.endpointKeyFile = endpointKeyFile
     }
 
     func setAgentPath(_ path: String) {
@@ -1008,7 +1011,7 @@ actor WorkbenchAPI {
         var resolvedKeyFile: String? = nil
         if slot.inferenceOptions.sharedPrefixCacheRequested {
             guard let digest = slot.apiKeySHA256,
-                  let keyFile = try? EndpointCredentialStore.ensurePrivateKeyFile(for: digest) else {
+                  let keyFile = try? endpointKeyFile(digest) else {
                 throw WorkflowEvidenceError.invalid("Shared prefix cache login items require a saved API key in Keychain.")
             }
             resolvedKeyFile = keyFile
@@ -1028,7 +1031,7 @@ actor WorkbenchAPI {
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
             receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
-            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: slot.apiKeySHA256, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName, sharedPrefixCacheMiB: slot.inferenceOptions.sharedPrefixCacheMiB)
+            m5Prefill: slot.inferenceOptions.m5Prefill, promptLookup: slot.inferenceOptions.promptLookup, visionCache: slot.inferenceOptions.visionCache, maximumTokens: slot.inferenceOptions.maximumTokens, apiKeySHA256: effectiveDigest, requestDefaults: slot.inferenceOptions, profileName: slot.splashPresetName, sharedPrefixCacheMiB: slot.inferenceOptions.sharedPrefixCacheMiB, apiKeyFile: resolvedKeyFile)
         if let options { args += options.arguments }
         if slot.inferenceOptions.thinkingOff { args += ["--thinking", "off"] }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
@@ -1044,7 +1047,7 @@ actor WorkbenchAPI {
         var resolvedKeyFile = apiKeyFile
         if let mib = effectivePrefixCacheMiB {
             if resolvedKeyFile == nil, let digest = apiKeySHA256 {
-                resolvedKeyFile = try? EndpointCredentialStore.ensurePrivateKeyFile(for: digest)
+                resolvedKeyFile = try? endpointKeyFile(digest)
             }
             let checkOptions = LocalInferenceOptions(
                 m5Prefill: m5Prefill, promptLookup: promptLookup, visionCache: visionCache,
@@ -1104,8 +1107,11 @@ actor WorkbenchAPI {
         let effectivePrefixCacheMiB = sharedPrefixCacheMiB ?? requestDefaults?.sharedPrefixCacheMiB
         let resolvedRuntime = (effectivePrefixCacheMiB != nil && runtime == "auto") ? "mlx_lm" : runtime
         var resolvedKeyFile = apiKeyFile
-        if effectivePrefixCacheMiB != nil, resolvedKeyFile == nil, let digest = apiKeySHA256 {
-            resolvedKeyFile = try? EndpointCredentialStore.ensurePrivateKeyFile(for: digest)
+        if effectivePrefixCacheMiB != nil, resolvedKeyFile == nil {
+            guard let apiKeySHA256 else {
+                throw WorkflowEvidenceError.invalid("The shared prefix cache requires a saved API key.")
+            }
+            resolvedKeyFile = try endpointKeyFile(apiKeySHA256)
         }
         let effectiveDigest = resolvedKeyFile == nil ? apiKeySHA256 : nil
         var argv = Self.serveArguments(model: repo, runtime: resolvedRuntime, port: port, receipts: receiptDirectory,

@@ -88,10 +88,10 @@ final class QuickConnectSnippetsTests: XCTestCase {
         XCTAssertFalse(anthropicPy.contains("base_url=\"http://127.0.0.1:8766/v1\""))
     }
 
-    func testAuthenticatedEndpointUsesEnvVarPlaceholderAndNeverEmbedsRawSecrets() {
+    func testAuthenticatedEndpointUsesEnvVarPlaceholderAndNeverEmbedsRawSecrets() throws {
         let fakeDigest = String(repeating: "a", count: 64)
-        let settings = FrontDoorSettings(port: 8790, apiKeySHA256: fakeDigest)
-        let target = QuickConnectTarget.frontDoor(settings: settings, modelID: "org/Llama-3.2-3B")
+        let listener = FrontDoorListener(port: 8790, apiKeySHA256: fakeDigest, models: ["org/Llama-3.2-3B"])
+        let target = try XCTUnwrap(QuickConnectTarget.frontDoor(listener))
 
         XCTAssertTrue(target.requiresAPIKey)
         XCTAssertTrue(target.isFrontDoor)
@@ -121,6 +121,21 @@ final class QuickConnectSnippetsTests: XCTestCase {
     }
 
     // MARK: - Typed Embeddings Routes & Format Discovery
+
+    func testFrontDoorSnippetRequiresTheSelectedLiveServersKeyAndAdvertisedRoute() throws {
+        let digest = String(repeating: "a", count: 64)
+        let listener = FrontDoorListener(port: 8790, apiKeySHA256: digest,
+                                         routes: [FrontDoorRoute(id: "model", taskKinds: ["embedding"])])
+        let selected = ServerInfo(path: "/a/model", runtime: "tasks", port: 8766, state: "running",
+                                  taskKinds: ["embedding"], apiKeySHA256: digest)
+        let sameNameDifferentKey = ServerInfo(path: "/b/model", runtime: "tasks", port: 8767, state: "running",
+                                              taskKinds: ["embedding"], apiKeySHA256: String(repeating: "b", count: 64))
+        let target = try XCTUnwrap(QuickConnectTarget.frontDoor(listener, server: selected))
+        XCTAssertEqual(target.modelID, "model")
+        XCTAssertEqual(QuickConnectSnippets.availableFormats(for: target), [.curlEmbeddings, .pythonOpenAI])
+        XCTAssertNil(QuickConnectTarget.frontDoor(listener, server: sameNameDifferentKey))
+        XCTAssertNil(QuickConnectTarget.frontDoor(listener, modelID: "unadvertised"))
+    }
 
     func testTypedEmbeddingsRouteGeneratesEmbeddingsCurlAndOpenAIEmbeddingsPython() {
         let listener = FrontDoorListener(

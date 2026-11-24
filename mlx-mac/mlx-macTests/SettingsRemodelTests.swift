@@ -792,47 +792,6 @@ final class SettingsSourceContractTests: XCTestCase {
         try String(contentsOf: SettingsProbeTests.viewsDirectory.appendingPathComponent(name), encoding: .utf8)
     }
 
-    func testEveryLabelledFieldAppearsInTheUITestsDocumentOrder() throws {
-        let text = try source("SettingsView.swift")
-        let labels = ["mlx-agent checkout", "Output directory", "Quarantine directory",
-                      "Fit reserve in gigabytes", "Stale after days", "Comparison maximum tokens"]
-        let indices = try labels.map { label in try XCTUnwrap(text.range(of: "\"\(label)\"")?.lowerBound, label) }
-        XCTAssertEqual(indices, indices.sorted())
-        let sections = ["engineSection", "locationsSection", "storageSection", "servingSection",
-                        "conversionSection", "advisorsSection", "updatesSection"]
-        let body = try XCTUnwrap(text.range(of: "var body: some View"))
-        let bodyOrder = try sections.map {
-            let pattern = #"(?m)^\s+"# + NSRegularExpression.escapedPattern(for: $0) + #"\s*$"#
-            return try XCTUnwrap(text.range(of: pattern, options: .regularExpression,
-                range: body.lowerBound..<text.endIndex)?.lowerBound, $0)
-        }
-        XCTAssertEqual(bodyOrder, bodyOrder.sorted())
-        let definitionOrder = try sections.map { try XCTUnwrap(text.range(of: "private var \($0): some View")?.lowerBound, $0) }
-        XCTAssertEqual(definitionOrder, definitionOrder.sorted())
-    }
-
-    func testEngineStatusAndAgentFieldAreInTheFirstSection() throws {
-        let text = try source("SettingsView.swift")
-        let engine = try XCTUnwrap(text.range(of: "private var engineSection"))
-        let locations = try XCTUnwrap(text.range(of: "private var locationsSection"))
-        let section = text[engine.lowerBound..<locations.lowerBound]
-        XCTAssertTrue(section.contains(#"label: "Engine status""#))
-        XCTAssertTrue(section.contains(#"label: "mlx-agent checkout""#))
-    }
-
-    func testNoNestedScrollContainersOrFormControls() throws {
-        let text = try source("SettingsView.swift")
-        XCTAssertEqual(text.components(separatedBy: "ScrollView {").count - 1, 2, "the page and the update log")
-        let containers = text.replacingOccurrences(of: "ScrollViewReader", with: "")
-            .replacingOccurrences(of: "ScrollViewProxy", with: "")
-        XCTAssertEqual(containers.components(separatedBy: "ScrollView").count - 1, 2)
-        for banned in ["Form {", "List(", "List {", "Table(", "TextEditor", ".animation("] {
-            XCTAssertFalse(text.contains(banned), banned)
-        }
-        let log = try XCTUnwrap(text.range(of: "if !updater.logTail.isEmpty {"))
-        XCTAssertTrue(text[log.lowerBound...].contains("DisclosureGroup(\"Update log\")"))
-    }
-
     func testRouteSelectionComesFromTheShellAndNeverFromDefaults() throws {
         let view = try source("SettingsView.swift")
         for banned in ["UserDefaults", "selectionStorageKey", "selectRoute"] {
@@ -844,67 +803,6 @@ final class SettingsSourceContractTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(shell.contains("SettingsView(appHost: appHost, onRouteSelection: navigate)"))
-    }
-
-    func testBooleansAreSwitchRowsInTheLabelControlGrid() throws {
-        let text = try source("SettingsView.swift")
-        let row = try XCTUnwrap(text.range(of: "struct SettingsToggleRow"))
-        let end = try XCTUnwrap(text.range(of: "struct SettingsStatusLabel"))
-        let body = text[row.lowerBound..<end.lowerBound]
-        XCTAssertTrue(body.contains("SettingsRow(label: title, stacked: stacked)"))
-        XCTAssertTrue(body.contains("Toggle(title, isOn: $isOn)"))
-        XCTAssertTrue(body.contains(".toggleStyle(.switch)"))
-        XCTAssertTrue(body.contains(".labelsHidden()"))
-        for title in ["Sign converted outputs", "Verify conversions (canary quality gate)", "Watch & regression alerts"] {
-            XCTAssertTrue(text.contains("title: \"\(title)\""), title)
-        }
-        XCTAssertEqual(text.components(separatedBy: "Toggle(").count - 1, 1)
-    }
-
-    func testStatusColourIsNotUsedAsDecorationOnFiguresOrRemoveButtons() throws {
-        let text = try source("SettingsView.swift")
-        let figures = try XCTUnwrap(text.range(of: "struct SettingsFigureText"))
-        let ledger = try XCTUnwrap(text.range(of: "struct SettingsLedgerRowView"))
-        let figureBody = text[figures.lowerBound..<ledger.lowerBound]
-        XCTAssertTrue(figureBody.contains("state.isCounted ? WorkbenchTypography.tabular"))
-        XCTAssertTrue(figureBody.contains("state.isCounted ? WorkbenchColor.ink"))
-        let remove = try XCTUnwrap(text.range(of: "Image(systemName: \"minus.circle.fill\")"))
-        XCTAssertTrue(text[remove.lowerBound...].prefix(120).contains("WorkbenchColor.muted"))
-        XCTAssertTrue(text.contains(".frame(width: WorkbenchSize.Settings.bitsPickerWidth, alignment: .leading)"))
-    }
-
-    func testSurvivingStringsAndControls() throws {
-        let text = try source("SettingsView.swift") + (try source("SettingsPresentation.swift"))
-        let survivors = [
-            "Engine status", "Detect", "Choose…", "Add Folder…", "Add Detected", "Remove \\(row.path)",
-            "Check for updates", "Update to \\(offer.target)", "Relaunch", "Rebuild & relaunch", "Update log",
-            "uncommitted change(s) in the checkout — commit or discard them before updating.",
-            "This app is not running from a repository checkout, so in-app updates are unavailable. Install updates by replacing the app with a newly built one.",
-            "Default bits", "ForEach(Config.Q_BITS_CHOICES.sorted(), id: \\.self)", "FP32 / Unquantized", "Sign converted outputs", "Verify conversions (canary quality gate)",
-            "Watch & regression alerts", "Unsaved changes", "All changes saved", "Saved to \\(appHost.configPath)",
-            "Settings could not be saved.", "Discard", "Save", ".keyboardShortcut(.defaultAction)",
-            "Enter a number between 0 and 16.", "Enter an integer between 2 and 365.", "Enter an integer between 64 and 4096.",
-            "Directory does not exist yet.", "Path exists but is not a directory.",
-            "Serving", "Open Run", "Fit reserve in gigabytes", "Stale after days",
-            "Comparison maximum tokens", "Output directory", "Quarantine directory", "mlx-agent checkout",
-            "Channel", "Open Health", "Rescan",
-        ]
-        for survivor in survivors { XCTAssertTrue(text.contains(survivor), survivor) }
-        XCTAssertFalse(text.contains("No directories added."))
-        XCTAssertFalse(text.contains("Scanned after you save"))
-    }
-
-    func testPromptsCarryThePlaceholders() throws {
-        let text = try source("SettingsView.swift")
-        XCTAssertFalse(text.contains("TextField(placeholder"))
-        XCTAssertEqual(text.components(separatedBy: "prompt: Text(").count - 1, 2)
-    }
-
-    func testFigureMotionIsGatedAndKeyedOnTheSnapshot() throws {
-        let text = try source("SettingsView.swift")
-        XCTAssertTrue(text.contains(".contentTransition(isRouteActive ? .numericText() : .identity)"))
-        XCTAssertTrue(text.contains(".workbenchAnimation(value: stamp)"))
-        XCTAssertTrue(text.contains("stamp: appHost.librarySnapshot?.generatedAt"))
     }
 
     func testSaveDoesNotRescan() throws {

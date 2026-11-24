@@ -408,24 +408,11 @@ class AppHost {
             .sink { [weak self] fleet in
                 self?.frontDoor.updateCollisions(slots: fleet.slots, frontDoorKeySHA256: fleet.frontDoor?.apiKeySHA256)
             }
-        var frontDoorFollowUpTask: Task<Void, Never>?
         self.frontDoorSyncMonitoring = self.endpoint.$slotStates
             .dropFirst()
             .removeDuplicates()
             .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
-            .sink { [weak self] _ in
-                guard let self, self.frontDoor.isRunning else { return }
-                frontDoorFollowUpTask?.cancel()
-                frontDoorFollowUpTask = Task { @MainActor [weak self] in
-                    guard let self, self.frontDoor.isRunning else { return }
-                    if !self.frontDoor.busy {
-                        await self.frontDoor.refresh()
-                    }
-                    try? await Task.sleep(for: .milliseconds(1200))
-                    guard !Task.isCancelled, self.frontDoor.isRunning, !self.frontDoor.busy else { return }
-                    await self.frontDoor.refresh()
-                }
-            }
+            .sink { [weak self] _ in self?.frontDoor.refreshAfterEndpointChange() }
         // Usage evidence: serve, verify, and measure all count as "used" for
         // the Disk Pressure Advisor's staleness detector.
         self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.recordServed(path) }

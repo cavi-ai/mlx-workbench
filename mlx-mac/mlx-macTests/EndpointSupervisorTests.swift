@@ -1,4 +1,5 @@
 import Foundation
+import os
 import XCTest
 
 @testable import mlx_workbench
@@ -168,6 +169,58 @@ final class EndpointSupervisorTests: XCTestCase {
         let repeated = await supervisor.confirmAuthentication(review)
         XCTAssertFalse(repeated)
         XCTAssertEqual(saved.count, 1)
+    }
+
+    func testSharedPrefixEndpointAndLoginItemUseTheReviewedPrivateKeyFile() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let token = try EndpointCredentialStore.generate()
+        let digest = EndpointCredentialStore.digest(token)
+        let saved = OSAllocatedUnfairLock(initialState: false)
+        let commands = OSAllocatedUnfairLock(initialState: [[String]]())
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: root.path,
+            command: { _, argv, _, _ in
+                guard let keyIndex = argv.firstIndex(of: "--api-key-file"), keyIndex + 1 < argv.count else {
+                    throw WorkflowEvidenceError.invalid("No engine key file was supplied.")
+                }
+                let file = URL(fileURLWithPath: argv[keyIndex + 1])
+                let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+                XCTAssertEqual(mode?.intValue, 0o600)
+                XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), token + "\n")
+                XCTAssertFalse(argv.contains("--api-key-sha256"))
+                commands.withLock { $0.append(argv) }
+                return ["plan": ["preview_hash": "review", "runtime": "mlx_lm", "shared_prefix_cache": ["mib": 256]]]
+            },
+            endpointKeyFile: { requestedDigest in
+                guard requestedDigest == digest, saved.withLock({ $0 }) else {
+                    throw WorkflowEvidenceError.invalid("The key has not been saved.")
+                }
+                return try EndpointCredentialStore.materializePrivateKeyFile(token).path
+            }
+        )
+        let fleetURL = root.appendingPathComponent("fleet.json")
+        let supervisor = EndpointSupervisor(lifecycle: .live(api: api), statusProvider: { [] },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")),
+            fleetStore: JSONStore(fileURL: fleetURL))
+        supervisor.inferenceLifecycle = { .live(api: api, acceleration: $0) }
+        supervisor.generateAPIKey = { token }
+        supervisor.saveAPIKey = { key in
+            XCTAssertEqual(key, token)
+            saved.withLock { $0 = true }
+        }
+        let slotID = await supervisor.addSlot(modelPath: "/Models/prefix", port: 8920, loadOnRequest: true,
+            requireAPIKey: true, inference: LocalInferenceOptions(sharedPrefixCacheMiB: 256))
+        let id = try XCTUnwrap(slotID, supervisor.lastError ?? "")
+        let slot = try XCTUnwrap(supervisor.fleet.slots.first)
+        XCTAssertEqual(supervisor.slotStates[id], .waitingForServer)
+        XCTAssertEqual(slot.apiKeySHA256, digest)
+        let command = try await api.loginItemPlan(slot: slot, fleetURL: fleetURL)
+        let observed = commands.withLock { $0 }
+        let launch = try XCTUnwrap(observed.first(where: { $0.contains("--confirm") }))
+        let loginPreview = try XCTUnwrap(observed.last)
+        let confirm = try XCTUnwrap(command.arguments.firstIndex(of: "--confirm"))
+        XCTAssertEqual(Array(command.arguments[..<confirm]), loginPreview)
+        XCTAssertEqual(command.arguments, launch)
     }
 
     func testFrontDoorKeyIsCreatedOnceSharedByEndpointsAndKeptWhenTheyLeave() async throws {
@@ -1638,6 +1691,41 @@ final class EndpointSupervisorTests: XCTestCase {
         guard case .running = supervisor.slotStates[id] else {
             return XCTFail("Expected the pinned adapter server, got \(String(describing: supervisor.slotStates[id]))")
         }
+    }
+
+    func testTrainedAdapterAuthenticationReviewsThePinnedReceipt() async throws {
+        let binding = try XCTUnwrap(TrainedAdapterBinding.decode(TrainedAdapterEndpointFixture.binding))
+        let token = try EndpointCredentialStore.generate()
+        let digest = EndpointCredentialStore.digest(token)
+        let observed = OSAllocatedUnfairLock(initialState: [String]())
+        var slot = EndpointSlot(enabled: false, port: 8766, modelPath: binding.basePath, loadOnRequest: false)
+        slot.trainingReceipt = binding.receiptPath
+        let fleet = JSONStore<EndpointFleetConfig>(fileURL: temporaryURL("fleet-adapter-auth.json"))
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: fleet)
+        supervisor.generateAPIKey = { token }
+        var saved = [String]()
+        supervisor.saveAPIKey = { saved.append($0) }
+        supervisor.adapterLaunch = AdapterEndpointLaunch(
+            preview: { _, _, _ in XCTFail("Expected a keyed JIT plan"); return ("", binding) },
+            start: { _, _, _ in XCTFail("Authentication does not start an endpoint") },
+            jitPreview: { receipt, base, port, _, key in
+                XCTAssertEqual(receipt, binding.receiptPath)
+                XCTAssertEqual(base, binding.basePath)
+                XCTAssertEqual(port, 8766)
+                observed.withLock { $0.append(key ?? "") }
+                return (TrainedAdapterEndpointFixture.hash, binding)
+            },
+            jitStart: { _, _, _, _, _ in XCTFail("Authentication does not start an endpoint") }
+        )
+        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
+        XCTAssertTrue(saved.isEmpty)
+        let confirmed = await supervisor.confirmAuthentication(review)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        XCTAssertEqual(observed.withLock { $0 }, [digest, digest])
+        XCTAssertEqual(saved, [token])
+        XCTAssertEqual(supervisor.fleet.slots.first?.apiKeySHA256, digest)
     }
 
     func testAdapterLoginItemStaysOnExplicitMLXLM() async throws {

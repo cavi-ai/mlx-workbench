@@ -73,41 +73,39 @@ final class FleetRouterTests: XCTestCase {
         XCTAssertEqual(plan.multimodalAssignments.map(\.routeRole), [.audio, .media])
     }
 
-    func testAuthenticatedEndpointUsesFrontDoorWhenKeyMatchesOrEnvVarOtherwise() {
+    func testManagedRoutesShareOneCredentialAcrossFrontDoorAndDirectPorts() {
         let frontDoorID = UUID()
-        let envAuthID = UUID()
+        let directID = UUID()
         let frontDoor = FrontDoorSettings(port: 8700, apiKeySHA256: digest)
-        let plan = FleetRouter.plan(
-            slots: [
-                slot(port: 8766, modelPath: hfPath, role: .coding, apiKeySHA256: digest, id: frontDoorID),
-                slot(port: 8767, modelPath: hfPath, role: .reasoning, apiKeySHA256: otherDigest, id: envAuthID),
-            ],
-            states: [
-                frontDoorID: .running(modelPath: hfPath, port: 8766),
-                envAuthID: .running(modelPath: hfPath, port: 8767),
-            ],
-            frontDoor: frontDoor
-        )
-        XCTAssertTrue(plan.skipped.isEmpty)
-        let coding = plan.assignments.first(where: { $0.routeRole == .coding })
-        let reasoning = plan.assignments.first(where: { $0.routeRole == .reasoning })
-        XCTAssertEqual(coding?.authMode, .frontDoor(port: 8700))
-        XCTAssertEqual(coding?.port, 8700)
-        XCTAssertEqual(reasoning?.authMode, .envVar(name: "MLX_AGENT_LOCAL_API_KEY"))
-        XCTAssertEqual(reasoning?.port, 8767)
-        // Never emit raw keys or digests into route guidance.
-        XCTAssertFalse(coding?.authMode.guidance?.contains(digest) ?? false)
-        XCTAssertFalse(reasoning?.authMode.guidance?.contains(otherDigest) ?? false)
+        let slots = [
+            slot(port: 8766, modelPath: hfPath, role: .coding, apiKeySHA256: digest, id: frontDoorID),
+            slot(port: 8767, modelPath: hfPath, role: .reasoning, apiKeySHA256: otherDigest, id: directID),
+        ]
+        let states = [
+            frontDoorID: EndpointState.running(modelPath: hfPath, port: 8766),
+            directID: .running(modelPath: hfPath, port: 8767),
+        ]
+        let plan = FleetRouter.plan(slots: slots, states: states, frontDoor: frontDoor,
+                                    frontDoorRoutes: ["pub/coder"])
+        XCTAssertEqual(plan.cliAssignments.map(\.port), [8700])
+        XCTAssertEqual(plan.cliAssignments.map(\.repo), ["pub/coder"])
+        XCTAssertEqual(plan.skipped.map(\.routeRole), [.reasoning])
 
-        // When frontDoorRoutes is supplied and does not advertise the model, do not switch ports to Front Door.
-        let unadvertisedPlan = FleetRouter.plan(
-            slots: [slot(port: 8766, modelPath: hfPath, role: .coding, apiKeySHA256: digest, id: frontDoorID)],
-            states: [frontDoorID: .running(modelPath: hfPath, port: 8766)],
-            frontDoor: frontDoor,
-            frontDoorRoutes: ["other/model"]
-        )
-        XCTAssertEqual(unadvertisedPlan.assignments.first?.port, 8766)
-        XCTAssertEqual(unadvertisedPlan.assignments.first?.authMode, .envVar(name: "MLX_AGENT_LOCAL_API_KEY"))
+        let reversed = FleetRouter.plan(slots: Array(slots.reversed()), states: states,
+                                        frontDoor: frontDoor, frontDoorRoutes: ["pub/coder"])
+        XCTAssertEqual(reversed.cliAssignments.map(\.port), [8767])
+        XCTAssertEqual(reversed.skipped.map(\.routeRole), [.coding])
+    }
+
+    func testFrontDoorWithoutAnAdvertisedRouteKeepsDirectEndpoint() {
+        let id = UUID()
+        let settings = FrontDoorSettings(port: 8700, apiKeySHA256: digest)
+        let endpoint = slot(port: 8766, modelPath: hfPath, role: .coding, apiKeySHA256: digest, id: id)
+        for routes: Set<String> in [[], ["other/model"]] {
+            let plan = FleetRouter.plan(slots: [endpoint], states: running(id, path: hfPath, port: 8766),
+                                        frontDoor: settings, frontDoorRoutes: routes)
+            XCTAssertEqual(plan.cliAssignments.first?.port, 8766)
+        }
     }
 
     func testUnassignedChatSlotsAreIgnoredNotSkipped() {
@@ -136,16 +134,14 @@ final class FleetRouterTests: XCTestCase {
         XCTAssertEqual(plan.skipped.first(where: { $0.role == .reasoning })?.reason, "endpoint not running")
     }
 
-    func testRunningLocalPathModelGetsSafeRouteIdentifier() {
+    func testFilesystemModelWithoutUpstreamRepoIDIsExcludedFromEngineRender() {
         let id = UUID()
         let plan = FleetRouter.plan(
             slots: [slot(port: 8766, modelPath: localPath, role: .generalChat, id: id)],
             states: running(id, path: localPath, port: 8766)
         )
-        XCTAssertTrue(plan.skipped.isEmpty)
-        XCTAssertEqual(plan.assignments.count, 1)
-        XCTAssertEqual(plan.assignments[0].repo, "local-MLX-4bit")
-        XCTAssertTrue(plan.assignments[0].isLocalRoute)
+        XCTAssertTrue(plan.cliAssignments.isEmpty)
+        XCTAssertEqual(plan.skipped.map(\.routeRole), [.general])
     }
 
     func testUnsafeLocalPathsAreRejectedAndSkipped() {
@@ -163,16 +159,7 @@ final class FleetRouterTests: XCTestCase {
         )
         XCTAssertTrue(plan.assignments.isEmpty)
         XCTAssertEqual(plan.skipped.count, 1)
-        XCTAssertTrue(plan.skipped[0].reason.contains("unsafe"))
+        XCTAssertEqual(plan.skipped.first?.routeRole, .coding)
     }
 
-    func testFleetRoleVocabulary() {
-        XCTAssertEqual(FleetRouter.fleetRoleName(for: .coding), "coding")
-        XCTAssertEqual(FleetRouter.fleetRoleName(for: .generalChat), "general")
-        XCTAssertEqual(FleetRouter.fleetRoleName(for: .reasoning), "reasoning")
-        XCTAssertEqual(FleetRouter.fleetRoleName(for: .vision), "vision")
-        XCTAssertEqual(FleetRouter.RouteRole.audio.rawValue, "audio")
-        XCTAssertEqual(FleetRouter.RouteRole.media.rawValue, "media")
-        XCTAssertEqual(FleetRouter.RouteRole.embedding.rawValue, "embedding")
-    }
 }

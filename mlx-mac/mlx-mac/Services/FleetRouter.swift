@@ -5,8 +5,7 @@ import Foundation
 // Role router (spec 09 P4 + Phase 2.3): map fleet-slot roles onto running
 // endpoints via `mlx-agent fleet render/apply --port-map`, while supporting
 // multimodal (audio/media/embedding) roles, authenticated endpoints (via Front
-// Door or env-var references — never raw API keys), and local/converted models
-// with explicit safe route identifiers.
+// Door or the managed key environment variable).
 
 enum FleetRouter {
     enum RouteRole: String, CaseIterable, Equatable, Sendable, Identifiable {
@@ -59,7 +58,7 @@ enum FleetRouter {
             case .envVar(let name):
                 return "Auth via $\(name) (no raw key written)"
             case .frontDoor(let port):
-                return "Routed via Front Door :\(port) (Keychain auth)"
+                return "Front Door :\(port) uses $\(FleetRouter.localAPIKeyEnvVar)"
             }
         }
     }
@@ -166,11 +165,6 @@ enum FleetRouter {
         WorkbenchStatePaths.applicationSupport().appendingPathComponent("fleet-router.yaml").path
     }
 
-    /// App UseCase → fleet's canonical role vocabulary.
-    static func fleetRoleName(for useCase: UseCase) -> String {
-        routeRole(for: useCase).rawValue
-    }
-
     static func routeRole(for useCase: UseCase) -> RouteRole {
         switch useCase {
         case .coding: return .coding
@@ -195,10 +189,7 @@ enum FleetRouter {
         return nil
     }
 
-    /// Build a safe `local/<slug>` route identifier for non-HF-cache models.
-    /// Rejects path traversal segments (`..`, `.`), backslashes, and control
-    /// characters, and guarantees compatibility with `mlx-agent`'s `_MODEL`
-    /// identifier regex (`^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$`).
+    /// Safe display label for local typed routes outside the fleet renderer.
     static func safeLocalRouteIdentifier(for path: String) -> String? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -249,10 +240,6 @@ enum FleetRouter {
     /// Environment variable name emitted by `mlx-agent fleet` for authenticated routes.
     static let localAPIKeyEnvVar = "MLX_AGENT_LOCAL_API_KEY"
 
-    static func authEnvVarName(forPort port: Int) -> String {
-        localAPIKeyEnvVar
-    }
-
     static func plan(
         slots: [EndpointSlot],
         states: [UUID: EndpointState],
@@ -264,7 +251,7 @@ enum FleetRouter {
         var assignments: [Assignment] = []
         var skipped: [SkippedRole] = []
         var assignedRoles = Set<RouteRole>()
-        var seenLocalAuthDigest: String?
+        var rendererKeyDigest: String?
 
         for slot in slots {
             let matchingServer = servers.first(where: { $0.port == slot.port })
@@ -295,55 +282,50 @@ enum FleetRouter {
                 continue
             }
 
+            let modelPath = matchingServer?.path ?? slot.modelPath
+            let publicName = matchingServer?.path.map(FrontDoorCoordinator.publicModelName(for:))
+                ?? matchingServer?.repo ?? FrontDoorCoordinator.publicModelName(for: slot.modelPath)
+            let slotDigest = slot.apiKeySHA256 ?? matchingServer?.apiKeySHA256
+            let isRoutableRuntime = matchingServer.map { $0.jit == true || $0.runtime == "tasks" } ?? slot.usesJIT
+            let routedFrontDoor = frontDoor.flatMap { listener in
+                isRoutableRuntime && listener.apiKeySHA256 == slotDigest && frontDoorRoutes.contains(publicName)
+                    ? listener : nil
+            }
+            let upstreamID = routedFrontDoor != nil ? publicName
+                : matchingServer?.repo ?? HFRepoID.forPath(modelPath) ?? publicName
             let routeID: String
-            let isLocal: Bool
-            if let hfRepo = HFRepoID.forPath(slot.modelPath) {
-                routeID = hfRepo
-                isLocal = false
-            } else if let identity = matchingServer?.modelIdentity, !identity.isEmpty,
-                      let publicIdentity = safeLocalRouteIdentifier(for: identity) {
-                routeID = publicIdentity
-                isLocal = true
-            } else if let localRepo = safeLocalRouteIdentifier(for: slot.modelPath) {
-                routeID = localRepo
-                isLocal = true
+            if resolvedRouteRole.supportsFleetCLI {
+                // The pinned engine validates the exact model ID it sends upstream.
+                guard upstreamID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,191}$",
+                                       options: .regularExpression) != nil else {
+                    skipped.append(SkippedRole(routeRole: resolvedRouteRole, role: slot.role,
+                                               reason: "router needs a publisher/model ID served by this endpoint"))
+                    continue
+                }
+                if let slotDigest {
+                    if let existingDigest = rendererKeyDigest, existingDigest != slotDigest {
+                        skipped.append(SkippedRole(routeRole: resolvedRouteRole, role: slot.role,
+                                                   reason: "router config supports one API key; use the same key for these routes"))
+                        continue
+                    }
+                    rendererKeyDigest = slotDigest
+                }
+                routeID = upstreamID
+            } else if let localID = HFRepoID.forPath(modelPath) ?? safeLocalRouteIdentifier(for: modelPath) {
+                routeID = localID
             } else {
-                skipped.append(SkippedRole(
-                    routeRole: resolvedRouteRole,
-                    role: slot.role,
-                    reason: "unsafe or invalid local model path"
-                ))
+                skipped.append(SkippedRole(routeRole: resolvedRouteRole, role: slot.role,
+                                           reason: "unsafe or invalid local model path"))
                 continue
             }
 
-            let slotDigest = slot.apiKeySHA256 ?? matchingServer?.apiKeySHA256
-            let isAuthenticated = slotDigest != nil
             let authMode: AuthMode
             let effectivePort: Int
-            if isAuthenticated {
-                let publicName = FrontDoorCoordinator.publicModelName(for: slot.modelPath)
-                let frontDoorAdvertisesModel = frontDoorRoutes.isEmpty || frontDoorRoutes.contains(routeID) || frontDoorRoutes.contains(publicName)
-                if let frontDoor,
-                   let slotDigest,
-                   slotDigest == frontDoor.apiKeySHA256,
-                   frontDoorAdvertisesModel {
-                    authMode = .frontDoor(port: frontDoor.port)
-                    effectivePort = frontDoor.port
-                } else {
-                    if let existingDigest = seenLocalAuthDigest, let slotDigest, existingDigest != slotDigest {
-                        skipped.append(SkippedRole(
-                            routeRole: resolvedRouteRole,
-                            role: slot.role,
-                            reason: "distinct API key conflicts with MLX_AGENT_LOCAL_API_KEY; share the Front Door key"
-                        ))
-                        continue
-                    }
-                    if let slotDigest { seenLocalAuthDigest = slotDigest }
-                    authMode = .envVar(name: localAPIKeyEnvVar)
-                    effectivePort = slot.port
-                }
+            if let routedFrontDoor {
+                authMode = .frontDoor(port: routedFrontDoor.port)
+                effectivePort = routedFrontDoor.port
             } else {
-                authMode = .none
+                authMode = slotDigest != nil ? .envVar(name: localAPIKeyEnvVar) : .none
                 effectivePort = slot.port
             }
 
@@ -356,7 +338,7 @@ enum FleetRouter {
                 port: effectivePort,
                 authMode: authMode,
                 routeKind: routeKind,
-                isLocalRoute: isLocal
+                isLocalRoute: HFRepoID.forPath(modelPath) == nil
             ))
         }
         return Plan(assignments: assignments, skipped: skipped, targetPath: targetPath)

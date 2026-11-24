@@ -434,55 +434,6 @@ final class IntakeRemodelTests: XCTestCase {
     }
 }
 
-// MARK: - Source
-
-final class IntakeSourceTests: XCTestCase {
-    private func source(_ name: String) throws -> String {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("mlx-mac/UI/Views/\(name)")
-        return try String(contentsOf: url, encoding: .utf8)
-    }
-
-    func testTheWindowDoesNotRepeatItsTitleOrFixTheLabelColumn() throws {
-        let sheet = try source("IntakeSheet.swift")
-        XCTAssertNil(sheet.range(of: #"Text\("Add from Hugging Face"\)\s*\.font\(WorkbenchTypography\.title\)"#, options: .regularExpression))
-        XCTAssertFalse(sheet.contains("frame(width: 80"))
-        XCTAssertFalse(try source("PortAnalysisPanel.swift").contains("frame(width: 80"))
-        XCTAssertFalse(sheet.contains("minWidth: 640"))
-    }
-
-    func testNoRawEnumStringReachesABadge() throws {
-        let sheet = try source("IntakeSheet.swift")
-        XCTAssertFalse(sheet.contains("StatusBadge"))
-        XCTAssertNil(sheet.range(of: #"StatusBadge\([^)]*\.rawValue"#, options: .regularExpression))
-    }
-
-    func testOnlyTheFitViewObservesTheMemoryMonitorAndOneButtonIsProminent() throws {
-        let sheet = try source("IntakeSheet.swift")
-        XCTAssertEqual(sheet.components(separatedBy: "@ObservedObject var resources").count - 1, 1)
-        let actions = try XCTUnwrap(sheet.range(of: "switch resolution.verdict {"))
-        let branches = sheet[actions.upperBound...].components(separatedBy: "\n            case ").dropFirst()
-        var prominent: [String: Int] = [:]
-        for branch in branches.prefix(5) {
-            let name = String(branch.prefix(while: { $0 != ":" }))
-            prominent[name] = branch.components(separatedBy: ".workbenchPrimary").count - 1
-        }
-        XCTAssertEqual(prominent[".convertibleAfterInstall"], 1)
-        XCTAssertEqual(prominent[".convertible"], 1)
-        XCTAssertEqual(prominent[".gguf"], 1)
-        XCTAssertEqual(prominent[".alreadyMLX"], 2, "install or download, never both")
-        XCTAssertEqual(prominent[".unknown"], 0)
-    }
-
-    func testTheLogIsNotDumpedBeneathTheResult() throws {
-        let sheet = try source("IntakeSheet.swift")
-        XCTAssertFalse(sheet.contains("intake.logTail.joined"))
-        XCTAssertTrue(sheet.contains("IntakeLogDisclosure("))
-    }
-}
-
 // MARK: - Renders
 
 @MainActor

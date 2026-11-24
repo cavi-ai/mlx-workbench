@@ -11,10 +11,12 @@ import SwiftUI
 struct FleetRouterSheet: View {
     let appHost: AppHost
     @ObservedObject private var endpoint: EndpointSupervisor
+    @ObservedObject private var frontDoor: FrontDoorCoordinator
 
     init(appHost: AppHost) {
         self.appHost = appHost
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+        _frontDoor = ObservedObject(wrappedValue: appHost.frontDoor)
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -30,12 +32,13 @@ struct FleetRouterSheet: View {
     }
 
     private var plan: FleetRouter.Plan {
-        FleetRouter.plan(
+        let listener = frontDoor.listening
+        return FleetRouter.plan(
             slots: appHost.endpoint.fleet.slots,
             states: appHost.endpoint.slotStates,
             servers: appHost.modelWorkflow.servers,
-            frontDoor: appHost.frontDoor.isRunning ? appHost.endpoint.fleet.frontDoor : nil,
-            frontDoorRoutes: Set(appHost.frontDoor.listening?.routes.map(\.id) ?? [])
+            frontDoor: listener.map { FrontDoorSettings(port: $0.port, apiKeySHA256: $0.apiKeySHA256) },
+            frontDoorRoutes: Set(listener?.allModelIDs ?? []).subtracting(frontDoor.collisions.map(\.modelName))
         )
     }
 
@@ -47,7 +50,7 @@ struct FleetRouterSheet: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Wire roles to running endpoints")
                 .font(WorkbenchTypography.emphasis)
-            Text("Maps running endpoints onto role routes via mlx-agent fleet, including local models, authenticated routes (via Front Door or env-var references), and multimodal audio/media services.")
+            Text("Wire running endpoints with publisher/model IDs. The config uses one API key for protected routes.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 

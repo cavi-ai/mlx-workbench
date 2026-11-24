@@ -459,6 +459,21 @@ final class ComfyWorkflowTests: XCTestCase {
         XCTAssertEqual(output.fileExtension, "png")
     }
 
+    func testVHSOutputFormatsMustBeReadableBeforeSubmission() throws {
+        func workflow(_ format: String) -> ComfyWorkflow {
+            ComfyWorkflow(apiJSON: """
+            {
+              "1": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"local.safetensors"}},
+              "2": {"class_type":"CLIPTextEncode","inputs":{"clip":["1",1],"text":"prompt"}},
+              "3": {"class_type":"VHS_VideoCombine","inputs":{"images":["2",0],"format":"\(format)"}}
+            }
+            """, checkpointNodeID: "1", promptNodeID: "2", outputNodeID: "3")
+        }
+        XCTAssertThrowsError(try workflow("image/gif").parsedGraph())
+        XCTAssertThrowsError(try workflow("video/webm").parsedGraph())
+        XCTAssertNoThrow(try workflow("video/h264-mp4").parsedGraph())
+    }
+
     func testLTXVideoWorkflowSupportsWebPAndMP4OutputsWithOverrides() async throws {
         let ltxWebPGraph = #"""
         {

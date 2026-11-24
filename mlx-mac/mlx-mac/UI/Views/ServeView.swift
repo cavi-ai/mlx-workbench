@@ -381,8 +381,12 @@ struct ServeView: View {
                     }
                 }
                 if trainedAdapters.selectedJob != nil {
-                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview in
-                        await endpoint.addTrainedAdapterSlot(binding: preview.binding, port: preview.port, allowUnverified: true)
+                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview, key in
+                        await endpoint.addTrainedAdapterSlot(
+                            binding: preview.binding, port: preview.port, allowUnverified: true,
+                            loadOnRequest: preview.loadOnRequest, requireAPIKey: preview.requireAPIKey,
+                            reviewedHash: preview.hash, reviewedKey: key
+                        )
                         await modelWorkflow.refreshServers()
                         return endpoint.lastError
                     }) { await modelWorkflow.refreshServers() }
@@ -615,13 +619,11 @@ struct ServeView: View {
     }
 
     private func quickConnectFrontDoorTarget(for row: ServingRow) -> QuickConnectTarget? {
-        let modelID = ServingWorkspacePresentation.modelID(row)
-        guard !modelID.isEmpty, let listener = frontDoor.listening else { return nil }
-        let publicName = FrontDoorCoordinator.publicModelName(for: modelID)
-        guard let route = listener.routes.first(where: { $0.id == modelID || $0.id == publicName }) else {
-            return nil
-        }
-        return QuickConnectTarget.frontDoor(listener, modelID: route.id)
+        guard let server = ServingWorkspacePresentation.server(row),
+              let listener = frontDoor.listening,
+              let target = QuickConnectTarget.frontDoor(listener, server: server),
+              !frontDoor.collisions.contains(where: { $0.modelName == target.modelID }) else { return nil }
+        return target
     }
 
     @ViewBuilder

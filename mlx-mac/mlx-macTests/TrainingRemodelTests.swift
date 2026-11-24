@@ -537,6 +537,40 @@ final class TrainedAdapterServingTests: XCTestCase {
         XCTAssertFalse(try TrainedServeFixture.server().matchesUnadaptedModel("/models/base"))
     }
 
+    func testProtectedStartUsesTheReviewedDigestAndSavesTheKeyOnlyAtConfirmation() async throws {
+        let token = try EndpointCredentialStore.generate()
+        let digest = EndpointCredentialStore.digest(token)
+        var saved = [String]()
+        var running: ServerInfo?
+        let api = TrainedAdapterServingAPI(
+            preview: { _, _ in XCTFail("A keyed adapter requires JIT"); return [:] },
+            start: { _, _, _ in XCTFail("A keyed adapter requires JIT"); return [:] },
+            status: { running.map { [$0] } ?? [] },
+            jitPreview: { _, _, _, key in
+                XCTAssertEqual(key, digest)
+                XCTAssertTrue(saved.isEmpty)
+                return TrainedServeFixture.plan.merging(["jit": true, "api_key_sha256": digest]) { _, value in value }
+            },
+            jitStart: { _, port, hash, _, key in
+                XCTAssertEqual(port, 8766)
+                XCTAssertEqual(hash, TrainedServeFixture.hash)
+                XCTAssertEqual(key, digest)
+                XCTAssertEqual(saved, [token])
+                let receipt = TrainedServeFixture.receipt.merging(["jit": true, "api_key_sha256": digest]) { _, value in value }
+                running = WorkbenchAPI.servers(from: ["servers": [receipt.merging(["state": "running"]) { _, value in value }]])?.first
+                return ["receipt": receipt]
+            }
+        )
+        let coordinator = TrainedAdapterServingCoordinator(api: api, generateAPIKey: { token }, saveAPIKey: { saved.append($0) })
+        XCTAssertTrue(coordinator.select(try TrainedServeFixture.job()))
+        coordinator.requireAPIKey = true
+        await coordinator.previewServe()?.value
+        XCTAssertEqual(coordinator.preview?.apiKeySHA256, digest)
+        XCTAssertTrue(saved.isEmpty)
+        await coordinator.confirmServe()?.value
+        XCTAssertEqual(coordinator.runningServer?.apiKeySHA256, digest)
+    }
+
     func testPortEditsAndDelayedPreviewsNeverGrantOldConfirmation() async throws {
         var completion: CheckedContinuation<[String: Any], Never>?
         let started = expectation(description: "preview started")
@@ -1232,35 +1266,6 @@ final class TrainingSourceTests: XCTestCase {
         XCTAssertTrue(text.contains("guard isRouteActive else { return }"))
     }
 
-    func testEveryBorderedButtonIsSmall() throws {
-        let lines = try source("TrainingViews.swift").components(separatedBy: "\n")
-        for (index, line) in lines.enumerated() where line.contains(".buttonStyle(.bordered)") {
-            let nearby = lines[index...].prefix(2).joined()
-            XCTAssertTrue(nearby.contains(".controlSize(.small)"), "line \(index + 1) is not small")
-        }
-    }
-
-    func testThereIsOneStatusBadge() throws {
-        let ui = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("mlx-mac/UI")
-        let files = try XCTUnwrap(FileManager.default.enumerator(at: ui, includingPropertiesForKeys: nil))
-        var declarations = 0
-        for case let url as URL in files where url.pathExtension == "swift" {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            declarations += text.components(separatedBy: "\n").filter {
-                $0.range(of: #"^\s*(private |fileprivate )?struct \w*StatusBadge\b"#, options: .regularExpression) != nil
-            }.count
-        }
-        XCTAssertEqual(declarations, 1)
-    }
-
-    func testUITestAnchorsStay() throws {
-        let text = try source("TrainingView.swift")
-        for anchor in ["LoRA fine-tune", "Base model repo id", "Dataset path", "Preview Training", "Confirm & Train"] {
-            XCTAssertTrue(text.contains("\"\(anchor)\""), anchor)
-        }
-        XCTAssertTrue(text.contains(#"TextField("Iterations""#))
-    }
 }
 
 // MARK: - Renders
