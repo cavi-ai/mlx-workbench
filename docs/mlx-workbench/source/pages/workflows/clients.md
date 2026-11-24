@@ -20,13 +20,13 @@ Write targets are these files, in their standard folder or a folder chosen with 
 
 ## Add clients and check setup
 
-**Connect app…** opens setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code. Choose the app and a running model endpoint, **Review setup**, then **Apply setup**. Workbench creates missing config files, retains unrelated setting values and backs up existing files. JSON5, YAML and TOML files are reformatted; the review warns when comments may be removed. API keys are supplied automatically for protected endpoints.
+**Connect app…** opens setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code. Choose the app and a running model endpoint, **Review setup**, then **Apply setup**. Workbench creates missing config files, retains unrelated setting values and backs up existing files. JSON5, YAML and TOML files are reformatted; the review warns when comments may be removed. API keys are supplied automatically for protected endpoints, except OpenClaw, which reads `MLX_AGENT_API_KEY`.
 
 For OpenCode, the endpoint list also offers **Front door** while the front door runs (**Settings → Serving → Front door**, see [Run](run.md)). Setup writes the front door's base URL and key and lists every model it routes, with the first as OpenCode's default; models already listed for the same port stay. Workbench reads the front door's model list again before writing and refuses the write when it changed.
 
 **Test connection** sends a short prompt through the bundled CAVI API client using Chat Completions, Responses or Messages, according to the selected app. It checks the exact written configuration and server identity before and after testing. Testing may load the selected model. Success means the server responded using that protocol; open a new client session to use the configuration. App detection is separate from connection testing. Missing apps have an official installation link and can be configured before installation. OpenClaw gateways need a restart to reload configuration. Project settings and launch options can override user settings.
 
-For OpenCode, the test also checks whether the model returns a tool call, reports an unverified call separately, and does not execute the tool.
+For OpenCode, OpenClaw and Hermes, the test also checks whether the model returns a tool call, reports an unverified call separately, and does not execute the tool.
 The tool-call check has a 10-second time limit and reports a timeout separately.
 
 **Undo setup** reverses that setup transaction while its files still match the applied contents. **Connect another app** reuses the same flow for another client.
@@ -61,7 +61,7 @@ The result reports zero, partial or full outcomes per client. The opencode adapt
 
 Protected endpoints appear in the same server picker and **Wire into clients** handoff. Preview checks that Workbench can read the matching inference key from Keychain. Confirmation rechecks the running process, model and key identity before writing. Key lookups run off the UI thread and refuse permission prompts. A missing, locked or reset key requires a new preview; authentication is never disabled to complete setup.
 
-OpenCode, OpenClaw, Hermes, Codex, Claude Code, Continue’s legacy JSON adapter and Aider receive the inference key in their supported configuration fields. Configs, temporary writes and backups are readable and writable only by your macOS user. The review names the credential destination and masks key values. Wiring history records paths and content digests, never keys. Keep these config files and backups out of shared folders and source control.
+OpenCode, Hermes, Codex, Claude Code, Continue’s legacy JSON adapter and Aider receive the inference key in their supported configuration fields. OpenClaw receives `${MLX_AGENT_API_KEY}` instead; export that variable with the endpoint's inference key in the OpenClaw gateway environment before restarting OpenClaw. Setup updates an existing `mlx-agent` provider in place and lists every model the endpoint serves. Configs, temporary writes and backups are readable and writable only by your macOS user. The review names the credential destination and masks key values. Wiring history records paths and content digests, never keys. Keep these config files and backups out of shared folders and source control.
 
 Zed stores API keys in its own system-keychain entry. Workbench writes its endpoint settings and shows **Finish API-key setup in Zed**. Use **Copy inference key**, then paste it into Zed’s OpenAI provider in Agent Settings. Workbench never puts the key in Zed’s settings file. Continue’s current YAML format remains a guided setup; use its official secret configuration instructions.
 
