@@ -194,9 +194,14 @@ final class ModelServingDefaultsTests: XCTestCase {
         XCTAssertEqual(preview.restarting.map(\.id), [following.id])
         XCTAssertEqual(Set(preview.following.map(\.id)), [following.id, stopped.id])
         XCTAssertFalse(try XCTUnwrap(preview.plans[following.id]).isEmpty)
+        let recorder = LifecycleRecorder()
+        world.recorder = recorder
         let confirmed = await supervisor.confirmModelDefaultsChange(preview)
         XCTAssertTrue(confirmed, supervisor.lastError ?? "")
         XCTAssertEqual(defaults.defaults(for: "/Models/a"), change)
+        let starts = recorder.events.filter { $0.hasPrefix("start:") }
+        XCTAssertEqual(starts.count, 1, "\(recorder.events)")
+        XCTAssertTrue(starts.first?.hasPrefix("start:/Models/a:8925:") == true, "\(recorder.events)")
         XCTAssertTrue(try world.status().contains { $0.port == 8925 })
         let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == following.id })
         XCTAssertEqual(supervisor.effectiveSlot(slot).inferenceOptions.maximumTokens, 1024)

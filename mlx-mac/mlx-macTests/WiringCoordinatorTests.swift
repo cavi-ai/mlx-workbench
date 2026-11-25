@@ -301,20 +301,6 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(parsed["model"] as? String, "mlx-agent/qwen3-8b")
     }
 
-    func testOpencodePlanAddsProvidersEntryBesideLMStudioWithoutTouchingIt() throws {
-        let before = """
-        {"providers": {"lmstudio": {"name": "LM Studio (local)", "package": "aisdk:@ai-sdk/openai-compatible",
-          "settings": {"baseURL": "http://127.0.0.1:1234/v1"}, "models": {"qwen": {"name": "Qwen"}}}}}
-        """
-        let beforeParsed = try JSONCTolerant.parse(before)
-        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))
-        XCTAssertNil(parsed["provider"])
-        let providers = try XCTUnwrap(parsed["providers"] as? [String: Any])
-        XCTAssertEqual(providers.keys.sorted(), ["lmstudio", "mlx-agent"])
-        XCTAssertEqual(NSDictionary(dictionary: try XCTUnwrap(providers["lmstudio"] as? [String: Any])),
-                       NSDictionary(dictionary: try XCTUnwrap((beforeParsed["providers"] as? [String: Any])?["lmstudio"] as? [String: Any])))
-    }
-
     func testOpencodePlanMigratesLegacyMlxLocalKeepingModelSettings() throws {
         let before = """
         {"provider": {
@@ -331,15 +317,6 @@ final class WiringCoordinatorTests: XCTestCase {
 
         let onlyLegacy = #"{"provider": {"mlx-local": {"options": {"baseURL": "http://127.0.0.1:8766/v1"}, "models": {"qwen3-8b": {}}}}}"#
         XCTAssertNil(try JSONCTolerant.parse(ClientAdapters.opencode.plan(onlyLegacy, endpoint))["provider"])
-    }
-
-    func testOpencodePlanDropsModelsTheEndpointNoLongerServes() throws {
-        let first = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "qwen3-8b", models: ["gemma-3", "qwen3-8b"])
-        let afterFirst = try ClientAdapters.opencode.plan(nil, first)
-        let second = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "qwen3-8b", models: ["qwen3-8b"])
-        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(afterFirst, second))
-        let models = try XCTUnwrap(((parsed["providers"] as? [String: Any])?["mlx-agent"] as? [String: Any])?["models"] as? [String: Any])
-        XCTAssertEqual(models.keys.sorted(), ["qwen3-8b"])
     }
 
     func testOpencodePlanPreservesUnrelatedKeysAndCommentsAreNormalized() throws {

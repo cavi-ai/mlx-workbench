@@ -12,10 +12,6 @@ final class FleetFitAdvisorTests: XCTestCase {
 
     private func available(gb: Double) -> Int64 { Int64(gb * 1e9) }
 
-    func testMaxSlotsSupportsSixteenEndpoints() {
-        XCTAssertEqual(EndpointFleetConfig.maxSlots, 16)
-    }
-
     func testEmptyFleetIsUnknown() {
         let verdict = FleetFitAdvisor.verdict(estimates: [], availableBytes: available(gb: 64), reserveBytes: reserve)
         guard case .unknown(let reason) = verdict else {

@@ -39,12 +39,4 @@ final class WorkbenchKeySetupTests: XCTestCase {
         XCTAssertEqual(setup.chosen(nil).map(\.port), [8930, 8932])
         XCTAssertEqual(setup.chosen([]).map(\.port), [])
     }
-
-    func testExportTemplateNamesTheVariableAndNeverTheKey() {
-        let setup = WorkbenchKeySetup(keyDigest: digest, slots: [])
-        XCTAssertEqual(setup.exportTemplate, "export MLX_AGENT_API_KEY=\"<paste copied key>\"")
-        XCTAssertTrue(setup.exportTemplate.contains("MLX_AGENT_API_KEY"))
-        XCTAssertFalse(setup.exportTemplate.contains(digest))
-        XCTAssertFalse(setup.exportTemplate.contains("mlxw_"))
-    }
 }

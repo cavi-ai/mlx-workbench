@@ -222,7 +222,7 @@ the model's serving defaults for every field they do not set themselves. The Ser
 inspector marks each inference field **Model default** or **This endpoint**; **Reset** returns
 an overridden field to the default. **Save as model default** writes the endpoint's current
 values. Before a changed default is saved, the preview lists the endpoints that follow it and
-the running ones that restart on confirm, each with its launch-plan hash. Confirm rechecks
+the running ones that restart on confirm, shown by port. Confirm rechecks
 the endpoints, refuses while work holds the model or requests are active, stops each endpoint
 through the idle-checked stop, saves the defaults, and reports any endpoint that did not
 restart. A default that makes an endpoint's settings illegal is refused at the preview. **Reset**

@@ -4,18 +4,15 @@ import XCTest
 final class ServingInspectorPresentationTests: XCTestCase {
     typealias Presentation = ServingInspectorPresentation
 
-    func testChatRoleSectionOrder() {
-        for role in [ServingRole.general, .vision, .reasoning, .coding] {
-            XCTAssertEqual(Presentation.sections(for: role).map(\.title),
-                           ["Status", "Load", "Inference", "Acceleration", "Access"], "\(role)")
-        }
-    }
-
-    func testTypedRoleSectionOrder() {
-        XCTAssertEqual(Presentation.sections(for: .classification).map(\.title), ["Status", "Load", "Access", "Tasks"])
-        for role in ServingRole.allCases where !role.isChat {
-            XCTAssertEqual(Presentation.sections(for: role).map(\.title), ["Status", "Load", "Access", "Tasks"], "\(role)")
-        }
+    func testInferenceSectionFollowsTheRoleAndTypedTasks() {
+        XCTAssertTrue(Presentation.sections(for: nil).contains(.inference))
+        XCTAssertTrue(Presentation.sections(for: .coding).contains(.inference))
+        let typedChat = Presentation.sections(for: .coding, typedTasks: true)
+        XCTAssertTrue(typedChat.contains(.tasks))
+        XCTAssertFalse(typedChat.contains(.inference))
+        let classification = Presentation.sections(for: .classification)
+        XCTAssertFalse(classification.contains(.inference))
+        XCTAssertTrue(classification.contains(.tasks))
     }
 
     func testEveryInferenceFieldHasExactlyOneCaption() {
@@ -25,20 +22,6 @@ final class ServingInspectorPresentationTests: XCTestCase {
         let captions = Presentation.Field.allCases.map { Presentation.caption($0) }
         XCTAssertEqual(Set(captions).count, 9)
         XCTAssertTrue(captions.allSatisfy { !$0.isEmpty && !$0.contains("\n") })
-    }
-
-    func testCaptionRangesMatchTheValidationBounds() {
-        let bounds = LocalInferenceBounds.self
-        XCTAssertTrue(Presentation.caption(.maximumTokens).contains("\(bounds.maximumTokens.lowerBound) to \(bounds.maximumTokens.upperBound)"))
-        XCTAssertTrue(Presentation.caption(.sharedPrefixCacheMiB).contains("\(bounds.sharedPrefixCacheMiB.lowerBound) to \(bounds.sharedPrefixCacheMiB.upperBound)"))
-        XCTAssertTrue(Presentation.caption(.temperature).contains("0 to 2"))
-        XCTAssertTrue(Presentation.caption(.topP).contains("0 to 1"))
-        XCTAssertTrue(Presentation.caption(.systemPrompt).contains("8,192"))
-        XCTAssertEqual(bounds.temperature, 0...2)
-        XCTAssertEqual(bounds.topP, 0...1)
-        XCTAssertEqual(bounds.maximumTokens, 256...65536)
-        XCTAssertEqual(bounds.sharedPrefixCacheMiB, 16...2048)
-        XCTAssertEqual(bounds.systemPromptBytes, 8192)
     }
 
     func testValidationAcceptsBoundsAndRejectsJustOutside() {

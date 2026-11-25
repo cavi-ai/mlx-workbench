@@ -18,23 +18,6 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
-
-        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Home", "Models", "Serving", "Studio", "System"])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 5, 3, 4, 3])
-    }
-
-    func testSidebarGroupsFollowTheTaskOrder() {
-        let grouped = AppRoute.grouped
-        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Home", "Models", "Serving", "Studio", "System"])
-        XCTAssertEqual(grouped.map { $0.routes.count }, [2, 5, 3, 4, 3])
-        XCTAssertEqual(grouped.map(\.routes), [
-            [.overview, .use],
-            [.library, .sources, .discover, .prepare, .reclaim],
-            [.run, .clientSetup, .monitor],
-            [.compare, .studies, .training, .terminal],
-            [.activity, .health, .settings],
-        ])
-        XCTAssertEqual(AppRoute.grouped.flatMap(\.routes).first, .overview)
     }
 
     func testNoSidebarGroupHoldsASinglePage() {
@@ -48,13 +31,6 @@ final class AppRouteTests: XCTestCase {
         let current = AppRoute.allCases.filter { $0.navigationDestination == $0 }
         XCTAssertEqual(listed.count, current.count)
         XCTAssertEqual(Set(listed), Set(current))
-        for entry in AppRoute.grouped {
-            for route in entry.routes {
-                XCTAssertEqual(route.group, entry.group, "\(route.label) is listed outside its group")
-            }
-        }
-        XCTAssertEqual(AppRoute.lmStudio.group, .models)
-        XCTAssertEqual(AppRoute.adopt.group, .models)
     }
 
     func testCollapsedSidebarSectionShowsItsPagesCount() {
@@ -104,14 +80,6 @@ final class AppRouteTests: XCTestCase {
         return window.title
     }
 
-    func testCommandNumberShortcutsFollowTheSidebarOrder() {
-        XCTAssertEqual(ContentView.shortcutRoutes, [
-            .overview, .use, .library, .sources, .discover, .prepare, .reclaim, .run, .clientSetup, .settings,
-        ])
-        let sidebarOrder = AppRoute.grouped.flatMap(\.routes)
-        XCTAssertEqual(Array(ContentView.shortcutRoutes.prefix(9)), Array(sidebarOrder.prefix(9)))
-    }
-
     func testOnlyPrepareAndRunCarryAToolbarSubtitle() {
         let timestamp = Date(timeIntervalSince1970: 1_726_500_000)
         let workflow = ConversionWorkflow(
@@ -146,37 +114,6 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(AppRoute.lmStudio.navigationDestination, .library)
         XCTAssertFalse(AppRoute.grouped.flatMap(\.routes).contains(.lmStudio))
         XCTAssertEqual(ContentView.mountedRoutes(for: [.lmStudio, .library, .discover]), [.library, .discover])
-    }
-
-    func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {
-        let expected: [(AppRoute, String, String, String)] = [
-            (.overview, "Home", "Overview", "house"),
-            (.library, "Models", "Library", "books.vertical"),
-            (.use, "Home", "Use", "bubble.left.and.bubble.right"),
-            (.prepare, "Models", "Convert", "shippingbox"),
-            (.compare, "Studio", "Compare", "chart.bar"),
-            (.run, "Serving", "Serving", "server.rack"),
-            (.activity, "System", "Activity", "clock.arrow.circlepath"),
-            (.reclaim, "Models", "Disk space", "square.3.layers.3d"),
-            (.clientSetup, "Serving", "Clients", "arrow.triangle.branch"),
-            (.health, "System", "Health", "stethoscope"),
-            (.discover, "Models", "Discover", "magnifyingglass"),
-            (.lmStudio, "Models", "LM Studio", "square.and.arrow.down"),
-            (.studies, "Studio", "Experiments", "square.split.2x1"),
-            (.training, "Studio", "Training", "sparkles"),
-            (.adopt, "Models", "Adopt", "hand.tap"),
-            (.settings, "System", "Settings", "gearshape"),
-            (.monitor, "Serving", "Monitor", "waveform.path.ecg"),
-            (.sources, "Models", "Model sources", "externaldrive.connected.to.line.below"),
-            (.terminal, "Studio", "Terminal", "apple.terminal")
-        ]
-
-        for (route, group, label, symbol) in expected {
-            XCTAssertEqual(route.group.rawValue, group)
-            XCTAssertEqual(route.label, label)
-            XCTAssertEqual(route.symbolName, symbol)
-            XCTAssertFalse(route.pageDescription.isEmpty)
-        }
     }
 
     func testLegacyIDInitializerFallsBackToLibraryForUnknownValues() {

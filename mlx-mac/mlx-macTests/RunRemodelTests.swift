@@ -1462,6 +1462,10 @@ extension RunRemodelTests {
         try await Task.sleep(for: .milliseconds(400))
         let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
         XCTAssertTrue(lines.contains { $0.contains("not assigned") })
+        for name in ["alder", "birch", "cedar"] {
+            XCTAssertFalse(lines.contains { $0.contains(name) }, "\(name) is not served in this world")
+        }
+        XCTAssertFalse(lines.contains { $0.contains("other servers on this mac (2)") })
     }
 
     // MARK: Endpoint changes

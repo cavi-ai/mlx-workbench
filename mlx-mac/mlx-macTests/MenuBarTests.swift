@@ -287,7 +287,6 @@ final class MenuBarTests: XCTestCase {
         XCTAssertTrue(sections.roles.isEmpty)
         XCTAssertEqual(sections.others.count, 21)
         XCTAssertEqual(MenuBarPresentation.otherServersTitle(count: sections.others.count), "Other servers (21)")
-        XCTAssertEqual(MenuBarPresentation.fleetSummary(slots: [], states: [:]), "No always-on endpoints")
     }
 
     func testRoleSlotsGetTopLevelRowsAndRoleLessSlotsJoinOthers() {

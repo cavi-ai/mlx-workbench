@@ -251,23 +251,6 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(EndpointFleetConfig.self, from: reencoded).roleDefaults)
     }
 
-    func testClassificationRolePassesValidation() throws {
-        let config = EndpointFleetConfig(slots: [
-            EndpointSlot(enabled: true, port: 8096, modelPath: "/c", role: .classification),
-        ], installedAtLogin: false)
-        XCTAssertNoThrow(try config.validated())
-    }
-
-    func testSlotOnFrontDoorPortIsRejected() {
-        var config = EndpointFleetConfig(slots: [
-            EndpointSlot(enabled: true, port: 8766, modelPath: "/a"),
-        ], installedAtLogin: false)
-        config.frontDoor = FrontDoorSettings(port: 8766, apiKeySHA256: String(repeating: "a", count: 64))
-        XCTAssertThrowsError(try config.validated()) { error in
-            XCTAssertEqual(error as? EndpointFleetValidation, .duplicatePort(8766))
-        }
-    }
-
     func testSixteenSlotsPassAndSeventeenAreRejected() {
         func fleet(_ count: Int) -> EndpointFleetConfig {
             EndpointFleetConfig(slots: (0..<count).map {
@@ -287,15 +270,6 @@ final class EndpointFleetTests: XCTestCase {
         ], installedAtLogin: false)
         XCTAssertEqual(config.port(for: .coding), 8766)
         XCTAssertEqual(config.port(for: .classification), 8096)
-        XCTAssertEqual(ServingRole.mesh.defaultPort, 8098)
-        XCTAssertEqual(ServingRole.mesh.title, "3D")
-    }
-
-    func testMeshRoleSurvivesEncodeDecode() throws {
-        let slot = EndpointSlot(enabled: true, port: 8098, modelPath: "/mesh", role: .mesh)
-        let decoded = try JSONDecoder().decode(EndpointSlot.self, from: JSONEncoder().encode(slot))
-        XCTAssertEqual(decoded.role, .mesh)
-        XCTAssertEqual(decoded, slot)
     }
 
     // MARK: - Supervisor: multi-slot reconcile

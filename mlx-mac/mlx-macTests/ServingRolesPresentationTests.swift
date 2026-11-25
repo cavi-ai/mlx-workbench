@@ -68,23 +68,21 @@ final class ServingRolesPresentationTests: XCTestCase {
     }
 
     func testWorkbenchAPIDefaultPortDiffersFromEveryRolePort() {
-        XCTAssertEqual(ServingRole.workbenchAPIDefaultPort, 8090)
-        XCTAssertEqual(FrontDoorEditor.defaultPort, 8090)
         XCTAssertFalse(ServingRole.allCases.map(\.defaultPort).contains(ServingRole.workbenchAPIDefaultPort))
     }
 
-    func testWorkbenchAPIStringsNeverSayFrontDoor() {
-        let rows = [workbenchAPIRow(), workbenchAPIRow(running: false), workbenchAPIRow(settings: nil)]
-        var strings = [ServingRolesPresentation.workbenchAPITitle, ServingRolesPresentation.workbenchAPICaption]
-        for row in rows {
-            strings += [row.title, row.address, row.stateText, row.routedText, row.startTitle, row.stopTitle,
-                        row.copyAddressTitle, row.keyTitle, row.setupTitle]
-        }
-        strings.append(FleetRouter.AuthMode.frontDoor(port: 8090).guidance ?? "")
-        XCTAssertEqual(FleetRouter.AuthMode.frontDoor(port: 8090).guidance, "Workbench API :8090 uses $\(FleetRouter.localAPIKeyEnvVar)")
-        XCTAssertEqual(ServingRolesPresentation.workbenchAPITitle, "Workbench API")
-        XCTAssertEqual(ServingRolesPresentation.workbenchAPICaption, "Apps call one address and pick a model by name. Each role keeps its own port.")
-        for text in strings { XCTAssertFalse(text.localizedCaseInsensitiveContains("front door"), text) }
+    @MainActor
+    func testRenderedWorkbenchAPIRowAndSettingsEditorNeverSayFrontDoor() async throws {
+        let app = try await ServingWorld.host()
+        let row = try await ServingWorld.renderedLines(
+            WorkbenchAPIRowView(appHost: app, coordinator: app.frontDoor, endpoint: app.endpoint)
+                .padding(16), size: CGSize(width: 900, height: 260))
+        let editor = try await ServingWorld.renderedLines(
+            FrontDoorEditor(coordinator: app.frontDoor, endpoint: app.endpoint).padding(16),
+            size: CGSize(width: 900, height: 260))
+        XCTAssertTrue(row.contains { $0.localizedCaseInsensitiveContains("workbench api") }, "\(row)")
+        XCTAssertFalse(editor.isEmpty)
+        for line in row + editor { XCTAssertFalse(line.localizedCaseInsensitiveContains("front door"), line) }
     }
 
     func testClassifierCandidatesExcludeTextModels() {

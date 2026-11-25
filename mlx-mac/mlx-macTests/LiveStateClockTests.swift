@@ -91,7 +91,7 @@ final class LiveStateClockTests: XCTestCase {
             isVisible: { true })
         clock.addConsumer { [clock] in seen.add((try? await clock.snapshot())?.errors["fetch"] ?? "none") }
         let first = Task { try await clock.snapshot() }
-        while fetches.count < 1 { await Task.yield() }
+        await waitUntil("the first fetch to start") { fetches.count >= 1 }
         let forced = Task { await clock.tickNow() }
         for _ in 0..<200 { await Task.yield() }
         await gate.release()
@@ -120,17 +120,17 @@ final class LiveStateClockTests: XCTestCase {
             },
             isVisible: { visible.value })
         let loop = clock.start()
-        while sleeps.values.count < 1 { await Task.yield() }
+        await waitUntil("the first sleep") { sleeps.values.count >= 1 }
         XCTAssertEqual(fetches.count, 1)
         XCTAssertEqual(sleeps.values, ["60"])
         visible.value = true
         clock.visibilityChanged()
-        while sleeps.values.count < 2 { await Task.yield() }
+        await waitUntil("the second sleep") { sleeps.values.count >= 2 }
         XCTAssertEqual(fetches.count, 2)
         XCTAssertEqual(sleeps.values, ["60", "10"])
         visible.value = false
         clock.visibilityChanged()
-        while sleeps.values.count < 3 { await Task.yield() }
+        await waitUntil("the third sleep") { sleeps.values.count >= 3 }
         XCTAssertEqual(fetches.count, 2)
         XCTAssertEqual(sleeps.values, ["60", "10", "60"])
         clock.stop()
@@ -161,10 +161,16 @@ final class LiveStateClockTests: XCTestCase {
 
     private final class VisibilityBox: @unchecked Sendable { var value = false }
 
-    func testMutationSendsOneFetch() async throws {
-        let h = harness(visible: true, limit: 0)
-        _ = try await h.clock.snapshot()
-        await h.clock.tickNow()
-        XCTAssertEqual(h.fetches.count, 2)
+    /// Yields until `condition` holds; fails with `message` after `timeout` seconds instead of hanging.
+    private func waitUntil(_ message: String, timeout: TimeInterval = 10,
+                           _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        while !condition() {
+            if ContinuousClock.now >= deadline {
+                XCTFail("Timed out waiting for \(message)")
+                return
+            }
+            await Task.yield()
+        }
     }
 }

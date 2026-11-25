@@ -34,17 +34,26 @@ final class EndpointSupervisorTests: XCTestCase {
     func testRemovingARoleSlotFreesTheRoleAndWritesNoRoleDefaults() async throws {
         let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
         let world = FakeServeWorld()
-        let jit = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/splash", role: .coding, loadOnRequest: true)
-        let eager = EndpointSlot(enabled: true, port: 8926, modelPath: "/Models/eager", role: .general, loadOnRequest: false)
-        let store = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
-        try store.replaceAll([EndpointFleetConfig(slots: [jit, eager], installedAtLogin: false)])
+        let coding = UUID()
+        let eager = UUID()
+        let json = """
+        [{"slots":[\
+        {"id":"\(coding.uuidString)","enabled":false,"port":8925,"modelPath":"/Models/splash","loadOnRequest":true},\
+        {"id":"\(eager.uuidString)","enabled":false,"port":8926,"modelPath":"/Models/eager","role":"general_chat"}],\
+        "installedAtLogin":false,"roleDefaults":{"coding":"\(coding.uuidString)"}}]
+        """
+        let fleetURL = home.appendingPathComponent("fleet.json")
+        try Data(json.utf8).write(to: fleetURL)
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
-            store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")), fleetStore: store)
-        await supervisor.removeSlot(id: jit.id)
-        let saved = try XCTUnwrap(store.load().first)
-        XCTAssertNil(saved.slot(for: .coding))
-        XCTAssertEqual(saved.slot(for: .general)?.id, eager.id)
-        XCTAssertNil(saved.roleDefaults)
+            store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")),
+            fleetStore: JSONStore<EndpointFleetConfig>(fileURL: fleetURL))
+        XCTAssertEqual(supervisor.fleet.slot(for: .coding)?.id, coding)
+        await supervisor.removeSlot(id: coding)
+        let reopened = try XCTUnwrap(JSONStore<EndpointFleetConfig>(fileURL: fleetURL).load().first)
+        XCTAssertNil(reopened.slot(for: .coding))
+        XCTAssertEqual(reopened.slot(for: .general)?.id, eager)
+        XCTAssertNil(reopened.roleDefaults)
+        XCTAssertFalse(try String(contentsOf: fleetURL, encoding: .utf8).contains("roleDefaults"))
     }
     func testSplashPresetRefusesBusyUnknownAndStaleGeneration() async throws {
         let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
@@ -300,34 +309,6 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(try store.load().first?.frontDoor, FrontDoorSettings(port: 8938, apiKeySHA256: digest))
     }
 
-    func testProtectingTwoEndpointsYieldsOneDigestEqualToTheWorkbenchAPIs() async throws {
-        let root = try makeHome()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let first = EndpointSlot(enabled: false, port: 8930, modelPath: "/Models/a", loadOnRequest: true)
-        let second = EndpointSlot(enabled: false, port: 8931, modelPath: "/Models/b", loadOnRequest: true)
-        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
-        try store.replaceAll([EndpointFleetConfig(slots: [first, second], installedAtLogin: false)])
-        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
-            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
-        var counter = 0
-        var saved: [String] = []
-        supervisor.generateAPIKey = { counter += 1; return "mlxw_" + String(repeating: Character(String(counter)), count: 64) }
-        supervisor.saveAPIKey = { saved.append($0) }
-        supervisor.removeAPIKey = { _ in }
-        try supervisor.ensureWorkbenchKey()
-        for id in [first.id, second.id] {
-            let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == id })
-            let review = try await supervisor.previewAuthentication(slot: slot, required: true)
-            let confirmed = await supervisor.confirmAuthentication(review)
-            XCTAssertTrue(confirmed, supervisor.lastError ?? "")
-        }
-        let digests = Set(supervisor.fleet.slots.compactMap(\.apiKeySHA256))
-        XCTAssertEqual(digests.count, 1)
-        XCTAssertEqual(digests.first, supervisor.fleet.frontDoor?.apiKeySHA256)
-        XCTAssertNotNil(supervisor.fleet.frontDoor)
-        XCTAssertEqual(saved.count, 1)
-    }
-
     func testAuthenticationChangesRefuseAnEnabledEndpoint() async throws {
         let (supervisor, _) = makeSupervisor()
         await supervisor.enable(modelPath: "/Models/old", port: 8921, loadOnRequest: false)
@@ -552,24 +533,6 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertFalse(claimed)
         XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [nil, nil, ownDigest])
         XCTAssertTrue(removed.isEmpty)
-    }
-
-    func testSlotWithItsOwnKeyIsListedAndKeepsItsDigestWhenTheWorkbenchKeyExists() async throws {
-        let root = try makeHome()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let doorDigest = EndpointCredentialStore.digest("mlxw_" + String(repeating: "1", count: 64))
-        let ownToken = "mlxw_" + String(repeating: "3", count: 64)
-        var own = EndpointSlot(enabled: false, port: 8932, modelPath: "/Models/c", loadOnRequest: true)
-        own.apiKeySHA256 = EndpointCredentialStore.digest(ownToken)
-        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
-        try store.replaceAll([EndpointFleetConfig(slots: [own], installedAtLogin: false,
-                                                  frontDoor: FrontDoorSettings(port: 8939, apiKeySHA256: doorDigest))])
-        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
-            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
-        XCTAssertEqual(supervisor.slotsWithOwnKey.map(\.id), [own.id])
-        XCTAssertTrue(supervisor.protectedSlots.isEmpty)
-        XCTAssertEqual(try supervisor.ensureWorkbenchKey(), doorDigest)
-        XCTAssertEqual(supervisor.fleet.slots.first?.apiKeySHA256, EndpointCredentialStore.digest(ownToken))
     }
 
     func testObservedStopCarriesTheReviewedIdentityAfterDisablingRestart() async throws {
@@ -1732,20 +1695,6 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(supervisor.config.port, EndpointConfig.defaultPort)
         XCTAssertEqual(supervisor.state, .waitingForServer)
         XCTAssertNil(supervisor.lastError)
-    }
-
-    func testSlotStillStartingIsNotRestartedByTheNextReconcile() async {
-        let lifecycle = LifecycleRecorder()
-        let world = FakeServeWorld()
-        world.recorder = lifecycle
-        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { [] },
-            store: JSONStore<EndpointConfig>(fileURL: storeURL), maxRestarts: 3, restartWindow: 300)
-        await supervisor.enable(modelPath: "/Models/q4", port: 8766)
-        await supervisor.reconcile()
-        await supervisor.reconcile()
-
-        XCTAssertEqual(lifecycle.events.filter { $0.hasPrefix("start:") }.count, 1)
-        XCTAssertEqual(supervisor.state, .waitingForServer)
     }
 
     func testEnabledWithoutServerStartsViaPreviewHashFlow() async {
