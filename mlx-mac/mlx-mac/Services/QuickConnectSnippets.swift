@@ -161,7 +161,7 @@ struct QuickConnectTarget: Equatable, Hashable, Sendable {
             supportsResponses: chat,
             supportsAnthropic: chat,
             supportsEmbeddings: embeddings,
-            statusLabel: "Front door"
+            statusLabel: "Workbench API"
         )
     }
 

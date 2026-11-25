@@ -417,8 +417,8 @@ struct SettingsView: View {
                 DuplicationPolicyEditor(appHost: appHost, coordinator: duplication)
             }
             SettingsSeparator()
-            SettingsRow(label: "Front door", hint: "One authenticated loopback address that routes to every running endpoint using the front door key, by model name.", stacked: layout.stacksRows) {
-                FrontDoorEditor(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+            SettingsRow(label: "Workbench API port", hint: "Loopback port of the Workbench API. Start and stop it from Serving.", stacked: layout.stacksRows) {
+                FrontDoorEditor(coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
             }
         } footer: {
             Text("Manage loopback servers and each endpoint's port in Run.")

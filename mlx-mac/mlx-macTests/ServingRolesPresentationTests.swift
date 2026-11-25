@@ -47,6 +47,46 @@ final class ServingRolesPresentationTests: XCTestCase {
         XCTAssertEqual(slot.port, 9101)
     }
 
+    private func workbenchAPIRow(running: Bool = true, settings: FrontDoorSettings? = FrontDoorSettings(port: ServingRole.workbenchAPIDefaultPort, apiKeySHA256: "door")) -> ServingRolesPresentation.WorkbenchAPIRow {
+        var shared = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/coder", role: .coding)
+        shared.apiKeySHA256 = "door"
+        var shared2 = EndpointSlot(enabled: true, port: 9100, modelPath: "/models/custom")
+        shared2.apiKeySHA256 = "door"
+        var own = EndpointSlot(enabled: true, port: 8091, modelPath: "/models/embed", role: .embedding)
+        own.apiKeySHA256 = "own"
+        let open = EndpointSlot(enabled: true, port: 8096, modelPath: "/models/clf", role: .classification)
+        return ServingRolesPresentation.workbenchAPIRow(settings: settings, isRunning: running, slots: [shared, shared2, own, open])
+    }
+
+    func testRoutedCountExcludesSlotWithItsOwnDigest() {
+        let row = workbenchAPIRow()
+        XCTAssertEqual(row.routedCount, 2)
+        XCTAssertEqual(row.address, "http://127.0.0.1:\(ServingRole.workbenchAPIDefaultPort)/v1")
+        XCTAssertEqual(workbenchAPIRow(settings: nil).address, "http://127.0.0.1:8090/v1")
+        XCTAssertEqual(row.stateText, "Running")
+        XCTAssertEqual(workbenchAPIRow(settings: nil).routedCount, 0)
+    }
+
+    func testWorkbenchAPIDefaultPortDiffersFromEveryRolePort() {
+        XCTAssertEqual(ServingRole.workbenchAPIDefaultPort, 8090)
+        XCTAssertEqual(FrontDoorEditor.defaultPort, 8090)
+        XCTAssertFalse(ServingRole.allCases.map(\.defaultPort).contains(ServingRole.workbenchAPIDefaultPort))
+    }
+
+    func testWorkbenchAPIStringsNeverSayFrontDoor() {
+        let rows = [workbenchAPIRow(), workbenchAPIRow(running: false), workbenchAPIRow(settings: nil)]
+        var strings = [ServingRolesPresentation.workbenchAPITitle, ServingRolesPresentation.workbenchAPICaption]
+        for row in rows {
+            strings += [row.title, row.address, row.stateText, row.routedText, row.startTitle, row.stopTitle,
+                        row.copyAddressTitle, row.copyKeyTitle, row.setupTitle]
+        }
+        strings.append(FleetRouter.AuthMode.frontDoor(port: 8090).guidance ?? "")
+        XCTAssertEqual(FleetRouter.AuthMode.frontDoor(port: 8090).guidance, "Workbench API :8090 uses $\(FleetRouter.localAPIKeyEnvVar)")
+        XCTAssertEqual(ServingRolesPresentation.workbenchAPITitle, "Workbench API")
+        XCTAssertEqual(ServingRolesPresentation.workbenchAPICaption, "Apps call one address and pick a model by name. Each role keeps its own port.")
+        for text in strings { XCTAssertFalse(text.localizedCaseInsensitiveContains("front door"), text) }
+    }
+
     func testClassifierCandidatesExcludeTextModels() {
         let models = [model("/m/llm", task: .textLLM), model("/m/clf", task: .classification), model("/m/vlm", task: .visionLanguage)]
         let classifier = ServingRolesPresentation.candidates(for: .classification, models: models, slots: [])

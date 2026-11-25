@@ -58,7 +58,7 @@ Keep model endpoints on your Mac with loopback binding. Enable **Require API key
 
 Saved endpoints support JIT loading through **Load on request**: the endpoint stays available while weights load for the first inference request. Concurrent cold requests share one load. Unload idle models to free memory, keep frequently used models resident, and let active streams finish before unloading.
 
-Run up to eight endpoints side by side and put them behind one address: **Settings → Serving → Front door** routes chat, embeddings and classification requests by model name with one shared key. **Quick Connect** copies ready-to-run curl and Python calls for any running endpoint without exposing its key.
+Run up to eight endpoints side by side and put them behind one address: the **Workbench API** row in Serving routes chat, embeddings and classification requests by model name with one shared key. **Quick Connect** copies ready-to-run curl and Python calls for any running endpoint without exposing its key.
 
 See [Serving and Monitor](docs/mlx-workbench/source/pages/workflows/run.md) for endpoint setup, API keys and residency controls.
 

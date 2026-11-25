@@ -922,7 +922,7 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         try await requireStoppedForAuthentication(slot)
         guard !frontDoorKey || (required && fleet.frontDoor != nil) else {
-            throw WorkflowEvidenceError.invalid("Set up the front door in Settings before using its key.")
+            throw WorkflowEvidenceError.invalid("Start the Workbench API in Serving before using its key.")
         }
         let token = required && !frontDoorKey ? try generateAPIKey() : nil
         var candidate = slot
@@ -951,7 +951,7 @@ final class EndpointSupervisor: ObservableObject {
                 guard EndpointCredentialStore.digest(token) == review.keySHA256 else { throw WorkflowEvidenceError.invalid("The API key review changed.") }
                 try saveAPIKey(token); savedKey = review.keySHA256
             } else if let shared = review.keySHA256, fleet.frontDoor?.apiKeySHA256 != shared {
-                throw WorkflowEvidenceError.invalid("The front door key changed. Review authentication again.")
+                throw WorkflowEvidenceError.invalid("The Workbench API key changed. Review authentication again.")
             }
             if candidate.inferenceOptions.requested { candidate.accelerationPreviewHash = hash }
             candidate.profilePreviewHash = candidate.splashPresetName == nil ? nil : hash

@@ -16,6 +16,40 @@ enum ServingRolesPresentation {
         var unassignedText: String { "Not assigned - :\(port)" }
     }
 
+    static let workbenchAPITitle = "Workbench API"
+    static let workbenchAPICaption = "Apps call one address and pick a model by name. Each role keeps its own port."
+
+    /// The first Serving row: the shared address and how many endpoints route through it.
+    struct WorkbenchAPIRow: Equatable {
+        let address: String
+        let stateText: String
+        let routedCount: Int
+        let isRunning: Bool
+        let isConfigured: Bool
+
+        var title: String { ServingRolesPresentation.workbenchAPITitle }
+        var routedText: String { routedCount == 1 ? "1 model routed" : "\(routedCount) models routed" }
+        var startTitle: String { isConfigured ? "Start" : "Create key and start" }
+        var stopTitle: String { "Stop" }
+        var copyAddressTitle: String { "Copy address" }
+        var copyKeyTitle: String { "Copy key" }
+        var setupTitle: String { "Set up an app…" }
+    }
+
+    /// Routed slots are those whose key digest equals the Workbench API digest.
+    static func routedCount(slots: [EndpointSlot], digest: String?) -> Int {
+        guard let digest else { return 0 }
+        return slots.filter { $0.apiKeySHA256 == digest }.count
+    }
+
+    static func workbenchAPIRow(settings: FrontDoorSettings?, isRunning: Bool, slots: [EndpointSlot]) -> WorkbenchAPIRow {
+        let port = settings?.port ?? FrontDoorEditor.defaultPort
+        return WorkbenchAPIRow(address: "http://127.0.0.1:\(port)/v1",
+                               stateText: isRunning ? "Running" : settings == nil ? "Not set up" : "Stopped",
+                               routedCount: routedCount(slots: slots, digest: settings?.apiKeySHA256),
+                               isRunning: isRunning, isConfigured: settings != nil)
+    }
+
     /// One row per role in catalog order; a role's endpoint is the slot that carries it.
     static func roleRows(slots: [EndpointSlot], rows: [ServingRow]) -> [RoleRow] {
         ServingRole.allCases.map { role in

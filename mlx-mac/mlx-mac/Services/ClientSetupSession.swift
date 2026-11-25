@@ -305,7 +305,7 @@ final class ClientSetupSession: ObservableObject {
         } catch { self.error = error is CancellationError ? "Connection test stopped." : AppHost.render(error) }
     }
     private func changedFrontDoor() -> WorkflowEvidenceError {
-        .invalid("The front door changed or stopped. Refresh and review setup again.")
+        .invalid("The Workbench API changed or stopped. Refresh and review setup again.")
     }
     private func current(_ expected: ServerInfo) async throws -> [ServerInfo] {
         let latest = try await readServers()

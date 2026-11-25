@@ -75,7 +75,7 @@ server. **Save as endpoint…** on that preview saves an unverified always-on
 endpoint (eager serving by default) and does not inherit the base model's
 quality verdict. When the engine adapter serving lifecycle advertises JIT
 support, trained adapter endpoints can also opt into Load on request and API-key
-authentication so they can join Front Door and shared memory management; when
+authentication so they can join the Workbench API and shared memory management; when
 unsupported, Workbench fails closed with a clear validation message.
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.

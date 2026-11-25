@@ -243,6 +243,7 @@ private struct ServingModelRow: View {
 }
 
 struct ServingModelList: View {
+    let appHost: AppHost
     let roleRows: [ServingRolesPresentation.RoleRow]
     let customRows: [ServingRow]
     let otherRows: [ServingRow]
@@ -316,6 +317,12 @@ struct ServingModelList: View {
             TextField("Filter models", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
                 .accessibilityIdentifier("serving-model-filter")
             List(selection: $selectedID) {
+                Section {
+                    WorkbenchAPIRowView(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+                        .accessibilityIdentifier("serving-workbench-api")
+                } footer: {
+                    Text(ServingRolesPresentation.workbenchAPICaption)
+                }
                 Section("Roles") {
                     ForEach(roleRows) { roleRow($0) }
                 }

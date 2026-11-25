@@ -58,7 +58,7 @@ enum FleetRouter {
             case .envVar(let name):
                 return "Auth via $\(name) (no raw key written)"
             case .frontDoor(let port):
-                return "Front Door :\(port) uses $\(FleetRouter.localAPIKeyEnvVar)"
+                return "Workbench API :\(port) uses $\(FleetRouter.localAPIKeyEnvVar)"
             }
         }
     }

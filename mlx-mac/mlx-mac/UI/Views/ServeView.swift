@@ -149,7 +149,7 @@ struct ServeView: View {
             Group {
                 if viewport.size.width >= WorkbenchSize.Serving.splitMinimum {
                     HStack(spacing: 0) {
-                        ServingModelList(roleRows: ServingRolesPresentation.roleRows(slots: endpoint.fleet.slots, rows: workspaceRows),
+                        ServingModelList(appHost: appHost, roleRows: ServingRolesPresentation.roleRows(slots: endpoint.fleet.slots, rows: workspaceRows),
                             customRows: ServingRolesPresentation.customRows(workspaceRows),
                             otherRows: ServingRolesPresentation.otherRows(workspaceRows),
                             slots: endpoint.fleet.slots, models: models, states: endpoint.slotStates,
@@ -163,6 +163,8 @@ struct ServeView: View {
                     }
                 } else {
                     VStack(spacing: 0) {
+                        WorkbenchAPIRowView(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+                            .padding(.horizontal, WorkbenchSpacing.md).padding(.top, WorkbenchSpacing.xs)
                         HStack {
                             Menu(selectedWorkspaceRow.map { ServingWorkspacePresentation.name($0, models: models) } ?? "Choose endpoint") {
                                 ForEach(workspaceRows) { row in
@@ -558,10 +560,10 @@ struct ServeView: View {
                         }
                         if let door = endpoint.fleet.frontDoor {
                             if slot.apiKeySHA256 == door.apiKeySHA256 {
-                                Text("Uses the front door key · routed at 127.0.0.1:\(String(door.port)) while the front door runs.")
+                                Text("Uses the Workbench API key · routed at 127.0.0.1:\(String(door.port)) while the Workbench API runs.")
                                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                             } else {
-                                Button("Use front door key…") { prepareAuthentication(slot, required: true, frontDoorKey: true) }
+                                Button("Use Workbench API key…") { prepareAuthentication(slot, required: true, frontDoorKey: true) }
                                     .disabled(slot.enabled || endpoint.isChanging)
                                     .accessibilityIdentifier("serving-use-front-door-key")
                             }
@@ -1711,11 +1713,11 @@ struct ServeView: View {
     private func authenticationConfirmation(_ review: EndpointAuthenticationReview) -> some View {
         let sharesFrontDoorKey = review.token == nil && review.keySHA256 != nil
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text(review.keySHA256 == nil ? "Disable API key authentication?" : sharesFrontDoorKey ? "Use the front door key?" : "Require a new API key?")
+            Text(review.keySHA256 == nil ? "Disable API key authentication?" : sharesFrontDoorKey ? "Use the Workbench API key?" : "Require a new API key?")
                 .font(WorkbenchTypography.cardTitle)
             Text("Endpoint: 127.0.0.1:\(review.slot.port)").textSelection(.enabled)
             Text(review.keySHA256 == nil ? "Any local client will be able to use this endpoint after you start it."
-                 : sharesFrontDoorKey ? "Clients holding the front door key can use this endpoint directly or through the front door. Previous keys stop working."
+                 : sharesFrontDoorKey ? "Clients holding the Workbench API key can use this endpoint directly or through the Workbench API. Previous keys stop working."
                  : "Only clients holding the new key can use this endpoint. Copy the key after saving and configure it in each client. Previous keys stop working.")
             Text("The endpoint stays stopped. Model files stay in place.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)

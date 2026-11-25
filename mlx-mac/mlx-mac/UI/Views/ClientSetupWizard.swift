@@ -75,7 +75,7 @@ struct ClientSetupWizard: View {
                 Picker("Model endpoint", selection: Binding(get: { session.selectedID }, set: { session.choose(serverID: $0) })) {
                     Text("Choose a running endpoint").tag(String?.none)
                     if session.client == .opencode, let door = session.frontDoor {
-                        Text("Front door · \(door.models.count) models · :" + String(ClientEndpointURL.port(of: door.baseURL) ?? 0))
+                        Text("Workbench API · \(door.models.count) models · :" + String(ClientEndpointURL.port(of: door.baseURL) ?? 0))
                             .tag(Optional(ClientSetupSession.frontDoorID))
                     }
                     ForEach(session.servers) { server in
@@ -113,10 +113,10 @@ struct ClientSetupWizard: View {
                 if session.stage != .choose { Text(session.client.title).font(WorkbenchTypography.emphasis) }
                 Text(door.baseURL).font(WorkbenchTypography.compactValue).textSelection(.enabled)
                     .accessibilityIdentifier("connect-app-reviewed-url")
-                Text("Every model the front door routes, default \(door.modelName)").font(WorkbenchTypography.secondary)
+                Text("Every model the Workbench API routes, default \(door.modelName)").font(WorkbenchTypography.secondary)
                 Text(door.models.joined(separator: " · ")).font(WorkbenchTypography.secondary).textSelection(.enabled)
                     .foregroundStyle(WorkbenchColor.muted).accessibilityIdentifier("connect-app-reviewed-model")
-                Label("Front door key · supplied automatically to this app", systemImage: "lock.shield")
+                Label("Workbench API key · supplied automatically to this app", systemImage: "lock.shield")
                     .font(WorkbenchTypography.secondary)
             }.padding(WorkbenchSpacing.md).frame(maxWidth: .infinity, alignment: .leading)
                 .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))

@@ -21,7 +21,7 @@ be saved.
 | `use-sessions.json.sqlite` | Conversation text, partial replies, drafts, server identities and task workspace selections; navigation loads summaries |
 | `use-defaults.json` | Request defaults and the selected work session |
 | `serving-profiles.json` | Saved serving profiles and their verification |
-| `endpoint-fleet.json` | Always-on endpoints (up to 16) and their memory policies; the front door port and key digest. A slot's `role` is one of `embedding` (8091), `general` (8092), `vision` (8093), `reasoning` (8094), `coding` (8095), `classification` (8096), `image` (8097), `mesh` (8098), `voice` (8099), `transcription` (8100), `music` (8101), `video` (8102); the port is the role's canonical port when no slot holds the role |
+| `endpoint-fleet.json` | Always-on endpoints (up to 16) and their memory policies; the Workbench API port and key digest. A slot's `role` is one of `embedding` (8091), `general` (8092), `vision` (8093), `reasoning` (8094), `coding` (8095), `classification` (8096), `image` (8097), `mesh` (8098), `voice` (8099), `transcription` (8100), `music` (8101), `video` (8102); the port is the role's canonical port when no slot holds the role |
 | `task-endpoints.json` | Typed task endpoint origins, verified job identities and unresolved-submission blocks; contains no API keys or model weights |
 | `recommendation-preferences.json` | Preferred model per use case |
 | `usage-stamps.json` | When each model was last served, verified or benchmarked |

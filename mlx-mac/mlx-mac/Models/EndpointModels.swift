@@ -367,6 +367,9 @@ enum ServingRole: String, CaseIterable, Codable, Identifiable, Hashable, Sendabl
         }
     }
 
+    /// Default port of the Workbench API; distinct from every role's port.
+    static let workbenchAPIDefaultPort = 8090
+
     var defaultPort: Int {
         switch self {
         case .embedding: return 8091
@@ -563,7 +566,7 @@ extension EndpointFleetValidation: LocalizedError {
         case .invalidAuthentication:
             return "API key authentication requires Load on request and a valid credential reference."
         case .invalidFrontDoorKey:
-            return "The front door needs a valid credential reference."
+            return "The Workbench API needs a valid credential reference."
         case .invalidAdapterEndpoint:
             return "A trained adapter endpoint uses explicit MLX-LM serving and does not inherit the base model's quality verdict."
         }
