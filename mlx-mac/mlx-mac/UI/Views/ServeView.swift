@@ -89,7 +89,6 @@ struct ServeView: View {
     @State private var memoryReviewSlot: EndpointSlot?
     @State private var loginPlist = ""
     @State private var loginBusy = false
-    @State private var expandedMemorySlots: Set<UUID> = []
     @State private var viewportWidth = WorkbenchSize.assumedContentWidth + WorkbenchSpacing.pageInset * 2
     @State private var loginItemMessage: String?
     @State private var loginItemMessageIsError = false
@@ -338,6 +337,7 @@ struct ServeView: View {
                         }
                     }.padding(WorkbenchSpacing.md).accessibilityIdentifier("serving-memory-override")
                 }
+                if let row = selectedWorkspaceRow { connectionBar(row) }
                 if let error = visibleActionError {
                     InlineMessage(kind: .error, text: error).lineLimit(nil).fixedSize(horizontal: false, vertical: true).padding(WorkbenchSpacing.md)
                 }
@@ -427,14 +427,101 @@ struct ServeView: View {
         }
     }
 
+    /// The selected row's runtime: the running server's, else the endpoint's model and profile.
+    private func workspaceContext(_ row: ServingRow) -> ServingInferenceContext {
+        let server = ServingWorkspacePresentation.server(row)
+        if case .endpoint(let slot, _, _) = row {
+            return ServingInferenceContext.resolve(model: RunModels.model(for: slot.modelPath, in: models),
+                override: server?.runtime ?? "auto", profile: slot.servingProfile, chip: appHost.hardwareProfile.chip)
+        }
+        return ServingInferenceContext(runtime: server?.runtime ?? "auto", chip: appHost.hardwareProfile.chip)
+    }
+
+    /// Pinned above the scrolling inspector: state, address, port, key and Start or Stop.
+    private func connectionBar(_ row: ServingRow) -> some View {
+        ViewThatFits(in: .horizontal) {
+            connectionBarContent(row, showsStatus: true)
+            connectionBarContent(row, showsStatus: false)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, WorkbenchSpacing.lg)
+        .padding(.vertical, WorkbenchSpacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WorkbenchColor.surface)
+        .overlay(alignment: .bottom) { Divider() }
+        .onAppear(perform: synchronizeConnectionPort)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("serving-connection-bar")
+    }
+
+    private func connectionBarContent(_ row: ServingRow, showsStatus: Bool) -> some View {
+        let server = ServingWorkspacePresentation.server(row)
+        let name = ServingWorkspacePresentation.name(row, models: models)
+        return HStack(spacing: WorkbenchSpacing.sm) {
+            Circle().fill(ServingWorkspacePresentation.dotColor(row)).frame(width: 8, height: 8).accessibilityHidden(true)
+            Text(name).font(WorkbenchTypography.emphasis).lineLimit(1).truncationMode(.middle).help(name)
+            if showsStatus {
+                ServingStatusLabel(row: row, states: endpoint.slotStates)
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1).fixedSize()
+            }
+            Spacer(minLength: WorkbenchSpacing.sm)
+            if let url = ServingWorkspacePresentation.baseURL(row) {
+                HStack(spacing: WorkbenchSpacing.xxs) {
+                    Text(url).font(WorkbenchTypography.compactValue).textSelection(.enabled).lineLimit(1).fixedSize()
+                        .help("Base URL. Loopback only: reachable from this Mac.")
+                    Button { ServedModelsSelection.copy(url) } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.borderless).help("Copy base URL")
+                        .accessibilityLabel("Copy base URL").accessibilityIdentifier("serving-copy-base-url")
+                }
+            }
+            if case .endpoint(let slot, _, _) = row {
+                HStack(spacing: WorkbenchSpacing.xxs) {
+                    TextField("Port", text: $connectionPort).labelsHidden().textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing).monospacedDigit().frame(width: 64)
+                        .accessibilityLabel("Port").accessibilityIdentifier("serving-endpoint-port")
+                    Button("Change…") { reviewConnectionPort(slot) }
+                        .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
+                }
+                .help(ServingInspectorPresentation.caption(.port))
+                Toggle(isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
+                    if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
+                })) {
+                    Image(systemName: slot.apiKeySHA256 != nil ? "lock.fill" : "lock.open")
+                }
+                .toggleStyle(.button)
+                .disabled(slot.enabled || endpoint.isChanging)
+                .accessibilityLabel("Protected by Workbench key")
+                .accessibilityIdentifier("serving-require-api-key")
+                .help((slot.apiKeySHA256 != nil ? "Protected: clients need the API key. " : "Open: any local client can connect. ")
+                      + ServingInspectorPresentation.caption(.requireKey))
+                Button(slot.enabled ? "Stop server" : "Start server…") {
+                    if slot.enabled { Task { if let error = await changes.stop(slot) { actionError = error } } }
+                    else { prepare(slot: slot, remove: false) }
+                }
+                .buttonStyle(.workbenchPrimary)
+                .disabled(slot.enabled ? !changes.mayStop(slot) : (endpoint.isChanging || !comparison.hasLoadedHistory))
+                .accessibilityIdentifier("serving-toggle-server")
+            } else {
+                if let server {
+                    Image(systemName: server.apiKeySHA256 == nil ? "lock.open" : "lock.fill")
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .help(server.apiKeySHA256 == nil ? "No API key required" : "API key required")
+                        .accessibilityLabel(server.apiKeySHA256 == nil ? "No API key required" : "API key required")
+                }
+                if let service = ServingWorkspacePresentation.service(row), service.canStop {
+                    Button("Stop server…") { Task { await inventory.prepare(.stop, service: service) } }
+                        .buttonStyle(.workbenchPrimary)
+                        .disabled(!inventory.mayChange(service) || inventory.isChanging)
+                }
+            }
+        }
+    }
+
     private func selectedWorkspace(_ row: ServingRow) -> some View {
         var slot: EndpointSlot?
         if case .endpoint(let value, _, _) = row { slot = value }
         let server = ServingWorkspacePresentation.server(row)
-        let context = slot.map { slot in
-            ServingInferenceContext.resolve(model: RunModels.model(for: slot.modelPath, in: models),
-                override: server?.runtime ?? "auto", profile: slot.servingProfile, chip: appHost.hardwareProfile.chip)
-        } ?? ServingInferenceContext(runtime: server?.runtime ?? "auto", chip: appHost.hardwareProfile.chip)
+        let context = workspaceContext(row)
         return ServingInspector(
             sections: ServingInspectorPresentation.sections(for: slot?.role, typedTasks: server?.runtime == "tasks"),
             endpoint: endpoint, slot: slot, context: context,
@@ -463,12 +550,10 @@ struct ServeView: View {
         let server = ServingWorkspacePresentation.server(row)
         let name = ServingWorkspacePresentation.name(row, models: models)
         var role = ServingWorkspacePresentation.provider(row)
-        var port = server?.port
-        if case .endpoint(let slot, _, _) = row { role = slot.role?.title ?? "Unassigned"; port = slot.port }
+        if case .endpoint(let slot, _, _) = row { role = slot.role?.title ?? "Unassigned" }
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             LabeledContent("Model") { Text(name).textSelection(.enabled) }
             LabeledContent("Role", value: role)
-            if let port { LabeledContent("Port", value: ":\(port)") }
             LabeledContent("State") { ServingStatusLabel(row: row, states: endpoint.slotStates) }
             if let server, server.jit == true {
                 LabeledContent("Model state", value: (server.modelState ?? "unknown").capitalized)
@@ -487,20 +572,12 @@ struct ServeView: View {
                     }
                     Spacer()
                     if case .endpoint(let slot, _, let service) = row {
-                        Button(slot.enabled ? "Stop server" : "Start server…") {
-                            if slot.enabled { Task { if let error = await changes.stop(slot) { actionError = error } } }
-                            else { prepare(slot: slot, remove: false) }
-                        }.buttonStyle(.workbenchPrimary).disabled(slot.enabled ? !changes.mayStop(slot) : (endpoint.isChanging || !comparison.hasLoadedHistory))
-                            .accessibilityIdentifier("serving-toggle-server")
                         if slot.usesJIT, slot.enabled, let service, service.canUnload {
                             Button("Unload model…") { Task { await inventory.prepare(.unload, service: service) } }
                                 .disabled(inventory.isChanging || !inventory.mayChange(service))
                                 .accessibilityIdentifier("serving-unload-model")
                         }
                         slotMenu(slot, server: server, service: service, name: name)
-                    } else if let service = ServingWorkspacePresentation.service(row), service.canStop {
-                        Button("Stop server…") { Task { await inventory.prepare(.stop, service: service) } }
-                            .disabled(!inventory.mayChange(service) || inventory.isChanging)
                     }
                 }
                 if let server { HStack(spacing: WorkbenchSpacing.sm) { promptButtons(server, name: name) } }
@@ -514,12 +591,7 @@ struct ServeView: View {
     private func statusConnection(_ row: ServingRow) -> some View {
         let server = ServingWorkspacePresentation.server(row)
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                if let url = ServingWorkspacePresentation.baseURL(row) {
-                    ServingConnectionField(title: "Base URL", value: url, identifier: "serving-copy-base-url", compact: true)
-                }
-                ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id", compact: true)
-            }
+            ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id", compact: true)
             if let server {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -569,18 +641,6 @@ struct ServeView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             if case .endpoint(let slot, _, _) = row {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                        LabeledContent("Address", value: "127.0.0.1 · loopback only")
-                        LabeledContent("Port") {
-                            TextField("Port", text: $connectionPort).multilineTextAlignment(.trailing).accessibilityIdentifier("serving-endpoint-port")
-                            Button("Change…") { reviewConnectionPort(slot) }
-                                .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
-                        }
-                        .help(ServingInspectorPresentation.caption(.port))
-                        Toggle("Protected by Workbench key", isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
-                            if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
-                        })).toggleStyle(.checkbox).disabled(slot.enabled || endpoint.isChanging)
-                            .accessibilityIdentifier("serving-require-api-key")
-                            .help(ServingInspectorPresentation.caption(.requireKey))
                         if let hash = slot.apiKeySHA256 {
                             HStack {
                                 Button("Copy API key") {
@@ -603,14 +663,7 @@ struct ServeView: View {
                                     .accessibilityIdentifier("serving-use-front-door-key")
                             }
                         }
-                        if slot.enabled {
-                            Text("Stop the server to change its port or authentication. Existing settings remain visible here.")
-                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                        }
                 }
-            } else if let server {
-                LabeledContent("Authentication", value: server.apiKeySHA256 == nil ? "No API key required" : "API key required")
-                if let port = server.port { LabeledContent("Port", value: String(port)) }
             }
             if let server, server.jit == true, UseChatClient.supports(server) {
                 if let address = tailnet.sharedAddress(port: server.port) {
@@ -625,9 +678,8 @@ struct ServeView: View {
             } else {
                 Text(server?.runtime == "tasks" ? "This model uses the typed task API. Copy its API address and run a task from Tasks." : "Start this endpoint to connect an app.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                if let url = ServingWorkspacePresentation.baseURL(row) { ServingConnectionField(title: "Base URL", value: url) }
             }
-        }.onAppear(perform: synchronizeConnectionPort)
+        }
     }
 
     private func quickConnectTarget(for row: ServingRow) -> QuickConnectTarget? {
@@ -685,27 +737,34 @@ struct ServeView: View {
         }
     }
 
+    /// Runtime and headroom, loading, residency, memory check and execution wait; fleet actions share one footer row.
     @ViewBuilder
     private func loadSection(_ row: ServingRow) -> some View {
         let server = ServingWorkspacePresentation.server(row)
-        LabeledContent("Runtime", value: server?.runtime ?? "Chosen when the endpoint starts")
-            .help(ServingInspectorPresentation.caption(.runtime))
+        let context = workspaceContext(row)
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.md) {
+            LabeledContent("Runtime") { Text(ServingWorkspacePresentation.runtimeTitle(context.runtime) ?? "Chosen at start") }
+                .help(ServingInspectorPresentation.caption(.runtime)
+                      + (context.runtime == "auto" ? " The engine picks it when the endpoint starts." : ""))
+            ServingSystemHeadroom(resources: appHost.resources).lineLimit(1).fixedSize()
+        }
         if case .endpoint(let slot, _, _) = row, server?.runtime == "splash" || slot.splashPresetName != nil {
-            LabeledContent("Splash preset", value: slot.splashPresetName ?? "None")
-                .help(ServingInspectorPresentation.caption(.splashPreset))
-            Button("Splash presets…") { splashPresetSlot = slot }.disabled(endpoint.pendingStops[slot.id] != nil)
-        }
-        ServingSystemHeadroom(resources: appHost.resources)
-        fleetCoResidencyBudgetBar
-        if case .endpoint(let slot, _, _) = row {
-            Toggle("Load on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
-                Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
-            })).toggleStyle(.checkbox).disabled(endpoint.isChanging)
-                .help(ServingInspectorPresentation.caption(.loadOnRequest))
-            if slot.usesJIT {
-                memoryManagement(slot, inline: true)
+            LabeledContent("Splash preset") {
+                Text(slot.splashPresetName ?? "None").lineLimit(1)
+                Button("Splash presets…") { splashPresetSlot = slot }.disabled(endpoint.pendingStops[slot.id] != nil)
             }
+            .help(ServingInspectorPresentation.caption(.splashPreset))
         }
+        if case .endpoint(let slot, _, _) = row {
+            LabeledContent("Loading") {
+                Toggle("Load on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
+                    Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
+                })).toggleStyle(.checkbox).disabled(endpoint.isChanging)
+            }
+            .help(ServingInspectorPresentation.caption(.loadOnRequest))
+            if slot.usesJIT { residencyRows(slot) }
+        }
+        fleetCoResidencyBudgetBar
         if let service = ServingWorkspacePresentation.service(row) {
             ServingServiceDetails(service: service, inventory: inventory)
             if service.canUnload {
@@ -713,8 +772,17 @@ struct ServeView: View {
                     .disabled(inventory.isChanging || !inventory.mayChange(service))
             }
         }
-        Button("Model router…") { showFleetRouter = true }
-        loginItemSection
+        Divider()
+        HStack(spacing: WorkbenchSpacing.sm) {
+            if case .endpoint(let slot, _, _) = row, slot.usesJIT {
+                Button("Review memory policy…") { memoryReviewSlot = slot }
+                    .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
+                    .accessibilityIdentifier("endpoint-memory-review")
+            }
+            Button("Model router…") { showFleetRouter = true }
+            loginItemSection
+        }
+        .controlSize(.small)
     }
 
     private func openServerSetup() {
@@ -1488,132 +1556,95 @@ struct ServeView: View {
         }
     }
 
-    private func memoryPopoverBinding(_ slot: EndpointSlot) -> Binding<Bool> {
-        Binding(
-            get: { expandedMemorySlots.contains(slot.id) },
-            set: { value in
-                if value { expandedMemorySlots.insert(slot.id) } else { expandedMemorySlots.remove(slot.id) }
+    /// Residency, memory check with reserve, and execution wait for a load-on-request endpoint.
+    @ViewBuilder
+    private func residencyRows(_ slot: EndpointSlot) -> some View {
+        let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
+        let residency = EndpointResidency(policy)
+        Group {
+            if slot.splashPresetName != nil {
+                Text("Memory settings come from the selected Splash preset. Review another preset to change them.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
-        )
+            LabeledContent("Residency") {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { residencyPickers(slot, policy: policy, residency: residency) }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { residencyPickers(slot, policy: policy, residency: residency) }
+                }
+            }
+            .help("Release weights after each request: " + ServingInspectorPresentation.caption(.releaseAfterRequest)
+                  + " Keep loaded: " + ServingInspectorPresentation.caption(.keepLoaded)
+                  + " Unload after idle: " + ServingInspectorPresentation.caption(.idleUnload))
+            LabeledContent("Memory check") {
+                Toggle("Check before loading", isOn: Binding(get: { policy.minimumHeadroomGB != nil }, set: { enabled in
+                    var updated = policy
+                    updated.minimumHeadroomGB = enabled ? 2 : nil
+                    if !enabled { updated.unloadUnderPressure = nil; updated.contextTokens = nil; updated.modelMemoryBudgetGB = nil }
+                    saveMemoryPolicy(slot, updated)
+                }))
+                .toggleStyle(.checkbox).fixedSize()
+                if let reserve = policy.minimumHeadroomGB {
+                    Picker("Reserve", selection: Binding(get: { reserve }, set: { value in
+                        var updated = policy
+                        updated.minimumHeadroomGB = value
+                        saveMemoryPolicy(slot, updated)
+                    })) {
+                        ForEach([1.0, 2, 4, 8], id: \.self) { value in Text("\(Int(value)) GB").tag(value) }
+                        if ![1.0, 2, 4, 8].contains(reserve) { Text("\(reserve, specifier: "%.1f") GB").tag(reserve) }
+                    }
+                    .fixedSize()
+                }
+            }
+            .help(ServingInspectorPresentation.caption(.memoryPolicy) + " Uses estimated weights + runtime allowance + reserve; other processes and larger contexts can change actual use. Unknown headroom blocks loading.")
+            LabeledContent("Execution wait") {
+                Picker("Execution wait", selection: Binding(get: { policy.executionWaitSeconds ?? 0 }, set: { value in
+                    var updated = policy
+                    updated.executionWaitSeconds = value == 0 ? nil : value
+                    saveMemoryPolicy(slot, updated)
+                })) {
+                    Text("Off (0 s)").tag(0)
+                    Text("30 seconds").tag(30)
+                    Text("1 minute").tag(60)
+                    Text("2 minutes").tag(120)
+                    Text("5 minutes").tag(300)
+                    Text("10 minutes").tag(600)
+                    Text("30 minutes").tag(1800)
+                    Text("1 hour").tag(3600)
+                    if let current = policy.executionWaitSeconds, ![0, 30, 60, 120, 300, 600, 1800, 3600].contains(current) {
+                        Text(verbatim: "\(current) seconds").tag(current)
+                    }
+                }
+                .labelsHidden().fixedSize()
+            }
+            .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
+        }
+        .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
     }
 
+    /// The residency choice, and its idle duration when it unloads after idle.
     @ViewBuilder
-    func memoryManagement(_ slot: EndpointSlot, expanded: Binding<Bool>? = nil, inline: Bool = false) -> some View {
-        if inline { memoryFields(slot) }
-        else {
-            DisclosureGroup("Memory management", isExpanded: expanded ?? memoryPopoverBinding(slot)) { memoryFields(slot) }
-                .font(WorkbenchTypography.secondary)
+    private func residencyPickers(_ slot: EndpointSlot, policy: EndpointMemoryPolicy, residency: EndpointResidency) -> some View {
+        Picker("Residency", selection: Binding(get: { residency.kind }, set: { kind in
+            saveMemoryPolicy(slot, EndpointResidency(kind, from: policy).applied(to: policy))
+        })) {
+            ForEach(EndpointResidency.Kind.allCases) { Text($0.title).tag($0) }
+        }
+        .labelsHidden().fixedSize()
+        .accessibilityIdentifier("endpoint-memory-release-after-request")
+        if case .unloadAfterIdle(let seconds) = residency {
+            let choices = EndpointResidency.idleChoices + (EndpointResidency.idleChoices.contains(seconds) ? [] : [seconds])
+            Picker("Idle time", selection: Binding(get: { seconds }, set: { value in
+                saveMemoryPolicy(slot, EndpointResidency.unloadAfterIdle(seconds: value).applied(to: policy))
+            })) {
+                ForEach(choices, id: \.self) { Text(EndpointResidency.duration($0)).tag($0) }
+            }
+            .labelsHidden().fixedSize()
+            .accessibilityIdentifier("endpoint-memory-idle")
         }
     }
 
-    private func memoryFields(_ slot: EndpointSlot) -> some View {
-        let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
-        return
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                if slot.splashPresetName != nil {
-                    Text("Memory settings come from the selected Splash preset. Review another preset to change them.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                }
-                HStack {
-                    Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
-                        Text("Never").tag(0)
-                        Text("1 minute").tag(60)
-                        Text("2 minutes").tag(120)
-                        Text("5 minutes").tag(300)
-                        Text("10 minutes").tag(600)
-                        Text("30 minutes").tag(1800)
-                        Text("1 hour").tag(3600)
-                        if ![0, 60, 120, 300, 600, 1800, 3600].contains(policy.idleTimeoutSeconds) {
-                            Text(verbatim: "\(policy.idleTimeoutSeconds) seconds").tag(policy.idleTimeoutSeconds)
-                        }
-                    }
-                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
-                    .disabled(policy.keepLoaded || policy.releaseAfterRequest == true)
-                    .help(ServingInspectorPresentation.caption(.idleUnload))
-                    Toggle("Keep loaded after use", isOn: memoryBinding(slot, \.keepLoaded))
-                        .toggleStyle(.checkbox)
-                        .fixedSize()
-                        .help(ServingInspectorPresentation.caption(.keepLoaded))
-                }
-                Toggle("Release weights after each request", isOn: Binding(
-                    get: { policy.releaseAfterRequest == true },
-                    set: { enabled in
-                        var updated = policy
-                        updated.releaseAfterRequest = enabled
-                        if enabled { updated.keepLoaded = false; updated.idleTimeoutSeconds = 0 }
-                        Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                    }))
-                    .toggleStyle(.checkbox)
-                    .fixedSize()
-                    .accessibilityIdentifier("endpoint-memory-release-after-request")
-                    .help(ServingInspectorPresentation.caption(.releaseAfterRequest))
-                HStack {
-                    Toggle("Check memory before loading", isOn: Binding(
-                        get: { policy.minimumHeadroomGB != nil },
-                        set: { enabled in
-                            var updated = policy
-                            updated.minimumHeadroomGB = enabled ? 2 : nil
-                            if !enabled { updated.unloadUnderPressure = nil; updated.contextTokens = nil; updated.modelMemoryBudgetGB = nil }
-                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                        }))
-                        .toggleStyle(.checkbox)
-                    if let reserve = policy.minimumHeadroomGB {
-                        Picker("Reserve after loading", selection: Binding(
-                            get: { reserve },
-                            set: { value in
-                                var updated = policy
-                                updated.minimumHeadroomGB = value
-                                Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                            })) {
-                            ForEach([1.0, 2, 4, 8], id: \.self) { value in Text("\(Int(value)) GB").tag(value) }
-                            if ![1.0, 2, 4, 8].contains(reserve) { Text("\(reserve, specifier: "%.1f") GB").tag(reserve) }
-                        }
-                        .frame(maxWidth: WorkbenchSize.Run.reservePickerMaximum)
-                    }
-                }
-                .help(ServingInspectorPresentation.caption(.memoryPolicy) + " Uses estimated weights + runtime allowance + reserve; other processes and larger contexts can change actual use. Unknown headroom blocks loading.")
-                HStack {
-                    Picker("Execution wait", selection: Binding(
-                        get: { policy.executionWaitSeconds ?? 0 },
-                        set: { value in
-                            var updated = policy
-                            updated.executionWaitSeconds = value == 0 ? nil : value
-                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                        })) {
-                        Text("Off (0 s)").tag(0)
-                        Text("30 seconds").tag(30)
-                        Text("1 minute").tag(60)
-                        Text("2 minutes").tag(120)
-                        Text("5 minutes").tag(300)
-                        Text("10 minutes").tag(600)
-                        Text("30 minutes").tag(1800)
-                        Text("1 hour").tag(3600)
-                        if let current = policy.executionWaitSeconds, ![0, 30, 60, 120, 300, 600, 1800, 3600].contains(current) {
-                            Text(verbatim: "\(current) seconds").tag(current)
-                        }
-                    }
-                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
-                    .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
-                }
-                Button("Review memory policy…") { memoryReviewSlot = slot }
-                    .accessibilityIdentifier("endpoint-memory-review")
-            }
-            .padding(.top, WorkbenchSpacing.sm)
-            .controlSize(.small)
-            .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
-    }
-
-    private func memoryBinding<Value>(_ slot: EndpointSlot, _ keyPath: WritableKeyPath<EndpointMemoryPolicy, Value>) -> Binding<Value> {
-        Binding(get: { (slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy)[keyPath: keyPath] },
-                set: { value in
-                    var policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
-                    policy[keyPath: keyPath] = value
-                    if policy.keepLoaded {
-                        policy.unloadUnderPressure = nil
-                        if policy.releaseAfterRequest == true { policy.releaseAfterRequest = false }
-                    }
-                    Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
-                })
+    private func saveMemoryPolicy(_ slot: EndpointSlot, _ policy: EndpointMemoryPolicy) {
+        Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
     }
 
     @ViewBuilder

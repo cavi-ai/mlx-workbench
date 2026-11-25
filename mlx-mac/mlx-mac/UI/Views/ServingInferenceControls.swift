@@ -288,10 +288,12 @@ struct ServingInferenceRows: View {
             if allowRequestDefaults && context.supportsRequestDefaults {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                     ServingSamplingRow(title: "Temperature", value: $options.temperature, range: LocalInferenceBounds.temperature,
-                                       step: 0.05, start: 0.8, identifier: "serve-default-temperature")
+                                       step: 0.05, start: 0.8, identifier: "serve-default-temperature",
+                                       help: ServingInspectorPresentation.caption(Field.temperature))
                     accessory(.temperature)
                     ServingSamplingRow(title: "Top-p", value: $options.topP, range: LocalInferenceBounds.topP,
-                                       step: 0.01, start: 0.95, identifier: "serve-default-top-p")
+                                       step: 0.01, start: 0.95, identifier: "serve-default-top-p",
+                                       help: ServingInspectorPresentation.caption(Field.topP))
                     accessory(.topP)
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         HStack {
@@ -308,8 +310,9 @@ struct ServingInferenceRows: View {
                             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                             .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
                             .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
-                        ServingCaption("Used when a client sends no system prompt.")
                     }
+                    .contentShape(Rectangle())
+                    .help(ServingInspectorPresentation.caption(Field.systemPrompt))
                     accessory(.systemPrompt)
                 }
             } else if context.supportsRequestDefaults {
@@ -328,6 +331,8 @@ struct ServingSamplingRow: View {
     /// Value set when the override is turned on.
     let start: Double
     let identifier: String
+    /// Plain-English explanation shown when hovering anywhere on the row.
+    var help: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -357,12 +362,14 @@ struct ServingSamplingRow: View {
             .labelsHidden().controlSize(.small)
             .disabled(value == nil)
         }
+        .contentShape(Rectangle())
+        .help(help ?? "")
     }
 
     private static func text(_ value: Double) -> String { String(format: "%g", value) }
 }
 
-/// An optional engine feature: what it buys, where it works and its control.
+/// An optional engine feature: its name, where it works and its control. `detail` explains it on hover.
 struct ServingFeatureCard<Control: View>: View {
     let title: String
     let detail: String
@@ -374,7 +381,6 @@ struct ServingFeatureCard<Control: View>: View {
         HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text(title).font(WorkbenchTypography.emphasis)
-                ServingCaption(detail)
                 Label(availability, systemImage: unavailable ? "xmark.circle" : "checkmark.circle")
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(unavailable ? WorkbenchColor.warning : WorkbenchColor.muted)
@@ -385,6 +391,8 @@ struct ServingFeatureCard<Control: View>: View {
         .padding(WorkbenchSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: WorkbenchRadius.control).strokeBorder(WorkbenchColor.muted.opacity(0.25)))
+        .contentShape(Rectangle())
+        .help(detail)
     }
 }
 

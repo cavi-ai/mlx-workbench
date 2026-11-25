@@ -34,19 +34,25 @@ enum ServingInspectorPresentation {
         return chat ? [.status, .load, .inference, .acceleration, .access] : [.status, .load, .access, .tasks]
     }
 
+    /// Plain-English explanation shown on hover; it ends with the accepted range.
     static func caption(_ field: Field) -> String {
         typealias Bounds = LocalInferenceBounds
         switch field {
-        case .m5Prefill: return "Faster prompt processing on supported M5 Q4 models; other inputs use native MLX."
-        case .promptLookup: return "Reuses text from the prompt while decoding, for code edits; requests run one at a time."
-        case .visionCache: return "Reuses image features for repeated questions about one image on supported vision models."
-        case .thinkingOff: return "Skips reasoning when the model's chat template supports it."
-        case .maximumTokens: return "Output length used when a client omits it: \(Bounds.text(Bounds.maximumTokens)) tokens."
-        case .systemPrompt: return "Used when a client sends no system prompt: up to \(Bounds.systemPromptBytesText) UTF-8 bytes."
-        case .temperature: return "Sampling default when a client omits it: \(Bounds.text(Bounds.temperature))."
-        case .topP: return "Nucleus sampling default when a client omits it: \(Bounds.text(Bounds.topP))."
-        case .sharedPrefixCacheMiB: return "Reuses identical system-prompt prefixes on keyed MLX-LM endpoints: \(Bounds.text(Bounds.sharedPrefixCacheMiB)) MiB."
+        case .m5Prefill: return "M5 prompt processing: reads long prompts faster on an Apple M5 with Q4 models. Other models use the standard path."
+        case .promptLookup: return "Prompt lookup decoding: copies matching text from the prompt instead of writing it word by word, which speeds up code edits and rewrites. Requests run one at a time."
+        case .visionCache: return "Image feature reuse: remembers what the model saw in an image, so follow-up questions about the same image answer faster."
+        case .thinkingOff: return "Reasoning: whether the model thinks step by step before it answers. Off answers sooner and shorter, on models whose chat template supports it."
+        case .maximumTokens: return "Max response tokens: how long an answer can get when a client sets no limit. A token is about three quarters of a word. Range \(Bounds.text(Bounds.maximumTokens))."
+        case .systemPrompt: return "System prompt: standing instructions the model reads before every conversation, used when a client sends none. Up to \(Bounds.systemPromptBytesText) UTF-8 bytes."
+        case .temperature: return "Temperature: how adventurous word choice is. Lower gives focused, repeatable answers; higher gives more varied ones. Used when a client sends none; range \(Bounds.text(Bounds.temperature))."
+        case .topP: return "Top-p: keeps only the most likely next words whose chances add up to this share. Lower is safer; 1 keeps every option. Used when a client sends none; range \(Bounds.text(Bounds.topP))."
+        case .sharedPrefixCacheMiB: return "Shared prefix cache: remembers the start of prompts that repeat, such as one long system prompt, so keyed MLX-LM endpoints answer sooner. Budget \(Bounds.text(Bounds.sharedPrefixCacheMiB)) MiB."
         }
+    }
+
+    /// Inference edits differ from what the endpoint serves with (its options resolved against the model default).
+    static func hasUnsavedEdits(_ options: LocalInferenceOptions, effective slot: EndpointSlot) -> Bool {
+        options != slot.inferenceOptions
     }
 
     static func caption(_ control: Control) -> String {
@@ -60,6 +66,83 @@ enum ServingInspectorPresentation {
         case .releaseAfterRequest: return "Unloads the weights after every request."
         case .port: return "Loopback port from \(ServingPortBounds.range.lowerBound) to \(ServingPortBounds.range.upperBound); stop the server to change it."
         case .requireKey: return "Requires an API key on every request; stop the server to change it."
+        }
+    }
+}
+
+/// How long a load-on-request endpoint keeps its weights, as one choice over `EndpointMemoryPolicy`.
+enum EndpointResidency: Hashable {
+    case releaseAfterRequest, keepLoaded, unloadAfterIdle(seconds: Int)
+
+    enum Kind: String, CaseIterable, Identifiable {
+        case releaseAfterRequest, keepLoaded, unloadAfterIdle
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .releaseAfterRequest: return "Release weights after each request"
+            case .keepLoaded: return "Keep loaded"
+            case .unloadAfterIdle: return "Unload after idle"
+            }
+        }
+    }
+
+    static let idleChoices = [0, 60, 120, 300, 600, 1800, 3600]
+    static let defaultIdleSeconds = 600
+
+    init(_ policy: EndpointMemoryPolicy) {
+        if policy.releaseAfterRequest == true { self = .releaseAfterRequest }
+        else if policy.keepLoaded { self = .keepLoaded }
+        else { self = .unloadAfterIdle(seconds: policy.idleTimeoutSeconds) }
+    }
+
+    /// Switching to idle unload from a policy without an idle time starts at ten minutes.
+    init(_ kind: Kind, from policy: EndpointMemoryPolicy) {
+        switch kind {
+        case .releaseAfterRequest: self = .releaseAfterRequest
+        case .keepLoaded: self = .keepLoaded
+        case .unloadAfterIdle: self = .unloadAfterIdle(seconds: policy.idleTimeoutSeconds > 0 ? policy.idleTimeoutSeconds : Self.defaultIdleSeconds)
+        }
+    }
+
+    var kind: Kind {
+        switch self {
+        case .releaseAfterRequest: return .releaseAfterRequest
+        case .keepLoaded: return .keepLoaded
+        case .unloadAfterIdle: return .unloadAfterIdle
+        }
+    }
+
+    /// The policy with this residency; headroom, budget, context and execution wait are kept.
+    func applied(to policy: EndpointMemoryPolicy) -> EndpointMemoryPolicy {
+        var result = policy
+        switch self {
+        case .releaseAfterRequest:
+            result.releaseAfterRequest = true; result.keepLoaded = false; result.idleTimeoutSeconds = 0
+        case .keepLoaded:
+            result.keepLoaded = true; result.unloadUnderPressure = nil
+            if result.releaseAfterRequest == true { result.releaseAfterRequest = false }
+        case .unloadAfterIdle(let seconds):
+            result.keepLoaded = false; result.idleTimeoutSeconds = seconds
+            if result.releaseAfterRequest == true { result.releaseAfterRequest = false }
+        }
+        return result
+    }
+
+    var title: String {
+        switch self {
+        case .unloadAfterIdle(let seconds): return seconds == 0 ? "Never unload when idle" : "Unload after \(Self.duration(seconds)) idle"
+        default: return kind.title
+        }
+    }
+
+    static func duration(_ seconds: Int) -> String {
+        switch seconds {
+        case 0: return "Never"
+        case 3600: return "1 hour"
+        case 60: return "1 minute"
+        case let value where value % 3600 == 0: return "\(value / 3600) hours"
+        case let value where value % 60 == 0: return "\(value / 60) minutes"
+        default: return "\(seconds) seconds"
         }
     }
 }
@@ -251,7 +334,7 @@ struct ServingInspector<Content: View>: View {
                     .foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
             }
             actions(slot)
-            ServingCaption("After saving, enable the endpoint. Reinstall an existing login item to capture the changed settings.")
+                .help("After saving, start the endpoint. Reinstall an existing login item to capture the changed settings.")
         }.disabled(busy)
     }
 
@@ -271,17 +354,21 @@ struct ServingInspector<Content: View>: View {
                     }.labelsHidden().fixedSize()
                 }
             }
-            ServingCaption(ServingInspectorPresentation.caption(Field.sharedPrefixCacheMiB))
         }
+        .help(ServingInspectorPresentation.caption(Field.sharedPrefixCacheMiB))
     }
 
+    /// Preview and Discard are enabled only while the edits differ from the endpoint's effective options.
     private func actions(_ slot: EndpointSlot) -> some View {
-        HStack {
+        let edited = ServingInspectorPresentation.hasUnsavedEdits(options, effective: endpoint.effectiveSlot(slot))
+        return HStack {
             if options.requested {
                 Button("Reset") { options = .init() }.buttonStyle(.borderless).disabled(slot.enabled)
                     .accessibilityIdentifier("serve-inference-reset")
             }
             Button("Discard changes") { options = endpoint.effectiveSlot(slot).inferenceOptions; preview = nil; error = nil }
+                .disabled(!edited && preview == nil)
+                .accessibilityIdentifier("serve-inference-discard")
             Spacer()
             if let preview {
                 Button("Confirm and save") {
@@ -304,7 +391,8 @@ struct ServingInspector<Content: View>: View {
                         } catch { self.error = AppHost.render(error) }
                         busy = false
                     }
-                }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
+                }.buttonStyle(.workbenchPrimary).disabled(!edited || slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
+                    .accessibilityIdentifier("serve-inference-preview")
             }
         }
     }
@@ -336,6 +424,48 @@ extension ServingInspectorPresentation {
         case .temperature: return "Temperature"
         case .topP: return "Top-p"
         case .sharedPrefixCacheMiB: return "Shared prefix cache"
+        }
+    }
+
+    /// One setting's value on a slot as display text; the one formatter for per-setting values.
+    static func value(_ key: ServingSettingKey, slot: EndpointSlot) -> String {
+        let options = slot.inferenceOptions
+        func onOff(_ value: Bool) -> String { value ? "On" : "Off" }
+        func sampling(_ value: Double?) -> String { value.map { String(format: "%.2f", $0) } ?? "Model default" }
+        switch key {
+        case .loadOnRequest: return onOff(slot.usesJIT)
+        case .memoryPolicy:
+            guard let policy = slot.memoryPolicy else { return "Engine default" }
+            let reserve = policy.minimumHeadroomGB.map { " · reserve \(String(format: "%g", $0)) GB" } ?? ""
+            return EndpointResidency(policy).title + reserve
+        case .splashPreset: return slot.splashPresetName ?? "None"
+        case .servingProfile: return slot.servingProfile?.name ?? "None"
+        case .m5Prefill: return onOff(options.m5Prefill)
+        case .promptLookup: return onOff(options.promptLookup)
+        case .visionCache: return onOff(options.visionCache)
+        case .thinkingOff: return options.thinkingOff ? "Off" : "Model default"
+        case .maximumTokens: return options.maximumTokens.map { "\($0.formatted()) tokens" } ?? "Engine default"
+        case .systemPrompt:
+            let line = options.systemPrompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+            if line.isEmpty { return "None" }
+            return line.count > 40 ? String(line.prefix(40)) + "…" : line
+        case .temperature: return sampling(options.temperature)
+        case .topP: return sampling(options.topP)
+        case .sharedPrefixCacheMiB: return options.sharedPrefixCacheMiB.map { "\($0) MiB" } ?? "Off"
+        }
+    }
+
+    /// Settings whose values differ between two slots, in `ServingSettingKey` order.
+    static func differences(_ slot: EndpointSlot, from base: EndpointSlot) -> [ServingSettingKey] {
+        let inference = ServingSettings.changedKeys(from: base.inferenceOptions, to: slot.inferenceOptions)
+        return ServingSettingKey.allCases.filter { key in
+            switch key {
+            case .loadOnRequest: return slot.usesJIT != base.usesJIT
+            case .memoryPolicy: return slot.memoryPolicy != base.memoryPolicy
+            case .splashPreset: return slot.splashPresetName != base.splashPresetName
+            case .servingProfile: return slot.servingProfile?.id != base.servingProfile?.id
+            default: return inference.contains(key)
+            }
         }
     }
 }

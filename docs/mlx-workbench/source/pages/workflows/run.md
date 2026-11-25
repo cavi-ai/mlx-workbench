@@ -37,17 +37,17 @@ the model being inspected.
 
 1. Select a ready model in Library, then open **Serving**, or use **+** in the endpoint list. Choose the model in the setup form. Supported standalone model types can serve without a conversion record; speculative drafters remain paired with their target.
 2. **Save as endpoint** keeps a stable loopback port. Review the port, authentication, residency and inference settings, then confirm. **Start now** offers a temporary server with a runtime preview before confirmation.
-3. Select an endpoint to work in one scrolling form. Its sections are **Status** (model, role, port, state, Start or Stop, copy address and model ID), **Load** (runtime, Splash preset, load on request, memory policy, idle unload), **Inference** and **Acceleration** (chat roles only), **Access** (port, API key, Tailscale share, app setup) and **Tasks** (typed roles only). Every control has a one-line caption with what it changes and its valid range.
+3. Select an endpoint to work in one scrolling form. A bar pinned above the form keeps the endpoint in view while you scroll: its state and model, the base URL with a copy button, the port with **Change…**, a lock that turns Workbench key protection on or off, and **Start server…** or **Stop server**. The sections are **Status** (model, role, state, model ID), **Load** (runtime, system headroom, load on request, residency, memory check and reserve, execution wait, Splash preset, with **Review memory policy…**, **Model router…** and the login item in one row), **Inference** and **Experimental** (chat roles only), **Server** (API key, Tailscale share, app setup) and **Tasks** (typed roles only). Hover a control for a plain-English explanation and its valid range. **Preview settings** and **Discard changes** are available only while an inference setting differs from what the endpoint serves with.
 
 When a discovered endpoint already serves the selected model, **Open existing endpoint** takes you to its settings. The endpoint keeps its existing configuration. If the engine refuses a start because the model already has an endpoint, the message names that endpoint's address, runtime, state and whether it requires an API key.
 
 To run one model on more than one endpoint, open **Settings → Serving → Duplicate serving** and choose **Allow a model…**. Workbench shows the exact model the engine will allow; **Confirm** saves it. **Remove…** returns a model to one endpoint. A change applies to endpoints started after it, and API keys and memory admission stay in effect.
 
-To reach several endpoints through one address, use the **Workbench API** row at the top of the Serving list; **Settings → Serving → Workbench API port** sets its port (default 8090). Choose **Create key and start**. Workbench creates one Workbench API key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The row shows the address, state and the number of routed models, with **Start**/**Stop**, **Copy address**, **Workbench key…** and **Set up an app…**. **Workbench key…** opens the Workbench key wizard (see Require an API key below). The Workbench API routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Protect with Workbench key…** (or **Use Workbench key…** for an endpoint with its own key) in **Access**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the row lists the routed model count. Starting, stopping, swapping or removing an endpoint automatically refreshes the Workbench API's route list while it is running. Each model name behind the Workbench API must map to a single endpoint using the Workbench API key: if two enabled endpoints share the key and advertise the same model name, the Workbench API row warns about the collision and the Workbench API omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the Workbench API key for that model. Endpoints keep their own ports, loading and memory admission, and the Workbench API key stays in Keychain when no endpoint uses it.
+To reach several endpoints through one address, use the **Workbench API** row at the top of the Serving list; **Settings → Serving → Workbench API port** sets its port (default 8090). Choose **Create key and start**. Workbench creates one Workbench API key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The row shows the address, state and the number of routed models, with **Start**/**Stop**, **Copy address**, **Workbench key…** and **Set up an app…**. **Workbench key…** opens the Workbench key wizard (see Require an API key below). The Workbench API routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and turn on the endpoint bar's key lock (or choose **Use Workbench key…** in **Server** for an endpoint with its own key), which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the row lists the routed model count. Starting, stopping, swapping or removing an endpoint automatically refreshes the Workbench API's route list while it is running. Each model name behind the Workbench API must map to a single endpoint using the Workbench API key: if two enabled endpoints share the key and advertise the same model name, the Workbench API row warns about the collision and the Workbench API omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the Workbench API key for that model. Endpoints keep their own ports, loading and memory admission, and the Workbench API key stays in Keychain when no endpoint uses it.
 
 The endpoint list has three sections. **Roles** has one row per serving role, in catalog order, each on its own canonical port; an assigned role shows its model, port and status with **Stop** or **Start** and **Change model…**, and an unassigned role shows **Not assigned - :port** and **Choose model…**. **Custom endpoints** lists saved endpoints without a role and **Add custom endpoint…**. **Other servers on this Mac** is collapsed, with a count, and lists external servers and inventory entries. **Choose model…** lists ready Library models whose task the role accepts; the review shows the role's port and a confirmation adds the endpoint. Each row shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Sources that missed the latest refresh are listed under the endpoint list, with each source and its message in the sheet. They do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 
-**Status** shows the base URL and model ID, which you can copy directly; **Access** holds the port and API-key controls. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
+The pinned bar holds the base URL, port and key lock; **Status** shows the model ID and **Server** copies or resets the API key. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
 
 ## Share a chat endpoint with Tailscale
 
@@ -94,7 +94,7 @@ length ranges from 256 to 65536 tokens; the engine default is 8,192. On
 load-on-request chat endpoints it also sets a default system prompt (up to 8,192
 UTF-8 bytes), temperature (0 to 2) and top-p (0 to 1), used only when a client omits
 them. Client requests can supply their own limits. Thinking off can trade
-deliberation for shorter responses. **Acceleration** holds M5 prefill, prompt
+deliberation for shorter responses. **Experimental** holds M5 prefill, prompt
 lookup, the vision cache and the shared prefix cache (16 to 2048 MiB). The same
 bounds validate the settings, so each caption states the range the preview accepts.
 
@@ -120,7 +120,7 @@ settings. A saved endpoint must be stopped to edit launch defaults; preview and
 confirm the new configuration before starting it again.
 
 Choose **Configure clients…** on a running endpoint to open the app setup in its
-**Access** section. Clients rechecks its process and adapter identity; a changed or
+**Server** section. Clients rechecks its process and adapter identity; a changed or
 stopped server requires a fresh selection from Serving. Opening Clients does not
 write configuration. Preview and confirm client wiring before applying it.
 
@@ -231,17 +231,18 @@ Changing a field on an endpoint (load mode, memory policy, Splash preset, infere
 it that endpoint's own value.
 Endpoints saved by earlier releases keep all of their own values.
 
-### Serving inspector layout, configuration and profiles
+### Serving inspector layout, presets and profiles
 
-In a wide window the inspector has two columns: the settings sections (up to 640 pt) and
-**Configuration** filling the rest. Narrower windows use one column with **Configuration**
-after **Status**. Numeric fields and pickers size to their content; the system prompt takes the
-column width.
+In a wide window the inspector has two columns: **Status**, **Load**, **Server** and **Tasks**
+(up to 640 pt), with **Inference**, **Experimental** and **Presets** beside them. Narrower
+windows use one column with **Presets** after **Status**. Numeric fields and pickers size to
+their content; the system prompt takes the column width.
 
-**Configuration** shows the selected endpoint's effective settings as sorted-key JSON in
-monospaced text, with each setting's source (**Model default** or **This endpoint**). The
-picker switches the view to the model default or a saved profile. **Copy JSON** copies the
-shown text. The JSON contains no API key or key digest; protection appears as `"protected" : true`.
+**Presets** lists only the settings of the chosen preset that differ from the model default,
+each with its value and a source badge (**This endpoint**, **Model default** or **Profile**).
+The picker switches between the endpoint, the model default and saved profiles. **Show JSON…**
+opens the chosen preset as sorted-key JSON with **Copy JSON**. The JSON contains no API key or
+key digest; protection appears as `"protected" : true`.
 
 A profile is a named settings set saved per model: inference settings, memory policy, load
 on request, Splash preset and serving profile id.
@@ -293,13 +294,13 @@ workers and included agent processes. This limit is separate from system headroo
 and each Strata model's memory budget. Applying it preserves the engine's included
 process identities; it does not stop unrelated applications.
 
-Each load-on-request endpoint has compact controls for:
+Each load-on-request endpoint has compact controls in **Load**. **Residency** is one choice: **Release weights after each request**, **Keep loaded**, or **Unload after idle** with its duration.
 
 | Control | Default for new endpoints |
 |---|---|
-| Idle unload | After 600 seconds without requests |
-| Keep loaded after use | Off; when on, the model is not unloaded automatically, but manual Unload still works |
-| Headroom reserve | 2 GB |
+| Residency | Unload after 10 minutes idle |
+| Keep loaded | Off; when chosen, the model is not unloaded automatically, but manual Unload still works |
+| Memory check reserve | 2 GB |
 
 The engine owns the idle timer, so idle unload works for requests from any client, with or without the app open. Idle time starts when the last request ends. Policy changes apply to the running gateway without a restart.
 
@@ -360,7 +361,7 @@ jobs and benchmarks, or **Keep loaded between requests** for a session. Both loa
 weights on the first request. Release mode stops the owned model worker after
 completion; keep mode retains the same model object for the next job. Existing
 caches stay in place and serving never downloads weights. Change either choice
-later in the endpoint's **Memory management** controls. Manual Unload keeps the
+later in the endpoint's **Residency** control in **Load**. Manual Unload keeps the
 endpoint reachable; Stop also closes it. Active jobs finish or are cancelled
 before their weights are released.
 
@@ -406,7 +407,7 @@ endpoint stays on loopback and loads weights on request. Use **Copy base URL**,
 **Copy model ID** and **Copy API key** to configure each authorized client;
 clients read the key from `MLX_AGENT_API_KEY`.
 
-The **Workbench key wizard** (the key button in the Serving list header, **Workbench key…** on the Workbench API row, or **Protected by Workbench key** and
+The **Workbench key wizard** (the key button in the Serving list header, **Workbench key…** on the Workbench API row, or the endpoint bar's key lock and
 **Protect with Workbench key…** while no key exists) has three steps and opens at the first one that still has work.
 **Create key** makes the key once, or shows an existing one as `…` and its last four digest characters.
 **Protect endpoints** lists every fleet endpoint not on the key, including endpoints with their own key, all checked
@@ -423,7 +424,7 @@ For a saved endpoint, stop it first, then choose **Protect with Workbench key…
 Review and save the change, then start the endpoint. Authentication changes
 leave the endpoint stopped. **Disable authentication…** explicitly restores
 access for local clients without a key. An endpoint saved with its own key keeps
-working with it; its **Access** section offers **Use Workbench key…** to move it
+working with it; its **Server** section offers **Use Workbench key…** to move it
 onto the Workbench key through the same review.
 
 **Reset Workbench key…** lists every protected endpoint and the Workbench API.

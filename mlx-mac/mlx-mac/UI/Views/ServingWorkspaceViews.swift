@@ -66,14 +66,23 @@ enum ServingWorkspacePresentation {
     }
     static func provider(_ row: ServingRow) -> String {
         if let service = service(row), !service.isWorkbenchManaged { return service.providerName }
-        switch server(row)?.runtime {
+        return runtimeTitle(server(row)?.runtime) ?? "Workbench"
+    }
+    /// Display name of a known runtime; nil for `auto` or an unknown one.
+    static func runtimeTitle(_ runtime: String?) -> String? {
+        switch runtime {
         case "strata": return "Strata"
         case "splash": return "Splash"
         case "mlx_lm": return "MLX-LM"
         case "mlx-vlm": return "MLX-VLM"
         case "tasks": return "Task server"
-        default: return "Workbench"
+        default: return nil
         }
+    }
+    /// Red when the row needs attention, green while running, muted otherwise.
+    static func dotColor(_ row: ServingRow) -> Color {
+        if attentionReason(row) != nil { return WorkbenchColor.failure }
+        return isRunning(row) ? WorkbenchColor.success : WorkbenchColor.muted.opacity(0.5)
     }
     static func baseURL(_ row: ServingRow) -> String? {
         if case .endpoint(let slot, _, _) = row { return "http://127.0.0.1:\(slot.port)/v1" }
@@ -218,7 +227,7 @@ private struct ServingModelRow: View {
                 }
             }
             HStack(spacing: WorkbenchSpacing.xs) {
-                Circle().fill(dotColor).frame(width: 7, height: 7).accessibilityHidden(true)
+                Circle().fill(ServingWorkspacePresentation.dotColor(row)).frame(width: 7, height: 7).accessibilityHidden(true)
                 if case .endpoint(let slot, _, _) = row, let role = slot.role {
                     Text(role.title)
                     Text("·")
@@ -230,11 +239,6 @@ private struct ServingModelRow: View {
         }
         .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
         .help(ServingWorkspacePresentation.baseURL(row) ?? "")
-    }
-
-    private var dotColor: Color {
-        if ServingWorkspacePresentation.attentionReason(row) != nil { return WorkbenchColor.failure }
-        return ServingWorkspacePresentation.isRunning(row) ? WorkbenchColor.success : WorkbenchColor.muted.opacity(0.5)
     }
 }
 
@@ -352,7 +356,10 @@ struct ServingModelList: View {
                         }
                     }.accessibilityIdentifier("serving-other-servers")
                 }
-            }.listStyle(.sidebar).accessibilityIdentifier("serving-model-list")
+            }
+            .listStyle(.inset)
+            .scrollContentBackground(.hidden)
+            .accessibilityIdentifier("serving-model-list")
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 Toggle("Include available models", isOn: $includesAvailable).toggleStyle(.checkbox)
                     .font(WorkbenchTypography.secondary).accessibilityIdentifier("serving-include-available")
@@ -365,7 +372,9 @@ struct ServingModelList: View {
                         .accessibilityIdentifier("serving-source-issues")
                 }
             }.padding(WorkbenchSpacing.md)
-        }.frame(minWidth: WorkbenchSize.Serving.sidebar, idealWidth: WorkbenchSize.Serving.sidebar, maxWidth: WorkbenchSize.Serving.sidebar)
+        }
+        .frame(minWidth: WorkbenchSize.Serving.sidebar, idealWidth: WorkbenchSize.Serving.sidebar, maxWidth: WorkbenchSize.Serving.sidebar)
+        .background(WorkbenchColor.sidebar)
     }
 }
 
