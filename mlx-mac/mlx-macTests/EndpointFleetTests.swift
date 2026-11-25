@@ -306,6 +306,7 @@ final class EndpointFleetTests: XCTestCase {
         world.recorder = lifecycle
         let supervisor = makeSupervisor(world: world)
         await supervisor.addSlot(modelPath: "/Models/first", port: 8766)
+        await supervisor.reconcile()
         world.kill(port: 8766)
         lifecycle.record("before-request")
 
@@ -326,6 +327,7 @@ final class EndpointFleetTests: XCTestCase {
 
         await supervisor.addSlot(modelPath: "/Models/coding", port: 8766, role: .coding)
         await supervisor.addSlot(modelPath: "/Models/chat", port: 8767, role: .general)
+        await supervisor.reconcile()
         lifecycle.record("reset-marker")
         world.kill(port: 8766)
 
@@ -341,17 +343,41 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertEqual(supervisor.slotStates.values.count, 2)
     }
 
+    func testSlotWaitingForServerIsNotRestartedWithinTheStartGrace() async {
+        let world = FakeServeWorld()
+        world.survives = false
+        let lifecycle = LifecycleRecorder()
+        world.recorder = lifecycle
+        let clock = TestClock()
+        let supervisor = makeSupervisor(world: world, clock: clock)
+        await supervisor.addSlot(modelPath: "/Models/slow", port: 8766)
+        let slot = supervisor.fleet.slots[0]
+        XCTAssertEqual(supervisor.slotStates[slot.id], .waitingForServer)
+        let starts = { lifecycle.events.filter { $0.hasPrefix("start:") }.count }
+        let before = starts()
+
+        clock.date.addTimeInterval(10)
+        await supervisor.reconcile()
+        XCTAssertEqual(starts(), before)
+
+        clock.date.addTimeInterval(21)
+        await supervisor.reconcile()
+        XCTAssertEqual(starts(), before + 1)
+    }
+
     func testCrashLoopGuardIsPerSlot() async {
         let world = FakeServeWorld()
         world.survives = false
-        let supervisor = makeSupervisor(world: world)
+        let clock = TestClock()
+        let supervisor = makeSupervisor(world: world, clock: clock)
         await supervisor.addSlot(modelPath: "/Models/crasher", port: 8766)
 
-        // Three failed attempts put the crasher into degraded on the next
-        // pass — before the healthy slot even exists.
-        await supervisor.reconcile()
-        await supervisor.reconcile()
-        await supervisor.reconcile()
+        // Three failed attempts, each past the start grace, put the crasher
+        // into degraded on the next pass — before the healthy slot even exists.
+        for _ in 0..<3 {
+            clock.date.addTimeInterval(31)
+            await supervisor.reconcile()
+        }
 
         let crasher = supervisor.fleet.slots.first { $0.port == 8766 }!
         guard case .degraded = supervisor.slotStates[crasher.id] else {
@@ -493,13 +519,16 @@ final class EndpointFleetTests: XCTestCase {
         )
     }
 
-    private func makeSupervisor(world: FakeServeWorld = FakeServeWorld()) -> EndpointSupervisor {
+    private final class TestClock { var date = Date() }
+
+    private func makeSupervisor(world: FakeServeWorld = FakeServeWorld(), clock: TestClock? = nil) -> EndpointSupervisor {
         let urls = makeStoreURLs()
         return EndpointSupervisor(
             lifecycle: world.lifecycle,
             statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: urls.legacy),
             fleetStore: JSONStore<EndpointFleetConfig>(fileURL: urls.fleet),
+            now: clock.map { clock in { clock.date } } ?? Date.init,
             maxRestarts: 3,
             restartWindow: 300
         )
