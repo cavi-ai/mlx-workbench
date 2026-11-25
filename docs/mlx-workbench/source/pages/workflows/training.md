@@ -110,7 +110,7 @@ remain readable and reviewable when their recorded schema and identity support i
 
 ## Controlled studies
 
-**Experiments**, in the Workspaces sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Experiments** opens the same workspace. Returning to Experiments refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
+**Experiments**, in the Studio sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Experiments** opens the same workspace. Returning to Experiments refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
 
 A **recipe** records the baseline prompt, generation settings, model and runtime
 identities. A controlled experiment changes one setting to create two candidates.

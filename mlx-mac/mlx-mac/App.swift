@@ -57,15 +57,7 @@ struct MlxWorkbenchApp: App {
                     alert.runModal()
                 }
             }
-            CommandGroup(after: .windowList) {
-                Button("Rescan Models") {
-                    appHost.requestRescan()
-                }
-                .keyboardShortcut("r", modifiers: [.command])
-            }
-            CommandGroup(after: .pasteboard) {
-                IntakeMenuCommand(intake: appHost.intake)
-            }
+            WorkbenchCommands(appHost: appHost, selectedRouteID: $selectedRouteID)
             // Settings is a workbench destination, so one draft state exists;
             // ⌘, selects it instead of opening a second Settings window.
             CommandGroup(replacing: .appSettings) {

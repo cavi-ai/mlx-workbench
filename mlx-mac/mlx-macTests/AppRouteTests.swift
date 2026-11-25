@@ -19,25 +19,49 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
-        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Sources", "Attention", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [1, 2, 1, 8, 4, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Home", "Models", "Serving", "Studio", "System"])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 5, 3, 4, 3])
     }
 
-    func testSidebarGroupsFollowTheModelFirstOrder() {
+    func testSidebarGroupsFollowTheTaskOrder() {
         let grouped = AppRoute.grouped
-        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Sources", "Attention", "Workspaces", "System", "Settings"])
+        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Home", "Models", "Serving", "Studio", "System"])
+        XCTAssertEqual(grouped.map { $0.routes.count }, [2, 5, 3, 4, 3])
         XCTAssertEqual(grouped.map(\.routes), [
-            [.library], [.sources, .discover], [.reclaim],
-            [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal],
-            [.overview, .activity, .clientSetup, .health], [.settings],
+            [.overview, .use],
+            [.library, .sources, .discover, .prepare, .reclaim],
+            [.run, .clientSetup, .monitor],
+            [.compare, .studies, .training, .terminal],
+            [.activity, .health, .settings],
         ])
+        XCTAssertEqual(AppRoute.grouped.flatMap(\.routes).first, .overview)
+    }
+
+    func testNoSidebarGroupHoldsASinglePage() {
+        for entry in AppRoute.grouped {
+            XCTAssertGreaterThan(entry.routes.count, 1, "\(entry.group.rawValue) holds one page")
+        }
+    }
+
+    func testEveryCurrentRouteAppearsOnceInItsOwnGroup() {
+        let listed = AppRoute.grouped.flatMap(\.routes)
+        let current = AppRoute.allCases.filter { $0.navigationDestination == $0 }
+        XCTAssertEqual(listed.count, current.count)
+        XCTAssertEqual(Set(listed), Set(current))
+        for entry in AppRoute.grouped {
+            for route in entry.routes {
+                XCTAssertEqual(route.group, entry.group, "\(route.label) is listed outside its group")
+            }
+        }
+        XCTAssertEqual(AppRoute.lmStudio.group, .models)
+        XCTAssertEqual(AppRoute.adopt.group, .models)
     }
 
     func testCollapsedSidebarSectionShowsItsPagesCount() {
-        let badges: [AppRoute: String] = [.overview: "3", .health: "2", .reclaim: "12 GB"]
+        let badges: [AppRoute: String] = [.activity: "3", .health: "2", .reclaim: "12 GB"]
         XCTAssertEqual(AppSidebar.headerBadge(for: .system, expanded: false, badges: badges), "5")
         XCTAssertNil(AppSidebar.headerBadge(for: .system, expanded: true, badges: badges))
-        XCTAssertNil(AppSidebar.headerBadge(for: .workspaces, expanded: false, badges: badges))
+        XCTAssertNil(AppSidebar.headerBadge(for: .studio, expanded: false, badges: badges))
     }
 
 
@@ -82,7 +106,7 @@ final class AppRouteTests: XCTestCase {
 
     func testCommandNumberShortcutsFollowTheSidebarOrder() {
         XCTAssertEqual(ContentView.shortcutRoutes, [
-            .library, .sources, .discover, .reclaim, .use, .run, .monitor, .compare, .prepare, .settings,
+            .overview, .use, .library, .sources, .discover, .prepare, .reclaim, .run, .clientSetup, .settings,
         ])
         let sidebarOrder = AppRoute.grouped.flatMap(\.routes)
         XCTAssertEqual(Array(ContentView.shortcutRoutes.prefix(9)), Array(sidebarOrder.prefix(9)))
@@ -126,25 +150,25 @@ final class AppRouteTests: XCTestCase {
 
     func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {
         let expected: [(AppRoute, String, String, String)] = [
-            (.overview, "System", "Overview", "house"),
+            (.overview, "Home", "Overview", "house"),
             (.library, "Models", "Library", "books.vertical"),
-            (.use, "Workspaces", "Use", "bubble.left.and.bubble.right"),
-            (.prepare, "Workspaces", "Convert", "shippingbox"),
-            (.compare, "Workspaces", "Compare", "chart.bar"),
-            (.run, "Workspaces", "Serving", "server.rack"),
+            (.use, "Home", "Use", "bubble.left.and.bubble.right"),
+            (.prepare, "Models", "Convert", "shippingbox"),
+            (.compare, "Studio", "Compare", "chart.bar"),
+            (.run, "Serving", "Serving", "server.rack"),
             (.activity, "System", "Activity", "clock.arrow.circlepath"),
-            (.reclaim, "Attention", "Disk space", "square.3.layers.3d"),
-            (.clientSetup, "System", "Clients", "arrow.triangle.branch"),
+            (.reclaim, "Models", "Disk space", "square.3.layers.3d"),
+            (.clientSetup, "Serving", "Clients", "arrow.triangle.branch"),
             (.health, "System", "Health", "stethoscope"),
-            (.discover, "Sources", "Discover", "magnifyingglass"),
+            (.discover, "Models", "Discover", "magnifyingglass"),
             (.lmStudio, "Models", "LM Studio", "square.and.arrow.down"),
-            (.studies, "Workspaces", "Experiments", "square.split.2x1"),
-            (.training, "Workspaces", "Training", "sparkles"),
-            (.adopt, "Sources", "Adopt", "hand.tap"),
-            (.settings, "Settings", "Settings", "gearshape"),
-            (.monitor, "Workspaces", "Monitor", "waveform.path.ecg"),
-            (.sources, "Sources", "Model sources", "externaldrive.connected.to.line.below"),
-            (.terminal, "Workspaces", "Terminal", "apple.terminal")
+            (.studies, "Studio", "Experiments", "square.split.2x1"),
+            (.training, "Studio", "Training", "sparkles"),
+            (.adopt, "Models", "Adopt", "hand.tap"),
+            (.settings, "System", "Settings", "gearshape"),
+            (.monitor, "Serving", "Monitor", "waveform.path.ecg"),
+            (.sources, "Models", "Model sources", "externaldrive.connected.to.line.below"),
+            (.terminal, "Studio", "Terminal", "apple.terminal")
         ]
 
         for (route, group, label, symbol) in expected {

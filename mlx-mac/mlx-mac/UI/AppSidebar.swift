@@ -133,32 +133,33 @@ struct AppSidebar: View {
 
     var body: some View {
         List(selection: selection) {
+            Section {
+                routeRows(AppRoute.routes(in: .home))
+            }
             Section(AppRoute.Group.models.rawValue) {
                 filterRow(.all, title: "All models", symbol: AppRoute.library.symbolName)
                     .accessibilityLabel(AppRoute.library.label)
                 ForEach(ModelCategory.allCases.filter { count(.category($0)) > 0 }) { category in
                     filterRow(.category(category), title: category.title, symbol: category.symbolName)
                 }
-            }
-            Section(AppRoute.Group.sources.rawValue) {
-                routeRows(AppRoute.routes(in: .sources))
-            }
-            Section(AppRoute.Group.attention.rawValue) {
                 filterRow(.needsConversion, title: "To convert", symbol: "arrow.triangle.2.circlepath")
-                routeRows(AppRoute.routes(in: .attention))
+                routeRows(AppRoute.routes(in: .models).filter { $0 != .library })
+            }
+            Section(AppRoute.Group.serving.rawValue) {
+                routeRows(AppRoute.routes(in: .serving))
             }
             Section(isExpanded: $workspacesExpanded) {
-                routeRows(AppRoute.routes(in: .workspaces))
+                routeRows(AppRoute.routes(in: .studio))
             } header: {
-                sectionHeader(.workspaces, expanded: workspacesExpanded)
+                sectionHeader(.studio, expanded: workspacesExpanded)
             }
             Section(isExpanded: $systemExpanded) {
-                routeRows(AppRoute.routes(in: .system))
+                routeRows(AppRoute.routes(in: .system).filter { $0 != .settings })
             } header: {
                 sectionHeader(.system, expanded: systemExpanded)
             }
             Section {
-                routeRows(AppRoute.routes(in: .settings))
+                routeRows([.settings])
             }
         }
         .listStyle(.sidebar)

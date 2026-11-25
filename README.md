@@ -81,9 +81,11 @@ Strata and Splash are optional installations. Splash requires an M3 or newer Mac
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Models | Library, Model sources, Discover, Disk space | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
-| Workspaces | Use, Serving, Monitor, Compare, Convert, Training, Experiments, Terminal | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token, throughput and memory-owner monitoring, measured comparisons in ten modes, previewed conversion from FP32 to 2-bit with quality gate canaries, text LoRA training with evaluation, controlled studies, OpenCode or a shell in a chosen folder |
-| System | Overview, Activity, Clients, Health | Model budget, job timeline, guided client setup with connection tests and undo, runtime readiness |
+| Home | Overview, Use | Model budget, persistent conversations |
+| Models | Library, Model sources, Discover, Convert, Disk space | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, previewed conversion from FP32 to 2-bit with quality gate canaries, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
+| Serving | Serving, Clients, Monitor | Always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, guided client setup with connection tests and undo, live token, throughput and memory-owner monitoring |
+| Studio | Compare, Experiments, Training, Terminal | Measured comparisons in ten modes, controlled studies, text LoRA training with evaluation, OpenCode or a shell in a chosen folder |
+| System | Activity, Health, Settings | Job timeline, runtime readiness |
 
 Served music models also generate sound effects and ambience.
 

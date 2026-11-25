@@ -392,6 +392,7 @@
 		E70600000000000000000702 /* UseWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000701 /* UseWorkspaceView.swift */; };
 		E70600000000000000000802 /* UseWorkViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000801 /* UseWorkViews.swift */; };
 		E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000901 /* UseWorkspaceCommands.swift */; };
+		E70600000000000000000A02 /* WorkbenchCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000A01 /* WorkbenchCommands.swift */; };
 		E71100000000000000000102 /* MediaReuseSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000101 /* MediaReuseSettings.swift */; };
 		E71100000000000000000202 /* MediaReuseCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000201 /* MediaReuseCapabilities.swift */; };
 		E71100000000000000000302 /* MediaReuseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000301 /* MediaReuseViews.swift */; };
@@ -810,6 +811,7 @@
 		E70600000000000000000701 /* UseWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkspaceView.swift; sourceTree = "<group>"; };
 		E70600000000000000000801 /* UseWorkViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkViews.swift; sourceTree = "<group>"; };
 		E70600000000000000000901 /* UseWorkspaceCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/UseWorkspaceCommands.swift; sourceTree = "<group>"; };
+		E70600000000000000000A01 /* WorkbenchCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/WorkbenchCommands.swift; sourceTree = "<group>"; };
 		E71100000000000000000101 /* MediaReuseSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/MediaReuseSettings.swift; sourceTree = "<group>"; };
 		E71100000000000000000201 /* MediaReuseCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MediaReuseCapabilities.swift; sourceTree = "<group>"; };
 		E71100000000000000000301 /* MediaReuseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/MediaReuseViews.swift; sourceTree = "<group>"; };
@@ -903,6 +905,7 @@
 				A0D100000000000000000001 /* LocalAudioRouting.swift */,
 				C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */,
 				E70600000000000000000901 /* UseWorkspaceCommands.swift */,
+				E70600000000000000000A01 /* WorkbenchCommands.swift */,
 				E70600000000000000000801 /* UseWorkViews.swift */,
 				E70600000000000000000701 /* UseWorkspaceView.swift */,
 				E70600000000000000000601 /* UseWorkspaceCoordinator.swift */,
@@ -1493,6 +1496,7 @@
 				A0D100000000000000000011 /* LocalAudioRouting.swift in Sources */,
 				C0DE00000000000000000011 /* InferenceTaskCoordinator.swift in Sources */,
 				E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */,
+				E70600000000000000000A02 /* WorkbenchCommands.swift in Sources */,
 				E70600000000000000000802 /* UseWorkViews.swift in Sources */,
 				E70600000000000000000702 /* UseWorkspaceView.swift in Sources */,
 				E70600000000000000000602 /* UseWorkspaceCoordinator.swift in Sources */,
