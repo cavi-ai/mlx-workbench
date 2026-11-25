@@ -151,11 +151,16 @@ enum ClientAdapters {
         advisoryNote: nil,
         apiKeyPlan: { contents, key in
             var config = try JSONCTolerant.parse(contents)
-            var providers = config["providers"] as? [String: Any] ?? [:]
-            var local = providers[providerID] as? [String: Any] ?? [:]
-            var settings = local["settings"] as? [String: Any] ?? [:]
+            let current = config["providers"] as? [String: Any]
+            let legacy = config["provider"] as? [String: Any]
+            let usesLegacy = current?[providerID] == nil && legacy?[legacyProviderID] != nil
+            let (map, id, options) = usesLegacy
+                ? ("provider", legacyProviderID, "options") : ("providers", providerID, "settings")
+            var providers = config[map] as? [String: Any] ?? [:]
+            var local = providers[id] as? [String: Any] ?? [:]
+            var settings = local[options] as? [String: Any] ?? [:]
             settings["apiKey"] = key
-            local["settings"] = settings; providers[providerID] = local; config["providers"] = providers
+            local[options] = settings; providers[id] = local; config[map] = providers
             return try JSONCTolerant.serialize(config)
         },
         read: { contents in
@@ -190,15 +195,31 @@ enum ClientAdapters {
         var providers = (config["providers"] as? [String: Any]) ?? [:]
         var legacy = (config["provider"] as? [String: Any]) ?? [:]
         let existing = providers[providerID] as? [String: Any]
-        let legacyModels = (legacy[legacyProviderID] as? [String: Any])?["models"] as? [String: Any]
+        let legacyEntry = legacy[legacyProviderID] as? [String: Any]
+        let legacyModels = legacyEntry?["models"] as? [String: Any]
         // Exactly the endpoint's models; settings of names that remain carry over.
         let previous = (existing?["models"] as? [String: Any]) ?? legacyModels ?? [:]
         var models: [String: Any] = [:]
         for name in endpoint.models + [endpoint.modelName] { models[name] = previous[name] ?? [String: Any]() }
+        if existing == nil, var legacyEntry, !opencodeLegacyCanMigrate(legacyEntry, models: models) {
+            var options = legacyEntry["options"] as? [String: Any] ?? [:]
+            options["baseURL"] = endpoint.baseURL
+            options["apiKey"] = "workbench"
+            if legacyEntry["api"] != nil { legacyEntry["api"] = endpoint.baseURL }
+            legacyEntry["options"] = options
+            legacyEntry["models"] = models
+            legacy[legacyProviderID] = legacyEntry
+            config["provider"] = legacy
+            config["model"] = "\(legacyProviderID)/\(endpoint.modelName)"
+            return try JSONCTolerant.serialize(config)
+        }
         var entry = existing ?? [:]
         entry["name"] = "mlx-agent (local)"
         entry["package"] = "aisdk:@ai-sdk/openai-compatible"
-        entry["settings"] = ["baseURL": endpoint.baseURL, "apiKey": "workbench"]
+        var settings = entry["settings"] as? [String: Any] ?? [:]
+        settings["baseURL"] = endpoint.baseURL
+        settings["apiKey"] = "workbench"
+        entry["settings"] = settings
         entry["models"] = models
         providers[providerID] = entry
         config["providers"] = providers
@@ -206,6 +227,19 @@ enum ClientAdapters {
         if legacy.isEmpty { config.removeValue(forKey: "provider") } else { config["provider"] = legacy }
         config["model"] = "\(providerID)/\(endpoint.modelName)"
         return try JSONCTolerant.serialize(config)
+    }
+
+    /// OpenCode 2 reads legacy providers, including settings whose native representation has changed.
+    /// Migrate only the fields this adapter can carry over directly.
+    private static func opencodeLegacyCanMigrate(_ entry: [String: Any], models: [String: Any]) -> Bool {
+        let options = entry["options"] as? [String: Any] ?? [:]
+        return Set(entry.keys).isSubset(of: ["npm", "options", "models"])
+            && (entry["npm"] == nil || entry["npm"] as? String == "@ai-sdk/openai-compatible")
+            && Set(options.keys).isSubset(of: ["baseURL", "apiKey"])
+            && models.values.allSatisfy { value in
+                guard let model = value as? [String: Any] else { return false }
+                return Set(model.keys).isSubset(of: ["name", "family", "limit", "headers"])
+            }
     }
 
     static let continue_ = ClientAdapter(

@@ -2406,7 +2406,10 @@ private struct EndpointProfileSheet: View {
                 }
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 460)
-        .onAppear { selected = choices.contains(where: { $0.id == slot.servingProfile?.id }) ? slot.servingProfile?.id : nil }
+        .onAppear {
+            let current = endpoint.effectiveSlot(slot).servingProfile?.id
+            selected = choices.contains(where: { $0.id == current }) ? current : nil
+        }
         .interactiveDismissDisabled(busy)
     }
 }

@@ -200,7 +200,7 @@ Select a ready model, then choose **Save as endpoint** in **Serve a model** (**S
 Set the port and **Load on request**, and, with load on request, whether weights are
 released after each request or kept loaded. Choose **Add endpoint…** (**Add unverified endpoint…** for a
 model that has not passed verification) and review the model, port, verification and memory warnings, then
-confirm. Up to eight endpoints can be saved, each on its own stable port between 1024 and 65535
+confirm. Up to sixteen endpoints can be saved, each on its own stable port between 1024 and 65535
 that no endpoint or server already uses, supporting simultaneous co-resident chat, vision, audio, video/media and embedding servers.
 
 Each endpoint row shows its state and base URL. Chat endpoints use the OpenAI-compatible API; typed endpoints advertise their operations at `/v1/models` and accept jobs at `/v1/tasks`. Use **Copy base URL**
@@ -219,7 +219,7 @@ model does not establish that one configuration is fastest for every workload.
 Saved endpoints in **Served models** keep chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
 Starting one endpoint checks that endpoint immediately. The background supervisor handles repairs for the rest of the fleet.
 
-- **Choose model…** on a role row uses that role's canonical port; **Add custom endpoint…** suggests the next free port. Up to eight endpoints.
+- **Choose model…** on a role row uses that role's canonical port; **Add custom endpoint…** suggests the next free port. Up to sixteen endpoints.
 - Endpoints require a verified model unless you explicitly override for an unverified one.
 - Each endpoint row shows status, restarts, a fit chip, **Stop** or **Start…**, and an overflow menu with the remaining controls.
 - **Load** displays a live **Fleet co-residency budget** bar combining per-modality estimates (LLM, Vision, Audio, Video, Image, Embedding), load-on-request dormant state, Splash memory caps and any configured shared agent memory limit. When one or more models lack size data, the bar surfaces the partial known total alongside the unknown slot count without fabricating sizes.
@@ -345,7 +345,7 @@ Opening the panel never refreshes external hosts. The refresh button beside each
 
 Saved serving profiles carry runtime settings for one model through verification and the endpoint configuration. They are used by the optional Strata runtime; see [Strata](strata.md).
 
-The selected endpoint shows its configured profile or Splash preset. To change a saved Strata endpoint's profile, stop it, choose **Change serving profile…** beside **Serving profile**, choose a verified profile or runtime defaults, and review the launch settings before saving. The endpoint stays stopped until you start it.
+The selected endpoint shows its configured profile or Splash preset. To change a saved Strata endpoint's profile, stop it, choose **Change serving profile…** beside **Serving profile**, choose a verified profile or runtime defaults, and review the launch settings before saving. This choice overrides the model's default profile for that endpoint. The endpoint stays stopped until you start it.
 
 If disabling or removing an endpoint cannot confirm its server stopped, Run keeps the failure visible. **Retry stopping servers** rechecks the server identity and retries the stop. Automatic starts for that endpoint remain paused until the stop is confirmed.
 

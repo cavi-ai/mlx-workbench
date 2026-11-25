@@ -319,6 +319,31 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertNil(try JSONCTolerant.parse(ClientAdapters.opencode.plan(onlyLegacy, endpoint))["provider"])
     }
 
+    func testOpencodePlanRetainsLegacyModelOverridesWhenRewiring() throws {
+        let before = """
+        {"provider": {
+          "mlx-local": {"npm": "@ai-sdk/openai-compatible", "api": "http://127.0.0.1:8765/v1", "options": {"timeout": 45000},
+            "models": {"qwen3-8b": {"id": "qwen3-8b-original", "tool_call": true,
+              "variants": {"high": {"reasoningEffort": "high"}}}}}}}
+        """
+        let token = "mlxw_" + String(repeating: "b", count: 64)
+        let protected = WireEndpoint(baseURL: endpoint.baseURL, modelName: endpoint.modelName,
+            apiKeySHA256: EndpointCredentialStore.digest(token))
+        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.authenticatedPlan(before, protected, key: token))
+        let providers = try XCTUnwrap(parsed["provider"] as? [String: Any])
+        let local = try XCTUnwrap(providers["mlx-local"] as? [String: Any])
+        let settings = try XCTUnwrap(local["options"] as? [String: Any])
+        let model = try XCTUnwrap((local["models"] as? [String: Any])?["qwen3-8b"] as? [String: Any])
+        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertEqual(local["api"] as? String, endpoint.baseURL)
+        XCTAssertEqual(settings["baseURL"] as? String, endpoint.baseURL)
+        XCTAssertEqual(settings["apiKey"] as? String, token)
+        XCTAssertEqual(settings["timeout"] as? Int, 45000)
+        XCTAssertEqual(model["id"] as? String, "qwen3-8b-original")
+        XCTAssertEqual(model["tool_call"] as? Bool, true)
+        XCTAssertEqual((model["variants"] as? [String: [String: String]])?["high"]?["reasoningEffort"], "high")
+    }
+
     func testOpencodePlanPreservesUnrelatedKeysAndCommentsAreNormalized() throws {
         let before = "{\n  // keep this intent\n  \"theme\": \"dark\",\n}\n"
         let after = try ClientAdapters.opencode.plan(before, endpoint)
@@ -331,7 +356,7 @@ final class WiringCoordinatorTests: XCTestCase {
         let before = """
         {"providers": {
           "mlx-agent": {"name": "mlx-agent (local)", "package": "aisdk:@ai-sdk/openai-compatible",
-            "settings": {"baseURL": "http://127.0.0.1:8765/v1"},
+            "settings": {"baseURL": "http://127.0.0.1:8765/v1", "encoding": "none", "timeout": 45000},
             "models": {"qwen3-8b-alias": {"name": "Qwen alias"}, "qwen3-8b": {"limit": {"context": 32768, "output": 4096}}}},
           "ollama": {"settings": {"baseURL": "http://127.0.0.1:11434/v1"}, "models": {"llama3": {}}}},
          "model": "ollama/llama3"}
@@ -342,7 +367,10 @@ final class WiringCoordinatorTests: XCTestCase {
         let models = try XCTUnwrap(local["models"] as? [String: Any])
         XCTAssertEqual(models.keys.sorted(), ["qwen3-8b"])
         XCTAssertEqual(((models["qwen3-8b"] as? [String: Any])?["limit"] as? [String: Any])?["context"] as? Int, 32768)
-        XCTAssertEqual((local["settings"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8766/v1")
+        let settings = try XCTUnwrap(local["settings"] as? [String: Any])
+        XCTAssertEqual(settings["baseURL"] as? String, "http://127.0.0.1:8766/v1")
+        XCTAssertEqual(settings["encoding"] as? String, "none")
+        XCTAssertEqual(settings["timeout"] as? Int, 45000)
         XCTAssertEqual(parsed["model"] as? String, "mlx-agent/qwen3-8b")
         XCTAssertEqual(((providers["ollama"] as? [String: Any])?["models"] as? [String: Any])?.keys.sorted(), ["llama3"])
     }

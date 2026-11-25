@@ -210,6 +210,31 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(saved.count, 1)
     }
 
+    func testProtectingStoppedEndpointOverridesEagerModelDefault() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var slot = EndpointSlot(enabled: false, port: 8920, modelPath: "/Models/auth", loadOnRequest: false)
+        slot.overrides = []
+        let digest = EndpointCredentialStore.digest("mlxw_" + String(repeating: "c", count: 64))
+        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false,
+                                                  frontDoor: FrontDoorSettings(port: 8939, apiKeySHA256: digest))])
+        let supervisor = EndpointSupervisor(lifecycle: Self.authenticationLifecycle(), statusProvider: { [] },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
+        let defaults = ModelDefaultsStore(store: JSONStore(fileURL: root.appendingPathComponent("defaults.json")))
+        try defaults.save(.init(loadOnRequest: false), for: slot.modelPath)
+        supervisor.modelDefaultsStore = defaults
+
+        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
+        let confirmed = await supervisor.confirmAuthentication(review)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        let saved = try XCTUnwrap(store.load().first?.slots.first)
+        let effective = supervisor.effectiveSlot(saved)
+        XCTAssertEqual(effective.apiKeySHA256, digest)
+        XCTAssertTrue(effective.usesJIT)
+        XCTAssertNoThrow(try EndpointFleetConfig(slots: [effective], installedAtLogin: false).validated())
+    }
+
     func testSharedPrefixEndpointAndLoginItemUseTheReviewedPrivateKeyFile() async throws {
         let root = try makeHome()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1088,6 +1113,34 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(try store.load().first?.slots, [expected])
         XCTAssertFalse(expected.enabled)
         XCTAssertFalse(recorder.events.contains { $0.hasPrefix("start:") || $0.hasPrefix("stop:") })
+        XCTAssertTrue(try world.status().isEmpty)
+    }
+
+    func testStoppedProfileReviewKeepsSelectionAndClearOverModelDefault() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/Models/a")
+        slot.overrides = []
+        let inherited = revisionProfile(path: slot.modelPath, fingerprint: "inherited")
+        let selected = revisionProfile(path: slot.modelPath, fingerprint: "selected")
+        let (supervisor, world, profiles) = try revisionSupervisor(root: root, slots: [slot], profiles: [inherited, selected])
+        supervisor.profileResolver = { id in (try? profiles.load())?.first { $0.id == id } }
+        let defaults = ModelDefaultsStore(store: JSONStore(fileURL: root.appendingPathComponent("defaults.json")))
+        try defaults.save(.init(servingProfileID: inherited.id), for: slot.modelPath)
+        supervisor.modelDefaultsStore = defaults
+        XCTAssertEqual(supervisor.effectiveSlot(slot).servingProfile, inherited)
+
+        let review = try await supervisor.previewSlotProfile(slot: slot, profile: selected)
+        XCTAssertEqual(review.hash, ProfileRevisionServeWorld.hash(selected, port: slot.port))
+        let saved = await supervisor.confirmSlotProfile(review)
+        XCTAssertTrue(saved, supervisor.lastError ?? "")
+        let updated = try XCTUnwrap(supervisor.fleet.slots.first)
+        XCTAssertEqual(supervisor.effectiveSlot(updated).servingProfile, selected)
+
+        let clear = try await supervisor.previewSlotProfile(slot: updated, profile: nil)
+        let cleared = await supervisor.confirmSlotProfile(clear)
+        XCTAssertTrue(cleared, supervisor.lastError ?? "")
+        XCTAssertNil(supervisor.effectiveSlot(try XCTUnwrap(supervisor.fleet.slots.first)).servingProfile)
         XCTAssertTrue(try world.status().isEmpty)
     }
 

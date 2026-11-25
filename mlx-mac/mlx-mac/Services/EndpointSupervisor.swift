@@ -305,14 +305,12 @@ final class EndpointSupervisor: ObservableObject {
             if requireAPIKey {
                 let key = try draftWorkbenchKey()
                 draft = key
-                candidate.apiKeySHA256 = key.digest
-                candidate.loadOnRequest = true
-                candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName)
+                candidate = authenticationCandidate(candidate, digest: key.digest)
             }
-            guard validate(candidate, isNew: true) else { return nil }
+            let effective = effectiveSlot(candidate)
+            guard validate(candidate, isNew: true), validate(effective, isNew: true) else { return nil }
             if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
-                let effective = effectiveSlot(candidate)
                 let hash = try await accelerationPreviewHash(effective, pendingKey: try planKey(effective, pending: draft?.created))
                 guard !hash.isEmpty, fleet == before else { throw WorkflowEvidenceError.invalid("Endpoint configuration changed. Review the new endpoint again.") }
                 if inference.requested { candidate.accelerationPreviewHash = hash }
@@ -722,16 +720,9 @@ final class EndpointSupervisor: ObservableObject {
     func previewSlotProfile(slot: EndpointSlot, profile: ServingProfile?) async throws -> EndpointServingProfileReview {
         guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
         defer { activeUserOperations -= 1 }
-        guard fleet.slots.contains(slot), slot.splashPresetName == nil,
-              profile.map({ $0.hasPassedVerification && $0.modelPath == slot.modelPath }) ?? true else {
-            throw WorkflowEvidenceError.invalid("Endpoint or verified profile changed. Review it again.")
-        }
+        let candidate = try slotProfileCandidate(slot, profile: profile)
         try await requireStoppedForAuthentication(slot)
-        var candidate = slot
-        candidate.servingProfile = profile
-        candidate.profilePreviewHash = nil
-        candidate.accelerationPreviewHash = nil
-        let hash = try await accelerationPreviewHash(candidate)
+        let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
         guard !hash.isEmpty, fleet.slots.contains(slot) else {
             throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the profile again.")
         }
@@ -739,20 +730,26 @@ final class EndpointSupervisor: ObservableObject {
         return EndpointServingProfileReview(slot: slot, profile: profile, hash: hash)
     }
 
+    private func slotProfileCandidate(_ slot: EndpointSlot, profile: ServingProfile?) throws -> EndpointSlot {
+        guard fleet.slots.contains(slot), effectiveSlot(slot).splashPresetName == nil,
+              profile.map({ $0.hasPassedVerification && $0.modelPath == slot.modelPath }) ?? true else {
+            throw WorkflowEvidenceError.invalid("Endpoint or verified profile changed. Review it again.")
+        }
+        var candidate = slot
+        candidate.servingProfile = profile
+        candidate.overrides?.insert(.servingProfile)
+        candidate.profilePreviewHash = nil
+        candidate.accelerationPreviewHash = nil
+        return candidate
+    }
+
     func confirmSlotProfile(_ review: EndpointServingProfileReview) async -> Bool {
         guard beginUserOperation() else { return false }
         defer { activeUserOperations -= 1 }
         do {
-            guard fleet.slots.contains(review.slot), review.slot.splashPresetName == nil,
-                  review.profile.map({ $0.hasPassedVerification && $0.modelPath == review.slot.modelPath }) ?? true else {
-                throw WorkflowEvidenceError.invalid("Endpoint or verified profile changed. Review it again.")
-            }
+            let candidate = try slotProfileCandidate(review.slot, profile: review.profile)
             try await requireStoppedForAuthentication(review.slot)
-            var candidate = review.slot
-            candidate.servingProfile = review.profile
-            candidate.profilePreviewHash = nil
-            candidate.accelerationPreviewHash = nil
-            let hash = try await accelerationPreviewHash(candidate)
+            let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
             guard hash == review.hash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review the profile again.")
             }
@@ -760,8 +757,7 @@ final class EndpointSupervisor: ObservableObject {
             guard fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the profile again.")
             }
-            if candidate.servingProfile != nil { candidate.profilePreviewHash = hash }
-            guard validate(candidate, isNew: false), commit(replacing: candidate) else { return false }
+            guard let stamped = stampedCandidate(candidate, hash: hash), commit(replacing: stamped) else { return false }
             lastError = nil
             return true
         } catch { lastError = AppHost.render(error); return false }
@@ -1225,14 +1221,22 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     /// The slot as saved with `digest`; a protected endpoint loads on request with its memory policy retained.
-    private static func authenticationCandidate(_ slot: EndpointSlot, digest: String?) -> EndpointSlot {
+    private func authenticationCandidate(_ slot: EndpointSlot, digest: String?) -> EndpointSlot {
         var candidate = slot
         candidate.apiKeySHA256 = digest
         if digest != nil {
+            let splash = effectiveSlot(slot).splashPresetName
             candidate.loadOnRequest = true
-            candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName)
+            candidate.overrides?.insert(.loadOnRequest)
+            candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: splash)
+            if splash != nil { candidate.overrides?.insert(.memoryPolicy) }
         }
         return candidate
+    }
+
+    private func authenticationPreviewHash(_ candidate: EndpointSlot, pendingKey: String? = nil) async throws -> String {
+        let effective = effectiveSlot(candidate)
+        return try await accelerationPreviewHash(effective, pendingKey: try planKey(effective, pending: pendingKey))
     }
 
     /// Lists the endpoints a batch protect restarts; nothing is saved.
@@ -1246,8 +1250,8 @@ final class EndpointSupervisor: ObservableObject {
         let live = try await statusProvider()
         var entries: [WorkbenchKeyProtectReview.Endpoint] = []
         for slot in slots.sorted(by: { $0.port < $1.port }) {
-            let candidate = Self.authenticationCandidate(slot, digest: door.apiKeySHA256)
-            let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
+            let candidate = authenticationCandidate(slot, digest: door.apiKeySHA256)
+            let hash = try await authenticationPreviewHash(candidate)
             guard !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.") }
             let running = live.contains { $0.port == slot.port && $0.state?.lowercased() == "running" }
             entries.append(.init(slot: slot, previewHash: hash, restarts: running))
@@ -1270,8 +1274,8 @@ final class EndpointSupervisor: ObservableObject {
                 throw WorkflowEvidenceError.invalid("The Workbench key or its endpoints changed. Review protection again.")
             }
             for entry in review.endpoints {
-                let candidate = Self.authenticationCandidate(entry.slot, digest: review.workbenchDigest)
-                let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
+                let candidate = authenticationCandidate(entry.slot, digest: review.workbenchDigest)
+                let hash = try await authenticationPreviewHash(candidate)
                 guard hash == entry.previewHash else { throw WorkflowEvidenceError.invalid("Launch plan changed. Review protection again.") }
                 guard let stamped = stampedCandidate(candidate, hash: hash) else { return false }
                 guard let index = next.slots.firstIndex(where: { $0.id == entry.slot.id }) else {
@@ -1339,8 +1343,8 @@ final class EndpointSupervisor: ObservableObject {
             guard let door = fleet.frontDoor else { throw WorkflowEvidenceError.invalid("Create the Workbench key first.") }
             digest = door.apiKeySHA256
         }
-        let candidate = Self.authenticationCandidate(slot, digest: digest)
-        let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
+        let candidate = authenticationCandidate(slot, digest: digest)
+        let hash = try await authenticationPreviewHash(candidate)
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
         return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, previewHash: hash)
     }
@@ -1348,9 +1352,10 @@ final class EndpointSupervisor: ObservableObject {
     /// The candidate carrying its reviewed plan hash, or nil (with `lastError`) when it does not validate.
     private func stampedCandidate(_ candidate: EndpointSlot, hash: String) -> EndpointSlot? {
         var stamped = candidate
-        if stamped.inferenceOptions.requested { stamped.accelerationPreviewHash = hash }
-        stamped.profilePreviewHash = stamped.splashPresetName == nil ? nil : hash
-        return validate(stamped, isNew: false) ? stamped : nil
+        let effective = effectiveSlot(candidate)
+        stamped.accelerationPreviewHash = effective.inferenceOptions.requested ? hash : nil
+        stamped.profilePreviewHash = effective.splashPresetName != nil || effective.servingProfile != nil ? hash : nil
+        return validate(stamped, isNew: false) && validate(effective, isNew: false) ? stamped : nil
     }
 
     func confirmAuthentication(_ review: EndpointAuthenticationReview) async -> Bool {
@@ -1358,8 +1363,8 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         do {
             try await requireStoppedForAuthentication(review.slot)
-            let candidate = Self.authenticationCandidate(review.slot, digest: review.keySHA256)
-            let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
+            let candidate = authenticationCandidate(review.slot, digest: review.keySHA256)
+            let hash = try await authenticationPreviewHash(candidate)
             guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
             }
@@ -1392,7 +1397,7 @@ final class EndpointSupervisor: ObservableObject {
         for slot in protectedSlots {
             var candidate = slot
             candidate.apiKeySHA256 = digest
-            let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
+            let hash = try await authenticationPreviewHash(candidate, pendingKey: token)
             guard !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the key reset again.") }
             entries.append(.init(slot: slot, previewHash: hash))
         }
@@ -1418,7 +1423,7 @@ final class EndpointSupervisor: ObservableObject {
             for entry in review.endpoints {
                 var candidate = entry.slot
                 candidate.apiKeySHA256 = review.newDigest
-                guard try await accelerationPreviewHash(candidate, pendingKey: review.token) == entry.previewHash else {
+                guard try await authenticationPreviewHash(candidate, pendingKey: review.token) == entry.previewHash else {
                     throw WorkflowEvidenceError.invalid("Launch plan changed. Review the key reset again.")
                 }
             }
