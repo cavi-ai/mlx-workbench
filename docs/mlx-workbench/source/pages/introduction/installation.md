@@ -4,7 +4,7 @@ MLX Workbench uses the native app, local MLX Agent sources and a Python environm
 
 ## Requirements
 
-- macOS on Apple Silicon
+- macOS 14 or newer on Apple Silicon
 - Apple's Command Line Tools (`xcode-select --install`) for the runtime installer
 - Git with submodule support, when using a source checkout
 - Python 3.12; [uv](https://docs.astral.sh/uv/getting-started/installation/) is recommended. If Homebrew is already installed, `brew install python@3.12` is another option.
