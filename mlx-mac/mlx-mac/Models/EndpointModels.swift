@@ -23,6 +23,29 @@ enum LocalInferenceBounds {
     private static func number(_ value: Double) -> String { String(format: "%g", value) }
 }
 
+/// Engine ranges for Splash and Strata settings; validation and the experimental controls read them.
+enum ServingRuntimeBounds {
+    static let splashMemoryGB: ClosedRange<Double> = 1...1024
+    static let splashContextTokens: ClosedRange<Int> = 512...1_010_000
+    static let splashThinkingTokens: ClosedRange<Int> = 0...1_010_000
+    static let splashCacheDiskGB: ClosedRange<Double> = 0...4096
+    static let strataExpertMemoryGB: ClosedRange<Double> = 0.5...64
+    static let strataContextTokens: ClosedRange<Int> = 512...131_072
+    static let launchPathBytes = 4096
+
+    /// A project cache name is a lowercase letter, then up to 63 lowercase letters, digits, `-` or `_`.
+    static func isProjectCacheName(_ name: String) -> Bool {
+        let scalars = name.unicodeScalars
+        guard let first = scalars.first, ("a"..."z").contains(first), scalars.count <= 64 else { return false }
+        return scalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" || $0 == "_" }
+    }
+
+    /// A launch file passed to the engine: an absolute local path without control characters.
+    static func isLaunchPath(_ path: String) -> Bool {
+        path.hasPrefix("/") && path.utf8.count <= launchPathBytes && !path.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+    }
+}
+
 struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var m5Prefill = false
     var promptLookup = false
@@ -33,11 +56,15 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var temperature: Double? = nil
     var topP: Double? = nil
     var sharedPrefixCacheMiB: Int? = nil
+    /// Splash launch files; nil uses the family's cached draft and the model's own chat template.
+    var splashDraftModel: String? = nil
+    var splashChatTemplate: String? = nil
     var hasRequestDefaults: Bool { !systemPrompt.isEmpty || temperature != nil || topP != nil }
     var textRequested: Bool { m5Prefill || promptLookup || thinkingOff }
     var accelerationRequested: Bool { m5Prefill || promptLookup || visionCache }
     var sharedPrefixCacheRequested: Bool { sharedPrefixCacheMiB != nil }
-    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults || sharedPrefixCacheRequested }
+    var splashLaunchRequested: Bool { splashDraftModel != nil || splashChatTemplate != nil }
+    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults || sharedPrefixCacheRequested || splashLaunchRequested }
     var validationError: String? {
         typealias Bounds = LocalInferenceBounds
         if systemPrompt.utf8.count > Bounds.systemPromptBytes || systemPrompt.contains("\0") { return "System prompt must fit in \(Bounds.systemPromptBytesText) UTF-8 bytes without null characters." }
@@ -50,17 +77,21 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
             if accelerationRequested { return "Shared prefix cache cannot be combined with M5 prefill, prompt lookup, or vision cache." }
             if !systemPrompt.isEmpty { return "Shared prefix cache cannot be combined with a default system prompt." }
         }
+        if let path = splashDraftModel, !ServingRuntimeBounds.isLaunchPath(path) { return "Choose the Splash draft model folder by its full local path." }
+        if let path = splashChatTemplate, !ServingRuntimeBounds.isLaunchPath(path) { return "Choose the Splash chat template file by its full local path." }
         return nil
     }
 
-    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil, sharedPrefixCacheMiB: Int? = nil) {
+    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil, sharedPrefixCacheMiB: Int? = nil,
+         splashDraftModel: String? = nil, splashChatTemplate: String? = nil) {
         self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
         self.thinkingOff = thinkingOff; self.maximumTokens = maximumTokens
         self.systemPrompt = systemPrompt; self.temperature = temperature; self.topP = topP
         self.sharedPrefixCacheMiB = sharedPrefixCacheMiB
+        self.splashDraftModel = splashDraftModel; self.splashChatTemplate = splashChatTemplate
     }
 
-    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP, sharedPrefixCacheMiB }
+    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP, sharedPrefixCacheMiB, splashDraftModel, splashChatTemplate }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         m5Prefill = try values.decodeIfPresent(Bool.self, forKey: .m5Prefill) ?? false
@@ -72,6 +103,8 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
         temperature = try values.decodeIfPresent(Double.self, forKey: .temperature)
         topP = try values.decodeIfPresent(Double.self, forKey: .topP)
         sharedPrefixCacheMiB = try values.decodeIfPresent(Int.self, forKey: .sharedPrefixCacheMiB)
+        splashDraftModel = try values.decodeIfPresent(String.self, forKey: .splashDraftModel)
+        splashChatTemplate = try values.decodeIfPresent(String.self, forKey: .splashChatTemplate)
     }
 }
 
@@ -208,14 +241,19 @@ struct SplashTuning: Equatable {
     var thinkingBudget: Int?
     var persistentCache: Bool?
     var maxCacheDiskGB: Double?
+    /// Named project SSD prompt cache; needs a keyed load-on-request endpoint, a cache quota and a write cap.
+    var projectCache: String?
+    var maxCacheDiskWritesGB: Double?
 
     static let efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
     init(verifyRows: String? = nil, cachedStates: String? = nil, kvFormat: String? = nil, reasoningEffort: String? = nil,
-         thinkingBudget: Int? = nil, persistentCache: Bool? = nil, maxCacheDiskGB: Double? = nil) {
+         thinkingBudget: Int? = nil, persistentCache: Bool? = nil, maxCacheDiskGB: Double? = nil,
+         projectCache: String? = nil, maxCacheDiskWritesGB: Double? = nil) {
         self.verifyRows = verifyRows; self.cachedStates = cachedStates; self.kvFormat = kvFormat
         self.reasoningEffort = reasoningEffort; self.thinkingBudget = thinkingBudget
         self.persistentCache = persistentCache; self.maxCacheDiskGB = maxCacheDiskGB
+        self.projectCache = projectCache; self.maxCacheDiskWritesGB = maxCacheDiskWritesGB
     }
 
     init(settings: [String: Any]) {
@@ -225,7 +263,9 @@ struct SplashTuning: Equatable {
                   reasoningEffort: settings["splash_reasoning_effort"] as? String,
                   thinkingBudget: settings["splash_thinking_token_budget"] as? Int,
                   persistentCache: settings["splash_persistent_cache"] as? Bool,
-                  maxCacheDiskGB: (settings["splash_max_cache_disk_gb"] as? NSNumber)?.doubleValue)
+                  maxCacheDiskGB: (settings["splash_max_cache_disk_gb"] as? NSNumber)?.doubleValue,
+                  projectCache: settings["splash_project_cache"] as? String,
+                  maxCacheDiskWritesGB: (settings["splash_max_cache_disk_writes_gb"] as? NSNumber)?.doubleValue)
     }
 
     /// Engine profile settings for the values set.
@@ -234,6 +274,7 @@ struct SplashTuning: Equatable {
             "splash_verify_rows": verifyRows, "splash_cached_states": cachedStates, "splash_kv_format": kvFormat,
             "splash_reasoning_effort": reasoningEffort, "splash_thinking_token_budget": thinkingBudget,
             "splash_persistent_cache": persistentCache, "splash_max_cache_disk_gb": maxCacheDiskGB,
+            "splash_project_cache": projectCache, "splash_max_cache_disk_writes_gb": maxCacheDiskWritesGB,
         ]
         return values.compactMapValues { $0 }
     }
@@ -248,14 +289,25 @@ struct SplashTuning: Equatable {
         if let thinkingBudget { argv += ["--splash-thinking-budget", String(thinkingBudget)] }
         if let persistentCache { argv.append(persistentCache ? "--splash-persistent-cache" : "--no-splash-persistent-cache") }
         if let maxCacheDiskGB { argv += ["--splash-max-cache-disk-gb", String(maxCacheDiskGB)] }
+        if let projectCache { argv += ["--splash-project-cache", projectCache] }
+        if let maxCacheDiskWritesGB { argv += ["--splash-max-cache-disk-writes-gb", String(maxCacheDiskWritesGB)] }
         return argv
     }
 
     /// A value Splash or the engine would refuse, named before saving.
     var problem: String? {
-        if let thinkingBudget, !(0...1_010_000).contains(thinkingBudget) { return "The thinking budget is 0 to 1,010,000 tokens." }
-        if let maxCacheDiskGB, !(0...4096).contains(maxCacheDiskGB) { return "The SSD cache quota is 0 to 4,096 GB." }
+        typealias Bounds = ServingRuntimeBounds
+        if let thinkingBudget, !Bounds.splashThinkingTokens.contains(thinkingBudget) { return "The thinking budget is 0 to 1,010,000 tokens." }
+        if let maxCacheDiskGB, !maxCacheDiskGB.isFinite || !Bounds.splashCacheDiskGB.contains(maxCacheDiskGB) { return "The SSD cache quota is 0 to 4,096 GB." }
         if persistentCache == true && maxCacheDiskGB == 0 { return "The persistent cache needs an SSD cache quota above 0." }
+        if let projectCache {
+            if !Bounds.isProjectCacheName(projectCache) { return "A project cache name starts with a lowercase letter and uses up to 64 lowercase letters, digits, - or _." }
+            if persistentCache == false { return "A project cache keeps the SSD cache across restarts; turn the persistent cache on." }
+            let positive: (Double?) -> Bool = { $0.map { $0.isFinite && $0 > 0 && $0 <= Bounds.splashCacheDiskGB.upperBound } ?? false }
+            if !positive(maxCacheDiskGB) || !positive(maxCacheDiskWritesGB) { return "A project cache needs an SSD cache quota and a write cap above 0 and up to 4,096 GB." }
+        } else if maxCacheDiskWritesGB != nil {
+            return "The write cap applies to a named project cache."
+        }
         return nil
     }
 
@@ -268,6 +320,8 @@ struct SplashTuning: Equatable {
         if let cachedStates { parts.append("States \(cachedStates)") }
         if persistentCache == true { parts.append("Persistent SSD cache") }
         if let maxCacheDiskGB { parts.append(maxCacheDiskGB == 0 ? "SSD cache off" : "SSD cache \(maxCacheDiskGB.formatted()) GB") }
+        if let projectCache { parts.append("Project cache \(projectCache)") }
+        if let maxCacheDiskWritesGB { parts.append("Writes ≤ \(maxCacheDiskWritesGB.formatted()) GB") }
         return parts
     }
 

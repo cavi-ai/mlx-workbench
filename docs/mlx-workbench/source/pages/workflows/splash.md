@@ -49,7 +49,18 @@ Presets are saved by the engine. **New preset…** opens the editor; every value
 | Limits | **Maximum memory**, **Maximum context tokens** | Splash's memory and context limits |
 | Residency | **Headroom reserve**, **Idle timeout**, **Execution wait**, **Keep loaded**, **Unload under memory pressure** | When the load-on-request endpoint loads, queues for host compute (0–3,600 s), and unloads the model |
 
-A preset needs at least one limit or Splash setting; with none, choose **Default settings**. The preset's summary under the picker and in the review lists each value it sets.
+A preset needs at least one limit or Splash setting; with none, choose **Default settings**. The preset's summary under the picker and in the review lists each value it sets. A preset saved with a named project cache lists **Project cache** and its write cap.
+
+## Draft model and chat template
+
+When an endpoint serves with Splash, the **Experimental** card offers two launch files. Hover either control for a plain-English summary.
+
+| Control | Effect |
+|---|---|
+| **Draft model** · **Choose folder…** | A local DFlash2 draft folder (`config.json` with `dflash_config` and safetensors weights) used instead of the family's cached draft |
+| **Chat template** · **Choose file…** | A local UTF-8 Jinja template of at most 1 MiB that replaces the model's own chat template |
+
+**Clear** returns to the default. The endpoint saves both paths with its settings. The preview checks the draft, binds the template by its SHA-256, and must report the chosen files before the endpoint starts. A runtime other than Splash refuses them.
 
 ### Context and SSD cache observability
 
@@ -73,3 +84,12 @@ Lanes run one at a time; each starts, measures and stops its own server. The res
 ```
 
 Inspect the preview, then repeat the command with `--confirm --preview-hash HASH`. `--repo` serves a cached Hugging Face snapshot under its repository ID; `--path` serves under `local/<name>`. The default port is 8086.
+
+| Option | Effect |
+|---|---|
+| `--splash-draft-model DIR` | Local DFlash2 draft directory; `serve start` only |
+| `--splash-chat-template FILE` | Local Jinja chat template file; `serve start` only |
+| `--splash-project-cache NAME` | Named project SSD prompt cache: a lowercase letter, then up to 63 lowercase letters, digits, `-` or `_`. Needs `--jit`, an API key, an SSD cache quota and a write cap |
+| `--splash-max-cache-disk-writes-gb N` | Project cache write cap in decimal GB, above 0 and up to 4,096 |
+
+`serve profile save` accepts the project cache and write cap with the other Splash settings, for example `serve profile save agents --min-headroom-gb 2 --splash-project-cache my-repo --splash-max-cache-disk-gb 64 --splash-max-cache-disk-writes-gb 256`.

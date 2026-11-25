@@ -40,7 +40,8 @@ Inspect the preview, then repeat the command with `--confirm --preview-hash HASH
 
 | Option | Effect |
 |---|---|
-| `--strata-speculation on` | Draft-and-verify decoding; off by default. Draft overhead can slow decoding down. |
+| `--strata-decoding plain\|lookup\|mtp` | Verified decoding mode: standard, prompt lookup (no draft weights) or the prepared MTP draft head |
+| `--strata-speculation on` | Legacy draft-and-verify switch; off by default. Draft overhead can slow decoding down. Use `--strata-decoding` instead. |
 | `--strata-expert-memory-gb N` | Caps resident expert weights, 0.5–64 decimal GB. Omit for automatic allocation. Smaller budgets page more from disk. |
 | `--strata-context-tokens N` | Context capacity, 512–131,072 tokens |
 
@@ -89,6 +90,8 @@ Create a profile directly in Run with **New profile…**, or save a measured lan
 3. **Preview serve** and **Confirm and run** carry the profile through the normal confirmation. **Save as endpoint** keeps the selected profile, generation defaults, port and residency mode together.
 
 Serving rechecks the profile's verification against a fresh plan; changed settings, files or runtime sources block serving until it passes again. Profiles are stored in `serving-profiles.json`, separately from configuration.
+
+When Strata is the runtime, the **Experimental** card names the profile-owned settings with their ranges: expert memory 0.5 to 64 GB and context 512 to 131,072 tokens. Hover it for a plain-English summary of Strata.
 
 Serving's **Manage profile** menu offers **Rename…**, **Remove…** (refused while any endpoint references the profile), **Customize copy…** (a new, unverified profile) and **Compare profiles…** (two profiles of one model in lanes A and B). In Serving, **Review profiles…** lists each profile's canary status and source measurements, with a **Check memory** action that previews the runtime's memory estimate against current RAM without loading anything; **Comparison evidence…** shows the recorded run behind the selected profile. A completed profile lane in Compare offers **Verify measured profile…** to attach that comparison and rerun the canaries.
 

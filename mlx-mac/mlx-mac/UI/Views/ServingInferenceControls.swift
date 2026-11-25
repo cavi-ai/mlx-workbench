@@ -237,11 +237,9 @@ struct ServingAccelerationRows: View {
                 }
                 accessory(.visionCache)
             } else if context.isStrata {
-                ServingFeatureCard(title: "Strata decoding", detail: "Lookup or MTP decoding, expert memory and context come from the verified serving profile.",
-                                   availability: "Strata profiles") { EmptyView() }
+                ServingStrataExperimentalControls()
             } else if context.isSplash {
-                ServingFeatureCard(title: "Splash DFlash2", detail: "Speculative decoding with the family's cached draft; serves MLX, GGUF and Strata weights in place. The preview checks Splash and the draft.",
-                                   availability: "Splash 1.4+, Apple M3 or newer, macOS 26.4") { EmptyView() }
+                ServingSplashExperimentalControls(options: $options)
             } else {
                 Text(context.runtime == "tasks"
                      ? "Generation settings belong to each task request. Use model residency and memory controls to manage the server's footprint."
