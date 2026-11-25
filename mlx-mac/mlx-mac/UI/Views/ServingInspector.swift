@@ -10,7 +10,13 @@ enum ServingInspectorPresentation {
     enum Section: String, CaseIterable, Identifiable {
         case status, load, inference, acceleration, access, tasks
         var id: String { rawValue }
-        var title: String { rawValue.capitalized }
+        var title: String {
+            switch self {
+            case .acceleration: return "Experimental"
+            case .access: return "Server"
+            default: return rawValue.capitalized
+            }
+        }
     }
 
     /// One case per `LocalInferenceOptions` field.
@@ -96,16 +102,20 @@ struct ServingInspector<Content: View>: View {
         _options = State(initialValue: slot.map { endpoint.effectiveSlot($0).inferenceOptions } ?? .init())
     }
 
-    /// Two columns (settings, then Configuration) when the pane is wide enough, else one column with Configuration after Status.
+    /// Wide: endpoint, load and server on the left; inference, experimental and presets on the right.
+    /// Narrow: one column with presets after Status.
     var body: some View {
         Group {
             if let slot {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
-                        sectionStack(configuration: nil)
+                        sectionStack(configuration: nil, only: [.status, .load, .access, .tasks])
                             .frame(minWidth: 480, idealWidth: 560, maxWidth: 640, alignment: .leading)
-                        ServingConfigurationPanel(endpoint: endpoint, slot: slot)
-                            .frame(minWidth: 360, idealWidth: 400, maxWidth: .infinity, alignment: .topLeading)
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                            sectionStack(configuration: nil, only: [.inference, .acceleration])
+                            ServingConfigurationPanel(endpoint: endpoint, slot: slot)
+                        }
+                        .frame(minWidth: 420, idealWidth: 520, maxWidth: 640, alignment: .topLeading)
                     }
                     sectionStack(configuration: slot).frame(maxWidth: 640, alignment: .leading)
                 }
@@ -120,9 +130,9 @@ struct ServingInspector<Content: View>: View {
         .accessibilityIdentifier("serving-inspector")
     }
 
-    private func sectionStack(configuration slot: EndpointSlot?) -> some View {
+    private func sectionStack(configuration slot: EndpointSlot?, only: [Section]? = nil) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-            ForEach(sections) { section in
+            ForEach(sections.filter { only?.contains($0) ?? true }) { section in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                     Text(section.title).font(WorkbenchTypography.cardTitle)
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.md) { rows(section) }

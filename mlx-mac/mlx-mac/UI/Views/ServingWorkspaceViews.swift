@@ -218,21 +218,30 @@ private struct ServingModelRow: View {
                 }
             }
             HStack(spacing: WorkbenchSpacing.xs) {
+                Circle().fill(dotColor).frame(width: 7, height: 7).accessibilityHidden(true)
+                if case .endpoint(let slot, _, _) = row, let role = slot.role {
+                    Text(role.title)
+                    Text("·")
+                }
                 Text(ServingWorkspacePresentation.provider(row))
                 Text("·")
                 ServingStatusLabel(row: row, states: states)
             }.font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1)
-            if let address = ServingWorkspacePresentation.baseURL(row) {
-                Text(address).font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(address)
-            }
-        }.foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
+        }
+        .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
+        .help(ServingWorkspacePresentation.baseURL(row) ?? "")
+    }
+
+    private var dotColor: Color {
+        if ServingWorkspacePresentation.attentionReason(row) != nil { return WorkbenchColor.failure }
+        return ServingWorkspacePresentation.isRunning(row) ? WorkbenchColor.success : WorkbenchColor.muted.opacity(0.5)
     }
 }
 
 struct ServingModelList: View {
     let appHost: AppHost
     let roleRows: [ServingRolesPresentation.RoleRow]
-    let customRows: [ServingRow]
+    let endpointRows: [ServingRow]
     let otherRows: [ServingRow]
     let slots: [EndpointSlot]
     let models: [LibraryModel]
@@ -250,6 +259,7 @@ struct ServingModelList: View {
     @State private var query = ""
     @State private var showsKeyWizard = false
     @State private var othersExpanded = false
+    @State private var rolesExpanded = false
     private func visible(_ rows: [ServingRow]) -> [ServingRow] {
         rows.filter { query.isEmpty || (ServingWorkspacePresentation.name($0, models: models) + " " + ServingWorkspacePresentation.provider($0)).localizedCaseInsensitiveContains(query) }
     }
@@ -302,34 +312,36 @@ struct ServingModelList: View {
                 Button { showsKeyWizard = true } label: { Image(systemName: "key") }.buttonStyle(.borderless)
                     .accessibilityLabel("Workbench key").help("Workbench key…").accessibilityIdentifier("serving-workbench-key")
                 Button(action: refresh) { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).accessibilityLabel("Refresh serving models")
-                Button(action: add) { Image(systemName: "plus") }.buttonStyle(.borderless).accessibilityLabel("Serve a model").accessibilityIdentifier("serving-add-model")
             }.padding(.horizontal, WorkbenchSpacing.md).padding(.top, WorkbenchSpacing.md)
                 .sheet(isPresented: $showsKeyWizard) { WorkbenchKeyWizard(appHost: appHost) }
-            TextField("Filter models", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
+            Button(action: add) {
+                Label("Load model…", systemImage: "plus").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.workbenchPrimary).controlSize(.large).padding(.horizontal, WorkbenchSpacing.md)
+            .accessibilityIdentifier("serving-add-model")
+            TextField("Filter", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
                 .accessibilityIdentifier("serving-model-filter")
             List(selection: $selectedID) {
                 Section {
-                    WorkbenchAPIRowView(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
-                        .accessibilityIdentifier("serving-workbench-api")
-                } footer: {
-                    Text(ServingRolesPresentation.workbenchAPICaption)
-                }
-                Section("Roles") {
-                    ForEach(roleRows) { roleRow($0) }
-                }
-                Section("Custom endpoints") {
-                    ForEach(visible(customRows)) { row in
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                            if let label = ServingRolesPresentation.roleLabel(row) {
-                                Text(label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                            }
-                            ServingModelRow(row: row, models: models, states: states)
-                        }
+                    if visible(endpointRows).isEmpty {
+                        Text(endpointRows.isEmpty ? "No endpoints yet. Load a model to get an address." : "No endpoints match the filter.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(visible(endpointRows)) { row in
+                        ServingModelRow(row: row, models: models, states: states)
                             .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
                             .accessibilityIdentifier("serving-model-\(row.id)")
                     }
-                    Button("Add custom endpoint…", action: add).buttonStyle(.borderless)
-                        .accessibilityIdentifier("serving-add-custom-endpoint")
+                }
+                Section {
+                    DisclosureGroup(ServingRolesPresentation.rolesTitle(roleRows), isExpanded: $rolesExpanded) {
+                        ForEach(roleRows) { roleRow($0) }
+                    }.accessibilityIdentifier("serving-roles")
+                }
+                Section {
+                    WorkbenchAPIRowView(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+                        .accessibilityIdentifier("serving-workbench-api")
                 }
                 Section {
                     DisclosureGroup(ServingRolesPresentation.othersTitle(count: otherRows.count), isExpanded: $othersExpanded) {

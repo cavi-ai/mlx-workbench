@@ -71,24 +71,29 @@ struct ServingConfigurationPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Configuration").font(WorkbenchTypography.cardTitle)
+            Text("Presets").font(WorkbenchTypography.cardTitle)
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                Picker("Show", selection: $choice) {
+                Picker("Preset", selection: $choice) {
                     Text("This endpoint").tag(Choice.endpoint)
                     Text("Model default").tag(Choice.modelDefault)
                     ForEach(profiles) { Text($0.name).tag(Choice.profile($0.id)) }
                 }
                 .fixedSize()
                 .accessibilityIdentifier("serving-configuration-picker")
-                ScrollView {
-                    Text(text).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(WorkbenchSpacing.sm)
-                }
-                .frame(minHeight: 160, maxHeight: 360)
-                .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
-                .accessibilityIdentifier("serving-configuration-json")
-                sourceGrid
                 actions
+                DisclosureGroup("Settings JSON") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        ScrollView {
+                            Text(text).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(WorkbenchSpacing.sm)
+                        }
+                        .frame(minHeight: 160, maxHeight: 360)
+                        .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                        .accessibilityIdentifier("serving-configuration-json")
+                        sourceGrid
+                    }.padding(.top, WorkbenchSpacing.xs)
+                }
+                .font(WorkbenchTypography.secondary)
                 if let nameEdit { nameEditor(nameEdit) }
                 if let preview {
                     ModelDefaultsConfirmation(endpoint: endpoint, preview: preview,

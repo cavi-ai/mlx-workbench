@@ -50,11 +50,10 @@ struct WorkbenchAPIRowView: View {
                 if coordinator.busy { ProgressView().controlSize(.small) }
                 Text(row.stateText).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
-            Text(row.address).font(WorkbenchTypography.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            Text(row.address).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 .accessibilityIdentifier("front-door-base-url")
-            Text(row.routedText).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                .accessibilityIdentifier("front-door-models")
-            HStack {
+            HStack(spacing: WorkbenchSpacing.sm) {
                 if row.isRunning {
                     Button(row.stopTitle) { Task { await coordinator.stop() } }.disabled(coordinator.busy)
                         .accessibilityIdentifier("front-door-stop")
@@ -62,14 +61,23 @@ struct WorkbenchAPIRowView: View {
                     Button(row.startTitle) { Task { await start(settings) } }
                         .disabled(coordinator.busy || endpoint.isChanging)
                         .accessibilityIdentifier("front-door-start")
+                        .help(row.isConfigured ? "Start the shared address." : "Create the Workbench key and start the shared address.")
                 }
-                Button(row.copyAddressTitle) { ServedModelsSelection.copy(row.address) }
-                Button(row.keyTitle) { showsKeyWizard = true }
-                    .accessibilityIdentifier("front-door-workbench-key")
-                Button(row.setupTitle) { showsSetup = true }
-                    .disabled(coordinator.endpoint == nil)
-                    .accessibilityIdentifier("front-door-setup-opencode")
-            }.buttonStyle(.borderless)
+                Text(row.routedText).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize().accessibilityIdentifier("front-door-models")
+                    .help("Endpoints that use the Workbench key are reachable through this address.")
+                Spacer(minLength: 0)
+                Menu {
+                    Button(row.copyAddressTitle) { ServedModelsSelection.copy(row.address) }
+                    Button(row.keyTitle) { showsKeyWizard = true }
+                        .accessibilityIdentifier("front-door-workbench-key")
+                    Button(row.setupTitle) { showsSetup = true }
+                        .disabled(coordinator.endpoint == nil)
+                        .accessibilityIdentifier("front-door-setup-opencode")
+                } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel("Workbench API actions")
+            }.controlSize(.small)
             ForEach(collisions) { collision in
                 InlineMessage(kind: .warning, text: collision.warningMessage)
                     .accessibilityIdentifier("front-door-collision-\(collision.modelName)")

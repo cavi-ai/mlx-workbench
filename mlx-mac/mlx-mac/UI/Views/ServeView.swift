@@ -151,7 +151,7 @@ struct ServeView: View {
                 if viewport.size.width >= WorkbenchSize.Serving.splitMinimum {
                     HStack(spacing: 0) {
                         ServingModelList(appHost: appHost, roleRows: ServingRolesPresentation.roleRows(slots: endpoint.fleet.slots, rows: workspaceRows),
-                            customRows: ServingRolesPresentation.customRows(workspaceRows),
+                            endpointRows: ServingRolesPresentation.endpointRows(workspaceRows),
                             otherRows: ServingRolesPresentation.otherRows(workspaceRows),
                             slots: endpoint.fleet.slots, models: models, states: endpoint.slotStates,
                             sourceIssueCount: inventory.snapshot.sourceErrors.count,
@@ -575,12 +575,12 @@ struct ServeView: View {
                             Button("Change…") { reviewConnectionPort(slot) }
                                 .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
                         }
-                        ServingCaption(ServingInspectorPresentation.caption(.port))
+                        .help(ServingInspectorPresentation.caption(.port))
                         Toggle("Protected by Workbench key", isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
                             if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
                         })).toggleStyle(.checkbox).disabled(slot.enabled || endpoint.isChanging)
                             .accessibilityIdentifier("serving-require-api-key")
-                        ServingCaption(ServingInspectorPresentation.caption(.requireKey))
+                            .help(ServingInspectorPresentation.caption(.requireKey))
                         if let hash = slot.apiKeySHA256 {
                             HStack {
                                 Button("Copy API key") {
@@ -689,11 +689,11 @@ struct ServeView: View {
     private func loadSection(_ row: ServingRow) -> some View {
         let server = ServingWorkspacePresentation.server(row)
         LabeledContent("Runtime", value: server?.runtime ?? "Chosen when the endpoint starts")
-        ServingCaption(ServingInspectorPresentation.caption(.runtime))
+            .help(ServingInspectorPresentation.caption(.runtime))
         if case .endpoint(let slot, _, _) = row, server?.runtime == "splash" || slot.splashPresetName != nil {
             LabeledContent("Splash preset", value: slot.splashPresetName ?? "None")
+                .help(ServingInspectorPresentation.caption(.splashPreset))
             Button("Splash presets…") { splashPresetSlot = slot }.disabled(endpoint.pendingStops[slot.id] != nil)
-            ServingCaption(ServingInspectorPresentation.caption(.splashPreset))
         }
         ServingSystemHeadroom(resources: appHost.resources)
         fleetCoResidencyBudgetBar
@@ -701,7 +701,7 @@ struct ServeView: View {
             Toggle("Load on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
                 Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
             })).toggleStyle(.checkbox).disabled(endpoint.isChanging)
-            ServingCaption(ServingInspectorPresentation.caption(.loadOnRequest))
+                .help(ServingInspectorPresentation.caption(.loadOnRequest))
             if slot.usesJIT {
                 memoryManagement(slot, inline: true)
             }
@@ -942,12 +942,6 @@ struct ServeView: View {
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
                     .lineLimit(1)
-                Text(item.path)
-                    .font(WorkbenchTypography.compactValue)
-                    .foregroundStyle(WorkbenchColor.muted)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
             }
         }
     }
@@ -1068,7 +1062,8 @@ struct ServeView: View {
 
     @ViewBuilder
     private var inferenceSettings: some View {
-        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest)
+        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest,
+                                 showsAcceleration: mode != .saveEndpoint)
             .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
         if mode == .saveEndpoint && newSlotLoadOnRequest && requireAPIKey && selectedSplashPreset == nil && modelWorkflow.servingProfile == nil && !inferenceContext.isStrata && !inferenceContext.isSplash {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -1534,12 +1529,12 @@ struct ServeView: View {
                     }
                     .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
                     .disabled(policy.keepLoaded || policy.releaseAfterRequest == true)
+                    .help(ServingInspectorPresentation.caption(.idleUnload))
                     Toggle("Keep loaded after use", isOn: memoryBinding(slot, \.keepLoaded))
                         .toggleStyle(.checkbox)
-                        .help("Prevent automatic unload after the first request. Manual unload remains available.")
+                        .fixedSize()
+                        .help(ServingInspectorPresentation.caption(.keepLoaded))
                 }
-                ServingCaption(ServingInspectorPresentation.caption(.idleUnload))
-                ServingCaption(ServingInspectorPresentation.caption(.keepLoaded))
                 Toggle("Release weights after each request", isOn: Binding(
                     get: { policy.releaseAfterRequest == true },
                     set: { enabled in
@@ -1549,8 +1544,9 @@ struct ServeView: View {
                         Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
                     }))
                     .toggleStyle(.checkbox)
+                    .fixedSize()
                     .accessibilityIdentifier("endpoint-memory-release-after-request")
-                ServingCaption(ServingInspectorPresentation.caption(.releaseAfterRequest))
+                    .help(ServingInspectorPresentation.caption(.releaseAfterRequest))
                 HStack {
                     Toggle("Check memory before loading", isOn: Binding(
                         get: { policy.minimumHeadroomGB != nil },
@@ -1575,7 +1571,7 @@ struct ServeView: View {
                         .frame(maxWidth: WorkbenchSize.Run.reservePickerMaximum)
                     }
                 }
-                ServingCaption(ServingInspectorPresentation.caption(.memoryPolicy))
+                .help(ServingInspectorPresentation.caption(.memoryPolicy) + " Uses estimated weights + runtime allowance + reserve; other processes and larger contexts can change actual use. Unknown headroom blocks loading.")
                 HStack {
                     Picker("Execution wait", selection: Binding(
                         get: { policy.executionWaitSeconds ?? 0 },
@@ -1599,9 +1595,6 @@ struct ServeView: View {
                     .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
                     .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
                 }
-                Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
-                    .font(WorkbenchTypography.metadata)
-                    .foregroundStyle(WorkbenchColor.muted)
                 Button("Review memory policy…") { memoryReviewSlot = slot }
                     .accessibilityIdentifier("endpoint-memory-review")
             }
@@ -1629,30 +1622,21 @@ struct ServeView: View {
             designedState(symbol: "square.stack.3d.up.slash", text: "Endpoint cap reached (\(EndpointFleetConfig.maxSlots)). Remove one to add another.")
         } else {
             let unverified = selectedModel.map { !appHost.isModelVerified($0.item.path) } ?? false
-            ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.xs) {
-                addEndpointPortAndRole
-                addEndpointLoadToggle
-                if newSlotLoadOnRequest {
-                    Picker("Model residency", selection: $keepModelLoaded) {
-                        Text("Release weights after each request").tag(false)
-                        Text("Keep loaded between requests").tag(true)
-                    }
-                    .fixedSize()
-                    .accessibilityIdentifier("serve-model-residency")
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                    addEndpointLoadColumn.frame(width: 320, alignment: .topLeading)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { inferenceSettings }
+                        .frame(minWidth: 420, maxWidth: 620, alignment: .topLeading)
+                }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    addEndpointLoadColumn
+                    inferenceSettings
                 }
             }
-            if let endpointPortError {
-                Text(endpointPortError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
-            }
-            inferenceSettings
             if unverified {
                 InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.")
             }
             HStack(spacing: WorkbenchSpacing.xs) {
-                Toggle("Require API key", isOn: $requireAPIKey)
-                    .toggleStyle(.checkbox)
-                    .accessibilityIdentifier("serve-model-authentication")
-                    .help("Only clients with this key can use inference. The endpoint stays on loopback; the key is saved in Keychain when you confirm.")
                 Spacer(minLength: WorkbenchSpacing.xs)
                 Button(unverified ? "Add unverified endpoint…" : "Add endpoint…") { prepareAddEndpoint() }
                     .buttonStyle(.workbenchPrimary)
@@ -1660,6 +1644,44 @@ struct ServeView: View {
                     .help(presentation.addEndpointBlockedReason ?? "Review and add the model shown above as a saved endpoint.")
             }
         }
+    }
+
+    /// Load and server settings for a new endpoint, then the runtime's experimental features.
+    private var addEndpointLoadColumn: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            addEndpointLoadCard
+            ServingExperimentalCard(options: $inferenceOptions, context: inferenceContext)
+                .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
+        }
+    }
+
+    private var addEndpointLoadCard: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Label("Load", systemImage: "memorychip").font(WorkbenchTypography.cardTitle)
+            addEndpointPortAndRole
+            if let endpointPortError {
+                Text(endpointPortError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            addEndpointLoadToggle
+            if newSlotLoadOnRequest {
+                Text("After each request").font(WorkbenchTypography.label)
+                Picker("After each request", selection: $keepModelLoaded) {
+                    Text("Release weights").tag(false)
+                    Text("Keep loaded").tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("serve-model-residency")
+                .help("Release weights after each request, or keep them loaded between requests.")
+            }
+            Toggle("Require API key", isOn: $requireAPIKey)
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("serve-model-authentication")
+                .help("Only clients with this key can use inference. The endpoint stays on loopback; the key is saved in Keychain when you confirm.")
+        }
+        .padding(WorkbenchSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
     }
 
     @ViewBuilder

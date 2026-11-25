@@ -1,6 +1,6 @@
 import Foundation
 
-/// Role-first grouping of the Serving list: one row per role, custom endpoints, then other servers.
+/// Grouping of the Serving list: endpoints, the role table, then other servers.
 enum ServingRolesPresentation {
     struct RoleRow: Identifiable, Equatable {
         let role: ServingRole
@@ -28,8 +28,8 @@ enum ServingRolesPresentation {
         let isConfigured: Bool
 
         var title: String { ServingRolesPresentation.workbenchAPITitle }
-        var routedText: String { routedCount == 1 ? "1 model routed" : "\(routedCount) models routed" }
-        var startTitle: String { isConfigured ? "Start" : "Create key and start" }
+        var routedText: String { routedCount == 1 ? "1 model" : "\(routedCount) models" }
+        var startTitle: String { isConfigured ? "Start" : "Set up" }
         var stopTitle: String { "Stop" }
         var copyAddressTitle: String { "Copy address" }
         var keyTitle: String { "Workbench key…" }
@@ -61,20 +61,15 @@ enum ServingRolesPresentation {
         }
     }
 
-    /// Endpoint slots without a role, plus any further slot of a role already shown in its role row.
-    static func customRows(_ rows: [ServingRow]) -> [ServingRow] {
-        var shown = Set<ServingRole>()
-        return rows.filter { row in
-            guard case .endpoint(let slot, _, _) = row else { return false }
-            guard let role = slot.role else { return true }
-            return !shown.insert(role).inserted
-        }
+    /// Every endpoint slot, running ones first, each group in fleet order.
+    static func endpointRows(_ rows: [ServingRow]) -> [ServingRow] {
+        let endpoints = rows.filter { if case .endpoint = $0 { return true } else { return false } }
+        return endpoints.filter(ServingWorkspacePresentation.isRunning)
+            + endpoints.filter { !ServingWorkspacePresentation.isRunning($0) }
     }
 
-    /// The role title shown beside a custom row that carries a role.
-    static func roleLabel(_ row: ServingRow) -> String? {
-        if case .endpoint(let slot, _, _) = row { return slot.role?.title }
-        return nil
+    static func rolesTitle(_ rows: [RoleRow]) -> String {
+        "Roles · \(rows.filter(\.isAssigned).count) of \(rows.count) assigned"
     }
 
     /// Servers and inventory entries that no endpoint slot owns.
