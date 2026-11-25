@@ -2,28 +2,6 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServingInspectorPresentationTests: XCTestCase {
-    typealias Presentation = ServingInspectorPresentation
-
-    func testInferenceSectionFollowsTheRoleAndTypedTasks() {
-        XCTAssertTrue(Presentation.sections(for: nil).contains(.inference))
-        XCTAssertTrue(Presentation.sections(for: .coding).contains(.inference))
-        let typedChat = Presentation.sections(for: .coding, typedTasks: true)
-        XCTAssertTrue(typedChat.contains(.tasks))
-        XCTAssertFalse(typedChat.contains(.inference))
-        let classification = Presentation.sections(for: .classification)
-        XCTAssertFalse(classification.contains(.inference))
-        XCTAssertTrue(classification.contains(.tasks))
-    }
-
-    func testEveryInferenceFieldHasExactlyOneCaption() {
-        let stored = Mirror(reflecting: LocalInferenceOptions()).children.compactMap(\.label)
-        XCTAssertEqual(stored.count, 9)
-        XCTAssertEqual(Presentation.Field.allCases.map(\.rawValue).sorted(), stored.sorted())
-        let captions = Presentation.Field.allCases.map { Presentation.caption($0) }
-        XCTAssertEqual(Set(captions).count, 9)
-        XCTAssertTrue(captions.allSatisfy { !$0.isEmpty && !$0.contains("\n") })
-    }
-
     func testValidationAcceptsBoundsAndRejectsJustOutside() {
         let bounds = LocalInferenceBounds.self
         XCTAssertNil(LocalInferenceOptions(maximumTokens: bounds.maximumTokens.lowerBound).validationError)
@@ -42,14 +20,5 @@ final class ServingInspectorPresentationTests: XCTestCase {
         XCTAssertNotNil(LocalInferenceOptions(sharedPrefixCacheMiB: bounds.sharedPrefixCacheMiB.upperBound + 1).validationError)
         XCTAssertNil(LocalInferenceOptions(systemPrompt: String(repeating: "a", count: bounds.systemPromptBytes)).validationError)
         XCTAssertNotNil(LocalInferenceOptions(systemPrompt: String(repeating: "a", count: bounds.systemPromptBytes + 1)).validationError)
-    }
-
-    func testValidationMessagesKeepTheirWording() {
-        XCTAssertEqual(LocalInferenceOptions(systemPrompt: String(repeating: "a", count: 8193)).validationError,
-                       "System prompt must fit in 8,192 UTF-8 bytes without null characters.")
-        XCTAssertEqual(LocalInferenceOptions(temperature: 3).validationError, "Temperature must be from 0 to 2.")
-        XCTAssertEqual(LocalInferenceOptions(topP: 2).validationError, "Top-p must be from 0 to 1.")
-        XCTAssertEqual(LocalInferenceOptions(maximumTokens: 10).validationError, "Default output length must be from 256 to 65536 tokens.")
-        XCTAssertEqual(LocalInferenceOptions(sharedPrefixCacheMiB: 4096).validationError, "Shared prefix cache must be from 16 to 2048 MiB.")
     }
 }

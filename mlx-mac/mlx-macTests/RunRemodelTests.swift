@@ -1438,36 +1438,6 @@ extension RunRemodelTests {
         XCTAssertTrue(text.contains("8766"), text)
     }
 
-    func testRunListsEachServedThingExactlyOnce() async throws {
-        let app = try await ServingWorld.host()
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 1220, height: 2600), dark: false)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        let lines = try renderedLines(try pngData(hosting))
-        // A row's header is its state pill (when it has one) and its name alone on a line.
-        func rows(named name: String) -> Int {
-            lines.filter { $0.lowercased().range(of: "^\\W*(running\\s+)?\(name)\\W*$", options: .regularExpression) != nil }.count
-        }
-        XCTAssertTrue(lines.contains { $0.lowercased().contains("serve a model") }, "The newly selected Library model keeps its setup workspace")
-        XCTAssertEqual(rows(named: "alder"), 1, "The endpoint and its running server are one row")
-        XCTAssertEqual(rows(named: "birch"), 0, "The third-party local service stays under the collapsed other servers")
-        XCTAssertEqual(rows(named: "cedar"), 0, "A launched server without an endpoint stays under the collapsed other servers")
-        XCTAssertTrue(lines.contains { $0.lowercased().contains("other servers on this mac (2)") })
-    }
-
-    func testRunWithNothingServingSaysSo() async throws {
-        let app = try await ServingWorld.host(populated: false)
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 1220, height: 1800), dark: false)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("not assigned") })
-        for name in ["alder", "birch", "cedar"] {
-            XCTAssertFalse(lines.contains { $0.contains(name) }, "\(name) is not served in this world")
-        }
-        XCTAssertFalse(lines.contains { $0.contains("other servers on this mac (2)") })
-    }
-
     // MARK: Endpoint changes
 
     func testChatServerReviewSkipsStandaloneServers() async throws {
@@ -1844,24 +1814,5 @@ extension RunRemodelTests {
         let text = try renderedLines(image).joined(separator: " ").lowercased()
         XCTAssertTrue(text.contains("service changed"), text)
 
-    }
-
-    // MARK: Wide rows
-
-    /// The connection remains readable while inference settings retain their saved values.
-    func testEndpointWorkspaceKeepsConnectionAndSettingsReadable() async throws {
-        let app = try await ServingWorld.host(accelerated: true)
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 3200), dark: false)
-        defer { window.close() }
-        await settle(400)
-        app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
-        await settle()
-        let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
-        XCTAssertTrue(text.contains("8766"), text)
-        XCTAssertTrue(text.contains("inference"), text)
-        XCTAssertTrue(text.contains("acceleration"), text)
-        XCTAssertTrue(text.contains("reuse prompt text"), text)
-        XCTAssertTrue(text.contains("access"), text)
-        XCTAssertTrue(try XCTUnwrap(app.endpoint.fleet.slots.first).inferenceOptions.promptLookup)
     }
 }

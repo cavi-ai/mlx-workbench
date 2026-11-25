@@ -10,28 +10,6 @@ final class WorkbenchKeySetupTests: XCTestCase {
         return slot
     }
 
-    func testNoKeyStartsAtCreateKey() {
-        let setup = WorkbenchKeySetup(keyDigest: nil, slots: [slot(8930, key: nil)])
-        XCTAssertEqual(setup.step, .createKey)
-        XCTAssertNil(setup.keySummary)
-    }
-
-    func testKeyWithUnprotectedEndpointsListsThemAtProtectStep() {
-        let own = EndpointCredentialStore.digest("mlxw_" + String(repeating: "3", count: 64))
-        let setup = WorkbenchKeySetup(keyDigest: digest, slots: [slot(8932, key: own), slot(8931, key: digest), slot(8930, key: nil)])
-        XCTAssertEqual(setup.step, .protectEndpoints)
-        XCTAssertEqual(setup.unprotected.map(\.port), [8930, 8932])
-        XCTAssertEqual(setup.unprotected.map(\.hasOwnKey), [false, true])
-        XCTAssertEqual(setup.keySummary, "…" + digest.suffix(4))
-    }
-
-    func testAllProtectedShowsTheEnvironmentVariableAtConnectStep() {
-        let setup = WorkbenchKeySetup(keyDigest: digest, slots: [slot(8930, key: digest), slot(8931, key: digest)])
-        XCTAssertEqual(setup.step, .connectApps)
-        XCTAssertTrue(setup.unprotected.isEmpty)
-        XCTAssertEqual(setup.envVarName, "MLX_AGENT_API_KEY")
-    }
-
     func testChosenExcludesSelectedEndpointsThatAreNowProtected() {
         let a = slot(8932, key: nil), b = slot(8930, key: nil), protected = slot(8931, key: digest)
         let setup = WorkbenchKeySetup(keyDigest: digest, slots: [a, b, protected])

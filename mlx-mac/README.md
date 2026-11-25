@@ -57,9 +57,8 @@ networking. Appearance changes, app launches and window resizing happen only
 inside the guest. Completion, failure and interruption stop and delete only
 that run's clone; the base VM remains available.
 
-The runner runs the native unit suite, builds the UI runner and executes
-deterministic presentation and interaction tests in light and dark appearance.
-Before testing, it verifies console ownership, the Aqua session and actual
+The runner runs the native unit suite. With `--ui-test`, it builds the UI
+runner and executes the named UI tests. Before testing, it verifies console ownership, the Aqua session and actual
 foreground activation through Launch Services inside the guest.
 It stops at the first failed gate, rejects zero-test or skipped UI results, and
 preserves logs, result bundles, source hashes and screenshots under
@@ -96,11 +95,8 @@ same test against the preserved app and current build, setting
 stage for captures while keeping current behavior assertions in the after
 stage. Each stage must execute its selected test without failures or skips.
 
-These UI fixtures test navigation, field validation, preview identity and
-recovery behavior. They do not certify conversion quality, model inference or
-GPU performance. Real-model acceptance still requires its explicit runtime
-manifest and a separately provisioned compatible runtime; it is not selected
-by `make test-native-ui`.
+Real-model acceptance requires its explicit runtime manifest and a separately
+provisioned compatible runtime; it is not selected by `make test-native-ui`.
 
 ## Opt-in packaged runtime installation
 

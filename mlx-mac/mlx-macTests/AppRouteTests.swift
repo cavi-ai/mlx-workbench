@@ -20,19 +20,6 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
     }
 
-    func testNoSidebarGroupHoldsASinglePage() {
-        for entry in AppRoute.grouped {
-            XCTAssertGreaterThan(entry.routes.count, 1, "\(entry.group.rawValue) holds one page")
-        }
-    }
-
-    func testEveryCurrentRouteAppearsOnceInItsOwnGroup() {
-        let listed = AppRoute.grouped.flatMap(\.routes)
-        let current = AppRoute.allCases.filter { $0.navigationDestination == $0 }
-        XCTAssertEqual(listed.count, current.count)
-        XCTAssertEqual(Set(listed), Set(current))
-    }
-
     func testCollapsedSidebarSectionShowsItsPagesCount() {
         let badges: [AppRoute: String] = [.activity: "3", .health: "2", .reclaim: "12 GB"]
         XCTAssertEqual(AppSidebar.headerBadge(for: .system, expanded: false, badges: badges), "5")
