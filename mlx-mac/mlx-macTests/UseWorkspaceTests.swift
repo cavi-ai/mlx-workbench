@@ -414,6 +414,54 @@ final class UseWorkspaceTests: XCTestCase {
         }
     }
 
+    // MARK: Chat server role choice
+
+    @MainActor
+    private func roleHost() async throws -> (AppHost, LibraryModel) {
+        let taken = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder", role: .general)
+        let app = try await ServingWorld.host(populated: false, initialSlots: [taken])
+        let model = try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == ServingWorld.selectedModel })
+        return (app, model)
+    }
+
+    @MainActor
+    func testUnservedModelChoosesRoleInsteadOfNextPort() async throws {
+        let (app, model) = try await roleHost()
+        guard case .chooseRole(let chosen) = UseChatServerSetup.review(model: model, appHost: app) else {
+            return XCTFail("An unserved model must ask for a chat role")
+        }
+        XCTAssertEqual(chosen.item.path, model.item.path)
+        let choices = UseChatServerSetup.roleChoices(for: model, appHost: app)
+        XCTAssertEqual(choices.map(\.role), ServingRole.allCases.filter { $0.isChat && $0 != .vision })
+        XCTAssertFalse(choices.contains { $0.role == .vision }, "A text-only model has no vision choice")
+        XCTAssertEqual(choices.first { $0.role == .general }?.replacesName, "Alder")
+        XCTAssertNil(choices.first { $0.role == .coding }?.replacesName)
+    }
+
+    @MainActor
+    func testFreeChatRoleReviewsOnItsPort() async throws {
+        let (app, model) = try await roleHost()
+        guard case .review(let review) = UseChatServerSetup.review(model: model, role: .coding, appHost: app) else {
+            return XCTFail("A free role should review an add")
+        }
+        XCTAssertEqual(review.role, .coding)
+        XCTAssertEqual(review.port, ServingRole.coding.defaultPort)
+        XCTAssertNil(review.slot)
+        XCTAssertTrue(review.loadOnRequest)
+    }
+
+    @MainActor
+    func testTakenChatRoleReviewsSwapOfThatSlot() async throws {
+        let (app, model) = try await roleHost()
+        guard case .review(let review) = UseChatServerSetup.review(model: model, role: .general, appHost: app) else {
+            return XCTFail("A taken role should review a swap")
+        }
+        XCTAssertEqual(review.slot?.role, .general)
+        XCTAssertEqual(review.slot?.modelPath, "/models/Alder")
+        XCTAssertEqual(review.swapTo?.item.path, model.item.path)
+        XCTAssertEqual(review.port, 8766)
+    }
+
 }
 
 private final class UseChatHTTPFixture: URLProtocol {

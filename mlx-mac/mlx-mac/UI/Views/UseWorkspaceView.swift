@@ -17,6 +17,8 @@ struct UseWorkspaceView: View {
     @State private var chatServerSessionID: UUID?
     @State private var chatServerReview: EndpointChangeReview?
     @State private var chatServerError: String?
+    /// The unserved model whose chat role is being chosen.
+    @State private var chatServerRoleModel: LibraryModel?
     @State private var chatServerBusy = false
     @State private var chatServerHold: String?
     private var controlsPresented: Bool { showHistory || showSettings || filePanelPresented || showChatServer }
@@ -278,9 +280,14 @@ struct UseWorkspaceView: View {
         chatServerSessionID = sessionID
         chatServerError = nil
         chatServerHold = nil
+        chatServerRoleModel = nil
         switch UseChatServerSetup.review(model: model, appHost: appHost) {
         case .review(let review):
             chatServerReview = review
+            showChatServer = true
+        case .chooseRole(let model):
+            chatServerReview = nil
+            chatServerRoleModel = model
             showChatServer = true
         case .portRejected(let message):
             chatServerReview = nil
@@ -291,11 +298,33 @@ struct UseWorkspaceView: View {
         }
     }
     private var chatServerSheet: some View {
-        let name = chatServerReview?.model?.displayName ?? coordinator.selected.map { libraryIndex.displayName(for: $0) } ?? "This model"
+        let name = chatServerReview?.model?.displayName ?? chatServerRoleModel?.displayName
+            ?? coordinator.selected.map { libraryIndex.displayName(for: $0) } ?? "This model"
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Start \(name)").font(WorkbenchTypography.cardTitle)
+            if chatServerReview == nil, let roleModel = chatServerRoleModel {
+                Text("Choose the chat role this model serves.").fixedSize(horizontal: false, vertical: true)
+                ForEach(UseChatServerSetup.roleChoices(for: roleModel, appHost: appHost)) { choice in
+                    Button {
+                        switch UseChatServerSetup.review(model: roleModel, role: choice.role, appHost: appHost) {
+                        case .review(let review): chatServerReview = review; chatServerError = nil
+                        case .portRejected(let message): chatServerError = message
+                        case .chooseRole, .noModel: break
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(choice.role.title) · :\(String(choice.port))")
+                            if let replaced = choice.replacesName {
+                                Text("Replaces \(replaced)").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.disabled(chatServerBusy).accessibilityIdentifier("use-role-\(choice.role.rawValue)")
+                }
+            }
             if let review = chatServerReview {
-                Text(review.slot == nil
+                Text(review.swapTo != nil
+                    ? "Replace \(review.slot.map { UseChatServerSetup.modelName(for: $0, appHost: appHost) } ?? "the current model") on 127.0.0.1:\(review.port) with \(name). The endpoint keeps its role and settings."
+                    : review.slot == nil
                     ? "This chat stays open. The server listens on 127.0.0.1:\(review.port), loads on the first message, and releases the weights afterward."
                     : "Start the saved server on 127.0.0.1:\(review.port) with its current settings.")
                     .fixedSize(horizontal: false, vertical: true)
@@ -321,7 +350,7 @@ struct UseWorkspaceView: View {
                     }.disabled(chatServerBusy)
                 }
                 if let review = chatServerReview, let sessionID = chatServerSessionID {
-                    Button(chatServerHold == nil ? (review.unverified ? "Start unverified server" : "Start server") : "Start anyway") {
+                    Button(chatServerHold == nil ? (review.swapTo != nil ? (review.unverified ? "Change to unverified model" : "Change model") : review.unverified ? "Start unverified server" : "Start server") : "Start anyway") {
                         let overrideMemory = chatServerHold != nil
                         Task { await confirmChatServer(review, sessionID: sessionID, overrideMemory: overrideMemory) }
                     }.buttonStyle(.workbenchPrimary).disabled(chatServerBusy || appHost.endpoint.isChanging)
@@ -350,7 +379,7 @@ struct UseWorkspaceView: View {
         case .completed:
             let candidates = workflow.servers.filter { UseChatClient.matches($0, modelPath: session.modelPath) && UseChatClient.supports($0) }
             guard workflow.serversError == nil, candidates.contains(where: {
-                $0.port == review.port && $0.matchesUnadaptedModel(review.slot?.modelPath ?? session.modelPath)
+                $0.port == review.port && $0.matchesUnadaptedModel(review.swapTo?.item.path ?? review.slot?.modelPath ?? session.modelPath)
                     && $0.apiKeySHA256 == review.slot?.apiKeySHA256 && ($0.jit == true) == review.loadOnRequest
             }) else {
                 chatServerError = workflow.serversError ?? "Serving did not report a running Chat connection for this endpoint. Check its status in Serving."
@@ -365,11 +394,13 @@ struct UseWorkspaceView: View {
         }
     }
     private func updateChatServerReview(modelPath: String) {
-        if let model = libraryIndex.model(for: modelPath),
-           case .review(let review) = UseChatServerSetup.review(model: model, appHost: appHost) {
-            chatServerReview = review
-        } else {
-            chatServerReview = nil
+        chatServerReview = nil
+        chatServerRoleModel = nil
+        guard let model = libraryIndex.model(for: modelPath) else { return }
+        switch UseChatServerSetup.review(model: model, appHost: appHost) {
+        case .review(let review): chatServerReview = review
+        case .chooseRole(let model): chatServerRoleModel = model
+        case .portRejected, .noModel: break
         }
     }
     private func chat(_ session: UseSession, index: UseLibraryIndex) -> some View {
@@ -569,10 +600,47 @@ enum UseChatServerSetup {
             }
             return .review(changes.review(slot: slot, remove: false))
         }
-        guard let port = changes.nextAvailablePort() else {
-            return .portRejected("No available port for a new server. Open More settings to choose a port.")
+        return .chooseRole(model)
+    }
+
+    struct RoleChoice: Identifiable {
+        let role: ServingRole
+        let port: Int
+        /// Display name of the model a taken role's endpoint would stop serving.
+        let replacesName: String?
+        var id: ServingRole { role }
+    }
+
+    /// One choice per chat role, on the role's endpoint port.
+    @MainActor
+    static func roleChoices(for model: LibraryModel, appHost: AppHost) -> [RoleChoice] {
+        let fleet = appHost.endpoint.fleet
+        return ServingRole.allCases.filter { $0.isChat && ServingRolesPresentation.accepts($0, model) }.map { role in
+            RoleChoice(role: role, port: fleet.port(for: role),
+                       replacesName: fleet.slot(for: role).map { modelName(for: $0, appHost: appHost) })
         }
-        return changes.reviewAdd(model: model, portText: "", suggestedPort: port, role: nil, loadOnRequest: true,
-                                 keepLoaded: false, requireKey: false)
+    }
+
+    /// Library display name of the model an endpoint serves.
+    @MainActor
+    static func modelName(for slot: EndpointSlot, appHost: AppHost) -> String {
+        let models = appHost.librarySnapshot?.models ?? []
+        return models.first { $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath) }?.displayName
+            ?? URL(fileURLWithPath: slot.modelPath).lastPathComponent
+    }
+
+    /// Reviews the model on a free role's port, or swaps it into a taken role's endpoint.
+    @MainActor
+    static func review(model: LibraryModel, role: ServingRole, appHost: AppHost) -> EndpointChanges.AddOutcome {
+        let changes = EndpointChanges(appHost: appHost)
+        if let slot = appHost.endpoint.fleet.slot(for: role) {
+            return .review(changes.reviewSwap(slot: slot, to: model))
+        }
+        let port = appHost.endpoint.fleet.port(for: role)
+        guard ServeView.isUsablePort(port, slots: appHost.endpoint.fleet.slots, servers: changes.occupiedServers) else {
+            return .portRejected("Port \(port) is in use. Open More settings to choose a port.")
+        }
+        return changes.reviewAdd(model: model, portText: "", suggestedPort: port, role: role,
+                                 loadOnRequest: true, keepLoaded: false, requireKey: false)
     }
 }

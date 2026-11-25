@@ -1467,14 +1467,17 @@ extension RunRemodelTests {
     // MARK: Endpoint changes
 
     func testChatServerReviewSkipsStandaloneServers() async throws {
-        let port = EndpointConfig.defaultPort
+        let port = ServingRole.coding.defaultPort
         let standalone = ServingWorld.server("Standalone", port: port, pid: 104, managedByWorkbench: false)
         let app = try await ServingWorld.host(populated: false, discoveredServers: [standalone])
         let model = try libraryModel(app, ServingWorld.selectedModel)
-        guard case .review(let review) = UseChatServerSetup.review(model: model, appHost: app) else {
-            return XCTFail("The next free port should be offered")
+        guard case .chooseRole = UseChatServerSetup.review(model: model, appHost: app) else {
+            return XCTFail("An unserved model should ask for a chat role")
         }
-        XCTAssertEqual(review.port, port + 1)
+        guard case .portRejected(let message) = UseChatServerSetup.review(model: model, role: .coding, appHost: app) else {
+            return XCTFail("A role port held by a standalone server must be refused")
+        }
+        XCTAssertEqual(message, "Port \(port) is in use. Open More settings to choose a port.")
     }
 
     func testChatServerReviewStartsTheSavedSlot() async throws {

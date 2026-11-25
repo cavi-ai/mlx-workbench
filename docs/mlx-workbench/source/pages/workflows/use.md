@@ -19,7 +19,10 @@ has a title and turns keeps that title.
 
 If no server is available, the conversation shows the model's name and says it
 is not running. **Send** stays unavailable and the draft is kept. **Start server…**
-reviews a loopback server in the chat. A new server loads on the first message and
+reviews a loopback server in the chat. If the model has no endpoint, it asks which
+chat role to use, listing each role that accepts the model with its port. A free role reviews a new
+server on that port; a taken role names the model it replaces and reviews moving
+that endpoint to this model. A new server loads on the first message and
 releases the weights afterward. If there is a saved endpoint for the model, the
 review uses its existing settings. An unverified model asks you to confirm that
 explicitly. If startup fails, the review shows the reason and retains your draft.

@@ -1675,7 +1675,7 @@ struct ServeView: View {
     private func prepareAddEndpoint() {
         switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: nil,
                                  loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey, inference: inferenceOptions, profile: modelWorkflow.servingProfile, splashPreset: inferenceContext.isSplash ? selectedSplashPreset : nil) {
-        case .noModel: return
+        case .noModel, .chooseRole: return
         case .portRejected(let message): endpointPortError = message
         case .review(let review): endpointPortError = nil; action = review
         }
@@ -1685,7 +1685,7 @@ struct ServeView: View {
     private func chooseModel(for role: ServingRole, _ model: LibraryModel) {
         switch changes.reviewAdd(model: model, portText: "", suggestedPort: endpoint.fleet.port(for: role), role: role,
                                  loadOnRequest: true, keepLoaded: false, requireKey: false) {
-        case .noModel: return
+        case .noModel, .chooseRole: return
         case .portRejected(let message): actionError = message
         case .review(let review): actionError = nil; action = review
         }
@@ -1958,6 +1958,8 @@ struct EndpointChanges {
         case review(EndpointChangeReview)
         case portRejected(String)
         case noModel
+        /// The model has no endpoint yet; the caller picks one of the chat roles.
+        case chooseRole(LibraryModel)
     }
 
     enum Confirmation: Equatable {
@@ -1969,12 +1971,8 @@ struct EndpointChanges {
     private var models: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
 
     /// Workbench's servers plus the local servers other tools run, whose ports a new endpoint must not take.
-    private var occupiedServers: [ServerInfo] {
+    var occupiedServers: [ServerInfo] {
         appHost.modelWorkflow.servers + appHost.servingInventory.snapshot.services.compactMap(\.server)
-    }
-
-    func nextAvailablePort() -> Int? {
-        ServedModelsSelection.nextPort(slots: appHost.endpoint.fleet.slots, servers: occupiedServers)
     }
 
     func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: ServingRole?, loadOnRequest: Bool,

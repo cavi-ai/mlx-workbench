@@ -86,8 +86,11 @@ enum ServingRolesPresentation {
 
     /// Ready Library models the role accepts that no endpoint already serves.
     static func candidates(for role: ServingRole, models: [LibraryModel], slots: [EndpointSlot]) -> [LibraryModel] {
-        ServedModelsSelection.candidates(models: models, slots: slots, query: "").filter { model in
-            role.eligibleTaskTypes.contains(model.item.task?.type ?? .textLLM)
-        }
+        ServedModelsSelection.candidates(models: models, slots: slots, query: "").filter { accepts(role, $0) }
+    }
+
+    /// Whether the role's task types include the model's task.
+    static func accepts(_ role: ServingRole, _ model: LibraryModel) -> Bool {
+        role.eligibleTaskTypes.contains(model.item.task?.type ?? .textLLM)
     }
 }
