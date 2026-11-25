@@ -176,32 +176,44 @@ struct ServingInferenceControls: View {
                         .accessibilityIdentifier("serve-inference-reset")
                 }
             }
+            ServingAccelerationRows(options: $options, context: context)
+            ServingInferenceRows(options: $options, context: context, allowRequestDefaults: allowRequestDefaults)
+            if let error = options.validationError { InlineMessage(kind: .warning, text: error) }
+        }
+        .padding(WorkbenchSpacing.md)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("serve-inference-settings")
+    }
+}
+
+/// Acceleration controls for the chosen runtime; captions come from `ServingInspectorPresentation`.
+struct ServingAccelerationRows: View {
+    @Binding var options: LocalInferenceOptions
+    let context: ServingInferenceContext
+    typealias Field = ServingInspectorPresentation.Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             if context.isText {
                 Picker("Decoding", selection: $options.promptLookup) {
                     Text("Standard").tag(false)
                     Text("Reuse prompt text").tag(true)
                 }
                 .pickerStyle(.segmented).accessibilityIdentifier("serve-text-decoding")
-                Text(options.promptLookup
-                     ? "For code edits that copy text from the prompt. Use temperature 0 in your client; these requests run one at a time. No draft model is needed."
-                     : "Native decoding and batching for general chat and concurrent requests.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                ServingCaption(ServingInspectorPresentation.caption(Field.promptLookup))
                 DisclosureGroup("Hardware acceleration") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Toggle("M5 prompt processing", isOn: $options.m5Prefill).toggleStyle(.checkbox)
                             .disabled(!context.supportsM5 && !options.m5Prefill)
                             .accessibilityIdentifier("serve-m5-prefill")
-                        Text(context.supportsM5
-                             ? "Experimental kernel for supported M5 Q4 models. First load compiles kernels; unsupported inputs use native MLX."
-                             : "Requires an M5 GPU and supported Q4 models. The engine checks runtime compatibility.")
-                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        ServingCaption(ServingInspectorPresentation.caption(Field.m5Prefill))
                     }.padding(.top, WorkbenchSpacing.xs)
                 }
             } else if context.isVision {
                 Toggle("Reuse image features", isOn: $options.visionCache).toggleStyle(.checkbox)
                     .accessibilityIdentifier("serve-vision-cache")
-                Text("For repeated questions about the same image on supported Qwen2.5-VL and Qwen3-VL models. Keeps up to 128 MiB of features while loaded; other models use native processing.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                ServingCaption(ServingInspectorPresentation.caption(Field.visionCache))
             } else if context.isStrata {
                 Text("A serving profile controls decoding, expert memory and context. Verify the profile before use.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -214,29 +226,34 @@ struct ServingInferenceControls: View {
                      : "The engine identifies this model's runtime during preview. Select a known runtime to review its inference controls.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-            if context.hasGenerationDefaults || context.supportsReasoningOverride {
-                Group {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        if context.supportsReasoningOverride {
-                            Picker("Reasoning", selection: $options.thinkingOff) {
-                                Text("Model default").tag(false)
-                                Text("Skip reasoning").tag(true)
-                            }.accessibilityIdentifier("serve-thinking")
-                            Text("Skipping reasoning can shorten responses at the cost of deliberation. Support depends on the model's chat template.")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                        if context.hasGenerationDefaults {
-                            Picker("Default output length", selection: $options.maximumTokens) {
-                                Text("Engine default · 8,192 tokens").tag(Int?.none)
-                                ForEach(Array(Set([256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] + (options.maximumTokens.map { [$0] } ?? []))).sorted(), id: \.self) { value in
-                                    Text("\(value.formatted()) tokens").tag(Optional(value))
-                                }
-                            }.accessibilityIdentifier("serve-output-length")
-                            Text("Used when a client omits its output length. Explicit client settings take precedence.")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                    }.padding(.top, WorkbenchSpacing.xs)
-                }
+        }
+    }
+}
+
+/// Reasoning, output length and request defaults; captions come from `ServingInspectorPresentation`.
+struct ServingInferenceRows: View {
+    @Binding var options: LocalInferenceOptions
+    let context: ServingInferenceContext
+    var allowRequestDefaults = false
+    typealias Field = ServingInspectorPresentation.Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if context.supportsReasoningOverride {
+                Picker("Reasoning", selection: $options.thinkingOff) {
+                    Text("Model default").tag(false)
+                    Text("Skip reasoning").tag(true)
+                }.accessibilityIdentifier("serve-thinking")
+                ServingCaption(ServingInspectorPresentation.caption(Field.thinkingOff))
+            }
+            if context.hasGenerationDefaults {
+                Picker("Default output length", selection: $options.maximumTokens) {
+                    Text("Engine default").tag(Int?.none)
+                    ForEach(LocalInferenceBounds.choices(LocalInferenceBounds.maximumTokens, including: options.maximumTokens), id: \.self) { value in
+                        Text("\(value.formatted()) tokens").tag(Optional(value))
+                    }
+                }.accessibilityIdentifier("serve-output-length")
+                ServingCaption(ServingInspectorPresentation.caption(Field.maximumTokens))
             }
             if allowRequestDefaults && context.supportsRequestDefaults {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -244,26 +261,22 @@ struct ServingInferenceControls: View {
                     TextEditor(text: $options.systemPrompt)
                         .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
                         .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
-                    Text("Used when a client supplies no system or developer prompt.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    ServingCaption(ServingInspectorPresentation.caption(Field.systemPrompt))
                     LabeledContent("Temperature") {
                         TextField("Model default", value: $options.temperature, format: .number)
                             .accessibilityIdentifier("serve-default-temperature")
                     }
+                    ServingCaption(ServingInspectorPresentation.caption(Field.temperature))
                     LabeledContent("Top-p") {
                         TextField("Model default", value: $options.topP, format: .number)
                             .accessibilityIdentifier("serve-default-top-p")
                     }
-                    Text("Sampling defaults apply only when the client omits the setting.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    ServingCaption(ServingInspectorPresentation.caption(Field.topP))
                 }
+            } else if context.supportsRequestDefaults {
+                ServingCaption("System prompt, temperature and top-p apply to load-on-request endpoints. Turn on Load on request to set them.")
             }
-            if let error = options.validationError { InlineMessage(kind: .warning, text: error) }
         }
-        .padding(WorkbenchSpacing.md)
-        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("serve-inference-settings")
     }
 }
 

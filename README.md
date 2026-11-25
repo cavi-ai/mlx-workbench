@@ -48,13 +48,13 @@ To build from source instead, run `make start` in the checkout after `make insta
 2. Paste a Hugging Face link into the Library search field and press **Add**, or anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
 3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
 4. Select the model and choose **Chat** to try it, or **Serve** to preview and start a loopback server. **Monitor** shows live status, token usage and response throughput.
-5. **Serving → Connect apps** sets up OpenCode, OpenClaw, Hermes, Codex or Claude Code against that endpoint, tests the connection over Chat Completions, Responses or Messages, and keeps backups with **Undo setup**.
+5. **Serving → Access** sets up OpenCode, OpenClaw, Hermes, Codex or Claude Code against that endpoint, tests the connection over Chat Completions, Responses or Messages, and keeps backups with **Undo setup**.
 
 See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
 
 ## Serve securely. Load just in time.
 
-Keep model endpoints on your Mac with loopback binding. Enable **Require API key** to control client access; keys are stored in Keychain. Manage the address, authentication and inference settings together in **Serving → API & security**.
+Keep model endpoints on your Mac with loopback binding. Enable **Require API key** to control client access; keys are stored in Keychain. Manage the address, authentication and inference settings together in the **Serving** inspector.
 
 Saved endpoints support JIT loading through **Load on request**: the endpoint stays available while weights load for the first inference request. Concurrent cold requests share one load. Unload idle models to free memory, keep frequently used models resident, and let active streams finish before unloading.
 

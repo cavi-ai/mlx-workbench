@@ -37,21 +37,21 @@ the model being inspected.
 
 1. Select a ready model in Library, then open **Serving**, or use **+** in the endpoint list. Choose the model in the setup form. Supported standalone model types can serve without a conversion record; speculative drafters remain paired with their target.
 2. **Save as endpoint** keeps a stable loopback port. Review the port, authentication, residency and inference settings, then confirm. **Start now** offers a temporary server with a runtime preview before confirmation.
-3. Select an endpoint to work in **API & security**, **Inference**, **Memory** or **Connect apps**. Its start/stop and prompt actions stay above these sections.
+3. Select an endpoint to work in one scrolling form. Its sections are **Status** (model, role, port, state, Start or Stop, copy address and model ID), **Load** (runtime, Splash preset, load on request, memory policy, idle unload), **Inference** and **Acceleration** (chat roles only), **Access** (port, API key, Tailscale share, app setup) and **Tasks** (typed roles only). Every control has a one-line caption with what it changes and its valid range.
 
 When a discovered endpoint already serves the selected model, **Open existing endpoint** takes you to its settings. The endpoint keeps its existing configuration. If the engine refuses a start because the model already has an endpoint, the message names that endpoint's address, runtime, state and whether it requires an API key.
 
 To run one model on more than one endpoint, open **Settings → Serving → Duplicate serving** and choose **Allow a model…**. Workbench shows the exact model the engine will allow; **Confirm** saves it. **Remove…** returns a model to one endpoint. A change applies to endpoints started after it, and API keys and memory admission stay in effect.
 
-To reach several endpoints through one address, use the **Workbench API** row at the top of the Serving list; **Settings → Serving → Workbench API port** sets its port (default 8090). Choose **Create key and start**. Workbench creates one Workbench API key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The row shows the address, state and the number of routed models, with **Start**/**Stop**, **Copy address**, **Copy key** and **Set up an app…**. The Workbench API routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Use Workbench API key…** in **API & security**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the row lists the routed model count. Starting, stopping, swapping or removing an endpoint automatically refreshes the Workbench API's route list while it is running. Each model name behind the Workbench API must map to a single endpoint using the Workbench API key: if two enabled endpoints share the key and advertise the same model name, the Workbench API row warns about the collision and the Workbench API omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the Workbench API key for that model. Endpoints keep their own ports, loading and memory admission, and the Workbench API key stays in Keychain when no endpoint uses it.
+To reach several endpoints through one address, use the **Workbench API** row at the top of the Serving list; **Settings → Serving → Workbench API port** sets its port (default 8090). Choose **Create key and start**. Workbench creates one Workbench API key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The row shows the address, state and the number of routed models, with **Start**/**Stop**, **Copy address**, **Copy key** and **Set up an app…**. The Workbench API routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Use Workbench API key…** in **Access**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the row lists the routed model count. Starting, stopping, swapping or removing an endpoint automatically refreshes the Workbench API's route list while it is running. Each model name behind the Workbench API must map to a single endpoint using the Workbench API key: if two enabled endpoints share the key and advertise the same model name, the Workbench API row warns about the collision and the Workbench API omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the Workbench API key for that model. Endpoints keep their own ports, loading and memory admission, and the Workbench API key stays in Keychain when no endpoint uses it.
 
 The endpoint list has three sections. **Roles** has one row per serving role, in catalog order, each on its own canonical port; an assigned role shows its model, port and status with **Stop** or **Start** and **Change model…**, and an unassigned role shows **Not assigned - :port** and **Choose model…**. **Custom endpoints** lists saved endpoints without a role and **Add custom endpoint…**. **Other servers on this Mac** is collapsed, with a count, and lists external servers and inventory entries. **Choose model…** lists ready Library models whose task the role accepts; the review shows the role's port and a confirmation adds the endpoint. Each row shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Sources that missed the latest refresh are listed under the endpoint list, with each source and its message in the sheet. They do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 
-**API & security** contains the base URL, model ID, port and API-key controls. Copy the URL or model ID directly. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
+**Status** shows the base URL and model ID, which you can copy directly; **Access** holds the port and API-key controls. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
 
 ## Share a chat endpoint with Tailscale
 
-For a running managed chat endpoint that requires an API key, select **API & security → Share via Tailscale…**. The wizard checks for Tailscale 1.104.2 or later, MagicDNS, and HTTPS. Tailnet grants or ACLs control reachability. Client requests also require the endpoint's API key. Enabling HTTPS can publish the device's DNS name in a certificate transparency log.
+For a running managed chat endpoint that requires an API key, select **Access → Share via Tailscale…**. The wizard checks for Tailscale 1.104.2 or later, MagicDNS, and HTTPS. Tailnet grants or ACLs control reachability. Client requests also require the endpoint's API key. Enabling HTTPS can publish the device's DNS name in a certificate transparency log.
 
 Review the model and HTTPS address, then choose **Start sharing**. Copy the API URL and model ID to a permitted device. To confirm that device can connect, use the model-list command under **Test from another device** and copy the API key separately. If the HTTPS port is occupied, choose another port and check again. If the endpoint has no key, select an already protected endpoint or create an eligible one in Endpoint setup.
 
@@ -88,11 +88,15 @@ clears its preview; review the new plan before confirming.
 - **Task endpoints:** generation controls belong to the typed request. Server
   residency and memory controls remain available.
 
-The **Inference** section offers **Skip reasoning** for MLX-LM and Splash models
+The **Inference** section offers **Thinking** (off) for MLX-LM and Splash models
 whose chat template supports it, and a default output length for MLX-LM and Strata. Output
-length ranges from 256 to 65,536 tokens; the engine default is 8,192. Client
-requests can supply their own token limits. Temperature and sampling belong to
-the client. Reasoning overrides can trade deliberation for shorter responses.
+length ranges from 256 to 65536 tokens; the engine default is 8,192. On
+load-on-request chat endpoints it also sets a default system prompt (up to 8,192
+UTF-8 bytes), temperature (0 to 2) and top-p (0 to 1), used only when a client omits
+them. Client requests can supply their own limits. Thinking off can trade
+deliberation for shorter responses. **Acceleration** holds M5 prefill, prompt
+lookup, the vision cache and the shared prefix cache (16 to 2048 MiB). The same
+bounds validate the settings, so each caption states the range the preview accepts.
 
 Under **Hardware acceleration**, **M5 prompt processing** requests the engine's
 experimental Q4 kernel. It requires an M5 GPU and supported Qwen2 models, FP16
@@ -115,8 +119,8 @@ system or developer prompt. Typed task endpoints retain their per-request
 settings. A saved endpoint must be stopped to edit launch defaults; preview and
 confirm the new configuration before starting it again.
 
-Choose **Configure clients…** on a running endpoint to open its **Connect apps**
-section. Clients rechecks its process and adapter identity; a changed or
+Choose **Configure clients…** on a running endpoint to open the app setup in its
+**Access** section. Clients rechecks its process and adapter identity; a changed or
 stopped server requires a fresh selection from Serving. Opening Clients does not
 write configuration. Preview and confirm client wiring before applying it.
 
@@ -203,7 +207,7 @@ Starting one endpoint checks that endpoint immediately. The background superviso
 - **Choose model…** on a role row uses that role's canonical port; **Add custom endpoint…** suggests the next free port. Up to eight endpoints.
 - Endpoints require a verified model unless you explicitly override for an unverified one.
 - Each endpoint row shows status, restarts, a fit chip, **Stop** or **Start…**, and an overflow menu with the remaining controls.
-- **Memory** displays a live **Fleet co-residency budget** bar combining per-modality estimates (LLM, Vision, Audio, Video, Image, Embedding), load-on-request dormant state, Splash memory caps and any configured shared agent memory limit. When one or more models lack size data, the bar surfaces the partial known total alongside the unknown slot count without fabricating sizes.
+- **Load** displays a live **Fleet co-residency budget** bar combining per-modality estimates (LLM, Vision, Audio, Video, Image, Embedding), load-on-request dormant state, Splash memory caps and any configured shared agent memory limit. When one or more models lack size data, the bar surfaces the partial known total alongside the unknown slot count without fabricating sizes.
 - **Model router…** (**Wire roles…**) writes routes for running chat, vision and embedding endpoints that serve a `publisher/model` ID. Workbench lists local endpoints with basename-only IDs and typed audio or media endpoints separately from the generated config. A route can use the Workbench API when the listener advertises the model and the endpoint shares its key. The generated `fleet-router.yaml` uses `MLX_AGENT_LOCAL_API_KEY` for protected routes, so a config can include only endpoints that use the same API key.
 
 The menu bar item aggregates endpoints ("N of M endpoints running") and provides a submenu for each selected model. An optional login item installs one `RunAtLoad` agent per enabled endpoint, `ai.cavi.mlxworkbench.endpoint.<slot id>`, and each runs `mlx-agent serve start` once at login. The preview lists every command before confirmation. Each captured command preserves that endpoint's local path, runtime selection, inference settings, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent that endpoint's login startup; a change to any included endpoint requires a fresh preview. Remove and reinstall the login item after changing endpoint settings. Installing is refused when the enabled fleet will not fit, until you choose **Install anyway**, the same override as enabling an endpoint. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority. An older single-agent plist, `ai.cavi.mlxworkbench.endpoint`, is removed when you install or remove the login item.
@@ -213,8 +217,8 @@ changes and reports any part of the previous setup it could not restore.
 
 ### Inference settings for saved endpoints
 
-Open an endpoint's actions menu and choose **Inference settings…** to review its
-configuration. Stop it before changing settings, then **Preview settings** and
+Open an endpoint's actions menu and choose **Inference settings…** to jump to its
+**Inference** section. Stop the endpoint before changing settings, then **Preview settings** and
 **Confirm and save**. Enable it again to use the saved configuration. Existing
 endpoints retain runtime defaults until changed. Changing the model clears its
 inference settings; Strata decoding stays in its verified profile.

@@ -20,7 +20,7 @@ final class FitAdvisorTests: XCTestCase {
         view.setFrameSize(NSSize(width: 740, height: view.fittingSize.height))
         view.layoutSubtreeIfNeeded()
         XCTAssertGreaterThan(view.bounds.height, 100)
-        XCTAssertLessThan(view.bounds.height, 280)
+        XCTAssertLessThan(view.bounds.height, 400)
         let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: image)
         let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")

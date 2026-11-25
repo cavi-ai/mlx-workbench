@@ -1844,7 +1844,7 @@ extension RunRemodelTests {
     /// The connection remains readable while inference settings retain their saved values.
     func testEndpointWorkspaceKeepsConnectionAndSettingsReadable() async throws {
         let app = try await ServingWorld.host(accelerated: true)
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 900), dark: false)
+        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 3200), dark: false)
         defer { window.close() }
         await settle(400)
         app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
@@ -1852,7 +1852,9 @@ extension RunRemodelTests {
         let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
         XCTAssertTrue(text.contains("8766"), text)
         XCTAssertTrue(text.contains("inference"), text)
-        XCTAssertTrue(text.contains("security"), text)
+        XCTAssertTrue(text.contains("acceleration"), text)
+        XCTAssertTrue(text.contains("reuse prompt text"), text)
+        XCTAssertTrue(text.contains("access"), text)
         XCTAssertTrue(try XCTUnwrap(app.endpoint.fleet.slots.first).inferenceOptions.promptLookup)
     }
 }

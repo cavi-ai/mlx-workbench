@@ -103,8 +103,8 @@ For **OpenClaw** and other multi-model clients using the **Workbench API**, poin
 
 ## Connect from the serving model
 
-In **Serving**, select a running chat endpoint and open **Connect apps**. Choose the app, then **Connect…** to open the same reviewed setup with that endpoint preselected. Address, port, model and authentication stay bound to the selected process.
+In **Serving**, select a running chat endpoint and scroll to **Access**. Choose the app, then **Connect…** to open the same reviewed setup with that endpoint preselected. Address, port, model and authentication stay bound to the selected process.
 
-**Manual setup** offers copyable provider fragments or launch commands for temporary overrides. Protected recipes refer to `WORKBENCH_API_KEY`; copy the key from **API & security** and supply it through the client’s environment. Recipes contain no inference key.
+**Manual setup** offers copyable provider fragments or launch commands for temporary overrides. Protected recipes refer to `WORKBENCH_API_KEY`; copy the key from **Access** and supply it through the client’s environment. Recipes contain no inference key.
 
 Codex and Claude Code require a managed load-on-request chat gateway, which supports Responses and Messages respectively. A model’s tool support determines its usefulness in coding agents. Setup links to each client’s documentation.

@@ -1,5 +1,28 @@
 import Foundation
 
+/// The one table of valid ranges for local inference settings; validation and inspector captions read it.
+enum LocalInferenceBounds {
+    static let systemPromptBytes = 8192
+    static let temperature: ClosedRange<Double> = 0...2
+    static let topP: ClosedRange<Double> = 0...1
+    static let maximumTokens: ClosedRange<Int> = 256...65536
+    static let sharedPrefixCacheMiB: ClosedRange<Int> = 16...2048
+
+    static var systemPromptBytesText: String { systemPromptBytes.formatted(.number.locale(Locale(identifier: "en_US"))) }
+    static func text(_ range: ClosedRange<Int>) -> String { "\(range.lowerBound) to \(range.upperBound)" }
+    static func text(_ range: ClosedRange<Double>) -> String { "\(number(range.lowerBound)) to \(number(range.upperBound))" }
+    /// Picker choices: the lower bound doubled up to the upper bound, plus a saved value outside that list.
+    static func choices(_ range: ClosedRange<Int>, including saved: Int? = nil) -> [Int] {
+        var values: [Int] = []
+        var value = range.lowerBound
+        while value < range.upperBound { values.append(value); value *= 2 }
+        values.append(range.upperBound)
+        if let saved { values.append(saved) }
+        return Array(Set(values)).sorted()
+    }
+    private static func number(_ value: Double) -> String { String(format: "%g", value) }
+}
+
 struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var m5Prefill = false
     var promptLookup = false
@@ -16,13 +39,14 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var sharedPrefixCacheRequested: Bool { sharedPrefixCacheMiB != nil }
     var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults || sharedPrefixCacheRequested }
     var validationError: String? {
-        if systemPrompt.utf8.count > 8192 || systemPrompt.contains("\0") { return "System prompt must fit in 8,192 UTF-8 bytes without null characters." }
-        if let temperature, !temperature.isFinite || !(0...2).contains(temperature) { return "Temperature must be from 0 to 2." }
-        if let topP, !topP.isFinite || !(0...1).contains(topP) { return "Top-p must be from 0 to 1." }
-        if let maximumTokens, !(256...65536).contains(maximumTokens) { return "Default output length must be from 256 to 65536 tokens." }
+        typealias Bounds = LocalInferenceBounds
+        if systemPrompt.utf8.count > Bounds.systemPromptBytes || systemPrompt.contains("\0") { return "System prompt must fit in \(Bounds.systemPromptBytesText) UTF-8 bytes without null characters." }
+        if let temperature, !temperature.isFinite || !Bounds.temperature.contains(temperature) { return "Temperature must be from \(Bounds.text(Bounds.temperature))." }
+        if let topP, !topP.isFinite || !Bounds.topP.contains(topP) { return "Top-p must be from \(Bounds.text(Bounds.topP))." }
+        if let maximumTokens, !Bounds.maximumTokens.contains(maximumTokens) { return "Default output length must be from \(Bounds.text(Bounds.maximumTokens)) tokens." }
         if visionCache && (textRequested || maximumTokens != nil) { return "Choose vision feature reuse separately from text-server settings." }
         if let mib = sharedPrefixCacheMiB {
-            if !(16...2048).contains(mib) { return "Shared prefix cache must be from 16 to 2048 MiB." }
+            if !Bounds.sharedPrefixCacheMiB.contains(mib) { return "Shared prefix cache must be from \(Bounds.text(Bounds.sharedPrefixCacheMiB)) MiB." }
             if accelerationRequested { return "Shared prefix cache cannot be combined with M5 prefill, prompt lookup, or vision cache." }
             if !systemPrompt.isEmpty { return "Shared prefix cache cannot be combined with a default system prompt." }
         }

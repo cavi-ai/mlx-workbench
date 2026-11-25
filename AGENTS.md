@@ -93,7 +93,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `ConversionWorkflow`; Quality Gate: `VerificationCoordinator` with
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:
   `ConvertedSourceCleanup`.
-- Run and endpoints: `ServedModelsView` and `MenuBarView` share `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
+- Run and endpoints: `ServingInspector` (`UI/Views/ServingInspector.swift`) owns the selected endpoint's form sections and captions; `ServedModelsView` and `MenuBarView` share `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
   JIT gateway, memory policy, source-bound acceleration settings). `ServeLaunch` decides which runtime,
   Splash preset, and memory policy may be combined. Transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router

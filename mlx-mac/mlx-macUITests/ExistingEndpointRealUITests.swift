@@ -32,7 +32,7 @@ final class ExistingEndpointRealUITests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 30)); picker.click()
         let model = picker.menuItems["mlx-community/Qwen3-4B-4bit"].firstMatch
         XCTAssertTrue(model.waitForExistence(timeout: 20)); XCTAssertTrue(model.isHittable); model.click()
-        let selectedTabs = application.radioGroups["serving-workspace-tabs"].firstMatch
+        let selectedTabs = application.descendants(matching: .any)["serving-inspector"].firstMatch
         XCTAssertTrue(selectedTabs.waitForExistence(timeout: 15)); add.click()
         let selectedPicker = application.popUpButtons["serving-model-picker"].firstMatch
         XCTAssertTrue(selectedPicker.waitForExistence(timeout: 10))
@@ -45,7 +45,7 @@ final class ExistingEndpointRealUITests: XCTestCase {
         XCTAssertTrue(open.waitForExistence(timeout: 30)); XCTAssertTrue(open.isHittable)
         capture("Existing endpoint notice")
         open.click()
-        let tabs = application.radioGroups["serving-workspace-tabs"].firstMatch
+        let tabs = application.descendants(matching: .any)["serving-inspector"].firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 20)); XCTAssertTrue(tabs.isHittable)
         let address = application.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", ":19081/v1", ":19081/v1")).firstMatch
         XCTAssertTrue(address.waitForExistence(timeout: 20)); XCTAssertTrue(address.isHittable)

@@ -4867,17 +4867,14 @@ final class WorkbenchReviewUITests: XCTestCase {
         keyToggle.click()
         let auth = app.sheets.firstMatch
         XCTAssertTrue(auth.waitForExistence(timeout: 10)); auth.buttons["Cancel"].click()
-        app.radioButtons["Inference"].click()
         let prompt = app.textViews["serve-system-prompt"]
         XCTAssertTrue(prompt.waitForExistence(timeout: 10))
         prompt.click(); prompt.typeText("Use clear explanations.")
         XCTAssertTrue(app.popUpButtons["serve-thinking"].exists)
         capture("Serving-inference-defaults")
-        app.radioButtons["Memory"].click()
         XCTAssertTrue(app.checkBoxes["endpoint-memory-release-after-request"].waitForExistence(timeout: 10))
         capture("Serving-memory-controls")
         resizeWindow(width: 740, height: 680)
-        app.radioButtons["API & security"].click()
         XCTAssertTrue(app.textFields["serving-endpoint-port"].isHittable)
         capture("Serving-API-security-minimum")
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
@@ -4901,7 +4898,6 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Monitor-live-usage")
         app.buttons["monitor-open-settings"].click()
         XCTAssertTrue(app.staticTexts["http://127.0.0.1:8766/v1"].waitForExistence(timeout: 10))
-        app.radioButtons["Connect apps"].click()
         let picker = app.popUpButtons["serving-client-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click(); app.menuItems["Codex"].click()
         app.disclosureTriangles["Manual setup"].coordinate(withNormalizedOffset: .zero)

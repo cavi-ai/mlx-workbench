@@ -1,18 +1,5 @@
 import SwiftUI
 
-enum ServingWorkspaceTab: String, CaseIterable, Identifiable {
-    case connection, inference, memory, clients
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .connection: "API & security"
-        case .inference: "Inference"
-        case .memory: "Memory"
-        case .clients: "Connect apps"
-        }
-    }
-}
-
 enum ServingWorkspacePresentation {
     /// The count is how many sources missed the latest refresh. The sheet lists each one.
     static func sourceIssueTitle(_ count: Int) -> String {
