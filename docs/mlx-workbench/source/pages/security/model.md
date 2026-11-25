@@ -13,6 +13,8 @@ MLX Workbench is a single-user local app, not a service. Protect the Mac account
 
 Serving endpoints bind to loopback, such as `127.0.0.1`. Load-on-request gateways use an authenticated control channel to their worker. Hugging Face Hub discovery, intake and downloads contact the network, and update checks contact GitHub. Loopback binding is not a promise of network isolation.
 
+Protected endpoints and the Workbench API share one Workbench key stored in Keychain; settings and launch arguments hold only its digest. Resetting it restarts every protected endpoint and the Workbench API, and the previous key is removed after all restarts succeed. An endpoint saved with its own key keeps it until moved onto the Workbench key.
+
 ## Files
 
 - State stores, client config writes and the config file are replaced atomically. Stores refuse a symbolic link in place of their file.

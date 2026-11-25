@@ -189,6 +189,17 @@ final class FrontDoorCoordinator: ObservableObject {
         error = nil
     }
 
+    /// Restarts a running Workbench API on `settings`. True when it is not running, or is listening with the new key
+    /// digest; false when an operation stays in flight or the restart did not come back on that digest.
+    func restart(_ settings: FrontDoorSettings) async -> Bool {
+        for _ in 0..<60 where busy { try? await Task.sleep(for: .milliseconds(250)) }
+        guard !busy else { return false }
+        guard session != nil else { return true }
+        await stop()
+        await start(settings)
+        return session != nil && listening?.apiKeySHA256 == settings.apiKeySHA256
+    }
+
     private func end() async {
         let running = session
         endpointRefresh?.cancel(); endpointRefresh = nil

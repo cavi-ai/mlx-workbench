@@ -86,8 +86,35 @@ struct EndpointAuthenticationReview: Identifiable {
     let id = UUID()
     let slot: EndpointSlot
     let keySHA256: String?
-    let token: String?
+    /// A new Workbench key held in memory until the review is confirmed; nil when the key already exists.
+    let workbenchToken: String?
     let previewHash: String
+}
+
+/// A reviewed trained-adapter endpoint: the plan hash was computed with the digest the endpoint will save.
+struct TrainedAdapterEndpointReview {
+    let binding: TrainedAdapterBinding
+    let port: Int
+    let hash: String
+    let loadOnRequest: Bool
+    let requireAPIKey: Bool
+    let keySHA256: String?
+    let workbenchToken: String?
+}
+
+/// A reviewed Workbench key reset: the new key and every endpoint that restarts onto it.
+struct WorkbenchKeyResetReview: Identifiable {
+    struct Endpoint: Equatable {
+        let slot: EndpointSlot
+        let previewHash: String
+    }
+    let id = UUID()
+    let oldDigest: String
+    let newDigest: String
+    let token: String
+    let workbenchAPIPort: Int
+    /// Protected endpoints in restart order; the Workbench API restarts after them.
+    let endpoints: [Endpoint]
 }
 
 // MARK: - Endpoint models

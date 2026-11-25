@@ -43,7 +43,7 @@ When a discovered endpoint already serves the selected model, **Open existing en
 
 To run one model on more than one endpoint, open **Settings → Serving → Duplicate serving** and choose **Allow a model…**. Workbench shows the exact model the engine will allow; **Confirm** saves it. **Remove…** returns a model to one endpoint. A change applies to endpoints started after it, and API keys and memory admission stay in effect.
 
-To reach several endpoints through one address, use the **Workbench API** row at the top of the Serving list; **Settings → Serving → Workbench API port** sets its port (default 8090). Choose **Create key and start**. Workbench creates one Workbench API key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The row shows the address, state and the number of routed models, with **Start**/**Stop**, **Copy address**, **Copy key** and **Set up an app…**. The Workbench API routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Use Workbench API key…** in **Access**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the row lists the routed model count. Starting, stopping, swapping or removing an endpoint automatically refreshes the Workbench API's route list while it is running. Each model name behind the Workbench API must map to a single endpoint using the Workbench API key: if two enabled endpoints share the key and advertise the same model name, the Workbench API row warns about the collision and the Workbench API omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the Workbench API key for that model. Endpoints keep their own ports, loading and memory admission, and the Workbench API key stays in Keychain when no endpoint uses it.
+To reach several endpoints through one address, use the **Workbench API** row at the top of the Serving list; **Settings → Serving → Workbench API port** sets its port (default 8090). Choose **Create key and start**. Workbench creates one Workbench API key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The row shows the address, state and the number of routed models, with **Start**/**Stop**, **Copy address**, **Copy key** and **Set up an app…**. The Workbench API routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Protect with Workbench key…** (or **Use Workbench key…** for an endpoint with its own key) in **Access**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the row lists the routed model count. Starting, stopping, swapping or removing an endpoint automatically refreshes the Workbench API's route list while it is running. Each model name behind the Workbench API must map to a single endpoint using the Workbench API key: if two enabled endpoints share the key and advertise the same model name, the Workbench API row warns about the collision and the Workbench API omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the Workbench API key for that model. Endpoints keep their own ports, loading and memory admission, and the Workbench API key stays in Keychain when no endpoint uses it.
 
 The endpoint list has three sections. **Roles** has one row per serving role, in catalog order, each on its own canonical port; an assigned role shows its model, port and status with **Stop** or **Start** and **Change model…**, and an unassigned role shows **Not assigned - :port** and **Choose model…**. **Custom endpoints** lists saved endpoints without a role and **Add custom endpoint…**. **Other servers on this Mac** is collapsed, with a count, and lists external servers and inventory entries. **Choose model…** lists ready Library models whose task the role accepts; the review shows the role's port and a confirmation adds the endpoint. Each row shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Sources that missed the latest refresh are listed under the endpoint list, with each source and its message in the sheet. They do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 
@@ -378,17 +378,30 @@ client wiring and role routing are available only for chat endpoints.
 
 ## Require an API key
 
-When saving a model as an endpoint in **Serve a model**, turn on **Require API key**; an existing endpoint's overflow menu offers **Require API key…**, **Reset API key…** and **Disable authentication…** while it is stopped. The
+Protected endpoints share one Workbench key. When saving a model as an endpoint in **Serve a model**, turn on **Require API key**; an existing endpoint's overflow menu offers **Protect with Workbench key…** and **Disable authentication…** while it is stopped. The
 endpoint stays on loopback and loads weights on request. Use **Copy base URL**,
-**Copy model ID** and **Copy API key** to configure each authorized client.
-Keys are generated securely and saved in Keychain. Endpoint settings, launch
-arguments and exports contain only a verification digest.
+**Copy model ID** and **Copy API key** to configure each authorized client;
+clients read the key from `MLX_AGENT_API_KEY`.
+The Workbench key is generated securely once, saved in Keychain and shared with
+the Workbench API. Endpoint settings, launch arguments and exports contain only
+a verification digest. Protecting an endpoint never creates another key.
 
-For a saved endpoint, stop it first, then choose **Require API key…**. Review
-and save the change, then start the endpoint. **Reset API key…** creates a new
-key and revokes the previous one after restart. Authentication changes leave
-the endpoint stopped. **Disable authentication…** explicitly restores access
-for local clients without a key.
+For a saved endpoint, stop it first, then choose **Protect with Workbench key…**.
+Review and save the change, then start the endpoint. Authentication changes
+leave the endpoint stopped. **Disable authentication…** explicitly restores
+access for local clients without a key. An endpoint saved with its own key keeps
+working with it; its **Access** section offers **Use Workbench key…** to move it
+onto the Workbench key through the same review.
+
+**Reset Workbench key…** lists every protected endpoint and the Workbench API.
+Confirming refuses, changing nothing, when a running endpoint is in use by another
+operation or has active requests. Otherwise it stops the running endpoints, saves
+the new key, restarts the endpoints by ascending port and then the Workbench API,
+and removes the previous key from Keychain only after every restart succeeded. If
+a stop fails, nothing is saved and stopped endpoints restart on the previous key.
+If a restart fails, the previous key stays in Keychain and the failed ports are
+reported. Reviews never save a key; a new Workbench key is saved when the change
+that uses it is confirmed.
 
 Protected endpoints require `Authorization: Bearer KEY` or `x-api-key: KEY`
 for model discovery, inference, task history, cancellation and artifacts.

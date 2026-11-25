@@ -46,6 +46,7 @@ struct ServeView: View {
     @State private var mode = ServeMode.saveEndpoint
     @State private var action: EndpointChangeReview?
     @State private var authenticationReview: EndpointAuthenticationReview?
+    @State private var keyResetReview: WorkbenchKeyResetReview?
     @State private var workspaceSelection: String?
     @State private var inspectorScroll: ServingInspectorPresentation.Section?
     @State private var includesAvailable = false
@@ -216,6 +217,7 @@ struct ServeView: View {
         .sheet(item: $portReview) { review in portReviewSheet(review) }
         .sheet(item: gated($action)) { pending in confirmation(pending) }
         .sheet(item: gated($authenticationReview)) { review in authenticationConfirmation(review) }
+        .sheet(item: gated($keyResetReview)) { review in keyResetConfirmation(review) }
         .sheet(item: $promptPresentation) { presentation in
             EndpointTestSheet(presentation: presentation, coordinator: endpointTest) {
                 guard let request = ClientWiringRequest.forServer(presentation.server) else { return }
@@ -365,11 +367,16 @@ struct ServeView: View {
                     }
                 }
                 if trainedAdapters.selectedJob != nil {
-                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview, key in
+                    TrainedAdapterRunPanel(coordinator: trainedAdapters, reviewEndpoint: { preview in
+                        try await endpoint.reviewTrainedAdapterEndpoint(
+                            binding: preview.binding, port: preview.port,
+                            loadOnRequest: preview.loadOnRequest, requireAPIKey: preview.requireAPIKey
+                        )
+                    }, saveAsEndpoint: { review in
                         await endpoint.addTrainedAdapterSlot(
-                            binding: preview.binding, port: preview.port, allowUnverified: true,
-                            loadOnRequest: preview.loadOnRequest, requireAPIKey: preview.requireAPIKey,
-                            reviewedHash: preview.hash, reviewedKey: key
+                            binding: review.binding, port: review.port, allowUnverified: true,
+                            loadOnRequest: review.loadOnRequest, requireAPIKey: review.requireAPIKey,
+                            review: review
                         )
                         await modelWorkflow.refreshServers()
                         return endpoint.lastError
@@ -567,7 +574,7 @@ struct ServeView: View {
                                 .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
                         }
                         ServingCaption(ServingInspectorPresentation.caption(.port))
-                        Toggle("Protected by API key", isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
+                        Toggle("Protected by Workbench key", isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
                             if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
                         })).toggleStyle(.checkbox).disabled(slot.enabled || endpoint.isChanging)
                             .accessibilityIdentifier("serving-require-api-key")
@@ -578,15 +585,18 @@ struct ServeView: View {
                                     do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
                                     catch { actionError = AppHost.render(error) }
                                 }.accessibilityIdentifier("serving-copy-api-key")
-                                Button("Reset key…") { prepareAuthentication(slot, required: true) }.disabled(slot.enabled || endpoint.isChanging)
+                                if hash == endpoint.fleet.frontDoor?.apiKeySHA256 {
+                                    Button("Reset Workbench key…") { prepareWorkbenchKeyReset() }.disabled(endpoint.isChanging)
+                                        .accessibilityIdentifier("serving-reset-workbench-key")
+                                }
                             }
                         }
                         if let door = endpoint.fleet.frontDoor {
                             if slot.apiKeySHA256 == door.apiKeySHA256 {
-                                Text("Uses the Workbench API key · routed at 127.0.0.1:\(String(door.port)) while the Workbench API runs.")
+                                Text("Uses the Workbench key · routed at 127.0.0.1:\(String(door.port)) while the Workbench API runs.")
                                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                            } else {
-                                Button("Use Workbench API key…") { prepareAuthentication(slot, required: true, frontDoorKey: true) }
+                            } else if slot.apiKeySHA256 != nil {
+                                Button("Use Workbench key…") { prepareAuthentication(slot, required: true) }
                                     .disabled(slot.enabled || endpoint.isChanging)
                                     .accessibilityIdentifier("serving-use-front-door-key")
                             }
@@ -1457,10 +1467,12 @@ struct ServeView: View {
                     do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
                     catch { actionError = AppHost.render(error) }
                 }
-                Button("Reset API key…") { prepareAuthentication(slot, required: true) }
-                    .disabled(slot.enabled).help("Stop this endpoint before resetting its key.")
+                if hash == endpoint.fleet.frontDoor?.apiKeySHA256 {
+                    Button("Reset Workbench key…") { prepareWorkbenchKeyReset() }
+                        .disabled(endpoint.isChanging)
+                }
             }
-            Button(slot.apiKeySHA256 == nil ? "Require API key…" : "Disable authentication…") {
+            Button(slot.apiKeySHA256 == nil ? "Protect with Workbench key…" : "Disable authentication…") {
                 prepareAuthentication(slot, required: slot.apiKeySHA256 == nil)
             }.disabled(slot.enabled).help("Stop this endpoint before changing authentication.")
             if modelWorkflow.servers.contains(where: { $0.port == slot.port && $0.runtime == "tasks" }) {
@@ -1753,22 +1765,51 @@ struct ServeView: View {
         }
     }
 
-    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool, frontDoorKey: Bool = false) {
+    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool) {
         Task {
-            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required, frontDoorKey: frontDoorKey) }
+            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required) }
             catch { actionError = AppHost.render(error) }
         }
     }
 
+    private func prepareWorkbenchKeyReset() {
+        Task {
+            do { keyResetReview = try await endpoint.resetWorkbenchKeyPreview() }
+            catch { actionError = AppHost.render(error) }
+        }
+    }
+
+    private func keyResetConfirmation(_ review: WorkbenchKeyResetReview) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Reset the Workbench key?").font(WorkbenchTypography.cardTitle)
+            Text("These restart in order, then the previous key stops working:")
+            ForEach(review.endpoints, id: \.slot.id) { entry in
+                Text("Endpoint 127.0.0.1:\(entry.slot.port)\(entry.slot.enabled ? " (running)" : " (stopped)")").textSelection(.enabled)
+            }
+            Text("Workbench API 127.0.0.1:\(review.workbenchAPIPort)").textSelection(.enabled)
+            Text("Copy the new key after saving and update each client. If a restart fails, the previous key stays in Keychain.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            HStack {
+                Button("Cancel") { keyResetReview = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Reset key") {
+                    Task {
+                        let done = await endpoint.confirmWorkbenchKeyReset(review)
+                        if done { keyResetReview = nil }
+                        actionError = endpoint.lastError
+                    }
+                }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
+    }
+
     private func authenticationConfirmation(_ review: EndpointAuthenticationReview) -> some View {
-        let sharesFrontDoorKey = review.token == nil && review.keySHA256 != nil
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text(review.keySHA256 == nil ? "Disable API key authentication?" : sharesFrontDoorKey ? "Use the Workbench API key?" : "Require a new API key?")
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text(review.keySHA256 == nil ? "Disable API key authentication?" : "Protect with the Workbench key?")
                 .font(WorkbenchTypography.cardTitle)
             Text("Endpoint: 127.0.0.1:\(review.slot.port)").textSelection(.enabled)
             Text(review.keySHA256 == nil ? "Any local client will be able to use this endpoint after you start it."
-                 : sharesFrontDoorKey ? "Clients holding the Workbench API key can use this endpoint directly or through the Workbench API. Previous keys stop working."
-                 : "Only clients holding the new key can use this endpoint. Copy the key after saving and configure it in each client. Previous keys stop working.")
+                 : "Clients holding the Workbench key can use this endpoint directly or through the Workbench API. Previous keys for this endpoint stop working.")
             Text("The endpoint stays stopped. Model files stay in place.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             HStack {

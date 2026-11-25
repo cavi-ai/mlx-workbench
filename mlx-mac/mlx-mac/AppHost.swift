@@ -424,6 +424,10 @@ class AppHost {
         self.endpoint.isVerified = { [weak self] path in
             self?.isModelVerified(path) ?? false
         }
+        self.endpoint.restartWorkbenchAPI = { [weak self] settings in
+            guard let door = self?.frontDoor else { return false }
+            return await door.restart(settings)
+        }
         self.frontDoor.updateCollisions(slots: self.endpoint.fleet.slots, frontDoorKeySHA256: self.endpoint.fleet.frontDoor?.apiKeySHA256)
         self.frontDoorFleetMonitoring = self.endpoint.$fleet
             .sink { [weak self] fleet in

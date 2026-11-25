@@ -2,9 +2,11 @@ import SwiftUI
 
 struct TrainedAdapterRunPanel: View {
     @ObservedObject var coordinator: TrainedAdapterServingCoordinator
-    var saveAsEndpoint: ((TrainedAdapterServePreview, String?) async -> String?)? = nil
+    var reviewEndpoint: ((TrainedAdapterServePreview) async throws -> TrainedAdapterEndpointReview)? = nil
+    var saveAsEndpoint: ((TrainedAdapterEndpointReview) async -> String?)? = nil
     let refresh: () async -> Void
     @State private var confirmingSave = false
+    @State private var endpointReview: TrainedAdapterEndpointReview?
     @State private var saveError: String?
 
     var body: some View {
@@ -73,7 +75,7 @@ struct TrainedAdapterRunPanel: View {
                                     Button("Save unverified endpoint") { saveEndpoint() }
                                         .accessibilityIdentifier("trained-adapter-save-endpoint")
                                 } else {
-                                    Button("Save as endpoint…") { saveError = nil; confirmingSave = true }
+                                    Button("Save as endpoint…") { reviewSave() }
                                         .accessibilityIdentifier("trained-adapter-save-endpoint")
                                 }
                             }
@@ -88,7 +90,7 @@ struct TrainedAdapterRunPanel: View {
     }
 
     private var previewButton: some View {
-        Button("Preview adapter serve") { confirmingSave = false; saveError = nil; perform(coordinator.previewServe()) }
+        Button("Preview adapter serve") { confirmingSave = false; endpointReview = nil; saveError = nil; perform(coordinator.previewServe()) }
             .disabled(!coordinator.canPreview).accessibilityIdentifier("trained-adapter-preview")
             .help("Recheck the completed receipt, pinned base and adapter before serving.")
     }
@@ -103,12 +105,20 @@ struct TrainedAdapterRunPanel: View {
         guard let task else { return }
         Task { await task.value; await refresh() }
     }
-    private func saveEndpoint() {
-        guard let preview = coordinator.preview, let saveAsEndpoint else { return }
-        let key = coordinator.reviewedAPIKey
-        confirmingSave = false
+    private func reviewSave() {
+        guard let preview = coordinator.preview, let reviewEndpoint else { return }
+        saveError = nil
         Task {
-            saveError = await saveAsEndpoint(preview, key)
+            do { endpointReview = try await reviewEndpoint(preview); confirmingSave = true }
+            catch { saveError = AppHost.render(error) }
+        }
+    }
+    private func saveEndpoint() {
+        guard let review = endpointReview, let saveAsEndpoint else { return }
+        confirmingSave = false
+        endpointReview = nil
+        Task {
+            saveError = await saveAsEndpoint(review)
             if saveError == nil { coordinator.clear() }
             await refresh()
         }
