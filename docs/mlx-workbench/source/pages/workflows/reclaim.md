@@ -14,7 +14,7 @@
 | Other versions | You chose a version to keep; review the other versions before removing them |
 | Choose a version | Several versions need review; compare their capabilities and quality before choosing |
 
-Usage age and file modification dates never affect removal suggestions. Serving, preferred and in-use models are protected. Discovery skips a historical registered service location that no longer exists; unavailable explicit or live locations still block removal until ownership can be checked. **Review…** opens the removal review for that suggestion.
+Usage age and file modification dates never affect removal suggestions. Serving, preferred and in-use models are protected. Discovery skips a historical registered service location that no longer exists; unavailable explicit or live locations still block removal until ownership can be checked. **Remove…** lists what that suggestion moves to quarantine and removes it on confirmation.
 
 The header counts every file under the scanned folders once: the total on disk, the part held by recognized models, and that part by store (folders, the Hugging Face cache and Ollama). Hard links and blobs shared between Ollama tags or cache revisions are counted once. The remainder is listed by the folders and files that hold it, largest first, with **Reveal** to open each in Finder. Those bytes belong to no model the scan recognizes; they can be unsupported model formats as well as leftovers.
 
@@ -22,9 +22,9 @@ The table has one row per model. Versions of a model share its architecture (lay
 
 Expand a row to see its versions. A version is marked **Keep** only with evidence: one that is serving or preferred, or the one you mark with **Keep**. **Could free** is the space released by keeping that version, or the largest when none is marked, and removing the others: a file still used by a version that stays, such as an Ollama blob shared with another tag, is not counted. Serving, preferred and in-use versions show a lock and cannot be selected.
 
-Select versions, or **Select extra versions**, then **Review removal…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
+Select versions, or **Select extra versions**, then **Remove selected…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
 
-Before removal, Workbench checks current serving ownership. A successful discovery drops automatically detected servers that have stopped listening. If a local source cannot be checked, the removal message names the source and its error. Resolve it in Serving and retry. Disk inventory remains available while removal is paused.
+Before removal, Workbench checks current serving ownership. A successful discovery drops automatically detected servers that have stopped listening, and a saved connection whose address refuses the connection is shown as offline: no server runs there, so it serves no model and does not pause removal. If a local source cannot be checked, the removal message names the source and its error. Resolve it in Serving and retry. Disk inventory remains available while removal is paused.
 
 | Copy | Removal |
 |---|---|
@@ -39,7 +39,7 @@ Quarantined copies still occupy disk until you move them to the Trash and empty 
 
 **Compare model files** reads independent same-size standalone files in full and groups matching SHA-256 digests. It may take time for large files; **Cancel comparison** stops the check and keeps the previous scan. Model-owned files, provider stores, symlinks, shard-pattern files and files with multiple hard links are excluded. Missing files, changed folders and incomplete checks remain visible; they do not establish that no other copies exist.
 
-A verified group keeps the file named in the review. Choose **Keep** on another matching copy to retain it instead. **Review removal…** shows both the file to move and a retained match. Update other apps to use the kept path and confirm that you checked their model paths before removing the copy. Workbench cannot determine every external reference. Confirmation rechecks both files and their complete digests, and moves the selected file into same-volume Quarantine. It does not edit app configuration. The kept file remains in place, and **Put back** restores a quarantined file if its original location is free.
+A verified group keeps the file named in the review. Choose **Keep** on another matching copy to retain it instead. **Remove selected…** shows both the file to move and a retained match. Update other apps to use the kept path and confirm that you checked their model paths before removing the copy. Workbench cannot determine every external reference. Confirmation rechecks both files and their complete digests, and moves the selected file into same-volume Quarantine. It does not edit app configuration. The kept file remains in place, and **Put back** restores a quarantined file if its original location is free.
 
 ## What it suggests
 
@@ -101,7 +101,7 @@ inference. Active work or an open editor keeps the navigation request pending.
 Replacement advice requires current model and environment identities, the same
 complete prompt cohort, timing for every prompt and reviewed quality for every entrant. Truncated or reasoning-only answers
 cannot support chat replacement advice. A model can remain useful for another
-task even when a peer beats it here. **Review removal…** on an evidenced candidate
+task even when a peer beats it here. **Remove…** on an evidenced candidate
 opens Library's existing removal preview; confirmation moves it to macOS Trash.
 For a Hugging Face cache entry, that preview names the entire repository and all
 included revisions. No showdown automatically removes model files.

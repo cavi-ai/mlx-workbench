@@ -69,7 +69,7 @@ final class ServingInventoryCoordinator: ObservableObject {
          fetchFreshEngine: (() async throws -> ServingEngineSnapshot)? = nil,
          readMemory: @escaping ([Int]) async -> [Int: UInt64]? = { pids in
              let captured = await WorkbenchIO.perform { try? ProcessMemorySnapshot.probe(pids: pids.map(Int32.init)) }
-             return captured.map { Dictionary(uniqueKeysWithValues: $0.processes.map { (Int($0.pid), $0.residentBytes) }) }
+             return captured.map { Dictionary(uniqueKeysWithValues: $0.processes.map { (Int($0.pid), $0.memoryBytes) }) }
          }) {
         self.managedReceipts = managedReceipts
         self.now = now

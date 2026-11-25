@@ -57,7 +57,7 @@ final class PrepareRemodelTests: XCTestCase {
         let tiles = presentation.tiles(actualBytes: nil)
         XCTAssertEqual(tiles.map(\.bits), [4, 8])
         XCTAssertEqual(tiles.map(\.size), [.estimated(400), .estimated(800)])
-        XCTAssertTrue(tiles[0].size.text.hasPrefix("~"))
+        XCTAssertTrue(tiles[0].size.text.hasSuffix(" est."))
     }
 
     func testGGUFTilesHaveNoSize() {

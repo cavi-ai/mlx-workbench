@@ -20,13 +20,13 @@ final class OverviewPresentationTests: XCTestCase {
         XCTAssertEqual(segments.budget, 0.5, accuracy: 1e-9)
         XCTAssertEqual(segments.inUse + segments.reserve + segments.budget, 1, accuracy: 1e-9, "no serving segment is fabricated")
         XCTAssertEqual(presentation.budgetBytes, 16_000_000_000)
-        XCTAssertEqual(presentation.leadText, "~16.0")
+        XCTAssertEqual(presentation.leadText, "16.0")
     }
 
     func testBudgetClampsAtZeroWhenReserveExceedsAvailable() throws {
         let presentation = budget(total: 32_000_000_000, available: 3_000_000_000, reserveGB: 4)
         XCTAssertEqual(presentation.budgetBytes, 0)
-        XCTAssertEqual(presentation.leadText, "~0.0")
+        XCTAssertEqual(presentation.leadText, "0.0")
         let segments = try XCTUnwrap(presentation.segments)
         XCTAssertEqual(segments.budget, 0)
         XCTAssertEqual(segments.reserve, 3.0 / 32.0, accuracy: 1e-9)

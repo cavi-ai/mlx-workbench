@@ -258,9 +258,9 @@ struct RunRunway: Equatable {
         segment.kind == .reserve ? budget.reserveLabel : segment.name
     }
 
-    /// Legend size, estimate-marked; the reserve's size is already in its label.
+    /// Legend size; the reserve's size is already in its label.
     func legendSize(_ segment: Segment) -> String? {
-        segment.kind == .reserve ? nil : "~" + ModelBudgetPresentation.gb(segment.bytes) + " GB"
+        segment.kind == .reserve ? nil : ModelBudgetPresentation.gb(segment.bytes) + " GB"
     }
 
     init(memory: MemorySnapshot?, hasProbed: Bool, reserveGB: Double, contextTokens: Int,

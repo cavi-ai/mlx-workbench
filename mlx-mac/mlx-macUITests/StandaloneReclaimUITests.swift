@@ -106,7 +106,7 @@ final class StandaloneReclaimUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10)); XCTAssertTrue(row.isHittable)
         let resultCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         resultCapture.name = "Compared model files"; resultCapture.lifetime = .keepAlways; add(resultCapture)
-        let review = application.buttons["Review…"].firstMatch
+        let review = application.buttons["Remove…"].firstMatch
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         for _ in 0..<4 where !review.isHittable { scroll.scroll(byDeltaX: 0, deltaY: 250) }
         XCTAssertTrue(review.isHittable); review.click()

@@ -193,7 +193,7 @@ struct SystemResourceHeader: View {
     private func memoryValue(_ label: String, bytes: Int64, color: Color) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
             Text(label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            Text("~\(gb(bytes)) GB").font(WorkbenchTypography.display)
+            Text("\(gb(bytes)) GB").font(WorkbenchTypography.display)
                 .foregroundStyle(color)
                 .contentTransition(.numericText())
                 .workbenchAnimation(value: bytes)
@@ -227,7 +227,7 @@ enum ResourceHeaderPresentation {
     /// `tally` is nil until the inventory has been read. Models that need attention lead, and a compact label
     /// keeps only them; the rest name where running models stand, in the words Serving and Monitor use.
     static func memoryText(availableBytes: Int64, tally: ServingTally?, compact: Bool) -> String {
-        let available = "~\(gigabytes(availableBytes)) GB available"
+        let available = "\(gigabytes(availableBytes)) GB available"
         guard let tally else { return available }
         let attention = Self.attentionPhrase(tally.attention)
         if compact { return attention ?? available }
@@ -245,7 +245,7 @@ enum ResourceHeaderPresentation {
     static func lines(availableBytes: Int64, tally: ServingTally?) -> [ResourceHeaderLine] {
         let attention = tally?.attention ?? 0
         let badge = Self.attentionPhrase(attention)
-        let free = "~\(gigabytes(availableBytes)) GB free"
+        let free = "\(gigabytes(availableBytes)) GB free"
         let counts = [(tally?.loaded ?? 0) > 0 ? "\(tally?.loaded ?? 0) loaded" : nil,
                       (tally?.loading ?? 0) > 0 ? "\(tally?.loading ?? 0) loading" : nil,
                       (tally?.unloading ?? 0) > 0 ? "\(tally?.unloading ?? 0) unloading" : nil,
@@ -376,7 +376,7 @@ private struct ServingInventoryResourceSection: View {
                                   occupancy: occupancy, historyLoaded: historyLoaded, hostMemoryBusy: hostMemoryBusy, onManage: onManage, onReview: onReview)
                 if row.id != rows.last?.id { Divider() }
             }
-            Text("Process RAM is observed resident memory and may share pages. Provider readings and source estimates are separate; none are added to system headroom.")
+            Text("Process RAM is each process's physical footprint and may share pages. Provider readings and source estimates are separate; none are added to system headroom.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             if let date = inventory.processMemoryCapturedAt {
                 Text("Process RAM read " + date.formatted(date: .omitted, time: .standard))
@@ -557,7 +557,7 @@ struct ProcessMemoryButton: View {
         .buttonStyle(.borderless)
         .font(WorkbenchTypography.secondary)
         .accessibilityIdentifier("inspect-process-memory")
-        .help("Read the largest processes by resident memory without stopping anything")
+        .help("Read the largest processes by memory without stopping anything")
     }
 }
 
@@ -571,7 +571,7 @@ struct ProcessMemorySheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     Text("What’s using memory").font(WorkbenchTypography.title)
-                    Text("Largest processes by resident memory")
+                    Text("Largest processes by memory, as Activity Monitor reports it")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 Spacer()
@@ -580,7 +580,7 @@ struct ProcessMemorySheet: View {
                 }
                 .disabled(resources.refreshingProcesses)
             }
-            Text("Resident memory can include shared pages and omit GPU allocations. These values do not add up to system memory use or change the model-fit estimate.")
+            Text("Each value is the process's physical footprint, including GPU buffers it owns. Shared pages count in more than one process, so values do not add up to system memory use or change the model-fit estimate.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             if let error = resources.processError {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
@@ -600,8 +600,8 @@ struct ProcessMemorySheet: View {
                 }
                 TableColumn("PID") { process in Text(String(process.pid)).monospacedDigit() }
                     .width(65)
-                TableColumn("Resident RAM") { process in
-                    Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: process.residentBytes), countStyle: .memory))
+                TableColumn("Memory") { process in
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: process.memoryBytes), countStyle: .memory))
                         .monospacedDigit()
                 }.width(110)
             }

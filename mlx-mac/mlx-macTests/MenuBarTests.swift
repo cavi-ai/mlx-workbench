@@ -105,16 +105,16 @@ final class MenuBarTests: XCTestCase {
 
     func testToolbarLabelNamesLoadedCountOnlyWhenWideAndRead() {
         let twelve: Int64 = 12_000_000_000
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: false), "2 loaded · ~12.0 GB available")
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: true), "~12.0 GB available")
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: nil, compact: false), "~12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: false), "2 loaded · 12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(loaded: 2), compact: true), "12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: nil, compact: false), "12.0 GB available")
     }
 
     func testToolbarLinesPutAttentionInABadgeAndShortenInOrder() {
         let twelve: Int64 = 12_000_000_000
         let lines = ResourceHeaderPresentation.lines(availableBytes: twelve, tally: ServingTally(attention: 1, loaded: 2, onRequest: 2))
-        XCTAssertEqual(lines, [ResourceHeaderLine(badge: "A model failed to load", text: "2 loaded · 2 on request · ~12.0 GB free"),
-                               ResourceHeaderLine(badge: "A model failed to load", text: "~12.0 GB free"),
+        XCTAssertEqual(lines, [ResourceHeaderLine(badge: "A model failed to load", text: "2 loaded · 2 on request · 12.0 GB free"),
+                               ResourceHeaderLine(badge: "A model failed to load", text: "12.0 GB free"),
                                ResourceHeaderLine(badge: nil, text: "Load failed")])
         XCTAssertEqual(ResourceHeaderPresentation.attentionPhrase(2), "2 models failed to load")
         XCTAssertEqual(ResourceHeaderPresentation.lines(availableBytes: twelve, tally: nil).map(\.badge), [nil, nil, nil])
@@ -131,7 +131,7 @@ final class MenuBarTests: XCTestCase {
         let degraded = EndpointState.degraded(reason: "down")
         XCTAssertEqual(EndpointIcon.name(for: degraded), "exclamationmark.triangle")
         XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: 12_000_000_000, tally: ServingTally(loaded: 1), attention: degraded),
-                       "1 loaded · ~12.0 GB available, endpoint: " + degraded.summary)
+                       "1 loaded · 12.0 GB available, endpoint: " + degraded.summary)
         XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: nil, tally: nil, attention: nil), "RAM unavailable")
     }
 

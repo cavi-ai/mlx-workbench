@@ -183,7 +183,7 @@ struct ServingSystemHeadroom: View {
 
     var body: some View {
         if let memory = resources.memory {
-            Text(String(format: "System headroom: ~%.1f GB available", Double(memory.availableBytes) / 1e9))
+            Text(String(format: "System headroom: %.1f GB available", Double(memory.availableBytes) / 1e9))
                 .font(WorkbenchTypography.label.monospacedDigit())
                 .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
         } else {
@@ -264,48 +264,51 @@ struct ServingServiceRow: View {
 }
 
 struct ServingServiceDetails: View {
+    enum Section: Hashable { case source, memory }
     let service: ServingServiceObservation
     @ObservedObject var inventory: ServingInventoryCoordinator
+    var sections: Set<Section> = [.source, .memory]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-            Text("Model: " + (service.hostedModel == nil && service.server == nil ? "Not reported" : service.modelID)).font(WorkbenchTypography.compactValue)
-            Text("Endpoint: " + (service.baseURL ?? "Not reported")).font(WorkbenchTypography.compactValue)
-            Text("Model path: " + (service.modelPath ?? "Not reported")).font(WorkbenchTypography.compactValue)
-            if let receipts = service.server?.receiptsDirectory {
-                Text("Receipts: " + receipts).font(WorkbenchTypography.compactValue)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            if sections.contains(.source) {
+                MonitorField(label: "Model", value: service.hostedModel == nil && service.server == nil ? "Not reported" : service.modelID)
+                MonitorField(label: "Endpoint", value: service.baseURL ?? "Not reported", monospaced: true)
+                MonitorField(label: "Model path", value: service.modelPath ?? "Not reported", monospaced: true)
+                if let receipts = service.server?.receiptsDirectory {
+                    MonitorField(label: "Receipts", value: receipts, monospaced: true)
+                }
+                if let runtime = service.runtime {
+                    MonitorField(label: "Runtime", value: ServingWorkspacePresentation.runtimeTitle(runtime) ?? runtime)
+                }
+                if let active = service.server?.activeRequests { MonitorField(label: "Active requests", value: active.formatted()) }
             }
-            if let runtime = service.runtime { Text("Runtime: " + runtime) }
-            if let active = service.server?.activeRequests { Text("Active requests: \(active)") }
-            if let pid = service.modelProcessID {
-                Text("Model process RAM: " + memory(for: pid) + " · PID \(pid)")
-            } else {
-                Text("Model process RAM: Unknown")
+            if sections.contains(.memory) {
+                MonitorField(label: "Model process", value: service.modelProcessID.map { memory(for: $0) + " · PID \($0)" } ?? "Unknown")
+                if let pid = service.server?.pid, pid != service.modelProcessID {
+                    MonitorField(label: "Server process", value: memory(for: pid) + " · PID \(pid)")
+                }
+                if let pid = service.hostProcessID {
+                    MonitorField(label: "Shared host", value: memory(for: pid) + " · PID \(pid)")
+                }
+                if let reading = service.server?.workerMemory {
+                    MonitorField(label: "MLX allocator", value: ServingInventoryPresentation.allocatorSummary(reading))
+                }
+                if let bytes = service.reportedMemoryBytes {
+                    MonitorField(label: "Provider allocation", value: byteCount(bytes))
+                }
+                if let allocation = service.server?.memoryAllocation {
+                    if let bytes = allocation.estimatedResidentBytes { MonitorField(label: "Source estimate", value: byteCount(bytes)) }
+                    if let bytes = allocation.budgetBytes { MonitorField(label: "Memory budget", value: byteCount(bytes)) }
+                    if let mode = allocation.mode { MonitorField(label: "Allocation mode", value: mode) }
+                }
+                if let date = inventory.processMemoryCapturedAt, service.modelProcessID != nil || service.server?.pid != nil {
+                    MonitorField(label: "Process memory read", value: date.formatted(date: .omitted, time: .standard))
+                }
             }
-            if let pid = service.server?.pid, pid != service.modelProcessID {
-                Text("Server process RAM: " + memory(for: pid) + " · PID \(pid)")
-            }
-            if let pid = service.hostProcessID {
-                Text("Shared host process RAM: " + memory(for: pid) + " · PID \(pid)")
-            }
-            if let reading = service.server?.workerMemory {
-                Text("MLX allocator: " + ServingInventoryPresentation.allocatorSummary(reading))
-            }
-            if let date = inventory.processMemoryCapturedAt, service.modelProcessID != nil || service.server?.pid != nil {
-                Text("Process RAM read " + date.formatted(date: .omitted, time: .standard))
-            }
-            if let bytes = service.reportedMemoryBytes {
-                Text("Provider-reported model memory: " + byteCount(bytes))
-            }
-            if let allocation = service.server?.memoryAllocation {
-                if let bytes = allocation.estimatedResidentBytes { Text("Source estimate: " + byteCount(bytes)) }
-                if let bytes = allocation.budgetBytes { Text("Configured memory budget: " + byteCount(bytes)) }
-                if let mode = allocation.mode { Text("Allocation mode: " + mode) }
-            }
-            Text("Last observed " + service.capturedAt.formatted(date: .abbreviated, time: .standard))
+            MonitorField(label: "Last observed", value: service.capturedAt.formatted(date: .abbreviated, time: .standard))
         }
-        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func memory(for pid: Int) -> String {

@@ -187,7 +187,7 @@ enum ComparisonViewLogic {
 
     /// Client TTFT includes work beyond prompt processing; cache evidence may be unavailable.
     static func prefillText(_ tokensPerSecond: Double) -> String {
-        String(format: "in ~%.0f tok/s (est.)", tokensPerSecond)
+        String(format: "in %.0f tok/s (est.)", tokensPerSecond)
     }
 
     static func wordErrorText(_ rate: Double) -> String {

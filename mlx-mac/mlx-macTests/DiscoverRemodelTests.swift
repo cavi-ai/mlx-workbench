@@ -197,7 +197,7 @@ final class DiscoverFitTests: XCTestCase {
     }
 
     func testWeightsAreLabelledAsAnEstimate() {
-        XCTAssertEqual(F.fit(F.candidate("o/m", gb: 17.24)).weightsText, "~17.2 GB weights (est.)")
+        XCTAssertEqual(F.fit(F.candidate("o/m", gb: 17.24)).weightsText, "17.2 GB weights (est.)")
     }
 
     func testAgentVerdictIsOnlyALabelledBasisAndShowsWhenItDisagrees() {

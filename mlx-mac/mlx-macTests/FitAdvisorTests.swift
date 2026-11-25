@@ -42,15 +42,23 @@ final class FitAdvisorTests: XCTestCase {
     func testProcessMemoryReadsCurrentProcessWithoutArguments() throws {
         let reading = try ProcessMemorySnapshot.probe()
         let current = try XCTUnwrap(reading.processes.first { $0.pid == getpid() })
-        XCTAssertGreaterThan(current.residentBytes, 0)
+        XCTAssertGreaterThan(current.memoryBytes, 0)
         XCTAssertFalse(current.name.isEmpty)
-        XCTAssertEqual(reading.processes.map(\.residentBytes), reading.processes.map(\.residentBytes).sorted(by: >))
+        XCTAssertEqual(reading.processes.map(\.memoryBytes), reading.processes.map(\.memoryBytes).sorted(by: >))
         XCTAssertEqual(Set(reading.processes.map(\.pid)).count, reading.processes.count)
+    }
+
+    func testMemoryProbeSplitsPhysicalMemoryIntoActivityMonitorCategories() throws {
+        let snapshot = try XCTUnwrap(MemorySnapshot.probe())
+        let parts = try XCTUnwrap(snapshot.composition)
+        XCTAssertGreaterThan(parts.appBytes, 0)
+        XCTAssertGreaterThan(parts.wiredBytes, 0)
+        XCTAssertLessThanOrEqual(parts.usedBytes + parts.freeBytes, snapshot.totalBytes)
     }
 
     @MainActor
     func testProcessMemoryRefreshIsExplicitAndFailureKeepsDatedReading() async {
-        let first = ProcessMemorySnapshot(processes: [.init(pid: 42, name: "Example", residentBytes: 1234)])
+        let first = ProcessMemorySnapshot(processes: [.init(pid: 42, name: "Example", memoryBytes: 1234)])
         let calls = ProcessMemoryProbeFixture(reading: first)
         let date = Date(timeIntervalSince1970: 1234)
         let monitor = SystemResourceMonitor(probe: { nil }, now: { date }, processProbe: { try calls.read() })

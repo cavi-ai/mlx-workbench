@@ -377,7 +377,7 @@ struct HostedRunConditionsView: View {
             Text("Memory checked " + conditions.memoryCapturedAt.formatted(date: .abbreviated, time: .standard))
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             if let memory = conditions.validMemory {
-                Text(String(format: "System headroom: ~%.1f GB of %.1f GB unified memory", Double(memory.availableBytes) / 1e9, Double(memory.totalBytes) / 1e9))
+                Text(String(format: "System headroom: %.1f GB of %.1f GB unified memory", Double(memory.availableBytes) / 1e9, Double(memory.totalBytes) / 1e9))
                 Text(String(format: "Recorded reserve for model fit: %.1f GB. System-wide estimate, including reclaimable pages; model and GPU allocations are unavailable.", Double(conditions.reserveBytes) / 1e9))
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             } else { Text("System headroom unknown").foregroundStyle(WorkbenchColor.muted) }

@@ -3,6 +3,8 @@ import os
 
 enum HostHTTPError: Error, Equatable, LocalizedError, Sendable {
     case invalidURL, invalidPath, invalidResponse, responseTooLarge, requestFailed, timedOut
+    /// The loopback address refused the connection: no server is listening there.
+    case notListening
     case httpStatus(Int)
 
     var errorDescription: String? {
@@ -13,6 +15,7 @@ enum HostHTTPError: Error, Equatable, LocalizedError, Sendable {
         case .responseTooLarge: return "The host response exceeds the size limit."
         case .requestFailed: return "The local host could not be reached. Check its address and server settings."
         case .timedOut: return "The local host response timed out."
+        case .notListening: return "No server is running at this address. Start the server or remove the saved connection."
         case .httpStatus(let status): return "The host returned HTTP \(status)."
         }
     }
@@ -75,6 +78,7 @@ struct HostHTTPClient: Sendable {
         catch let error as HostHTTPError { throw error }
         catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         catch let error as URLError where error.code == .timedOut { throw HostHTTPError.timedOut }
+        catch let error as URLError where error.code == .cannotConnectToHost { throw HostHTTPError.notListening }
         catch { throw HostHTTPError.requestFailed }
     }
 }

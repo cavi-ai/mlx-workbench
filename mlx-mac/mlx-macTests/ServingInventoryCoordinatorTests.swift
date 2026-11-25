@@ -108,6 +108,33 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
         XCTAssertNil(hosts.discoveredProcessIDs[inventory.host.id])
     }
 
+    func testSavedHostWithNoServerDoesNotBlockRemoval() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET),
+                                  sin_port: 0, sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, length) == 0 && getsockname(listener, $0, &length) == 0 } }
+        let port = Int(UInt16(bigEndian: address.sin_port))
+        close(listener)
+        XCTAssertTrue(bound)
+        let store = JSONStore<ModelHost>(fileURL: root.appendingPathComponent("hosts.json"))
+        let saved = ModelHost(name: "Stopped server", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
+        try store.replaceAll([saved])
+        let hosts = ModelHostsCoordinator(store: store, discoverLocal: { [] }, readToken: { _ in nil })
+        let managedServer = server()
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [managedServer]) },
+            fetchHosts: { await hosts.servingSnapshot(refreshLocal: $0) }, readMemory: { _ in [:] })
+
+        let paths = try await coordinator.pathsForRemoval()
+        XCTAssertTrue(paths.contains("/models/model"))
+        XCTAssertEqual(hosts.offline, [saved.id])
+        XCTAssertNil(hosts.errors[saved.id])
+    }
+
     func testRemovalNamesUnavailableSourcesAndFailsClosed() throws {
         let host = hostInventory()
         let key = "host:" + host.host.id.uuidString

@@ -59,11 +59,26 @@ Sharing lasts while Workbench runs, including after you close the wizard. While 
 
 ## Live Monitor
 
-**Monitor** is a separate workspace for active model servers from the shared inventory. Its system headroom panel shows available and total memory when a reading is available. The endpoint list shows provider, status and known memory; select an endpoint for its address, gateway token totals and most recent response throughput. Missing measurements remain unknown. Models that need attention come first; their **Needs attention** status, here and in Serving, opens the engine's reason in place, and the selected row's details repeat it. Select a row for its API address, model ID, measurement interval, completed/failed/measured request counts and source/memory details. **Open model settings** selects that exact endpoint in Serving.
+**Monitor** is a separate workspace for active model servers from the shared inventory.
 
-Managed chat gateways report process-lifetime counters, reset when the gateway restarts. Monitor separates provider-reported model allocation from model process, gateway and shared host RAM. The overview counts each observed process once; coverage identifies missing readings and unknown owners. Process RSS can include shared physical pages and does not include unknown workers. Select an endpoint to see its memory owners and address alongside the endpoint list.
+**Memory** shows available and total memory, then one bar that splits physical memory into the categories Activity Monitor uses: app memory, wired, compressed, cached files and free. Hover a category for what it holds. **Using the most** lists the six processes with the largest physical footprint, read when Monitor opens and on **Refresh**; a process that serves a listed model is tagged with that model. **All processes…** opens the full list.
 
-Token totals include only completed responses whose workers reported usage. Missing measurements display a dash; a reported zero stays zero. Response tokens per second includes queueing, loading and response generation, so it differs from a decoder-only benchmark. External providers without these metrics retain status and source visibility. Monitor uses the existing inventory refresh and never starts inference.
+Three tiles follow: live endpoints and how many are loaded, the memory of the processes that serve them, and completed requests with output tokens since each gateway started. The endpoint list shows provider, status, known memory and the last request's decode speed. Models that need attention come first; their **Needs attention** status, here and in Serving, opens the engine's reason in place, and the selected endpoint's header repeats it.
+
+Select an endpoint for its cards:
+
+| Card | Shows |
+|---|---|
+| Header | Name, status, runtime and port; **Edit settings…** selects that exact endpoint in Serving |
+| Performance | Decode and prompt tokens per second, time to first token and response time of the last request; a bar splits that response into wait, prompt and decode shares; completed, failed, input and output token totals |
+| Settings | The endpoint's current loading, generation and acceleration settings, resolved with the model's defaults; **Edit…** opens them in Serving |
+| Memory | Provider allocation, model process, gateway and shared host memory with their PIDs, MLX allocator memory and the source estimate |
+| Connection | API address and Tailscale address |
+| Source | Model ID, model path, receipts and runtime; **Reveal in Finder** opens a local model |
+
+Managed chat gateways report process-lifetime counters, reset when the gateway restarts. Stage timing comes from streamed requests: wait covers queueing and loading, prompt runs until the first output token and decode covers the rest. A gateway that does not report stage timing shows whole-response output speed instead, which includes waiting and prompt processing. Token totals include only completed responses whose workers reported usage. Missing measurements display a dash; a reported zero stays zero.
+
+Process values are the physical footprint macOS reports, as Activity Monitor's Memory column does. Shared pages count in more than one process, so the values do not add up to system memory use. Provider-reported model allocation and source estimates are separate measurements. External providers without request metrics retain status and source visibility. Monitor uses the existing inventory refresh and never starts inference.
 
 ## Inference settings
 
@@ -308,14 +323,15 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 ## The memory header
 
-The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds while a window is visible and every minute while none is. Serving status comes from one engine discovery per ten seconds (per minute while no window is visible) shared by the header, Serving, Monitor and endpoint supervision. Its label counts the models Monitor lists (for example `1 loaded · 2 on request · ~12.0 GB free`), flags an endpoint that is starting or degraded, and shortens to fit the toolbar: headroom alone, then a bare figure. A model whose load failed adds a red `A model failed to load` badge. The shortest label says `Load failed` and drops the memory figure so it still fits. Open it for the same rows as Serving’s endpoint list, models that need attention first with the engine's reason, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
+The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds while a window is visible and every minute while none is. Serving status comes from one engine discovery per ten seconds (per minute while no window is visible) shared by the header, Serving, Monitor and endpoint supervision. Its label counts the models Monitor lists (for example `1 loaded · 2 on request · 12.0 GB free`), flags an endpoint that is starting or degraded, and shortens to fit the toolbar: headroom alone, then a bare figure. A model whose load failed adds a red `A model failed to load` badge. The shortest label says `Load failed` and drops the memory figure so it still fits. Open it for the same rows as Serving’s endpoint list, models that need attention first with the engine's reason, with reviewed **Unload model…** and **Stop server…** controls and **Open Serving**. Its context selector feeds model-fit reviews, not server configuration.
 
 Choose **What’s using memory…** from the toolbar popover
-for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.
+for an on-demand snapshot of up to 15 readable processes, sorted by memory.
 The table shows process names, PIDs and a capture time; **Refresh** reads again.
 It never stops a process. **Open Activity Monitor** opens macOS’s process inspector.
 
-Resident memory can include shared pages and omit GPU allocations, so the rows
+Each value is the process's physical footprint, including GPU buffers it owns.
+Shared pages count in more than one process, so the rows
 do not add up to system-wide usage and cannot identify which model or client
 requested an allocation. Exited or unreadable processes are omitted. Failed
 refreshes retain the dated reading with a warning. The serving headroom guard

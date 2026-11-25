@@ -403,7 +403,7 @@ final class CompareRemodelTests: XCTestCase {
 
         let full = ComparisonViewLogic.metrics(sample(tps: 48.2, ttft: 0.42, prefill: 1200, calls: 2, names: ["get_weather", "search"], valid: 2), mode: .chat)
         XCTAssertEqual(full.primary, "48.2 tok/s")
-        XCTAssertEqual(full.details, joined(["first token 0.42 s", "in ~1200 tok/s (est.)", "2 tool calls: get_weather, search", "2 usable"]))
+        XCTAssertEqual(full.details, joined(["first token 0.42 s", "in 1200 tok/s (est.)", "2 tool calls: get_weather, search", "2 usable"]))
 
         let bare = ComparisonViewLogic.metrics(sample(tps: 10), mode: .chat)
         XCTAssertEqual(bare.details, "")
@@ -420,7 +420,7 @@ final class CompareRemodelTests: XCTestCase {
             sample("p1", tps: 31.2, prefill: 1180, calls: 1, valid: 1), sample("p2", tps: 48.0, prefill: 1220, calls: 1, valid: 0),
         ])
         XCTAssertEqual(ComparisonViewLogic.chatLaneDetails(full), [
-            "in ~1200 tok/s (est.)", "first token 0.42 s", "31.2–48.0 tok/s across 2 prompts", "2 tool calls, 1 usable",
+            "in 1200 tok/s (est.)", "first token 0.42 s", "31.2–48.0 tok/s across 2 prompts", "2 tool calls, 1 usable",
         ])
 
         let noTools = result("/b", tps: 40, samples: [sample("p1", tps: 40, calls: 0), sample("p2", tps: 40, calls: 0)])

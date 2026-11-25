@@ -230,9 +230,10 @@ struct ReclaimDiskPanel: View {
                     .controlSize(.small)
                     .help("Show the versions so you can mark the one to keep")
             } else {
-                Button("Review…") { Task { await reclaim.previewCopies(Set(suggestion.remove), items: items, duplicates: appHost.scanResult?.duplicates ?? [], keep: keep) } }
+                Button("Remove…") { Task { await reclaim.previewCopies(Set(suggestion.remove), items: items, duplicates: appHost.scanResult?.duplicates ?? [], keep: keep) } }
                     .controlSize(.small)
                     .disabled(reclaim.isApplying)
+                    .help("List what moves to quarantine, then remove it")
             }
         }
     }
@@ -391,7 +392,7 @@ struct ReclaimDiskPanel: View {
                     .font(WorkbenchTypography.tabular)
                 Button("Clear") { selected = [] }.controlSize(.small)
             }
-            Button("Review removal…") { Task { await reclaim.previewCopies(selection, items: items, duplicates: appHost.scanResult?.duplicates ?? [], keep: keep) } }
+            Button("Remove selected…") { Task { await reclaim.previewCopies(selection, items: items, duplicates: appHost.scanResult?.duplicates ?? [], keep: keep) } }
                 .buttonStyle(.workbenchPrimary)
                 .disabled(selection.isEmpty || reclaim.isApplying)
         }

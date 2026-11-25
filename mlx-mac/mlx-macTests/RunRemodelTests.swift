@@ -964,7 +964,7 @@ extension RunRemodelTests {
         XCTAssertEqual(reserve.map(runway.legendName), "Reserve 4 GB")
         XCTAssertNil(reserve.flatMap(runway.legendSize))
         XCTAssertEqual(resident.map(runway.legendName), "mlx-community/Qwen3-4B-4bit")
-        XCTAssertTrue(resident.flatMap(runway.legendSize)?.hasPrefix("~") == true)
+        XCTAssertTrue(resident.flatMap(runway.legendSize)?.hasSuffix(" GB") == true)
         XCTAssertFalse(runway.caption.contains("reserve"))
         XCTAssertTrue(runway.caption.hasPrefix("of 32.0 GB unified memory"))
     }

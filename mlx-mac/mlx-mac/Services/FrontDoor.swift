@@ -276,7 +276,7 @@ final class FrontDoorCoordinator: ObservableObject {
     nonisolated static let livePortInUse: @Sendable (Int) async -> Bool = { port in
         let host = ModelHost(name: "Workbench API", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
         do { _ = try await HostHTTPClient().request(host: host, path: "health", maximumBytes: 4_096, timeout: 2); return true }
-        catch HostHTTPError.requestFailed { return false }
+        catch HostHTTPError.requestFailed, HostHTTPError.notListening { return false }
         catch { return true }
     }
 }

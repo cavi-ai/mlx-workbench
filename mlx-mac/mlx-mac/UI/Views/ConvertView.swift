@@ -219,7 +219,7 @@ struct PrepareTile: Equatable, Identifiable {
 
         var text: String {
             switch self {
-            case .estimated(let bytes): return "~" + LibraryTablePresentation.byteCount(bytes)
+            case .estimated(let bytes): return LibraryTablePresentation.byteCount(bytes) + " est."
             case .actual(let bytes): return LibraryTablePresentation.byteCount(bytes) + " actual"
             case .unknown: return "Size unknown"
             }

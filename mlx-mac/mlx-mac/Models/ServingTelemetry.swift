@@ -9,10 +9,26 @@ struct ServingTelemetry: Codable, Equatable {
         let outputTokens: Int?
         let responseSeconds: Double?
         let outputTokensPerSecond: Double?
+        /// Stage timing from gateways that measure it: queue and load wait, then prompt
+        /// processing until the first streamed token, then decoding.
+        var waitSeconds: Double? = nil
+        var firstTokenSeconds: Double? = nil
+        var promptTokensPerSecond: Double? = nil
+        var decodeTokensPerSecond: Double? = nil
         enum CodingKeys: String, CodingKey {
             case outcome
             case completedAt = "completed_at", inputTokens = "input_tokens", outputTokens = "output_tokens"
             case responseSeconds = "response_seconds", outputTokensPerSecond = "output_tokens_per_second"
+            case waitSeconds = "wait_seconds", firstTokenSeconds = "first_token_seconds"
+            case promptTokensPerSecond = "prompt_tokens_per_second", decodeTokensPerSecond = "decode_tokens_per_second"
+        }
+
+        /// Shares of the response time spent waiting, processing the prompt and decoding,
+        /// when the gateway reported consistent stage timing.
+        var stages: (wait: Double, prompt: Double, decode: Double)? {
+            guard let total = responseSeconds, total > 0, let wait = waitSeconds, let first = firstTokenSeconds,
+                  wait <= first, first <= total else { return nil }
+            return (wait / total, (first - wait) / total, (total - first) / total)
         }
     }
     let schema: Int
@@ -45,7 +61,8 @@ struct ServingTelemetry: Codable, Equatable {
         if let last = value.lastRequest {
             guard ["completed", "failed"].contains(last.outcome), Self.date(last.completedAt) != nil,
                   [last.inputTokens, last.outputTokens].compactMap({ $0 }).allSatisfy({ $0 >= 0 }),
-                  [last.responseSeconds, last.outputTokensPerSecond].compactMap({ $0 }).allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
+                  [last.responseSeconds, last.outputTokensPerSecond, last.waitSeconds, last.firstTokenSeconds,
+                   last.promptTokensPerSecond, last.decodeTokensPerSecond].compactMap({ $0 }).allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
         }
         self = value
     }
