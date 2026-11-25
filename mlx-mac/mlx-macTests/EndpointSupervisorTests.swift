@@ -1461,6 +1461,20 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertNil(supervisor.lastError)
     }
 
+    func testSlotStillStartingIsNotRestartedByTheNextReconcile() async {
+        let lifecycle = LifecycleRecorder()
+        let world = FakeServeWorld()
+        world.recorder = lifecycle
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { [] },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), maxRestarts: 3, restartWindow: 300)
+        await supervisor.enable(modelPath: "/Models/q4", port: 8766)
+        await supervisor.reconcile()
+        await supervisor.reconcile()
+
+        XCTAssertEqual(lifecycle.events.filter { $0.hasPrefix("start:") }.count, 1)
+        XCTAssertEqual(supervisor.state, .waitingForServer)
+    }
+
     func testEnabledWithoutServerStartsViaPreviewHashFlow() async {
         let lifecycle = LifecycleRecorder()
         let (supervisor, _) = makeSupervisor(lifecycle: lifecycle)
@@ -1488,17 +1502,24 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertTrue(lifecycle.events.isEmpty)
     }
 
+    private final class OffsetBox: @unchecked Sendable { var seconds: TimeInterval = 0 }
+
     func testCrashLoopGuardStopsRestartingAfterLimit() async {
         let lifecycle = LifecycleRecorder()
         let world = FakeServeWorld()
         world.survives = false
-        let (supervisor, _) = makeSupervisor(world: world, lifecycle: lifecycle)
+        let offset = OffsetBox()
+        let (supervisor, _) = makeSupervisor(world: world, lifecycle: lifecycle,
+            now: { Date(timeIntervalSince1970: 1_000_000 + offset.seconds) })
         await supervisor.enable(modelPath: "/Models/q4", port: 8766)
+        offset.seconds += 31
         await supervisor.reconcile()
+        offset.seconds += 31
         await supervisor.reconcile()
 
         XCTAssertEqual(lifecycle.events.filter { $0.hasPrefix("start") }.count, 3)
 
+        offset.seconds += 31
         await supervisor.reconcile()
 
         if case .degraded = supervisor.state {} else {
@@ -1973,7 +1994,8 @@ final class EndpointSupervisorTests: XCTestCase {
 
     private func makeSupervisor(
         world: FakeServeWorld? = nil,
-        lifecycle: LifecycleRecorder? = nil
+        lifecycle: LifecycleRecorder? = nil,
+        now: @escaping () -> Date = Date.init
     ) -> (EndpointSupervisor, FakeServeWorld) {
         let world = world ?? FakeServeWorld()
         let recorder = lifecycle ?? LifecycleRecorder()
@@ -1982,6 +2004,7 @@ final class EndpointSupervisorTests: XCTestCase {
             lifecycle: world.lifecycle,
             statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            now: now,
             maxRestarts: 3,
             restartWindow: 300
         )

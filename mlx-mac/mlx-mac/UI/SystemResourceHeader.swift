@@ -186,10 +186,7 @@ struct SystemResourceHeader: View {
         .frame(maxHeight: WorkbenchSize.ResourceHeader.popoverMaxHeight)
         .task {
             guard servingInventory == nil else { return }
-            while !Task.isCancelled {
-                await resources.refreshServers()
-                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
-            }
+            await resources.refreshServers()
         }
     }
 

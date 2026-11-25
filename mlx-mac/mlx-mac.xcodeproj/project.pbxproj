@@ -28,6 +28,7 @@
 		MEMTSTB1 /* EndpointMemoryPolicyReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */; };
 		MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNGTSTF1 /* ManagedModelInstallStoreTests.swift */; };
 		MEMRVB1 /* EndpointMemoryReviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMRVF1 /* EndpointMemoryReviewSheet.swift */; };
+		A13C10C4000000000000F002 /* LiveStateClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13C10C4000000000000F001 /* LiveStateClockTests.swift */; };
 		SIVTSTB1 /* ServingInventoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVTSTF1 /* ServingInventoryPresentationTests.swift */; };
 		SMETB001 /* ServingMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SMETF001 /* ServingMemoryTests.swift */; };
 		SRVRTB1 /* ServingRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRVRTF1 /* ServingRowsTests.swift */; };
@@ -41,6 +42,7 @@
 		MIDMDB1 /* ModelUpdateModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDMDF1 /* ModelUpdateModels.swift */; };
 		MIDAPB1 /* AppHostModelUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDAPF1 /* AppHostModelUpdates.swift */; };
 		MIDSTB1 /* ManagedModelInstallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDSTF1 /* ManagedModelInstallStore.swift */; };
+		A13C10C4000000000000F004 /* LiveStateClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13C10C4000000000000F003 /* LiveStateClock.swift */; };
 		SIVCOOB1 /* ServingInventoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVCOOF1 /* ServingInventoryCoordinator.swift */; };
 		SIVLOCB1 /* LocalModelHostDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVLOCF1 /* LocalModelHostDiscovery.swift */; };
 		SIVMODB1 /* ServingInventoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVMODF1 /* ServingInventoryModels.swift */; };
@@ -429,6 +431,7 @@
 		MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointMemoryPolicyReviewTests.swift; path = EndpointMemoryPolicyReviewTests.swift; sourceTree = "<group>"; };
 		MNGTSTF1 /* ManagedModelInstallStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStoreTests.swift; path = ManagedModelInstallStoreTests.swift; sourceTree = "<group>"; };
 		MEMRVF1 /* EndpointMemoryReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointMemoryReviewSheet.swift; path = UI/Views/EndpointMemoryReviewSheet.swift; sourceTree = "<group>"; };
+		A13C10C4000000000000F001 /* LiveStateClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LiveStateClockTests.swift; path = LiveStateClockTests.swift; sourceTree = "<group>"; };
 		SIVTSTF1 /* ServingInventoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryPresentationTests.swift; path = ServingInventoryPresentationTests.swift; sourceTree = "<group>"; };
 		SMETF001 /* ServingMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingMemoryTests.swift; path = ServingMemoryTests.swift; sourceTree = "<group>"; };
 		SRVRTF1 /* ServingRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRowsTests.swift; path = ServingRowsTests.swift; sourceTree = "<group>"; };
@@ -442,6 +445,7 @@
 		MIDMDF1 /* ModelUpdateModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateModels.swift; path = Models/ModelUpdateModels.swift; sourceTree = "<group>"; };
 		MIDAPF1 /* AppHostModelUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostModelUpdates.swift; path = Services/AppHostModelUpdates.swift; sourceTree = "<group>"; };
 		MIDSTF1 /* ManagedModelInstallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStore.swift; path = Services/ManagedModelInstallStore.swift; sourceTree = "<group>"; };
+		A13C10C4000000000000F003 /* LiveStateClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LiveStateClock.swift; path = Services/LiveStateClock.swift; sourceTree = "<group>"; };
 		SIVCOOF1 /* ServingInventoryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryCoordinator.swift; path = Services/ServingInventoryCoordinator.swift; sourceTree = "<group>"; };
 		SIVLOCF1 /* LocalModelHostDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LocalModelHostDiscovery.swift; path = Services/LocalModelHostDiscovery.swift; sourceTree = "<group>"; };
 		SIVMODF1 /* ServingInventoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryModels.swift; path = Models/ServingInventoryModels.swift; sourceTree = "<group>"; };
@@ -1002,6 +1006,7 @@
 				24FREF05B /* LineageModels.swift */,
 				24FREF05C /* LineageIndexer.swift */,
 				SIVLOCF1 /* LocalModelHostDiscovery.swift */,
+				A13C10C4000000000000F003 /* LiveStateClock.swift */,
 				SIVCOOF1 /* ServingInventoryCoordinator.swift */,
 				SIVMODF1 /* ServingInventoryModels.swift */,
 				SMEMF001 /* ServingMemory.swift */,
@@ -1220,6 +1225,7 @@
 				INVTSTF1 /* ServingInventoryCoordinatorTests.swift */,
 				MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */,
 				MNGTSTF1 /* ManagedModelInstallStoreTests.swift */,
+				A13C10C4000000000000F001 /* LiveStateClockTests.swift */,
 				SIVTSTF1 /* ServingInventoryPresentationTests.swift */,
 				SMETF001 /* ServingMemoryTests.swift */,
 				SRVRTF1 /* ServingRowsTests.swift */,
@@ -1680,6 +1686,7 @@
 				24BBLD05D /* LineageModels.swift in Sources */,
 				24BBLD05E /* LineageIndexer.swift in Sources */,
 				SIVLOCB1 /* LocalModelHostDiscovery.swift in Sources */,
+				A13C10C4000000000000F004 /* LiveStateClock.swift in Sources */,
 				SIVCOOB1 /* ServingInventoryCoordinator.swift in Sources */,
 				SIVMODB1 /* ServingInventoryModels.swift in Sources */,
 				SMEMB001 /* ServingMemory.swift in Sources */,
@@ -1799,6 +1806,7 @@
 				INVTSTB1 /* ServingInventoryCoordinatorTests.swift in Sources */,
 				MEMTSTB1 /* EndpointMemoryPolicyReviewTests.swift in Sources */,
 				MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */,
+				A13C10C4000000000000F002 /* LiveStateClockTests.swift in Sources */,
 				SIVTSTB1 /* ServingInventoryPresentationTests.swift in Sources */,
 				SMETB001 /* ServingMemoryTests.swift in Sources */,
 				SRVRTB1 /* ServingRowsTests.swift in Sources */,

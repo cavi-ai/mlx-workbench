@@ -170,6 +170,7 @@ struct ContentView: View {
 
     private func navigate(to route: AppRoute) {
         selectedRouteID = route.rawValue
+        if appHost.liveServicesStarted { Task { await appHost.liveClock.activate() } }
     }
 
     private var inventoryReviewBinding: Binding<Bool> {

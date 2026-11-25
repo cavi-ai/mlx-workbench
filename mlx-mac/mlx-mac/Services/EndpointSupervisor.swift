@@ -114,7 +114,12 @@ final class EndpointSupervisor: ObservableObject {
     private var pendingUserServeBySlot: [UUID: (modelPath: String, port: Int)] = [:]
     private var queuedUserReconcileIDs: [UUID] = []
     private var cachedFleetLoad: (fleetStamp: FleetFileStamp, legacyStamp: FleetFileStamp, load: EndpointFleetLoad)?
-    private var monitorTask: Task<Void, Never>?
+    /// A slot started within this window is waiting for its server, not restarted.
+    private static let startGrace: TimeInterval = 30
+    /// Status source for periodic reconcile passes; user-requested passes always read live status.
+    var reconcileStatus: (@Sendable () async throws -> [ServerInfo])?
+    /// Called after a user-requested pass changed serving state.
+    var servingChanged: (() -> Void)?
 
     init(
         lifecycle: ServeLifecycle,
@@ -227,7 +232,7 @@ final class EndpointSupervisor: ObservableObject {
 
     func disable() async {
         guard beginUserOperation() else { return }
-        defer { activeUserOperations -= 1 }
+        defer { activeUserOperations -= 1; servingChanged?() }
         guard var slot = fleet.slots.first else { return }
         slot.enabled = false
         guard commit(replacing: slot) else { return }
@@ -466,7 +471,7 @@ final class EndpointSupervisor: ObservableObject {
     /// Remove a slot entirely, stopping its server first when it is ours.
     func removeSlot(id: UUID) async {
         guard beginUserOperation() else { return }
-        defer { activeUserOperations -= 1 }
+        defer { activeUserOperations -= 1; servingChanged?() }
         guard let slot = fleet.slots.first(where: { $0.id == id }) else { return }
         var candidate = fleet
         candidate.slots.removeAll { $0.id == id }
@@ -1128,7 +1133,7 @@ final class EndpointSupervisor: ObservableObject {
             return false
         }
         isUnloading = true
-        defer { isUnloading = false }
+        defer { isUnloading = false; servingChanged?() }
         do {
             let current = try await statusProvider()
             guard let selected = current.first(where: { $0.sameProcess(as: expected) && $0.state?.lowercased() == "running" }) else {
@@ -1210,6 +1215,7 @@ final class EndpointSupervisor: ObservableObject {
             guard !isUnloading, !queuedUserReconcileIDs.isEmpty else { break }
             nextTarget = queuedUserReconcileIDs.removeFirst()
         }
+        if userRequestedSlotID != nil { servingChanged?() }
     }
 
     private func performReconcilePass(userRequestedSlotID: UUID?) async {
@@ -1221,7 +1227,7 @@ final class EndpointSupervisor: ObservableObject {
         }
         let servers: [ServerInfo]
         do {
-            servers = try await statusProvider()
+            servers = try await (userRequestedSlotID == nil ? reconcileStatus ?? statusProvider : statusProvider)()
             if pendingStops.isEmpty { lastError = nil }
         } catch {
             // Status is the authority; when it is unavailable, preserve the
@@ -1362,6 +1368,8 @@ final class EndpointSupervisor: ObservableObject {
         // Desired but not running: restart, with a per-slot crash-loop guard.
         let cutoff = now().addingTimeInterval(-restartWindow)
         var attempts = (slotAttemptTimestamps[slot.id] ?? []).filter { $0 > cutoff }
+        if case .waitingForServer = slotStates[slot.id], let latest = attempts.last,
+           now().timeIntervalSince(latest) < Self.startGrace { return }
         guard attempts.count < maxRestarts else {
             pendingUserServeBySlot.removeValue(forKey: slot.id)
             slotAttemptTimestamps[slot.id] = attempts
@@ -1448,23 +1456,19 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Monitoring
 
-    var isMonitoring: Bool { monitorTask != nil }
+    private(set) var isMonitoring = false
 
-    /// Poll authoritative status on a slow timer. Idempotent.
-    func startMonitoring(intervalNanoseconds: UInt64 = 30_000_000_000) {
-        guard monitorTask == nil else { return }
-        monitorTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.reconcile()
-                try? await Task.sleep(nanoseconds: intervalNanoseconds)
-            }
+    /// Reconciles once now, then on every tick of `clock`. Idempotent.
+    func startMonitoring(on clock: LiveStateClock) async {
+        guard !isMonitoring else { return }
+        isMonitoring = true
+        clock.addConsumer { [weak self] in
+            if self?.isMonitoring == true { await self?.reconcile() }
         }
+        await reconcile()
     }
 
-    func stopMonitoring() {
-        monitorTask?.cancel()
-        monitorTask = nil
-    }
+    func stopMonitoring() { isMonitoring = false }
 
     // MARK: - Internals
 

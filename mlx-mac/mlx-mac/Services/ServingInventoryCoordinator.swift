@@ -56,7 +56,7 @@ final class ServingInventoryCoordinator: ObservableObject {
     private let readMemory: ([Int]) async -> [Int: UInt64]?
     private var engineTask: Task<Result<ServingEngineSnapshot, Error>?, Never>?
     private var hostTask: Task<ServingHostSnapshot?, Never>?
-    private var monitoring: Task<Void, Never>?
+    private let fetchFreshEngine: (() async throws -> ServingEngineSnapshot)?
     private var lastEngine: ServingEngineSnapshot?
     private var lastEngineCapturedAt: Date?
     private var engineError: String?
@@ -66,6 +66,7 @@ final class ServingInventoryCoordinator: ObservableObject {
     init(managedReceipts: String, now: @escaping () -> Date = Date.init,
          fetchEngine: @escaping () async throws -> ServingEngineSnapshot,
          fetchHosts: @escaping (Bool) async -> ServingHostSnapshot = { _ in ServingHostSnapshot() },
+         fetchFreshEngine: (() async throws -> ServingEngineSnapshot)? = nil,
          readMemory: @escaping ([Int]) async -> [Int: UInt64]? = { pids in
              let captured = await WorkbenchIO.perform { try? ProcessMemorySnapshot.probe(pids: pids.map(Int32.init)) }
              return captured.map { Dictionary(uniqueKeysWithValues: $0.processes.map { (Int($0.pid), $0.residentBytes) }) }
@@ -74,11 +75,13 @@ final class ServingInventoryCoordinator: ObservableObject {
         self.now = now
         self.fetchEngine = fetchEngine
         self.fetchHosts = fetchHosts
+        self.fetchFreshEngine = fetchFreshEngine
         self.readMemory = readMemory
     }
 
-    func refresh(refreshHosts: Bool = false) async {
-        async let engine = refreshEngine()
+    /// `fresh` reads a discovery that starts now; otherwise the shared snapshot may be reused.
+    func refresh(refreshHosts: Bool = false, fresh: Bool = false) async {
+        async let engine = refreshEngine(fresh: fresh)
         if refreshHosts { _ = await refreshHostConnections() }
         else {
             lastHosts = await fetchHosts(false)
@@ -89,7 +92,7 @@ final class ServingInventoryCoordinator: ObservableObject {
 
     /// Use the raw results of the completed refresh, not retained display observations.
     func pathsForRemoval() async throws -> [String] {
-        async let engineRead = refreshEngine()
+        async let engineRead = refreshEngine(fresh: true)
         async let hostRead = refreshHostConnections()
         let (engineResult, hostResult) = await (engineRead, hostRead)
         try Task.checkCancellation()
@@ -131,8 +134,13 @@ final class ServingInventoryCoordinator: ObservableObject {
         return enginePaths + hostServices.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
     }
 
-    private func refreshEngine() async -> Result<ServingEngineSnapshot, Error>? {
-        if let engineTask { return await engineTask.value }
+    private func refreshEngine(fresh: Bool = false) async -> Result<ServingEngineSnapshot, Error>? {
+        if let engineTask {
+            let shared = await engineTask.value
+            if !fresh { return shared }
+            if let newer = self.engineTask { return await newer.value }
+        }
+        let fetchEngine = fresh ? fetchFreshEngine ?? self.fetchEngine : self.fetchEngine
         isRefreshing = true
         let task = Task<Result<ServingEngineSnapshot, Error>?, Never> { [weak self] in
             guard let self else { return nil }
@@ -246,20 +254,14 @@ final class ServingInventoryCoordinator: ObservableObject {
         await refresh()
     }
 
-    func startMonitoring(sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
-        guard monitoring == nil else { return }
-        monitoring = Task { [weak self] in
-            var untilHostRefresh = Duration.zero
-            while !Task.isCancelled {
-                let refreshHosts = untilHostRefresh <= .zero
-                await self?.refresh(refreshHosts: refreshHosts)
-                guard let idle = self?.discoveryIsIdle else { return }
-                let delay = Duration.seconds(idle ? 30 : 10)
-                let hostInterval = Duration.seconds(idle ? 60 : 30)
-                untilHostRefresh = (refreshHosts ? hostInterval : min(untilHostRefresh, hostInterval)) - delay
-                do { try await sleep(delay) } catch { return }
-            }
-        }
+    private var untilHostRefresh = Duration.zero
+
+    /// One clock tick: engine inventory every tick, host connections every 30 s (60 s when idle).
+    func refreshForTick(elapsed: Duration) async {
+        let refreshHosts = untilHostRefresh <= .zero
+        await refresh(refreshHosts: refreshHosts)
+        let hostInterval = Duration.seconds(discoveryIsIdle ? 60 : 30)
+        untilHostRefresh = (refreshHosts ? hostInterval : min(untilHostRefresh, hostInterval)) - elapsed
     }
 
     private var discoveryIsIdle: Bool {
@@ -267,5 +269,5 @@ final class ServingInventoryCoordinator: ObservableObject {
             && !snapshot.services.contains { $0.isLocal && ($0.server != nil || $0.residency == .loaded) }
     }
 
-    func stopMonitoring() { monitoring?.cancel(); monitoring = nil; engineTask?.cancel(); hostTask?.cancel() }
+    func stopMonitoring() { engineTask?.cancel(); hostTask?.cancel() }
 }

@@ -460,11 +460,11 @@ struct ReclaimSystemSection: View {
         }
         .task(id: ReclaimLoadTaskKey(path: volumePath, active: isRouteActive)) {
             guard isRouteActive else { return }
-            for _ in 0..<60 {
-                guard !Task.isCancelled else { return }
-                await readLoad()
-                do { try await Task.sleep(for: .seconds(10)) } catch { return }
-            }
+            await readLoad()
+        }
+        .onChange(of: resources.serverRefreshCount) { _, _ in
+            guard isRouteActive else { return }
+            Task { await readLoad() }
         }
     }
 

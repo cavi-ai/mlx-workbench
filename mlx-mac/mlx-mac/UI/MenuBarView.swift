@@ -82,7 +82,7 @@ struct MenuBarView: View {
                 Button("Open Serving") { openManager() }
                 Button("Live Monitor") { selectedRouteID = AppRoute.monitor.rawValue; openApp() }
                 Spacer()
-                Button { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } } label: {
+                Button { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true, fresh: true) } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .accessibilityLabel("Refresh local services")

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import Observation
@@ -62,6 +63,9 @@ class AppHost {
     /// Always-on endpoint supervisor (premium spec 06).
     let endpoint: EndpointSupervisor
     let resources: SystemResourceMonitor
+    /// Shared serving-discovery tick; see `LiveStateClock`.
+    let liveClock: LiveStateClock
+    @ObservationIgnored private var occlusionObserver: NSObjectProtocol?
     /// Usage evidence per model path (premium spec 04).
     let usage: UsageTracker
     let workflowEvidence: WorkflowEvidenceStore
@@ -174,7 +178,11 @@ class AppHost {
         self.tailnetSharing = TailnetSharingCoordinator(api: api)
         self.frontDoor = frontDoor ?? FrontDoorCoordinator(api: api)
         self.lab = LabCoordinator(api: api)
-        self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
+        let clock = LiveStateClock(fetch: { try await api.discoverServingServices() })
+        self.liveClock = clock
+        self.resources = SystemResourceMonitor(
+            statusProvider: { try await clock.snapshot().servers },
+            memoryInterval: { clock.interval == LiveStateClock.visibleInterval ? .seconds(5) : LiveStateClock.hiddenInterval })
         let profiles = ServingProfileCoordinator(store: JSONStore(fileURL: JSONStore<ServingProfile>.defaultFileURL("serving-profiles.json")),
             probe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
                 prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900) })
@@ -216,8 +224,9 @@ class AppHost {
         self.modelHosts = hosts
         self.servingInventory = servingInventory ?? ServingInventoryCoordinator(
             managedReceipts: WorkbenchStatePaths.applicationSupport().path,
-            fetchEngine: { try await api.discoverServingServices() },
-            fetchHosts: { await hosts.servingSnapshot(refreshLocal: $0) })
+            fetchEngine: { try await clock.snapshot() },
+            fetchHosts: { await hosts.servingSnapshot(refreshLocal: $0) },
+            fetchFreshEngine: { try await clock.fresh() })
         self.hostedComparison = hostedComparison ?? HostedComparisonCoordinator(
             nativeProbe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
             nativeDecide: { path, body in try await api.decide(path: path, requestBody: body) },
@@ -235,6 +244,7 @@ class AppHost {
             store: JSONStore<EndpointConfig>(fileURL: JSONStore<EndpointConfig>.defaultFileURL("endpoint-config.json"))
         )
         if endpoint == nil {
+            supervised.reconcileStatus = { try await clock.servers() }
             supervised.adapterLaunch = AdapterEndpointLaunch(
                 preview: { receipt, base, port in
                     let plan = try await api.trainedAdapterPreview(receipt: receipt, port: port, runtime: "mlx_lm")
@@ -351,6 +361,12 @@ class AppHost {
                 try await api.changeDiscoveredService(server, action: action.rawValue)
             }
         }
+        let applyMutation = self.servingInventory.mutate
+        self.servingInventory.mutate = { service, action in
+            do { try await applyMutation(service, action) } catch { await clock.tickNow(); throw error }
+            await clock.tickNow()
+        }
+        self.endpoint.servingChanged = { Task { await clock.tickNow() } }
         self.hostedComparison.validateTarget = { [weak self] target, mode in
             guard let self, self.comparison.activeRunID == nil, !self.modelHosts.resourceBusy else {
                 throw HostedIntegrationError.invalid("Finish the active comparison or host memory operation before starting hosted lanes.")
@@ -1290,12 +1306,20 @@ class AppHost {
         startConversionMonitoring()
         let startup = Task {
             await comparison.waitForHistory()
-            if comparison.hasLoadedHistory { endpoint.startMonitoring() }
+            if comparison.hasLoadedHistory { await endpoint.startMonitoring(on: liveClock) }
         }
         Task { await useWorkspace.load() }
         Task { await servedTasks.refreshHistories() }
         resources.startMonitoring()
-        servingInventory.startMonitoring()
+        liveClock.addConsumer { [servingInventory, liveClock] in
+            await servingInventory.refreshForTick(elapsed: liveClock.interval)
+        }
+        liveClock.addConsumer { [resources] in await resources.refreshServers() }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeOcclusionStateNotification, object: nil, queue: .main) { [liveClock, resources] _ in
+            Task { @MainActor in liveClock.visibilityChanged(); resources.wake() }
+        }
+        liveClock.start()
         Task { await self.refreshDiscoveredRoots() }
         requestRescan()
         return startup

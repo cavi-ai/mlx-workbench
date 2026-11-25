@@ -272,7 +272,7 @@ struct ModelSourcesView: View {
     }
     private var refresh: some View {
         Button {
-            Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) }
+            Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true, fresh: true) }
         } label: { Image(systemName: "arrow.clockwise") }
             .help(inventory.isRefreshing ? "Refreshing…" : "Refresh")
             .accessibilityLabel("Refresh").disabled(inventory.isRefreshing).accessibilityIdentifier("sources-refresh")

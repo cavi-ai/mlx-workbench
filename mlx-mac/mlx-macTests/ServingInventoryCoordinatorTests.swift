@@ -58,11 +58,9 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
     }
 
     func testBackgroundPollingSlowsWhenEmptyAndResumesWhenServing() async {
-        let published = expectation(description: "four background passes")
         let live = server()
         var engineReads = 0
         var hostProbes: [Bool] = []
-        var waits: [Duration] = []
         let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
             engineReads += 1
             return ServingEngineSnapshot(servers: engineReads <= 2 ? [] : [live])
@@ -70,18 +68,10 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
             hostProbes.append(refresh)
             return ServingHostSnapshot()
         }, readMemory: { _ in [:] })
-        coordinator.startMonitoring(sleep: { delay in
-            waits.append(delay)
-            if waits.count == 4 {
-                published.fulfill()
-                throw CancellationError()
-            }
-        })
-        await fulfillment(of: [published], timeout: 2)
+        for _ in 0..<8 { await coordinator.refreshForTick(elapsed: .seconds(10)) }
         coordinator.stopMonitoring()
 
-        XCTAssertEqual(waits, [.seconds(30), .seconds(30), .seconds(10), .seconds(10)])
-        XCTAssertEqual(hostProbes, [true, false, true, false])
+        XCTAssertEqual(hostProbes, [true, false, false, false, false, true, false, false])
     }
 
     func testRemovedListenerDoesNotBlockRemovalAfterSuccessfulDiscovery() async throws {

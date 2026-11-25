@@ -25,11 +25,17 @@ final class SystemResourceMonitor: ObservableObject {
     private let statusProvider: @Sendable () async throws -> [ServerInfo]
     private var monitoring: Task<Void, Never>?
     private var refreshingMemory = false
+    private let memoryInterval: () -> Duration
+    private var sleeper: Task<Void, Error>?
+    /// Increments after each server refresh, so views can follow the shared tick.
+    @Published private(set) var serverRefreshCount = 0
 
     init(probe: @escaping @Sendable () -> MemorySnapshot? = MemorySnapshot.probe,
          now: @escaping () -> Date = Date.init,
          statusProvider: @escaping @Sendable () async throws -> [ServerInfo] = { [] },
-         processProbe: @escaping @Sendable () throws -> ProcessMemorySnapshot = { try ProcessMemorySnapshot.probe() }) {
+         processProbe: @escaping @Sendable () throws -> ProcessMemorySnapshot = { try ProcessMemorySnapshot.probe() },
+         memoryInterval: @escaping () -> Duration = { .seconds(5) }) {
+        self.memoryInterval = memoryInterval
         self.probe = probe
         self.now = now
         self.statusProvider = statusProvider
@@ -55,7 +61,7 @@ final class SystemResourceMonitor: ObservableObject {
     func refreshServers() async {
         guard !refreshingServers else { return }
         refreshingServers = true
-        defer { refreshingServers = false }
+        defer { refreshingServers = false; serverRefreshCount += 1 }
         do {
             servers = try await statusProvider().filter { $0.state?.lowercased() == "running" }
             serverError = nil
@@ -90,10 +96,17 @@ final class SystemResourceMonitor: ObservableObject {
         monitoring = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshMemory()
-                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                guard let delay = self?.memoryInterval() else { return }
+                let sleeping = Task { try await Task.sleep(for: delay) }
+                self?.sleeper = sleeping
+                _ = await withTaskCancellationHandler { await sleeping.result } onCancel: { sleeping.cancel() }
+                self?.sleeper = nil
             }
         }
     }
+
+    /// Ends the current wait so the next reading follows the new window visibility.
+    func wake() { sleeper?.cancel() }
 
     deinit { monitoring?.cancel() }
 }

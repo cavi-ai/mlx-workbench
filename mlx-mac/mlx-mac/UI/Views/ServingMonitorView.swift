@@ -156,7 +156,7 @@ struct ServingMonitorView: View {
     @ViewBuilder
     private var overviewControls: some View {
         if inventory.isRefreshing { ProgressView().controlSize(.small) }
-        Button("Refresh") { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } }
+        Button("Refresh") { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true, fresh: true) } }
             .disabled(inventory.isRefreshing)
         Button("Manage endpoints") { onRouteSelection(.run) }
     }
