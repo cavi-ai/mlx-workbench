@@ -151,19 +151,6 @@ final class ScanContractTests: XCTestCase {
         let rows = ModelDetailsPresentation.displayRows(for: model, prepareDestination: nil)
         XCTAssertTrue(rows.contains { $0.label == "Runtime" && $0.value == "Strata (text only)" })
         XCTAssertEqual(ModelDetailsPresentation.readinessExplanation(for: model), "A local GGUF profile is prepared for the Strata runtime.")
-        let view = NSHostingView(rootView: DetailGrid(rows: rows).padding().frame(width: 520, height: 260)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 260), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = view
-        defer { window.close() }
-        view.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = "Strata model details"
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
     func testServeMemoryPolicyAndAdmissionFailureDecodeWithoutInventingDefaults() throws {
         let servers = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [

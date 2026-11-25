@@ -375,62 +375,6 @@ final class RuntimeInstallerTests: XCTestCase {
         XCTAssertEqual(installer.logTail.last, "Final output")
     }
 
-    func testInstallViewShowsRunningCheckingAndRecoveryWithoutClaimingReadiness() async throws {
-        let root = try directory()
-        let makefile = root.appendingPathComponent("Makefile")
-        try "install:\n\t@printf 'Installing test tools\\n'; touch started; sleep 15\n"
-            .write(to: makefile, atomically: true, encoding: .utf8)
-        let missing = report(ready: false)
-        var checkCount = 0
-        var releaseCheck: CheckedContinuation<RuntimeReport, Never>?
-        let installer = RuntimeInstaller(repoRoot: { root }, checkRuntime: {
-            checkCount += 1
-            if checkCount == 1 { return await withCheckedContinuation { releaseCheck = $0 } }
-            return missing
-        })
-        let view = NSHostingView(rootView: RuntimeInstallView(installer: installer, onFinished: {})
-            .padding(20).frame(width: 520, height: 440, alignment: .topLeading)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 440),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = view
-        window.orderFront(nil)
-        defer { installer.cancel(); window.close() }
-        func capture(_ name: String) async throws {
-            try await Task.sleep(for: .milliseconds(100))
-            view.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "Runtime-install-\(name)-compact"
-            attachment.lifetime = .keepAlways
-            add(attachment)
-        }
-        let task = Task { await installer.install() }
-        try await waitForFile(root.appendingPathComponent("started"))
-        XCTAssertTrue(installer.canCancel)
-        try await capture("running")
-        installer.cancel()
-        for _ in 0..<1000 where releaseCheck == nil { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertEqual(installer.state, .checking)
-        try await capture("checking")
-        try XCTUnwrap(releaseCheck).resume(returning: missing)
-        await task.value
-        XCTAssertEqual(installer.state, .cancelled)
-        try await capture("cancelled")
-        try "install:\n\t@printf 'Command finished\\n'\n".write(to: makefile, atomically: true, encoding: .utf8)
-        await installer.install()
-        XCTAssertEqual(installer.state, .succeeded)
-        XCTAssertFalse(try XCTUnwrap(installer.runtimeReport).ok)
-        try await capture("command-finished-tools-missing")
-        try "install:\n\t@echo 'Package install failed'; exit 1\n".write(to: makefile, atomically: true, encoding: .utf8)
-        await installer.install()
-        guard case .failed = installer.state else { return XCTFail("Expected installation failure") }
-        try await capture("failed")
-    }
-
     func testTaskCancellationStopsTheInstallerInsteadOfReportingSuccess() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("installer-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

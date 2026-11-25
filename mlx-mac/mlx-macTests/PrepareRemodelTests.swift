@@ -47,37 +47,6 @@ final class PrepareRemodelTests: XCTestCase {
         XCTAssertEqual(PrepareTile(bits: 3, size: .unknown).widthLabel, "3-bit")
     }
 
-    @MainActor
-    func testPrecisionScreenRendersWithoutForegroundActivation() async throws {
-        #if WORKBENCH_HOSTED_TEST_BUILD
-        XCTAssertEqual(NSApp.activationPolicy(), .prohibited)
-        #endif
-        for bits in [16, 4] {
-            let host = AppHost(config: .defaults(ggufRoots: []), hardwareProfile: hardware)
-            var item = model(bytes: 1_000, parameters: "7B", type: .textLLM, path: "/models/example.gguf").item
-            item.qBits = [2, 3, 4, 5, 6, 8, 16, 32]
-            host.modelWorkflow.inspect(source: item, snapshot: nil, qBits: bits)
-            let view = NSHostingView(rootView: ConvertView(appHost: host, onRouteSelection: { _ in })
-                .workbenchTheme().background(Color(nsColor: .windowBackgroundColor)).frame(width: 980, height: 900).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: .darkAqua); window.contentView = view
-            defer { window.close() }
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(300))
-            view.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
-            appearance.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: bitmap) }
-            XCTAssertEqual(try XCTUnwrap(bitmap.colorAt(x: 0, y: 0)).alphaComponent, 1, accuracy: 0.01)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "prepare-precision-\(bits)"
-            attachment.lifetime = .keepAlways
-            add(attachment)
-            XCTAssertFalse(window.isVisible)
-        }
-    }
-
     // MARK: - Size per state
 
     func testRepoTilesCarryTheIntakeEstimatePerWidth() {

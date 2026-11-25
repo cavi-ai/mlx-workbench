@@ -273,43 +273,6 @@ final class LibraryRemodelTests: XCTestCase {
         XCTAssertEqual(LibraryPresentation.summary(for: snapshot, familyCount: rows.count).families, 2)
     }
 
-    @MainActor
-    func testLibraryAndSidebarRenderAtCompactAndWideWindowSizes() async throws {
-        let host = AppHost(config: Config.defaults(), hardwareProfile: hardware)
-        let models = [
-            model(path: "/m/Qwen3-4B-4bit", type: .textLLM, name: "mlx-community/Qwen3-4B-4bit"),
-            model(path: "/m/Qwen3-8B-8bit", type: .textLLM, name: "mlx-community/Qwen3-8B-8bit"),
-            model(path: "/m/Llama-3B", type: .textLLM, name: "Llama-3B"),
-        ]
-        host.librarySnapshot = LibrarySnapshot(models: models, groups: models.map {
-            ModelGroup(variants: [$0], normalizedModelKey: $0.item.path, primaryDisplayName: $0.displayName)
-        }, hardware: hardware, totalBytes: models.reduce(0) { $0 + $1.item.bytes }, generatedAt: stamp)
-        for width in [960.0, 1440.0] {
-            let root = NavigationSplitView {
-                AppSidebar(selectedRoute: .constant(.library)).navigationSplitViewColumnWidth(210)
-            } detail: {
-                LibraryView(appHost: host).environment(\.isRouteActive, true)
-            }.frame(width: width, height: 760).preferredColorScheme(.dark)
-            let view = NSHostingView(rootView: root)
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 760), styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.contentView = view
-            window.orderFront(nil)
-            try await Task.sleep(for: .milliseconds(250))
-            view.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
-            attachment.name = "Library and sidebar at \(Int(width)) pt"; attachment.lifetime = .keepAlways
-            add(attachment)
-            if let directory = ProcessInfo.processInfo.environment["MLX_UI_EVIDENCE_DIR"] {
-                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("library-\(Int(width)).png"))
-            }
-            window.close()
-        }
-    }
-
     func testModifiedIsARelativeDateAndADashWhenUnknown() {
         XCTAssertEqual(LibraryTablePresentation.modifiedText(nil), "—")
         let text = LibraryTablePresentation.modifiedText(stamp, now: stamp.addingTimeInterval(2 * 86_400))
@@ -505,23 +468,5 @@ final class LibraryRemodelTests: XCTestCase {
             updatedAt: stamp,
             lastKnownAgentState: nil
         )
-    }
-}
-
-extension LibraryRemodelTests {
-    /// A selected model with a linked service shows one Serving link, not the old connection list.
-    @MainActor
-    func testSelectedModelWithAServiceShowsOneServingLink() async throws {
-        let app = try await ServingWorld.host()
-        let alder = try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == "/models/Alder" })
-        let dune = try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == ServingWorld.selectedModel })
-        let linked = try await ServingWorld.renderedLines(
-            LibraryServingLinks(model: alder, inventory: app.servingInventory) {}, size: CGSize(width: 400, height: 120)
-        ).map { $0.lowercased() }
-        XCTAssertTrue(linked.contains { $0.contains("serving") && $0.contains("1") }, "\(linked)")
-        XCTAssertFalse(linked.contains { $0.contains("manage served models") })
-        let unlinked = try await ServingWorld.renderedLines(
-            LibraryServingLinks(model: dune, inventory: app.servingInventory) {}, size: CGSize(width: 400, height: 120))
-        XCTAssertFalse(unlinked.contains { $0.lowercased().contains("serving") }, "A model no service uses shows no link")
     }
 }

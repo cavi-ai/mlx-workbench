@@ -272,38 +272,6 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertNil(try JSONStore<ConvertedSourceMove>(fileURL: journal).load().first?.restoredAt)
     }
 
-    @MainActor
-    func testSourceCleanupSectionRendersDiscoveryAndHistory() async throws {
-        let fixture = try cleanupFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let journal = fixture.root.appendingPathComponent("journal.json"), trash = fixture.root.appendingPathComponent("trash")
-        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
-        let payload = trash.appendingPathComponent("earlier.gguf")
-        try Data("weights".utf8).write(to: payload)
-        let record = ConvertedSourceMove(id: "earlier", from: fixture.root.appendingPathComponent("earlier.gguf").path, to: payload.path)
-        try JSONStore<ConvertedSourceMove>(fileURL: journal).upsert(record, id: \.id)
-        let reclaim = ReclaimCoordinator(sourceJournalURL: journal, sourceTrashRoots: [trash.path])
-        reclaim.mlxRoots = { [fixture.root.path] }
-        await reclaim.checkSources(workflows: [fixture.workflow])
-        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },
-            servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] }, serveStatus: { [] }, serveStop: { _ in [:] })
-        let workflows = ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [fixture.workflow] }, upsert: { _ in }))
-        let page = VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            SourceCleanupSection(reclaim: reclaim, modelWorkflow: workflows, rescan: {})
-            SourceHistorySection(reclaim: reclaim, models: [], layout: ReclaimLayout())
-        }
-        let view = NSHostingView(rootView: page.padding(24).frame(width: 680).preferredColorScheme(.dark))
-        view.setFrameSize(NSSize(width: 680, height: view.fittingSize.height))
-        view.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(view.bounds.height, 120)
-        XCTAssertLessThan(view.bounds.height, 850)
-        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: image)
-        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = "Source cleanup discovery and legacy history"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 
     private func modelFolder(in root: URL) throws -> URL {

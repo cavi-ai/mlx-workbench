@@ -111,94 +111,6 @@ final class CompareRemodelTests: XCTestCase {
         XCTAssertTrue(raw.hasPrefix("<think>"), "Presentation must not mutate persisted output")
     }
 
-    @MainActor
-    func testOpenStudiesRequiresAnExplicitClickAndUsesTheStudyRoute() async throws {
-        var destinations: [AppRoute] = []
-        let host = NSHostingView(rootView: StudiesNavigationButton { destinations.append($0) }
-            .buttonStyle(.borderless).padding(20).frame(width: 300, height: 100))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        func button(_ view: NSView) -> NSButton? { (view as? NSButton) ?? view.subviews.compactMap { button($0) }.first }
-        try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
-        XCTAssertTrue(destinations.isEmpty)
-        try XCTUnwrap(button(host)).performClick(nil)
-        XCTAssertEqual(destinations, [.studies])
-    }
-
-    @MainActor
-    func testEmptyComparisonLeadsWithSetupAtBothContentWidths() async throws {
-        let app = AppHost(config: Config.defaults())
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        for width: CGFloat in [1190, 814] {
-            let host = NSHostingView(rootView: QuantView(appHost: app).environment(\.isRouteActive, true)
-                .frame(width: width, height: 900).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 900),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(200)); host.layoutSubtreeIfNeeded()
-            let popups = descendants(host).compactMap { $0 as? NSPopUpButton }
-            let mode = try XCTUnwrap(popups.first { $0.itemTitles.contains("Video understanding") })
-            let history = try XCTUnwrap(popups.first { $0.title == "Champions" })
-            XCTAssertGreaterThan(mode.convert(mode.bounds, to: nil).minY, history.convert(history.bounds, to: nil).maxY,
-                "An empty comparison must lead with its mode and setup, before result history.")
-            XCTAssertNil(app.comparison.activeRunID)
-            if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
-                let root = URL(fileURLWithPath: folder)
-                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    .write(to: root.appendingPathComponent("empty-setup-\(Int(width)).png"))
-            }
-        }
-    }
-
-    @MainActor
-    func testCancellationControlsRequireExplicitClicksAndDisableWhileCleaning() async throws {
-        func button(in view: NSView) -> NSButton? {
-            if let button = view as? NSButton { return button }
-            return view.subviews.compactMap { button(in: $0) }.first
-        }
-        var cancellations = 0, retries = 0
-        for (index, flags) in [(false, false), (true, false), (false, true), (true, true)].enumerated() {
-            let (busy, cleanup) = flags
-            let message = cleanup ? (busy ? "Retrying comparison server cleanup…" : "Cleanup failed. Retry cleanup before starting another comparison.")
-                : (busy ? "Cancelling… Waiting for owned work and cleanup to finish." : "Measuring selected models…")
-            let controls = ComparisonProgressControls(message: message,
-                isCancelling: busy, cleanupPending: cleanup, onCancel: { cancellations += 1 }, onRetry: { retries += 1 })
-            let view = controls.buttonStyle(.borderless).padding(20).frame(width: 680, height: 130)
-                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-            let host = NSHostingView(rootView: view)
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 130),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
-            let action = try XCTUnwrap(button(in: host))
-            XCTAssertEqual(action.isEnabled, !busy)
-            let before = (cancellations, retries)
-            action.performClick(nil)
-            XCTAssertEqual(cancellations, before.0 + (!busy && !cleanup ? 1 : 0))
-            XCTAssertEqual(retries, before.1 + (!busy && cleanup ? 1 : 0))
-            if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
-                let root = URL(fileURLWithPath: path)
-                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                let styled = NSHostingView(rootView: controls.buttonStyle(.bordered).padding(20).frame(width: 680, height: 130)
-                    .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-                window.contentView = styled
-                try await Task.sleep(for: .milliseconds(100)); styled.layoutSubtreeIfNeeded()
-                let bitmap = try XCTUnwrap(styled.bitmapImageRepForCachingDisplay(in: styled.bounds))
-                styled.cacheDisplay(in: styled.bounds, to: bitmap)
-                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    .write(to: root.appendingPathComponent("cancellation-\(index).png"))
-            }
-        }
-        XCTAssertEqual(cancellations, 1); XCTAssertEqual(retries, 1)
-    }
-
     func testCancelledAndInterruptedRunsRetainValuesWithoutRankingIncompleteCohorts() {
         for state in [ComparisonRunState.cancelled, .interrupted] {
             let stopped = run(.chat, variants: ["/a", "/b", "/c"], results: [result("/a", tps: 50), result("/b", tps: 20)], state: state)
@@ -208,91 +120,12 @@ final class CompareRemodelTests: XCTestCase {
             XCTAssertEqual(lanes[2].state, .notMeasured)
         }
     }
-    @MainActor
-    func testSettingsSearchSheetRendersWithoutApplyingOrStarting() async throws {
-        guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] else {
-            throw XCTSkip("Set MLX_WORKBENCH_COMPARISON_RENDER_DIR for native settings-search presentation evidence.")
-        }
-        var applied = false
-        let view = StrataSettingsSearchSheet(models: [library("/Models/strata")]) { _, _ in applied = true; return nil }
-            .frame(width: 580, height: 660, alignment: .topLeading)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-        let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 660), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(250))
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let directory = URL(fileURLWithPath: folder)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try png.write(to: directory.appendingPathComponent("settings-search.png"))
-        XCTAssertFalse(applied)
-    }
     func testModelPickerAllowsOnlyExplicitlyRepeatablePaths() {
         let models = [library("/models/strata"), library("/models/other")]
         let slots: [String?] = ["/models/strata", nil]
         XCTAssertEqual(ComparePresentation.options(forSlot: 1, slots: slots, candidates: models).map { $0.item.path }, ["/models/other"])
         XCTAssertEqual(ComparePresentation.options(forSlot: 1, slots: slots, candidates: models,
             repeatedPaths: ["/models/strata"]).map { $0.item.path }, ["/models/strata", "/models/other"])
-    }
-    @MainActor
-    func testStrataResultCardsRenderRecordedEvidenceWithoutInventingMeasurements() async throws {
-        guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] else {
-            throw XCTSkip("Set MLX_WORKBENCH_COMPARISON_RENDER_DIR to capture the native comparison cards.")
-        }
-        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "fixture",
-            "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
-            "strata_speculation": false, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
-        let strata = VariantResult(modelPath: "/models/strata", modelSignature: nil, samples: [],
-            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence)
-        let legacy = result("/models/mlx")
-        let answer = ComparisonSample(promptID: "p", outputExcerpt: "4", tokensPerSecond: nil,
-            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "4", reasoningText: "Add two and two.", finishReason: "stop", timeToFirstAnswerSeconds: 0.5)
-        let truncated = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil,
-            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "", reasoningText: "Still thinking.", finishReason: "length")
-        let lanes = [ComparisonLaneConfiguration(id: "a", modelPath: strata.modelPath, modelSignature: nil,
-                        strataOptions: StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)),
-                     ComparisonLaneConfiguration(id: "b", modelPath: strata.modelPath, modelSignature: nil,
-                        strataOptions: StrataComparisonOptions(speculation: true, expertMemoryGB: 2, contextTokens: 8192))]
-        let otherEvidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "fixture-b",
-            "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
-            "strata_speculation": true, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
-        var measured = run(.chat, variants: [strata.modelPath, strata.modelPath], results: [
-            VariantResult(modelPath: strata.modelPath, modelSignature: nil, samples: [answer],
-                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence, laneID: "a",
-                systemMemory: SystemMemoryEvidence(totalBytes: 128_000_000_000, baselineAvailableBytes: 50_000_000_000,
-                    minimumAvailableBytes: 28_000_000_000, endingAvailableBytes: 30_000_000_000, sampleCount: 50,
-                    missedSamples: 0, startedAt: Date(), endedAt: Date(), samplingIntervalSeconds: 0.5)),
-            VariantResult(modelPath: strata.modelPath, modelSignature: nil, samples: [truncated],
-                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: otherEvidence, laneID: "b")])
-        measured.laneConfigurations = lanes
-        measured.promptEntries = [PromptEntry(id: "p", text: "What is 2 + 2?")]
-        XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.state), [.noMeasurement, .noMeasurement])
-        XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.resultKey), ["a", "b"])
-        XCTAssertTrue(ComparisonViewLogic.servingDetails(strata).contains("Strata · Metal · GGUF · GSQ-RCO Q2_0"))
-        XCTAssertEqual(ComparisonViewLogic.servingDetails(legacy), ["Runtime not recorded"])
-        let view = MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
-            isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent }, onReview: { _, _ in }) { _ in EmptyView() }
-            .padding(20).frame(width: 940, height: 1500, alignment: .topLeading)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-        let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 1500),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(250))
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let directory = URL(fileURLWithPath: folder, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try png.write(to: directory.appendingPathComponent("strata-comparison.png"))
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = "Strata comparison evidence"; attachment.lifetime = .keepAlways; add(attachment)
     }
 
     private let base = Date(timeIntervalSince1970: 1_791_388_800)

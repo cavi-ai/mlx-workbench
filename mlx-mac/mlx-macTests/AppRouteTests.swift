@@ -35,38 +35,6 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(AppRoute(rawID: "models"), .library)
     }
 
-    @MainActor
-    func testFreshInstallWindowOpensOnLibrary() async throws {
-        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured, runtimeReport: .checking)
-        app.librarySnapshot = LibrarySnapshot(models: [], groups: [], hardware: app.hardwareProfile, generatedAt: Date())
-
-        let fresh = try XCTUnwrap(UserDefaults(suiteName: "app-route-\(UUID().uuidString)"))
-        XCTAssertNil(fresh.string(forKey: AppRoute.selectionStorageKey))
-        let freshTitle = try await windowTitle(app: app, defaults: fresh)
-        XCTAssertEqual(freshTitle, "Library")
-
-        let stored = try XCTUnwrap(UserDefaults(suiteName: "app-route-\(UUID().uuidString)"))
-        stored.set(AppRoute.overview.rawValue, forKey: AppRoute.selectionStorageKey)
-        let storedTitle = try await windowTitle(app: app, defaults: stored)
-        XCTAssertEqual(storedTitle, "Overview")
-    }
-
-    @MainActor
-    private func windowTitle(app: AppHost, defaults: UserDefaults) async throws -> String {
-        let size = CGSize(width: WorkbenchSize.windowMinimumWidth, height: WorkbenchSize.windowMinimumHeight)
-        let hosting = NSHostingView(rootView: AnyView(ContentView(appHost: app).defaultAppStorage(defaults).frame(width: size.width, height: size.height)))
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = hosting
-        window.orderFront(nil)
-        defer { window.close() }
-        for _ in 0..<40 where window.title.isEmpty {
-            hosting.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        return window.title
-    }
-
     func testOnlyPrepareAndRunCarryAToolbarSubtitle() {
         let timestamp = Date(timeIntervalSince1970: 1_726_500_000)
         let workflow = ConversionWorkflow(

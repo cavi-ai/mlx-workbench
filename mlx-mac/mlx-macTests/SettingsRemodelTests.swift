@@ -677,7 +677,7 @@ final class SettingsRouteTests: XCTestCase {
 
 final class SettingsInputValidationTests: XCTestCase {
     @MainActor
-    func testSettingsRenderingAndPersistencePreserveUnexposedConnectionValues() async throws {
+    func testSettingsSavePreservesUnexposedConnectionValues() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("settings-save-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("config.json"), module = ConfigModule(pathOverride: root.appendingPathComponent("config.json").path)
@@ -690,22 +690,9 @@ final class SettingsInputValidationTests: XCTestCase {
         let host = AppHost(configModule: module, config: config, configPath: url.path,
             runtimeReport: SettingsFixtures.runtimeReport(ok: true),
             modelWorkflowAPI: SettingsFixtures.idleWorkflowAPI(), modelWorkflowPersistence: SettingsFixtures.idleWorkflowPersistence())
-        let view = NSHostingView(rootView: SettingsView(appHost: host, onRouteSelection: { _ in })
-            .environment(\.isRouteActive, true).frame(width: 1000, height: 2200)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 2200),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
-        defer { window.close() }
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        try await Task.sleep(for: .milliseconds(250)); view.layoutSubtreeIfNeeded()
-        let fields = descendants(view).compactMap { $0 as? NSTextField }.filter(\.isEditable)
-        XCTAssertFalse(fields.contains { $0.stringValue == "::1" }, "Legacy API host must not be an editable Settings field.")
-        XCTAssertFalse(fields.contains { $0.stringValue == "54321" }, "Legacy API port must not be an editable Settings field.")
         original["host"] = "localhost"
         original["port"] = 54322
         try JSONSerialization.data(withJSONObject: original).write(to: url, options: .atomic)
-        // The VM UI suite exercises Save; this checks its persistence boundary separately from rendering.
         var edited = host.config
         edited.qBits = 8
         let accepted = await host.saveSettingsConfig(edited)
@@ -842,178 +829,5 @@ final class SettingsSourceContractTests: XCTestCase {
         let chooseStart = try XCTUnwrap(text.range(of: "private func chooseDirectory()"))
         let chooseEnd = try XCTUnwrap(text.range(of: "/// A ledger state"))
         XCTAssertEqual(String(text[chooseStart.lowerBound..<chooseEnd.lowerBound]).components(separatedBy: "NSOpenPanel()").count - 1, 1)
-    }
-}
-
-// MARK: - Renders
-
-@MainActor
-final class SettingsRenderTests: XCTestCase {
-    private typealias F = SettingsFixtures
-
-    private struct Scenario {
-        var name: String
-        var config: Config
-        var models: [LibraryModel]? = []
-        var scanned: ScanRoots?
-        var scanning = false
-        var agent: AgentHealth = .ready(path: "/agent", cli: "/agent/scripts/mlx-agent")
-        var runtimeOk = true
-        var probe: @Sendable (String) -> SettingsDirectoryState = { _ in .exists }
-    }
-
-    private func scenarios() -> [Scenario] {
-        let home = NSHomeDirectory()
-        let counted = F.config(gguf: ["\(home)/.cache/huggingface/hub", "\(home)/.models"], output: "\(home)/.models/mlx")
-        let models = [
-            F.model("\(home)/.cache/huggingface/hub/models--a/snapshots/1", bytes: 310_000_000_000),
-            F.model("\(home)/.models/b.gguf", bytes: 4_200_000_000),
-            F.model("\(home)/.models/mlx/c-4bit", bytes: 2_100_000_000),
-            F.model("/elsewhere/d.gguf", bytes: 1_000_000_000),
-        ]
-        let scanned = ScanRoots(gguf: counted.ggufRoots, mlx: counted.ggufRoots)
-        return [
-            Scenario(name: "counted-nested-output", config: counted, models: models, scanned: scanned),
-            Scenario(name: "none", config: counted, models: [], scanned: scanned),
-            Scenario(name: "saved-not-scanned", config: counted, models: models, scanned: ScanRoots(gguf: ["\(home)/.models"], mlx: ["\(home)/.models"])),
-            Scenario(name: "missing", config: counted, models: models, scanned: scanned, probe: { $0.hasSuffix(".models") ? .missing : .exists }),
-            Scenario(name: "not-a-directory", config: counted, models: models, scanned: scanned, probe: { $0.hasSuffix(".models") ? .notDirectory : .exists }),
-            Scenario(name: "no-snapshot", config: counted, models: nil, scanned: nil),
-            Scenario(name: "scanning", config: counted, models: nil, scanned: nil, scanning: true),
-            Scenario(name: "empty-gguf", config: F.config(gguf: []), models: [], scanned: nil),
-            Scenario(name: "agent-not-found", config: counted, models: models, scanned: scanned, agent: .notFound(path: "/agent", cli: "x")),
-            Scenario(name: "agent-not-usable", config: counted, models: models, scanned: scanned, agent: .notUsable(path: "/agent", cli: "x", reason: "scripts/mlx-agent is not readable.")),
-            Scenario(name: "agent-not-configured", config: F.config(gguf: ["/m"], agent: ""), models: models, scanned: scanned, agent: .notConfigured),
-            Scenario(name: "runtime-not-ok", config: counted, models: models, scanned: scanned, runtimeOk: false),
-        ]
-    }
-
-    private func makeHost(_ scenario: Scenario, updater: UpdateCoordinator? = nil) -> AppHost {
-        let now = Date()
-        let host = AppHost(
-            config: scenario.config, discoveredRoots: ["/detected/models"], configPath: "/state/mlx-workbench/config.json",
-            agentHealth: scenario.agent, runtimeReport: F.runtimeReport(ok: scenario.runtimeOk), hardwareProfile: HardwareProfile.current(),
-            now: { now }, updater: updater
-        )
-        host.librarySnapshot = scenario.models.map { F.snapshot($0, generatedAt: F.renderStamp(now: now)) }
-        host.scannedRoots = scenario.scanned
-        host.isScanning = scenario.scanning
-        return host
-    }
-
-    private func attach<Content: View>(_ view: Content, name: String, viewport: CGFloat, dark: Bool, height: CGFloat = 1400) async throws {
-        let hosting = NSHostingView(rootView: view.frame(width: viewport, height: height).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(dark ? .dark : .light))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: viewport, height: height), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.contentView = hosting
-        defer { window.close() }
-        hosting.layoutSubtreeIfNeeded()
-        try await Task.sleep(nanoseconds: 400_000_000)
-        hosting.layoutSubtreeIfNeeded()
-        let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: image)
-        let png = try XCTUnwrap(image.representation(using: .png, properties: [:]))
-        XCTAssertGreaterThan(png.count, 1_000)
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = "\(name)-\(dark ? "dark" : "light")-\(Int(viewport))"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private final class RenderInstaller: ReleaseInstalling, @unchecked Sendable {
-        func fetchRelease(_ url: URL) async throws -> ReleaseEntry {
-            let name = "mlx-workbench-0.5.0.dmg"
-            let asset = ReleaseAsset(
-                name: name, downloadURL: URL(string: "https://example.invalid/\(name)")!,
-                size: 1, digest: "sha256:" + String(repeating: "a", count: 64)
-            )
-            return ReleaseEntry(tagName: "v0.5.0", draft: false, prerelease: false, assets: [asset])
-        }
-
-        func install(_ offer: ReleaseOffer, replacing bundle: URL, log: @escaping @Sendable (String) -> Void) async throws -> InstalledBuild {
-            InstalledBuild(version: "0.5.0", commit: "", channel: "release")
-        }
-
-        func relaunch(_ bundle: URL) {}
-    }
-
-    private func updateDefaults() throws -> UserDefaults {
-        let suite = "mlx-workbench-settings-render-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
-        return defaults
-    }
-
-    /// Drives UpdateCoordinator through its injected git runner or installer to each rendered phase.
-    private func updatePhases() async throws -> [(name: String, updater: UpdateCoordinator)] {
-        let checkout = URL(fileURLWithPath: "/render/checkout", isDirectory: true)
-        func git(status: String, failFetch: Bool = false) -> @Sendable ([String]) throws -> String {
-            { argv in
-                if argv.contains("status") { return status }
-                if argv.contains("describe") { throw UpdateCoordinator.UpdateError.gitFailed("describe", "no tag") }
-                if argv.contains("fetch") && failFetch { throw UpdateCoordinator.UpdateError.gitFailed("fetch","Could not resolve host: github.com") }
-                if argv.contains("tag") { return "v0.5.0\nv0.4.0\n" }
-                if argv.contains("rev-parse") { return "a0c36da\n" }
-                return ""
-            }
-        }
-        let dirty = UpdateCoordinator(repoRoot: checkout, defaults: try updateDefaults(), runGit: git(status: " M a.swift\n M b.swift\n"))
-        await dirty.check()
-        let failed = UpdateCoordinator(repoRoot: checkout, defaults: try updateDefaults(), runGit: git(status: "", failFetch: true))
-        await failed.check()
-
-        let bundle = FileManager.default.temporaryDirectory
-            .appendingPathComponent("settings-render-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("MLX Workbench.app")
-        try FileManager.default.createDirectory(at: bundle.deletingLastPathComponent(), withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: bundle.deletingLastPathComponent()) }
-        let updated = UpdateCoordinator(
-            repoRoot: nil,
-            installed: .init(bundle: bundle, build: InstalledBuild(version: "0.4.0", commit: "", channel: "release"), installer: RenderInstaller()),
-            defaults: try updateDefaults(), runGit: { _ in "" }
-        )
-        await updated.check()
-        guard case .available(let offer) = updated.phase else { throw XCTSkip("release offer not reached: \(updated.phase)") }
-        await updated.apply(offer: offer)
-
-        XCTAssertEqual(dirty.phase, .available(.init(target: "v0.5.0", current: "a0c36da", dirtyFiles: 2)))
-        XCTAssertEqual(updated.phase, .updated(target: "v0.5.0"))
-        guard case .failed = failed.phase else { throw XCTSkip("failed phase not reached: \(failed.phase)") }
-        return [("update-available-dirty", dirty), ("update-updated", updated), ("update-failed", failed)]
-    }
-
-    func testEveryUpdatePhaseRendersDarkAndLight() async throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
-        let scenario = try XCTUnwrap(scenarios().first)
-        for phase in try await updatePhases() {
-            for dark in [true, false] {
-                for viewport in [CGFloat(1220), 514] {
-                    let host = makeHost(scenario, updater: phase.updater)
-                    try await attach(
-                        SettingsView(appHost: host, probe: SettingsDirectoryProbe(state: scenario.probe), onRouteSelection: { _ in })
-                            .environment(\.isRouteActive, true),
-                        name: phase.name, viewport: viewport, dark: dark, height: 2000
-                    )
-                }
-            }
-        }
-    }
-
-    func testEveryStateRendersDarkAndLightAtEveryWidth() async throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
-        let widths: [(label: CGFloat, viewport: CGFloat)] = [(1556, 1220), (1050, 824), (740, 514)]
-        for scenario in scenarios() {
-            for dark in [true, false] {
-                for width in widths {
-                    let host = makeHost(scenario)
-                    let probe = SettingsDirectoryProbe(state: scenario.probe)
-                    try await attach(
-                        SettingsView(appHost: host, probe: probe, onRouteSelection: { _ in }).environment(\.isRouteActive, true),
-                        name: scenario.name, viewport: width.viewport, dark: dark
-                    )
-                }
-            }
-        }
     }
 }

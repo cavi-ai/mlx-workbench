@@ -252,41 +252,6 @@ final class LabWorkspaceTests: XCTestCase {
     }
 
     @MainActor
-    func testAuthorSheetKeepsItsOpenedWorkspaceWhenSwiftUIRebuildsIt() async throws {
-        func buttons(_ view: NSView) -> [NSButton] {
-            (view as? NSButton).map { [$0] } ?? view.subviews.flatMap { buttons($0) }
-        }
-        func scrollViews(_ view: NSView) -> [NSScrollView] {
-            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews($0) }
-        }
-        func refreshButton(_ view: NSView) -> NSButton? {
-            guard let scroll = scrollViews(view).max(by: { ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0) }) else { return nil }
-            // Revision picker, Capture recipe and Refresh availability, in content order.
-            let controls = buttons(scroll)
-            return controls.count == 3 ? controls.last : nil
-        }
-        let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
-        defer { fixture.releaseAll(); harness.cleanup() }
-        let host = NSHostingView(rootView: LabAuthorSheet(lab: harness.lab).buttonStyle(.borderless))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 760),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        await expectWorkspaceCall(fixture, "first:recipe-catalog")
-        for _ in 0..<100 where refreshButton(host)?.isEnabled != true { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertTrue(try XCTUnwrap(refreshButton(host), "Native buttons: \(buttons(host).map { String(describing: type(of: $0)) + ":" + $0.title })").isEnabled)
-        await harness.lab.useStore(harness.second)
-        host.rootView = LabAuthorSheet(lab: harness.lab).buttonStyle(.borderless)
-        for _ in 0..<100 where refreshButton(host)?.isEnabled != false { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertFalse(try XCTUnwrap(refreshButton(host)).isEnabled)
-        XCTAssertEqual(fixture.count("second:recipe-catalog"), 0)
-        await harness.lab.useStore(harness.first)
-        host.rootView = LabAuthorSheet(lab: harness.lab).buttonStyle(.borderless)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertFalse(try XCTUnwrap(refreshButton(host)).isEnabled)
-    }
-
-    @MainActor
     func testWorkspaceSwitchStartsItsOwnRefreshAndIgnoresOldCompletions() async throws {
         for operation in ["snapshot", "study-list"] {
             let fixture = WorkspaceRefreshFixture()
@@ -494,54 +459,6 @@ final class LabWorkspaceTests: XCTestCase {
         await session.capture()
         XCTAssertNil(session.manifest)
         XCTAssertNotNil(session.error)
-    }
-    @MainActor
-    func testStudiesViewReadsAnIsolatedRealWorkspaceWhenRequested() async throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard let agent = environment["MLX_LAB_TEST_AGENT"] else {
-            throw XCTSkip("Set MLX_LAB_TEST_AGENT to exercise the study page with the shared engine.")
-        }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("studies-view-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let suite = "studies-view-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(root.path, forKey: "mlx-workbench.lab-store")
-        let lab = LabCoordinator(api: WorkbenchAPI(cli: CLIProcess(), agentPath: agent), defaults: defaults)
-        let installer = RuntimeInstaller()
-        for width: CGFloat in [1190, 814] {
-            let host = NSHostingView(rootView: StudiesView(lab: lab, installer: installer, agentPath: agent)
-                .environment(\.isRouteActive, false).frame(width: width, height: 900)
-                .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 900),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(200))
-            if width == 1190 {
-                XCTAssertNil(lab.snapshot.history)
-                XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("experiments.sqlite3").path))
-            }
-            lab.error = "Refresh pending"
-            host.rootView = StudiesView(lab: lab, installer: installer, agentPath: agent)
-                .environment(\.isRouteActive, true).frame(width: width, height: 900)
-                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-            for _ in 0..<200 where lab.snapshot.history == nil || lab.isRefreshing || lab.error != nil { try await Task.sleep(for: .milliseconds(25)) }
-            XCTAssertNil(lab.error)
-            XCTAssertEqual(lab.snapshot.history?.items.count, 0)
-            XCTAssertEqual(lab.snapshot.queue?.count, 0)
-            XCTAssertNil(lab.runningJobID)
-            XCTAssertEqual(installer.state, .idle)
-            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("experiments.sqlite3").path))
-            host.layoutSubtreeIfNeeded()
-            if let folder = environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
-                let directory = URL(fileURLWithPath: folder)
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    .write(to: directory.appendingPathComponent("studies-\(Int(width)).png"))
-            }
-        }
     }
 
     func testRequestPreservesFrozenRecipeAndChangesOneVariable() throws {

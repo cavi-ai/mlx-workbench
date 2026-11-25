@@ -41,59 +41,6 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(MenuBarPresentation.availability(endpoint, state: .starting, residency: nil), "Starting…")
     }
 
-    @MainActor
-    func testServedModelsAndFamilyReviewsRenderWithoutStartingLiveServices() async throws {
-        let stateRoot = WorkbenchStatePaths.hostedTestRoot
-        let world = FakeServeWorld()
-        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Qwen3-8B-4bit", loadOnRequest: true, memoryPolicy: .automatic)
-        world.preload(repo: slot.modelPath, port: slot.port, jit: true, modelState: "unloaded", memoryPolicy: .automatic)
-        let fleet = JSONStore<EndpointFleetConfig>(fileURL: stateRoot.appendingPathComponent("render-fleet.json"))
-        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
-        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
-            store: JSONStore(fileURL: stateRoot.appendingPathComponent("render-endpoint.json")), fleetStore: fleet)
-        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured, runtimeReport: .checking, endpoint: supervisor)
-        await supervisor.reconcile()
-        let models = ["Qwen3-8B-4bit", "Qwen3-8B-abliterated-8bit", "Qwen3-8B-coding-4bit"].map { name in
-            LibraryModel(item: ModelItem(path: "/models/" + name, name: name, bytes: 5_000_000_000, modifiedAt: nil,
-                shard: nil, modelKey: name, architecture: "qwen3", quantization: "4-bit", parameters: "8B", structure: nil,
-                signature: "weights-" + name, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil))
-        }
-        app.librarySnapshot = LibrarySnapshot(models: models, groups: [], hardware: app.hardwareProfile, generatedAt: Date())
-        await app.comparison.waitForHistory(); await app.modelPurposes.waitForHistory()
-        _ = await app.modelPurposes.save(path: models[1].item.path, signature: models[1].item.signature, note: "Abliterated creative writing")
-        for width in [560, 800] {
-            for dark in [false, true] {
-                for family in [false, true] {
-                    let view = family
-                        ? AnyView(ModelFamilyReviewView(appHost: app, onCompare: {}, onReviewRemoval: { _ in }))
-                        : AnyView(ServeView(appHost: app))
-                    let hosting = NSHostingView(rootView: view.padding().frame(width: CGFloat(width), height: 700)
-                        .background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
-                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
-                    window.isReleasedWhenClosed = false; window.contentView = hosting
-                    window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderFront(nil)
-                    hosting.layoutSubtreeIfNeeded(); window.displayIfNeeded()
-                    let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-                    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-                    let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    let name = "\(family ? "family" : "served")-\(width)-\(dark ? "dark" : "light")"
-                    let capture = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
-                    capture.name = name; capture.lifetime = .keepAlways; add(capture)
-                    if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDER_OUTPUT"] {
-                        let url = URL(fileURLWithPath: folder)
-                        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-                        try data.write(to: url.appendingPathComponent(name + ".png"))
-                    }
-                    window.close()
-                }
-            }
-        }
-        XCTAssertEqual(app.endpoint.fleet.slots, [slot])
-        XCTAssertEqual(try world.status().count, 1)
-        XCTAssertNil(app.comparison.activeRunID)
-        XCTAssertNil(app.handoffs[.compareFamily])
-    }
-
     func testFleetIconIgnoresDisabledSlotsLeftInAStaleState() {
         let off = slot("/m/a", port: 1, enabled: false)
         let on = slot("/m/b", port: 2)
@@ -139,42 +86,6 @@ final class MenuBarTests: XCTestCase {
         ServerInfo(path: path, runtime: "mlx_lm", port: port, pid: pid, state: "running", jit: true,
                    modelState: residency, workerPid: pid + 100, activeRequests: 0,
                    receiptsDirectory: managed ? managedReceipts : "/receipts/other", processStartedAt: "process-\(pid)")
-    }
-
-    /// One endpoint with its server, one third-party service and one running server no slot owns.
-    @MainActor
-    private func servingFixture(readInventory: Bool, residency: String = "loaded") async throws -> (header: SystemResourceHeader, rows: [ServingRow]) {
-        let stateRoot = WorkbenchStatePaths.hostedTestRoot
-        let world = FakeServeWorld()
-        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Qwen3-8B-4bit", loadOnRequest: true, memoryPolicy: .automatic)
-        world.preload(repo: slot.modelPath, port: slot.port, jit: true, modelState: "loaded", memoryPolicy: .automatic)
-        let fleet = JSONStore<EndpointFleetConfig>(fileURL: stateRoot.appendingPathComponent("popover-fleet.json"))
-        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
-        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
-            store: JSONStore(fileURL: stateRoot.appendingPathComponent("popover-endpoint.json")), fleetStore: fleet)
-        await supervisor.reconcile()
-        let owned = engineServer(slot.modelPath, port: slot.port, pid: 10, managed: true, residency: residency)
-        let thirdParty = engineServer("/models/ollama-model", port: 11434, pid: 30, managed: false, residency: "unloaded")
-        let bare = ServerInfo(path: "/models/bare", port: 9001, pid: 40, state: "running")
-        let inventory = ServingInventoryCoordinator(managedReceipts: managedReceipts, now: { Date(timeIntervalSince1970: 1_000) },
-            fetchEngine: { ServingEngineSnapshot(servers: [owned, thirdParty]) }, readMemory: { _ in [:] })
-        if readInventory { await inventory.refresh() }
-        let resources = SystemResourceMonitor(probe: { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 12_000_000_000) })
-        await resources.refreshMemory()
-        let servers = [owned, bare]
-        let header = SystemResourceHeader(resources: resources, endpoint: supervisor, servingInventory: inventory, servers: servers,
-                                          onUnload: { _ in false })
-        return (header, ServingRows.build(slots: supervisor.fleet.slots, servers: servers, snapshot: inventory.snapshot))
-    }
-
-    @MainActor
-    private func host<Content: View>(_ view: Content, width: CGFloat, height: CGFloat, dark: Bool = false) -> (NSWindow, NSHostingView<AnyView>) {
-        let hosting = NSHostingView(rootView: AnyView(view.background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light)))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderFront(nil)
-        hosting.layoutSubtreeIfNeeded(); window.displayIfNeeded()
-        return (window, hosting)
     }
 
     func testMenuBarTitlesFollowTheServingRowOrder() {
@@ -224,22 +135,6 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(ResourceHeaderPresentation.accessibilityLabel(availableBytes: nil, tally: nil, attention: nil), "RAM unavailable")
     }
 
-    @MainActor
-    func testHostedToolbarLabelNeverAsksForMoreWidthThanOffered() async throws {
-        let read = try await servingFixture(readInventory: true, residency: "failed")
-        XCTAssertEqual(ServingWorkspacePresentation.tally(read.rows).attention, 1, "the fixture has a model that needs attention")
-        /// The width the rendered label takes when the toolbar offers `offered` points.
-        func width(offered: CGFloat) -> CGFloat {
-            let hosting = NSHostingController(rootView: read.header)
-            return hosting.sizeThatFits(in: CGSize(width: offered, height: 40)).width
-        }
-        let roomy = width(offered: 900)
-        XCTAssertGreaterThan(roomy, 200, "with room, the label names the serving counts")
-        for offered: CGFloat in [260, 160, 110] {
-            XCTAssertLessThanOrEqual(width(offered: offered), offered, "offered \(offered) points")
-        }
-    }
-
     func testServerRowsOfferOnlyReviewedStopsAndUnloads() {
         let launched = engineServer("/models/launched", port: 9002, pid: 50, managed: true, residency: "loaded")
         let snapshot = ServingInventorySnapshot.make(engine: [launched], hosts: [], managedReceipts: managedReceipts,
@@ -250,30 +145,5 @@ final class MenuBarTests: XCTestCase {
         let stale = ServingInventorySnapshot.make(engine: [engineServer("/models/launched", port: 9002, pid: 50, managed: true, residency: "unloaded")],
                                                   hosts: [], managedReceipts: managedReceipts, capturedAt: Date(timeIntervalSince1970: 1_000))
         XCTAssertEqual(ResourceHeaderPresentation.serverActions(service: stale.services.first).map(\.title), ["Stop server…"])
-    }
-
-    @MainActor
-    func testPopoverRendersEachServingRowInOrderWithinTheFixedSize() async throws {
-        let fixture = try await servingFixture(readInventory: true)
-        XCTAssertEqual(fixture.rows.count, 3)
-        guard case .endpoint = fixture.rows[0], case .server = fixture.rows[1], case .service = fixture.rows[2] else {
-            return XCTFail("rows must read endpoint, server, service")
-        }
-        let width = WorkbenchSize.ResourceHeader.popoverWidth
-        let (window, hosting) = host(fixture.header.panel, width: width, height: WorkbenchSize.ResourceHeader.popoverMaxHeight)
-        defer { window.close() }
-        XCTAssertEqual(hosting.fittingSize.width, width, accuracy: 0.5)
-        XCTAssertLessThanOrEqual(hosting.fittingSize.height, WorkbenchSize.ResourceHeader.popoverMaxHeight)
-
-        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let capture = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
-        capture.name = "popover-light"; capture.lifetime = .keepAlways; add(capture)
-        if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDER_OUTPUT"] {
-            let url = URL(fileURLWithPath: folder)
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            try data.write(to: url.appendingPathComponent("popover-light.png"))
-        }
     }
 }

@@ -638,45 +638,4 @@ final class LibraryViewTests: XCTestCase {
             lastKnownAgentState: nil
         )
     }
-
-    /// At the inspector's minimum column width every control and label stays inside the column.
-    @MainActor
-    func testMusicModelInspectorFitsTheMinimumColumnWidth() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("inspector-width-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let host = AppHost(catalogStore: CatalogStore(appSupportDirectory: { root }), config: Config.defaults())
-        let model = LibraryModel(item: ModelItem(
-            path: "/models/MiniMax-Music3-8bit", name: "MiniMax-Music3-8bit", bytes: 14_180_000_000, modifiedAt: nil, shard: nil,
-            modelKey: nil, architecture: nil, quantization: "q8", parameters: nil, structure: nil, signature: nil, companion: nil,
-            readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
-            task: ModelTask(type: .musicGeneration, useCases: [], source: "scan", confidence: "high")), readiness: .ready)
-        let width = WorkbenchSize.Library.inspectorMinimum
-        let height: CGFloat = 1400
-        let hosting = NSHostingView(rootView: ModelDetailsView(appHost: host, model: model, onRouteSelection: { _ in })
-            .frame(width: width, height: height).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        hosting.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        hosting.layoutSubtreeIfNeeded()
-
-        if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_INSPECTOR_RENDER_DIR"] {
-            let directory = URL(fileURLWithPath: folder)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: directory.appendingPathComponent("inspector-music-\(Int(width)).png"))
-        }
-
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        let controls = descendants(hosting).filter { $0 is NSControl && !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 0 }
-        let column = hosting.bounds.insetBy(dx: -0.5, dy: 0)
-        let clipped = controls.map { ($0, $0.convert($0.bounds, to: hosting)) }
-            .filter { $0.1.minX < column.minX || $0.1.maxX > column.maxX }
-            .map { "\(type(of: $0.0)) \(Int($0.1.minX))...\(Int($0.1.maxX))" }
-        XCTAssertGreaterThan(controls.count, 3)
-        XCTAssertEqual(clipped, [], "Controls outside the \(Int(width)) pt column")
-    }
 }

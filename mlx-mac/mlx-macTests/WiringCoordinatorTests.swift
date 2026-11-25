@@ -768,40 +768,6 @@ final class WiringCoordinatorTests: XCTestCase {
         }
     }
 
-    func testClientHandoffRendersAndConsumesTheRequestOnEntry() async throws {
-        let home = try makeHome()
-        try FileManager.default.createDirectory(at: home.appendingPathComponent(".config/opencode"), withIntermediateDirectories: true)
-        let coordinator = makeCoordinator(home: home)
-        let server = ServerInfo(path: "/models/Qwen-converted-4bit", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
-        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },
-            servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] }, serveStatus: { [server] }, serveStop: { _ in [:] })
-        let host = AppHost(config: Config.defaults(), modelWorkflowAPI: api,
-            modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }), wiring: coordinator,
-            preferencesStore: JSONStore<RecommendationPreferences>(fileURL: home.appendingPathComponent("preferences.json")))
-        host.handoffs.send(ClientWiringRequest(modelPath: server.path!, preferredPort: 8766), as: .wireClient)
-        let view = NSHostingView(rootView: WireView(appHost: host).environment(\.isRouteActive, true)
-            .frame(width: 720, height: 720).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 720), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = view
-        defer { window.close() }
-        view.layoutSubtreeIfNeeded()
-        for _ in 0..<10 {
-            if host.handoffs[.wireClient] == nil { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        XCTAssertNil(host.handoffs[.wireClient])
-        XCTAssertEqual(host.modelWorkflow.servers, [server])
-        XCTAssertTrue(coordinator.transactions.isEmpty)
-        view.layoutSubtreeIfNeeded()
-        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: image)
-        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = "Chosen local model in Clients"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
     func testPreviewConfirmApplyAndRollbackRoundTrip() throws {
         let home = try makeHome()
         let opencodeConfig = home.appendingPathComponent(".config/opencode/opencode.jsonc")

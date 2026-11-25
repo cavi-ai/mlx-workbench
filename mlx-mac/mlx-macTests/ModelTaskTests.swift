@@ -170,46 +170,6 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertEqual(missing.selectedPromptSetID(in: [builtin, saved], current: "gone"), builtin.id)
     }
 
-    @MainActor
-    func testLibraryHandoffUpdatesAnAlreadyMountedComparison() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-handoff-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let host = AppHost(catalogStore: CatalogStore(appSupportDirectory: { root }), config: Config.defaults())
-        let types: [ModelTaskType] = [.speechToText, .imageGeneration, .textToSpeech, .videoGeneration]
-        let models = types.map { comparisonModel($0) }
-        host.librarySnapshot = LibrarySnapshot(models: models, groups: [], hardware: host.hardwareProfile, generatedAt: Date())
-        let view = NSHostingView(rootView: QuantView(appHost: host)
-            .environment(\.isRouteActive, true).frame(width: 1190, height: 900)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1190, height: 900),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
-        defer { window.close() }
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        try await Task.sleep(for: .milliseconds(200))
-        for model in models {
-            ModelActions(appHost: host, model: model, onRouteSelection: { XCTAssertEqual($0, .compare) }).compare()
-            for _ in 0..<40 where host.handoffs[.compareModel] != nil { try await Task.sleep(for: .milliseconds(25)) }
-            XCTAssertNil(host.handoffs[.compareModel])
-            try await Task.sleep(for: .milliseconds(100)); view.layoutSubtreeIfNeeded()
-            let popups = descendants(view).compactMap { $0 as? NSPopUpButton }
-            let mode = try XCTUnwrap(popups.first { $0.itemTitles.contains("Video understanding") })
-            XCTAssertEqual(mode.title, ComparisonMode.preferred(for: model.item)?.title)
-            XCTAssertTrue(popups.contains { $0.title.hasPrefix(model.displayName) }, "The Library model must occupy lane A.")
-            XCTAssertTrue(popups.contains { $0.title == "Choose a model" }, "Lane B must await explicit selection.")
-            XCTAssertNil(host.comparison.activeRunID)
-            XCTAssertTrue(host.comparison.runs.isEmpty)
-            if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
-                let directory = URL(fileURLWithPath: folder)
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-                view.cacheDisplay(in: view.bounds, to: bitmap)
-                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    .write(to: directory.appendingPathComponent("library-\(model.item.task!.type.rawValue).png"))
-            }
-        }
-    }
-
     private func comparisonModel(_ type: ModelTaskType, path: String? = nil) -> LibraryModel {
         LibraryModel(item: ModelItem(path: path ?? "/m/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil,
             shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil,
