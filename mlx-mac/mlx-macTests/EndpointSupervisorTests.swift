@@ -424,7 +424,7 @@ final class EndpointSupervisorTests: XCTestCase {
             loadOnRequest: true, memoryPolicy: .automatic)
         active.servingProfile = original; active.acceleration = .init()
         active.profilePreviewHash = ProfileRevisionServeWorld.hash(original, port: active.port)
-        var inactive = EndpointSlot(enabled: false, port: 8921, modelPath: original.modelPath, role: .generalChat,
+        var inactive = EndpointSlot(enabled: false, port: 8921, modelPath: original.modelPath, role: .general,
             loadOnRequest: false, memoryPolicy: .legacy)
         inactive.servingProfile = original; inactive.profilePreviewHash = "previous-disabled-preview"
         let expected = [active, inactive]

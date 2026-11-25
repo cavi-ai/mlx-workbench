@@ -1230,7 +1230,7 @@ enum ServingWorld {
         let root = WorkbenchStatePaths.hostedTestRoot
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
         if accelerated {
-            slot.role = UseCase.allCases.first
+            slot.role = UseCase.allCases.first.map(ServingRole.init)
             slot.acceleration = LocalInferenceOptions(m5Prefill: true, promptLookup: true)
         }
         let endpointServer = server("Alder", port: 8766, pid: 101, managedByWorkbench: true)

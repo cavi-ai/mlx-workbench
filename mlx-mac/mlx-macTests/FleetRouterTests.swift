@@ -15,7 +15,7 @@ final class FleetRouterTests: XCTestCase {
     private func slot(
         port: Int,
         modelPath: String,
-        role: UseCase?,
+        role: ServingRole?,
         enabled: Bool = true,
         apiKeySHA256: String? = nil,
         id: UUID = UUID()
@@ -137,7 +137,7 @@ final class FleetRouterTests: XCTestCase {
     func testFilesystemModelWithoutUpstreamRepoIDIsExcludedFromEngineRender() {
         let id = UUID()
         let plan = FleetRouter.plan(
-            slots: [slot(port: 8766, modelPath: localPath, role: .generalChat, id: id)],
+            slots: [slot(port: 8766, modelPath: localPath, role: .general, id: id)],
             states: running(id, path: localPath, port: 8766)
         )
         XCTAssertTrue(plan.cliAssignments.isEmpty)

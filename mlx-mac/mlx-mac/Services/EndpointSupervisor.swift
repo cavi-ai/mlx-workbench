@@ -273,7 +273,7 @@ final class EndpointSupervisor: ObservableObject {
     /// duplicate port or role, or when the model fails the verified gate.
     /// Returns the saved slot ID so callers can read its startup state.
     @discardableResult
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async -> UUID? {
+    func addSlot(modelPath: String, port: Int, role: ServingRole? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async -> UUID? {
         guard beginUserOperation() else { return nil }
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return nil }
@@ -398,7 +398,7 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     /// Change a slot's model/port/role without toggling its enabled flag.
-    func updateSlot(id: UUID, modelPath: String, port: Int, role: UseCase?) async {
+    func updateSlot(id: UUID, modelPath: String, port: Int, role: ServingRole?) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard let old = fleet.slots.first(where: { $0.id == id }) else { return }

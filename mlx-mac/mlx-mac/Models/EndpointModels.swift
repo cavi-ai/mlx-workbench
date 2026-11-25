@@ -288,6 +288,125 @@ struct SplashPresetReview: Identifiable {
     let previewHash: String
 }
 
+/// The one role vocabulary for fleet endpoints. Each role has a canonical
+/// loopback port and the model task types that may fill it.
+enum ServingRole: String, CaseIterable, Codable, Identifiable, Hashable, Sendable {
+    case embedding
+    case general
+    case vision
+    case reasoning
+    case coding
+    case classification
+    case image
+    case mesh
+    case voice
+    case transcription
+    case music
+    case video
+
+    var id: String { rawValue }
+
+    init(_ useCase: UseCase) {
+        switch useCase {
+        case .coding: self = .coding
+        case .generalChat: self = .general
+        case .reasoning: self = .reasoning
+        case .vision: self = .vision
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        let token = String(raw.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+        switch token {
+        case "generalchat": self = .general
+        case "research", "reasoningresearch": self = .reasoning
+        default:
+            guard let role = ServingRole(rawValue: token) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown serving role: \(raw)")
+            }
+            self = role
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var title: String {
+        switch self {
+        case .embedding: return ModelTaskType.embedding.title
+        case .general: return "General"
+        case .vision: return "Vision"
+        case .reasoning: return "Reasoning"
+        case .coding: return "Coding"
+        case .classification: return ModelTaskType.classification.title
+        case .image: return ModelTaskType.imageGeneration.title
+        case .mesh: return "3D"
+        case .voice: return ModelTaskType.textToSpeech.title
+        case .transcription: return ModelTaskType.speechToText.title
+        case .music: return ModelTaskType.musicGeneration.title
+        case .video: return ModelTaskType.videoGeneration.title
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .embedding: return ModelTaskType.embedding.symbolName
+        case .general, .reasoning, .coding: return ModelTaskType.textLLM.symbolName
+        case .vision: return ModelTaskType.visionLanguage.symbolName
+        case .classification: return ModelTaskType.classification.symbolName
+        case .image: return ModelTaskType.imageGeneration.symbolName
+        case .mesh: return ModelTaskType.meshGeneration.symbolName
+        case .voice: return ModelTaskType.textToSpeech.symbolName
+        case .transcription: return ModelTaskType.speechToText.symbolName
+        case .music: return ModelTaskType.musicGeneration.symbolName
+        case .video: return ModelTaskType.videoGeneration.symbolName
+        }
+    }
+
+    var defaultPort: Int {
+        switch self {
+        case .embedding: return 8091
+        case .general: return 8092
+        case .vision: return 8093
+        case .reasoning: return 8094
+        case .coding: return 8095
+        case .classification: return 8096
+        case .image: return 8097
+        case .mesh: return 8098
+        case .voice: return 8099
+        case .transcription: return 8100
+        case .music: return 8101
+        case .video: return 8102
+        }
+    }
+
+    var eligibleTaskTypes: [ModelTaskType] {
+        switch self {
+        case .embedding: return [.embedding]
+        case .general, .reasoning, .coding: return [.textLLM, .visionLanguage]
+        case .vision: return [.visionLanguage]
+        case .classification: return [.classification]
+        case .image: return [.imageGeneration]
+        case .mesh: return [.meshGeneration]
+        case .voice: return [.textToSpeech]
+        case .transcription: return [.speechToText]
+        case .music: return [.musicGeneration]
+        case .video: return [.videoGeneration]
+        }
+    }
+
+    var isChat: Bool {
+        switch self {
+        case .general, .vision, .reasoning, .coding: return true
+        default: return false
+        }
+    }
+}
+
 /// One supervised endpoint: a model on its own stable loopback port.
 /// `role == nil` is first-class — an unassigned stable port, exactly like
 /// the original single endpoint.
@@ -296,7 +415,7 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var enabled: Bool
     var port: Int
     var modelPath: String
-    var role: UseCase?
+    var role: ServingRole?
     /// Absent in legacy fleets: preserve their eager-serving behavior.
     var loadOnRequest: Bool?
     var memoryPolicy: EndpointMemoryPolicy?
@@ -314,7 +433,7 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var isTrainedAdapter: Bool { trainingReceipt != nil }
     var usesJIT: Bool { loadOnRequest == true }
 
-    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
+    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: ServingRole? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
         self.id = id
         self.enabled = enabled
         self.port = port
@@ -372,10 +491,31 @@ struct EndpointFleetConfig: Codable, Equatable, Sendable {
     /// Absent in older fleets; synthesized decoding keeps them readable.
     var roleDefaults: EndpointRoleDefaults? = nil
 
-    static let maxSlots = 8
+    static let maxSlots = 16
 
     static var empty: EndpointFleetConfig {
         EndpointFleetConfig(slots: [], installedAtLogin: false)
+    }
+
+    func slot(for role: ServingRole) -> EndpointSlot? {
+        slots.first { $0.role == role }
+    }
+
+    /// The assigned slot's port, else the role's canonical port.
+    func port(for role: ServingRole) -> Int {
+        slot(for: role)?.port ?? role.defaultPort
+    }
+
+    /// Assigns roles from the legacy `roleDefaults` slots that have none, when
+    /// no slot already holds that role. `roleDefaults` is left untouched.
+    func migratingRoleDefaults() -> EndpointFleetConfig {
+        var result = self
+        for (id, role) in [(roleDefaults?.coding, ServingRole.coding), (roleDefaults?.utility, ServingRole.general)] {
+            guard let id, !result.slots.contains(where: { $0.role == role }),
+                  let index = result.slots.firstIndex(where: { $0.id == id && $0.role == nil }) else { continue }
+            result.slots[index].role = role
+        }
+        return result
     }
 
     /// The saved default slot for a role, only if it still exists, is enabled
@@ -394,7 +534,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case tooManySlots(Int)
     case invalidPort(Int)
     case duplicatePort(Int)
-    case duplicateRole(UseCase)
+    case duplicateRole(ServingRole)
     case invalidMemoryPolicy(UUID)
     case invalidInference(UUID, String)
     case incompatibleAcceleration(UUID)
@@ -438,7 +578,7 @@ extension EndpointFleetConfig {
             throw EndpointFleetValidation.tooManySlots(slots.count)
         }
         var seenPorts = Set<Int>()
-        var seenRoles = Set<UseCase>()
+        var seenRoles = Set<ServingRole>()
         for slot in slots {
             if let digest = slot.apiKeySHA256,
                !slot.usesJIT || digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) == nil {

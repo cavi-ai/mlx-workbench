@@ -74,7 +74,7 @@ struct ServeView: View {
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
-    @State private var newSlotRole: UseCase?
+    @State private var newSlotRole: ServingRole?
     @State private var newSlotLoadOnRequest = true
     @StateObject private var fleetHold: FleetOverrideHold
     private var pendingFleetAction: PendingFleetAction? {
@@ -1405,9 +1405,9 @@ struct ServeView: View {
                     Task { await endpoint.updateSlot(id: slot.id, modelPath: slot.modelPath, port: slot.port, role: newRole) }
                 }
             )) {
-                Text("Unassigned").tag(UseCase?.none)
-                ForEach(UseCase.allCases) { role in
-                    Text(role.title).tag(UseCase?.some(role))
+                Text("Unassigned").tag(ServingRole?.none)
+                ForEach(ServingRole.allCases.filter(\.isChat)) { role in
+                    Text(role.title).tag(ServingRole?.some(role))
                 }
             }
             Toggle("Load on request", isOn: Binding(
@@ -1630,9 +1630,9 @@ struct ServeView: View {
                 .frame(width: WorkbenchSize.Run.portField)
         }
         Picker("Role", selection: $newSlotRole) {
-            Text("Unassigned").tag(UseCase?.none)
-            ForEach(UseCase.allCases) { role in
-                Text(role.title).tag(UseCase?.some(role))
+            Text("Unassigned").tag(ServingRole?.none)
+            ForEach(ServingRole.allCases.filter(\.isChat)) { role in
+                Text(role.title).tag(ServingRole?.some(role))
             }
         }
         .frame(width: WorkbenchSize.Run.roleWidth)
@@ -1895,7 +1895,7 @@ struct EndpointChangeReview: Identifiable {
     let model: LibraryModel?
     let slot: EndpointSlot?
     let port: Int
-    let role: UseCase?
+    let role: ServingRole?
     let loadOnRequest: Bool
     let keepLoaded: Bool
     let requireKey: Bool
@@ -1935,7 +1935,7 @@ struct EndpointChanges {
         ServedModelsSelection.nextPort(slots: appHost.endpoint.fleet.slots, servers: occupiedServers)
     }
 
-    func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: UseCase?, loadOnRequest: Bool,
+    func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: ServingRole?, loadOnRequest: Bool,
                    keepLoaded: Bool, requireKey: Bool, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) -> AddOutcome {
         guard let model else { return .noModel }
         if let error = inference.validationError { return .portRejected(error) }
