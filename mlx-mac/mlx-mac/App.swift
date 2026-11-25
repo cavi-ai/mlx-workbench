@@ -81,6 +81,7 @@ struct MlxWorkbenchApp: App {
         MenuBarExtra(WorkbenchMenuBarItem.title, systemImage: WorkbenchMenuBarItem.systemImage,
                      isInserted: menuBarInsertion) {
             MenuBarView(appHost: appHost)
+                .workbenchTheme()
         }
         .menuBarExtraStyle(.window)
         #endif
@@ -97,11 +98,62 @@ struct MlxWorkbenchApp: App {
     }
 }
 
+/// Applies the stored theme at a window root: tokens, forced appearance and an opaque canvas.
+struct WorkbenchThemeRoot: ViewModifier {
+    @AppStorage(WorkbenchTheme.storageKey) private var storedTheme = WorkbenchTheme.system.rawValue
+
+    func body(content: Content) -> some View {
+        content
+            .preferredColorScheme(WorkbenchThemeState.shared.theme.colorScheme)
+            .modifier(WindowCanvas())
+            .onChange(of: storedTheme, initial: true) { _, id in
+                guard !WorkbenchStatePaths.isHostedUnitTest() else { return }
+                WorkbenchThemeAppearance.apply(WorkbenchTheme(storedID: id))
+            }
+    }
+
+    private struct WindowCanvas: ViewModifier {
+        func body(content: Content) -> some View {
+            if #available(macOS 15.0, *) {
+                content.containerBackground(WorkbenchColor.canvas, for: .window)
+            } else {
+                content
+            }
+        }
+    }
+}
+
+/// The AppKit side of a theme: app appearance and opaque titled-window backgrounds, sheets included.
+@MainActor
+enum WorkbenchThemeAppearance {
+    static func apply(_ theme: WorkbenchTheme) {
+        WorkbenchThemeState.shared.theme = theme
+        NSApp.appearance = theme.colorScheme.flatMap { NSAppearance(named: $0 == .dark ? .darkAqua : .aqua) }
+        NSApp.windows.forEach(paint)
+    }
+
+    static func paint(_ window: NSWindow) {
+        guard window.styleMask.contains(.titled) else { return }
+        // A window keeps a forced appearance after the theme returns to System unless it is cleared.
+        if WorkbenchThemeState.shared.theme.colorScheme == nil, window.appearance != nil { window.appearance = nil }
+        window.backgroundColor = NSColor(WorkbenchColor.canvas)
+    }
+
+    static func observeWindows() -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated { paint(window) }
+        }
+    }
+}
+
 @MainActor
 final class WorkbenchApplicationDelegate: NSObject, NSApplicationDelegate {
     var startLiveServices: (() -> Void)?
     var prepareToQuit: (() async -> Bool)?
+    private var windowObserver: NSObjectProtocol?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !WorkbenchStatePaths.isHostedUnitTest() { windowObserver = WorkbenchThemeAppearance.observeWindows() }
         startLiveServices?()
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

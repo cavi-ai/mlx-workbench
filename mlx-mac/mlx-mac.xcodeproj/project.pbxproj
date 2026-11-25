@@ -338,6 +338,7 @@
 		27ABCD000000000000000002 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000002 /* DesignSystem.swift */; };
 		27ABCD000000000000000003 /* AppRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000003 /* AppRouteTests.swift */; };
 		27ABCD000000000000000004 /* DesignLintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000004 /* DesignLintTests.swift */; };
+		WBTHEMETSTB1 /* WorkbenchThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WBTHEMETSTF1 /* WorkbenchThemeTests.swift */; };
 		27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */; };
 		27ABCD000000000000000020 /* LibraryTypeGroupingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */; };
 		27ABCD000000000000000023 /* ConversionProgressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000023 /* ConversionProgressTests.swift */; };
@@ -749,6 +750,7 @@
 		27ABCD100000000000000002 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignSystem.swift; path = UI/DesignSystem.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000003 /* AppRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRouteTests.swift; path = AppRouteTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000004 /* DesignLintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignLintTests.swift; path = DesignLintTests.swift; sourceTree = "<group>"; };
+		WBTHEMETSTF1 /* WorkbenchThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchThemeTests.swift; path = WorkbenchThemeTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeCoordinatorTests.swift; path = IntakeCoordinatorTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryTypeGroupingTests.swift; path = LibraryTypeGroupingTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000023 /* ConversionProgressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConversionProgressTests.swift; path = ConversionProgressTests.swift; sourceTree = "<group>"; };
@@ -1272,6 +1274,7 @@
 				27TST009 /* UpdateCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 				27ABCD100000000000000004 /* DesignLintTests.swift */,
+				WBTHEMETSTF1 /* WorkbenchThemeTests.swift */,
 				27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */,
 				27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */,
 				27ABCD100000000000000023 /* ConversionProgressTests.swift */,
@@ -1844,6 +1847,7 @@
 				C5C000000000000000000003 /* QuickConnectSnippetsTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27ABCD000000000000000004 /* DesignLintTests.swift in Sources */,
+				WBTHEMETSTB1 /* WorkbenchThemeTests.swift in Sources */,
 				27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */,
 				27ABCD000000000000000020 /* LibraryTypeGroupingTests.swift in Sources */,
 				27ABCD000000000000000023 /* ConversionProgressTests.swift in Sources */,

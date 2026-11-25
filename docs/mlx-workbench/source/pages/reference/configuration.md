@@ -49,6 +49,19 @@ The app reads `~/.config/mlx-workbench/config.json`. A missing or unreadable fil
 
 Values outside a key's range fall back to its default. Saving from Settings merges the fields it manages into the existing file and keeps every other key, then replaces the file atomically through a temporary file. Valid legacy `host` and `port` values are preserved from the stored file, including edits made after opening the form. The native app has no Workbench API server; manage model servers and endpoint ports in **Serving**, also reachable through **Settings → Serving → Open Run**.
 
+## Appearance
+
+**Settings → Appearance → Theme** picks the window theme. The choice applies to every window at once, is stored in the app's preferences rather than `config.json`, and is not part of **Save**.
+
+| Theme | Appearance | Look |
+|---|---|---|
+| System | Follows macOS | Midnight when macOS is dark, Paper when it is light |
+| Midnight | Dark | Near-black canvas with layered, opaque surfaces |
+| Graphite | Dark | Neutral dark grey |
+| Paper | Light | Crisp, high-contrast light |
+
+Every theme draws opaque window and sidebar backgrounds, keeps text and secondary text at 4.5:1 contrast or better on canvas, cards and fields, and uses the yellow accent for primary actions.
+
 ## Discovery
 
 Scans use the saved GGUF and MLX locations plus the managed output directory. An empty list stays empty; it does not expand to other folders. Settings suggests known Hugging Face and LM Studio folders for explicit selection. Existing saved locations remain selected. New downloads go beneath `<output_dir>/managed`, separated by repository, revision and checkpoint selection; existing provider caches stay in place.
