@@ -12,6 +12,8 @@
 		FD0D00000000000000000001 /* FrontDoor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000002 /* FrontDoor.swift */; };
 		C5C000000000000000000001 /* QuickConnectSnippets.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C000000000000000000002 /* QuickConnectSnippets.swift */; };
 		FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000006 /* FrontDoorEditor.swift */; };
+		AB5E000000000000000000A1 /* WorkbenchKeyWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5E000000000000000000A2 /* WorkbenchKeyWizard.swift */; };
+		AB5E000000000000000000A3 /* WorkbenchKeySetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5E000000000000000000A4 /* WorkbenchKeySetupTests.swift */; };
         E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
         E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
         E71300000000000000000015 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000023; };
@@ -422,6 +424,8 @@
 		FD0D00000000000000000002 /* FrontDoor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/FrontDoor.swift; sourceTree = "<group>"; };
 		C5C000000000000000000002 /* QuickConnectSnippets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickConnectSnippets.swift; sourceTree = "<group>"; };
 		FD0D00000000000000000006 /* FrontDoorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/FrontDoorEditor.swift; sourceTree = "<group>"; };
+		AB5E000000000000000000A2 /* WorkbenchKeyWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/WorkbenchKeyWizard.swift; sourceTree = "<group>"; };
+		AB5E000000000000000000A4 /* WorkbenchKeySetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchKeySetupTests.swift; path = WorkbenchKeySetupTests.swift; sourceTree = "<group>"; };
 		E71400000000000000000101 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TerminalSession.swift; sourceTree = "<group>"; };
 		E71400000000000000000201 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TerminalWorkspaceView.swift; sourceTree = "<group>"; };
 		E71400000000000000000301 /* TerminalSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionTests.swift; sourceTree = "<group>"; };
@@ -892,6 +896,7 @@
 
 				A17A00000000000000000004 /* TailnetSharingWizard.swift */,
 				FD0D00000000000000000006 /* FrontDoorEditor.swift */,
+				AB5E000000000000000000A2 /* WorkbenchKeyWizard.swift */,
 				B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */,
 				9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */,
 				563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */,
@@ -1279,6 +1284,7 @@
 				27ABCD100000000000000008 /* IntakeContractTests.swift */,
 				27ABCD100000000000000006 /* ModelTaskTests.swift */,
 				7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */,
+				AB5E000000000000000000A4 /* WorkbenchKeySetupTests.swift */,
 				E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */,
 				E71200000000000000000F11 /* ModelServingDefaultsTests.swift */,
 			);
@@ -1491,6 +1497,7 @@
 				FD0D00000000000000000001 /* FrontDoor.swift in Sources */,
 				C5C000000000000000000001 /* QuickConnectSnippets.swift in Sources */,
 				FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */,
+				AB5E000000000000000000A1 /* WorkbenchKeyWizard.swift in Sources */,
 				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
 				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
 				9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */,
@@ -1851,6 +1858,7 @@
 				27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */,
 				27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */,
 				7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */,
+				AB5E000000000000000000A3 /* WorkbenchKeySetupTests.swift in Sources */,
 				E71200000000000000000F02 /* ServingInspectorPresentationTests.swift in Sources */,
 				E71200000000000000000F12 /* ModelServingDefaultsTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,

@@ -47,6 +47,7 @@ struct ServeView: View {
     @State private var action: EndpointChangeReview?
     @State private var authenticationReview: EndpointAuthenticationReview?
     @State private var keyResetReview: WorkbenchKeyResetReview?
+    @State private var showsKeyWizard = false
     @State private var workspaceSelection: String?
     @State private var inspectorScroll: ServingInspectorPresentation.Section?
     @State private var includesAvailable = false
@@ -218,6 +219,7 @@ struct ServeView: View {
         .sheet(item: gated($action)) { pending in confirmation(pending) }
         .sheet(item: gated($authenticationReview)) { review in authenticationConfirmation(review) }
         .sheet(item: gated($keyResetReview)) { review in keyResetConfirmation(review) }
+        .sheet(isPresented: $showsKeyWizard) { WorkbenchKeyWizard(appHost: appHost) }
         .sheet(item: $promptPresentation) { presentation in
             EndpointTestSheet(presentation: presentation, coordinator: endpointTest) {
                 guard let request = ClientWiringRequest.forServer(presentation.server) else { return }
@@ -1766,6 +1768,7 @@ struct ServeView: View {
     }
 
     private func prepareAuthentication(_ slot: EndpointSlot, required: Bool) {
+        if required, endpoint.fleet.frontDoor == nil { showsKeyWizard = true; return }
         Task {
             do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required) }
             catch { actionError = AppHost.render(error) }

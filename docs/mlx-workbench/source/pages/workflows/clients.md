@@ -99,7 +99,7 @@ Quick Connect snippets never read or embed raw Keychain secrets. For API-key pro
 export MLX_AGENT_API_KEY="<paste copied key>"
 ```
 
-For **OpenClaw** and other multi-model clients using the **Workbench API**, point the provider base URL at `http://127.0.0.1:<workbench-api-port>/v1`, supply the shared Workbench API key via `MLX_AGENT_API_KEY` (or let **Connect app…** write the reviewed config), and select any routed model ID advertised at `/v1/models`.
+For **OpenClaw** and other multi-model clients using the **Workbench API**, point the provider base URL at `http://127.0.0.1:<workbench-api-port>/v1`, supply the shared Workbench API key via `MLX_AGENT_API_KEY` (**Workbench key…** on the Workbench API row copies it and offers an export template; or let **Connect app…** write the reviewed config), and select any routed model ID advertised at `/v1/models`.
 
 ## Connect from the serving model
 

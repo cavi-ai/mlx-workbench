@@ -78,7 +78,7 @@ final class ServingRolesPresentationTests: XCTestCase {
         var strings = [ServingRolesPresentation.workbenchAPITitle, ServingRolesPresentation.workbenchAPICaption]
         for row in rows {
             strings += [row.title, row.address, row.stateText, row.routedText, row.startTitle, row.stopTitle,
-                        row.copyAddressTitle, row.copyKeyTitle, row.setupTitle]
+                        row.copyAddressTitle, row.keyTitle, row.setupTitle]
         }
         strings.append(FleetRouter.AuthMode.frontDoor(port: 8090).guidance ?? "")
         XCTAssertEqual(FleetRouter.AuthMode.frontDoor(port: 8090).guidance, "Workbench API :8090 uses $\(FleetRouter.localAPIKeyEnvVar)")

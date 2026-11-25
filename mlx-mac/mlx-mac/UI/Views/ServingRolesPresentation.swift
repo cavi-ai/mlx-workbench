@@ -32,7 +32,7 @@ enum ServingRolesPresentation {
         var startTitle: String { isConfigured ? "Start" : "Create key and start" }
         var stopTitle: String { "Stop" }
         var copyAddressTitle: String { "Copy address" }
-        var copyKeyTitle: String { "Copy key" }
+        var keyTitle: String { "Workbench key…" }
         var setupTitle: String { "Set up an app…" }
     }
 

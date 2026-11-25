@@ -37,6 +37,7 @@ struct WorkbenchAPIRowView: View {
     @ObservedObject var endpoint: EndpointSupervisor
     @State private var message: String?
     @State private var showsSetup = false
+    @State private var showsKeyWizard = false
 
     var body: some View {
         let settings = endpoint.fleet.frontDoor
@@ -63,12 +64,8 @@ struct WorkbenchAPIRowView: View {
                         .accessibilityIdentifier("front-door-start")
                 }
                 Button(row.copyAddressTitle) { ServedModelsSelection.copy(row.address) }
-                if let digest = settings?.apiKeySHA256 {
-                    Button(row.copyKeyTitle) {
-                        do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: digest)) }
-                        catch { message = AppHost.render(error) }
-                    }
-                }
+                Button(row.keyTitle) { showsKeyWizard = true }
+                    .accessibilityIdentifier("front-door-workbench-key")
                 Button(row.setupTitle) { showsSetup = true }
                     .disabled(coordinator.endpoint == nil)
                     .accessibilityIdentifier("front-door-setup-opencode")
@@ -81,6 +78,7 @@ struct WorkbenchAPIRowView: View {
         }
         .padding(.vertical, WorkbenchSpacing.xs)
         .sheet(isPresented: $showsSetup) { ClientSetupWizard(appHost: appHost, client: .opencode, prefersFrontDoor: true) }
+        .sheet(isPresented: $showsKeyWizard) { WorkbenchKeyWizard(appHost: appHost) }
     }
 
     private func start(_ settings: FrontDoorSettings?) async {

@@ -86,8 +86,6 @@ struct EndpointAuthenticationReview: Identifiable {
     let id = UUID()
     let slot: EndpointSlot
     let keySHA256: String?
-    /// A new Workbench key held in memory until the review is confirmed; nil when the key already exists.
-    let workbenchToken: String?
     let previewHash: String
 }
 
@@ -114,6 +112,19 @@ struct WorkbenchKeyResetReview: Identifiable {
     let token: String
     let workbenchAPIPort: Int
     /// Protected endpoints in restart order; the Workbench API restarts after them.
+    let endpoints: [Endpoint]
+}
+
+/// A reviewed batch protect: every endpoint that moves onto the Workbench key, and which ones restart.
+struct WorkbenchKeyProtectReview: Identifiable {
+    struct Endpoint: Equatable {
+        let slot: EndpointSlot
+        let previewHash: String
+        let restarts: Bool
+    }
+    let id = UUID()
+    let workbenchDigest: String
+    /// In restart order (ascending port).
     let endpoints: [Endpoint]
 }
 

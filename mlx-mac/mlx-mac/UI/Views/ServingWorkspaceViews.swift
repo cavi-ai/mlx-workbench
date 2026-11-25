@@ -248,6 +248,7 @@ struct ServingModelList: View {
     let refresh: () -> Void
     let showSources: () -> Void
     @State private var query = ""
+    @State private var showsKeyWizard = false
     @State private var othersExpanded = false
     private func visible(_ rows: [ServingRow]) -> [ServingRow] {
         rows.filter { query.isEmpty || (ServingWorkspacePresentation.name($0, models: models) + " " + ServingWorkspacePresentation.provider($0)).localizedCaseInsensitiveContains(query) }
@@ -298,9 +299,12 @@ struct ServingModelList: View {
             HStack {
                 Text("Endpoints").font(WorkbenchTypography.cardTitle)
                 Spacer()
+                Button { showsKeyWizard = true } label: { Image(systemName: "key") }.buttonStyle(.borderless)
+                    .accessibilityLabel("Workbench key").help("Workbench key…").accessibilityIdentifier("serving-workbench-key")
                 Button(action: refresh) { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).accessibilityLabel("Refresh serving models")
                 Button(action: add) { Image(systemName: "plus") }.buttonStyle(.borderless).accessibilityLabel("Serve a model").accessibilityIdentifier("serving-add-model")
             }.padding(.horizontal, WorkbenchSpacing.md).padding(.top, WorkbenchSpacing.md)
+                .sheet(isPresented: $showsKeyWizard) { WorkbenchKeyWizard(appHost: appHost) }
             TextField("Filter models", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
                 .accessibilityIdentifier("serving-model-filter")
             List(selection: $selectedID) {

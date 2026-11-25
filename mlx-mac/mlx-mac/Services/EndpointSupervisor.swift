@@ -1094,18 +1094,133 @@ final class EndpointSupervisor: ObservableObject {
         fleet.frontDoor?.apiKeySHA256 == digest || fleet.slots.contains { $0.apiKeySHA256 == digest }
     }
 
+    /// The slot as saved with `digest`; a protected endpoint loads on request with its memory policy retained.
+    private static func authenticationCandidate(_ slot: EndpointSlot, digest: String?) -> EndpointSlot {
+        var candidate = slot
+        candidate.apiKeySHA256 = digest
+        if digest != nil {
+            candidate.loadOnRequest = true
+            candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName)
+        }
+        return candidate
+    }
+
+    /// Lists the endpoints a batch protect restarts; nothing is saved.
+    func previewProtectEndpoints(_ slots: [EndpointSlot]) async throws -> WorkbenchKeyProtectReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard let door = fleet.frontDoor else { throw WorkflowEvidenceError.invalid("Create the Workbench key first.") }
+        guard !slots.isEmpty, slots.allSatisfy({ fleet.slots.contains($0) && $0.apiKeySHA256 != door.apiKeySHA256 }) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.")
+        }
+        let live = try await statusProvider()
+        var entries: [WorkbenchKeyProtectReview.Endpoint] = []
+        for slot in slots.sorted(by: { $0.port < $1.port }) {
+            let candidate = Self.authenticationCandidate(slot, digest: door.apiKeySHA256)
+            let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
+            guard !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.") }
+            let running = live.contains { $0.port == slot.port && $0.state?.lowercased() == "running" }
+            entries.append(.init(slot: slot, previewHash: hash, restarts: running))
+        }
+        guard fleet.frontDoor == door, entries.allSatisfy({ fleet.slots.contains($0.slot) }) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.")
+        }
+        return WorkbenchKeyProtectReview(workbenchDigest: door.apiKeySHA256, endpoints: entries)
+    }
+
+    /// Puts every reviewed endpoint on the Workbench key. Running ones stop through the idle gate and restart
+    /// by ascending port; on any refusal nothing is saved. Previous own keys leave Keychain once unused.
+    func confirmProtectEndpoints(_ review: WorkbenchKeyProtectReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        var next = fleet
+        do {
+            guard let door = fleet.frontDoor, door.apiKeySHA256 == review.workbenchDigest,
+                  review.endpoints.allSatisfy({ fleet.slots.contains($0.slot) }) else {
+                throw WorkflowEvidenceError.invalid("The Workbench key or its endpoints changed. Review protection again.")
+            }
+            for entry in review.endpoints {
+                let candidate = Self.authenticationCandidate(entry.slot, digest: review.workbenchDigest)
+                let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
+                guard hash == entry.previewHash else { throw WorkflowEvidenceError.invalid("Launch plan changed. Review protection again.") }
+                guard let stamped = stampedCandidate(candidate, hash: hash) else { return false }
+                guard let index = next.slots.firstIndex(where: { $0.id == entry.slot.id }) else {
+                    throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.")
+                }
+                next.slots[index] = stamped
+            }
+            guard fleet.frontDoor == door, review.endpoints.allSatisfy({ fleet.slots.contains($0.slot) }) else {
+                throw WorkflowEvidenceError.invalid("The Workbench key or its endpoints changed. Review protection again.")
+            }
+            try next.validated()
+        } catch { lastError = AppHost.render(error); return false }
+        guard let failed = await stopCommitRestart(next, slots: review.endpoints.map(\.slot), savingKey: nil,
+                                                    digest: review.workbenchDigest, purpose: "protecting endpoints") else { return false }
+        guard failed.isEmpty else {
+            lastError = "Endpoints were protected, but port \(failed.map(String.init).joined(separator: ", ")) did not restart. Previous keys stay in Keychain."
+            return false
+        }
+        for old in Set(review.endpoints.compactMap(\.slot.apiKeySHA256)) where !keyInUse(old) {
+            do { try removeAPIKey(old) }
+            catch {
+                lastError = "Endpoints were protected, but a previous unused key could not be removed from Keychain."
+                return true
+            }
+        }
+        lastError = nil
+        return true
+    }
+
+    /// Stops the idle running servers of `slots`, saves `next`, then restarts them by ascending port and reads back
+    /// that each runs on `digest`. Returns the ports that did not; nil (with `lastError`) when nothing was saved.
+    private func stopCommitRestart(_ next: EndpointFleetConfig, slots: [EndpointSlot], savingKey token: String?,
+                                   digest: String, purpose: String) async -> [Int]? {
+        var running: [EndpointSlot] = []
+        do {
+            let live = try await statusProvider()
+            running = slots.sorted { $0.port < $1.port }.filter { slot in live.contains { $0.port == slot.port && $0.state?.lowercased() == "running" } }
+            try await stopIdleRunning(running, purpose: purpose)
+        } catch {
+            // Endpoints already stopped come back on their current key; nothing was saved.
+            await restartOnCurrentKey(running)
+            lastError = AppHost.render(error)
+            return nil
+        }
+        do { guard try commit(next, savingKey: token) else { await restartOnCurrentKey(running); return nil } }
+        catch { await restartOnCurrentKey(running); lastError = AppHost.render(error); return nil }
+        var failed: [Int] = []
+        for slot in running where fleet.slots.contains(where: { $0.id == slot.id && $0.enabled }) {
+            await restartOnCurrentKey([slot])
+            let live = (try? await statusProvider()) ?? []
+            if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" && $0.apiKeySHA256 == digest }) {
+                failed.append(slot.port)
+            }
+        }
+        return failed
+    }
+
     /// Protecting an endpoint uses the Workbench key digest; no per-endpoint key is created.
     func previewAuthentication(slot: EndpointSlot, required: Bool) async throws -> EndpointAuthenticationReview {
         guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
         defer { activeUserOperations -= 1 }
         try await requireStoppedForAuthentication(slot)
-        var candidate = slot
-        let draft = required ? try draftWorkbenchKey() : nil
-        candidate.apiKeySHA256 = draft?.digest
-        if required { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-        let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: draft?.created))
+        var digest: String?
+        if required {
+            guard let door = fleet.frontDoor else { throw WorkflowEvidenceError.invalid("Create the Workbench key first.") }
+            digest = door.apiKeySHA256
+        }
+        let candidate = Self.authenticationCandidate(slot, digest: digest)
+        let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
-        return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, workbenchToken: draft?.created, previewHash: hash)
+        return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, previewHash: hash)
+    }
+
+    /// The candidate carrying its reviewed plan hash, or nil (with `lastError`) when it does not validate.
+    private func stampedCandidate(_ candidate: EndpointSlot, hash: String) -> EndpointSlot? {
+        var stamped = candidate
+        if stamped.inferenceOptions.requested { stamped.accelerationPreviewHash = hash }
+        stamped.profilePreviewHash = stamped.splashPresetName == nil ? nil : hash
+        return validate(stamped, isNew: false) ? stamped : nil
     }
 
     func confirmAuthentication(_ review: EndpointAuthenticationReview) async -> Bool {
@@ -1113,23 +1228,17 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         do {
             try await requireStoppedForAuthentication(review.slot)
-            var candidate = review.slot
-            candidate.apiKeySHA256 = review.keySHA256
-            if review.keySHA256 != nil { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-            let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: review.workbenchToken))
+            let candidate = Self.authenticationCandidate(review.slot, digest: review.keySHA256)
+            let hash = try await accelerationPreviewHash(candidate, pendingKey: try planKey(candidate, pending: nil))
             guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
             }
             try await requireStoppedForAuthentication(review.slot)
-            if review.workbenchToken != nil {
-                guard fleet.frontDoor == nil else { throw WorkflowEvidenceError.invalid("The Workbench API key changed. Review authentication again.") }
-            } else if let shared = review.keySHA256, fleet.frontDoor?.apiKeySHA256 != shared {
+            if let shared = review.keySHA256, fleet.frontDoor?.apiKeySHA256 != shared {
                 throw WorkflowEvidenceError.invalid("The Workbench API key changed. Review authentication again.")
             }
-            if candidate.inferenceOptions.requested { candidate.accelerationPreviewHash = hash }
-            candidate.profilePreviewHash = candidate.splashPresetName == nil ? nil : hash
-            guard validate(candidate, isNew: false),
-                  try commit(adding: candidate, key: review.keySHA256.map { ($0, review.workbenchToken) }) else { return false }
+            guard let stamped = stampedCandidate(candidate, hash: hash),
+                  try commit(adding: stamped, key: nil) else { return false }
             if let old = review.slot.apiKeySHA256, !keyInUse(old) {
                 do { try removeAPIKey(old) }
                 catch {
@@ -1175,7 +1284,6 @@ final class EndpointSupervisor: ObservableObject {
             return false
         }
         var next = fleet
-        var running: [EndpointSlot] = []
         do {
             for entry in review.endpoints {
                 var candidate = entry.slot
@@ -1195,25 +1303,9 @@ final class EndpointSupervisor: ObservableObject {
                 if next.slots[index].profilePreviewHash != nil { next.slots[index].profilePreviewHash = entry.previewHash }
             }
             try next.validated()
-            let live = try await statusProvider()
-            running = review.endpoints.map(\.slot).filter { slot in live.contains { $0.port == slot.port && $0.state?.lowercased() == "running" } }
-            try await stopIdleRunning(running, purpose: "resetting the Workbench key")
-        } catch {
-            // Endpoints already stopped come back on the old key; nothing was saved.
-            await restartOnCurrentKey(running)
-            lastError = AppHost.render(error)
-            return false
-        }
-        do { guard try commit(next, savingKey: review.token) else { await restartOnCurrentKey(running); return false } }
-        catch { await restartOnCurrentKey(running); lastError = AppHost.render(error); return false }
-        var failed: [Int] = []
-        for slot in running where fleet.slots.contains(where: { $0.id == slot.id && $0.enabled }) {
-            await restartOnCurrentKey([slot])
-            let live = (try? await statusProvider()) ?? []
-            if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" && $0.apiKeySHA256 == review.newDigest }) {
-                failed.append(slot.port)
-            }
-        }
+        } catch { lastError = AppHost.render(error); return false }
+        guard var failed = await stopCommitRestart(next, slots: review.endpoints.map(\.slot), savingKey: review.token,
+                                                    digest: review.newDigest, purpose: "resetting the Workbench key") else { return false }
         if let restart = restartWorkbenchAPI, !(await restart(FrontDoorSettings(port: door.port, apiKeySHA256: review.newDigest))) {
             failed.append(door.port)
         }

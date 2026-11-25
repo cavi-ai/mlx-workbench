@@ -179,9 +179,15 @@ final class EndpointSupervisorTests: XCTestCase {
         supervisor.generateAPIKey = { token }
         supervisor.saveAPIKey = { saved.append($0) }
         supervisor.removeAPIKey = { _ in }
-        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
+        do {
+            _ = try await supervisor.previewAuthentication(slot: slot, required: true)
+            XCTFail("Protecting needs an existing Workbench key")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Create the Workbench key")) }
         XCTAssertTrue(saved.isEmpty)
         XCTAssertNil(supervisor.fleet.frontDoor)
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+        try supervisor.ensureWorkbenchKey()
+        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
         XCTAssertNil(supervisor.fleet.slots[0].apiKeySHA256)
         let confirmed = await supervisor.confirmAuthentication(review)
         XCTAssertTrue(confirmed, supervisor.lastError ?? "")
@@ -308,6 +314,7 @@ final class EndpointSupervisorTests: XCTestCase {
         supervisor.generateAPIKey = { counter += 1; return "mlxw_" + String(repeating: Character(String(counter)), count: 64) }
         supervisor.saveAPIKey = { saved.append($0) }
         supervisor.removeAPIKey = { _ in }
+        try supervisor.ensureWorkbenchKey()
         for id in [first.id, second.id] {
             let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == id })
             let review = try await supervisor.previewAuthentication(slot: slot, required: true)
@@ -343,9 +350,7 @@ final class EndpointSupervisorTests: XCTestCase {
             store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
         supervisor.generateAPIKey = { "mlxw_" + String(repeating: "d", count: 64) }
         supervisor.saveAPIKey = { _ in throw WorkflowEvidenceError.invalid("Credential store unavailable") }
-        let review = try await supervisor.previewAuthentication(slot: slot, required: true)
-        let confirmed = await supervisor.confirmAuthentication(review)
-        XCTAssertFalse(confirmed)
+        XCTAssertThrowsError(try supervisor.ensureWorkbenchKey())
         XCTAssertEqual(supervisor.fleet.slots, [slot])
         XCTAssertNil(supervisor.fleet.frontDoor)
         XCTAssertEqual(try store.load().first?.slots, [slot])
@@ -477,6 +482,76 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(removed, [oldDigest])
         XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [newDigest, newDigest])
         XCTAssertEqual(world.status().map(\.apiKeySHA256), [newDigest, newDigest])
+    }
+
+    private func protectFixture(root: URL, ownDigest: String, doorDigest: String) throws -> (supervisor: EndpointSupervisor, world: KeyedServeWorld, slots: [EndpointSlot]) {
+        let running = EndpointSlot(enabled: true, port: 8931, modelPath: "/Models/b", loadOnRequest: true)
+        let stopped = EndpointSlot(enabled: false, port: 8930, modelPath: "/Models/a", loadOnRequest: true)
+        var own = EndpointSlot(enabled: false, port: 8932, modelPath: "/Models/c", loadOnRequest: true)
+        own.apiKeySHA256 = ownDigest
+        let slots = [running, stopped, own]
+        let world = KeyedServeWorld(servers: [ServerInfo(repo: running.modelPath, runtime: "mlx", port: running.port, pid: 1, state: "running",
+            logPath: nil, startedAt: nil, receipt: "r", jit: true, apiKeySHA256: nil)])
+        let store = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        try store.replaceAll([EndpointFleetConfig(slots: slots, installedAtLogin: false,
+                                                  frontDoor: FrontDoorSettings(port: 8939, apiKeySHA256: doorDigest))])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle(digest: nil), statusProvider: { world.status() },
+            store: JSONStore(fileURL: root.appendingPathComponent("legacy.json")), fleetStore: store)
+        return (supervisor, world, slots)
+    }
+
+    func testProtectEndpointsPutsEveryCheckedEndpointOnTheWorkbenchKeyAndRestartsTheRunningOne() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let doorDigest = EndpointCredentialStore.digest("mlxw_" + String(repeating: "1", count: 64))
+        let ownDigest = EndpointCredentialStore.digest("mlxw_" + String(repeating: "3", count: 64))
+        let (supervisor, world, slots) = try protectFixture(root: root, ownDigest: ownDigest, doorDigest: doorDigest)
+        var removed: [String] = [], saved: [String] = []
+        supervisor.removeAPIKey = { removed.append($0) }
+        supervisor.saveAPIKey = { saved.append($0) }
+        await supervisor.reconcile()
+
+        let review = try await supervisor.previewProtectEndpoints(slots)
+        XCTAssertEqual(review.endpoints.map(\.slot.port), [8930, 8931, 8932])
+        XCTAssertEqual(review.endpoints.map(\.restarts), [false, true, false])
+        XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [nil, nil, ownDigest], "preview saves nothing")
+
+        let confirmed = await supervisor.confirmProtectEndpoints(review)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [doorDigest, doorDigest, doorDigest])
+        XCTAssertEqual(world.stopped, [8931])
+        XCTAssertEqual(world.status().map(\.apiKeySHA256), [doorDigest])
+        XCTAssertEqual(removed, [ownDigest])
+        XCTAssertTrue(saved.isEmpty)
+        XCTAssertTrue(supervisor.protectedSlots.count == 3)
+    }
+
+    func testProtectEndpointsRefusesAnInUseEndpointAndChangesNothing() async throws {
+        let root = try makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let doorDigest = EndpointCredentialStore.digest("mlxw_" + String(repeating: "1", count: 64))
+        let ownDigest = EndpointCredentialStore.digest("mlxw_" + String(repeating: "3", count: 64))
+        let (supervisor, world, slots) = try protectFixture(root: root, ownDigest: ownDigest, doorDigest: doorDigest)
+        var removed: [String] = []
+        supervisor.removeAPIKey = { removed.append($0) }
+        await supervisor.reconcile()
+        let review = try await supervisor.previewProtectEndpoints(slots)
+
+        world.setActiveRequests(port: 8931, 2)
+        let busy = await supervisor.confirmProtectEndpoints(review)
+        XCTAssertFalse(busy)
+        XCTAssertEqual(world.stopped, [])
+        XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [nil, nil, ownDigest])
+        XCTAssertEqual(world.status().map(\.apiKeySHA256), [nil])
+        XCTAssertTrue(removed.isEmpty)
+        XCTAssertNotNil(supervisor.lastError)
+
+        world.setActiveRequests(port: 8931, 0)
+        supervisor.mayStopSlot = { $0.port != 8931 }
+        let claimed = await supervisor.confirmProtectEndpoints(review)
+        XCTAssertFalse(claimed)
+        XCTAssertEqual(supervisor.fleet.slots.map(\.apiKeySHA256), [nil, nil, ownDigest])
+        XCTAssertTrue(removed.isEmpty)
     }
 
     func testSlotWithItsOwnKeyIsListedAndKeepsItsDigestWhenTheWorkbenchKeyExists() async throws {
@@ -1938,9 +2013,8 @@ final class EndpointSupervisorTests: XCTestCase {
             },
             jitStart: { _, _, _, _, _ in XCTFail("Authentication does not start an endpoint") }
         )
+        try supervisor.ensureWorkbenchKey()
         let review = try await supervisor.previewAuthentication(slot: slot, required: true)
-        XCTAssertTrue(saved.isEmpty)
-        XCTAssertNil(supervisor.fleet.frontDoor)
         let confirmed = await supervisor.confirmAuthentication(review)
         XCTAssertTrue(confirmed, supervisor.lastError ?? "")
         XCTAssertEqual(observed.withLock { $0 }, [digest, digest])
