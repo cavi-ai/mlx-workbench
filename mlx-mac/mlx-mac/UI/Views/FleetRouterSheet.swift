@@ -50,7 +50,7 @@ struct FleetRouterSheet: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Wire roles to running endpoints")
                 .font(WorkbenchTypography.emphasis)
-            Text("Wire running endpoints with publisher/model IDs. The config uses one API key for protected routes.")
+            Text("Wire running endpoints with publisher/model IDs. The config uses one API key for protected routes, read from \(FleetRouter.localAPIKeyEnvVar).")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 
@@ -100,7 +100,7 @@ struct FleetRouterSheet: View {
             ForEach(plan.assignments) { assignment in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                     HStack {
-                        Text(assignment.fleetRole)
+                        Text(assignment.role?.title ?? assignment.fleetRole)
                             .font(WorkbenchTypography.secondary)
                             .frame(width: 90, alignment: .leading)
                         Text(assignment.repo)
@@ -142,7 +142,7 @@ struct FleetRouterSheet: View {
         }
         ForEach(plan.skipped) { skipped in
             HStack {
-                Text(skipped.fleetRole)
+                Text(skipped.role?.title ?? skipped.fleetRole)
                     .font(WorkbenchTypography.secondary)
                     .frame(width: 90, alignment: .leading)
                 Text("skipped — \(skipped.reason)")

@@ -39,7 +39,6 @@ The `Makefile` is the supported command surface. Run `make help` for the short l
 | `make test-native-ui` | UI tests in an isolated macOS VM; `NATIVE_UI_BASE_VM` names a prepared Tart VM |
 | `make test-live-scan` | Opt-in, read-only check of scanned model sizes against the filesystem |
 | `make test-swift-live-scan` | The same check through the native app's scan |
-| `make render-clients`, `make render-discover`, `make render-lmstudio`, `make render-settings` | Render a screen's states into an xcresult bundle |
 | `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` | Opt-in real conversion from an allowlisted local GGUF through to Run; writes per-run evidence |
 | `make accept-native-mlx RUNTIME_MANIFEST=/absolute/path/runtime.json` | Opt-in verification, serving and completion request for an existing local MLX model; writes per-run evidence |
 | `make accept-native-training RUNTIME_MANIFEST=/absolute/path/runtime.json` | Opt-in one-iteration LoRA training and retained base-versus-adapter evaluation through the native app |

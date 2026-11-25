@@ -2,7 +2,7 @@
 
 ## Overview
 
-The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. **Sources** contains **Model sources** and Discover. **Attention** lists **To convert**, which filters the table to sources awaiting conversion, and Disk space. Workspaces and System pages follow in collapsible groups; a collapsed group shows the total of its pages' counts beside its name, such as the Watch alert count on Overview. ⌘1 through ⌘9 open the first nine pages in sidebar order (Library, Model sources, Discover, Disk space, Use, Serving, Monitor, Compare and Convert), and ⌘0 opens Settings. **Overview**, in the System sidebar group, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
+The app opens on Library. The sidebar's **Models** group lists **All models** and one row per kind of model (Chat, Vision, Speech, Image and video, Music and 3D, Embedding and other) with its count; choosing a kind filters the table to it. After **To convert**, which filters the table to sources awaiting conversion, the group lists Model sources, Discover, Convert and Disk space. Overview and Use sit above it without a heading; Serving, Studio and System follow, and Studio and System collapse, showing the total of their pages' counts beside the name. ⌘1 through ⌘9 open the first nine pages in sidebar order (Overview, Use, Library, Model sources, Discover, Convert, Disk space, Serving and Clients), and ⌘0 opens Settings. **Overview**, the first sidebar page, leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
 The **Next step** follows the model selected in Library: ready supported models open
 Run for a serve preview, sources needing conversion open Convert, and other task
@@ -16,7 +16,7 @@ navigate or stage a preview; they never start conversion, installation or servin
 
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. The list groups models by family by default. **View options** changes the grouping, filters by readiness and quantization, and offers **View as table** for sortable columns. Workbench remembers these choices.
 
-The search field searches name, path, key and evidence. Paste a Hugging Face link there and press Return, or choose **Add**, to open intake for that model; **Add** with no link opens intake empty. Opening intake does not download a model.
+The search field searches name, path, key and evidence, plus each model's type, sidebar category and use cases: "Image and video", "speech", "tts", "stt", "vlm", "embedding" or "3D" finds those models. Paste a Hugging Face link there and press Return, or choose **Add**, to open intake for that model; **Add** with no link opens intake empty. Opening intake does not download a model.
 
 The **Source** menu offers **All local models** and each saved model host, including Ollama, LM Studio and ComfyUI. Host choices use their saved identity and show their provider; connections with matching names and providers include their address to distinguish them. Adding, editing or removing a saved connection updates the menu. **Hosted models** opens host selection and connection setup. The separate **Local files** group contains **LM Studio files**.
 
@@ -105,6 +105,11 @@ also lists **Agent tools**: the protocols the model is agent-ready for and each
 failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
 **Select for Compare** is available for ready chat, speech, music, image, video, 3D and classification models. It opens the matching comparison mode and selects the model without starting a run. Run offers chat endpoints and typed model-job endpoints for supported standalone model types. Runtime restrictions take precedence over task labels: Strata supports Chat only.
+
+**Serving defaults** in the model inspector edits the model's inference settings and load-on-request
+choice. **Review** lists the endpoints that follow the defaults and the running ones that
+restart on **Confirm and save**; **Clear defaults** removes them. See
+[Model defaults](run.md#model-defaults).
 
 ### Local inference tasks
 
@@ -282,9 +287,11 @@ measured speedup. **Reuse** restores the settings; **Export request…**, inside
 Result JSON, copies the verified engine request. The result export keeps reported
 reuse telemetry. Exporting a request does not copy model weights or input media.
 
-### Delete a model
+### Model actions and removal
 
-**Delete…** moves a model to the Trash after a review that rechecks its identity, its folders and whether it is serving. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).
+Right-click a model to open its available actions. **Use** opens a work session, and **Serve…** opens the serving setup for a ready model. **Manage serving** opens its linked service in Serving when the target is unambiguous. For a single eligible service, **Unload model…** opens the existing review before releasing its weights. Models that need conversion or runtime repair offer those actions instead.
+
+**Move to Trash…** reviews the model and its path before moving it to macOS Trash. Confirmation rechecks its identity, folders and serving ownership. If removal is unavailable, open **Serving Doctor** or expand **Details** to inspect the reason. Recheck connections, resolve any remaining issues, then retry removal yourself. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).
 
 ### Task types
 
@@ -307,7 +314,7 @@ Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embe
 
 ## Model sources
 
-**Model sources → Server models** lists model inventories across saved and detected local providers. Search, filter by provider, and use Sort to order the catalog by model, provider, or status. Select a model to inspect each connection’s state and API address, and copy the address from its details. In a narrow window, choose **Connection details** to open the inspector. Use **Add provider** to connect another server and **Connections** to edit existing connections. Refresh reads inventory without loading or downloading weights. Matching Ollama tags with the same reported digest appear once, with each connection listed in the details. Ollama tags reporting remote execution appear as Cloud in the provider inventory and are excluded from local Sources. Connection issues appear in the toolbar; stale observations are labeled as last seen.
+**Model sources → Server models** lists model inventories across saved and detected local providers. Search, filter by provider, and use Sort to order the catalog by model, provider, or status. Each model shows its type as a colored icon and tag in its sidebar kind's color: the Library scan of its files when one matches, otherwise the type its serving runtime or provider reports. The key above the list counts models per kind; models whose provider reports no type count as **Type not reported**. Select a model to inspect each connection’s state and API address, and copy the address from its details. In a narrow window, choose **Connection details** to open the inspector. Use **Add provider** to connect another server and **Connections** to edit existing connections. Refresh reads inventory without loading or downloading weights. Matching Ollama tags with the same reported digest appear once, with each connection listed in the details. Ollama tags reporting remote execution appear as Cloud in the provider inventory and are excluded from local Sources. Connection issues appear in the toolbar; stale observations are labeled as last seen.
 
 **Model folders** lists the managed destination and registered GGUF/MLX folders. A folder registered for both formats appears once. Existing caches stay in place. **Browse local files** opens Library, **Review duplicates** opens Disk space, and **Manage folders…** opens the existing location settings. Provider inventories are not summed as physical disk usage: several servers can reference the same files, and model-list APIs do not necessarily report their cache paths.
 

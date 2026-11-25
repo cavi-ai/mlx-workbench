@@ -28,6 +28,22 @@ struct ModelActions {
     var canUse: Bool { !UseMode.modes(for: model).isEmpty }
     var canCompare: Bool { ComparisonModelRequest(model: model) != nil }
 
+    var linkedServices: [ServingServiceObservation] {
+        ServingInventoryPresentation.linkedServices(for: model, in: appHost.servingInventory.snapshot)
+            .filter { !$0.stale }
+    }
+
+    func manageServing(service: ServingServiceObservation? = nil) {
+        let rows = ServingRows.build(slots: appHost.endpoint.fleet.slots, servers: appHost.modelWorkflow.servers,
+                                     snapshot: appHost.servingInventory.snapshot)
+        let matches = rows.filter { row in
+            guard let candidate = ServingWorkspacePresentation.service(row) else { return false }
+            return service.map { candidate.id == $0.id } ?? linkedServices.contains { $0.id == candidate.id }
+        }
+        appHost.handoffs.send(ServingFocusRequest(rowID: matches.count == 1 ? matches[0].id : nil), as: .openServing)
+        onRouteSelection(.run)
+    }
+
     func repairRuntime() {
         guard let request = ModelRuntimeRecoveryRequest(model: model),
               appHost.librarySnapshot?.models.contains(where: request.matches) == true else { return }
@@ -378,6 +394,15 @@ struct ModelDetailsView: View {
                 if showsTaskPanel, UseMode.modes(for: model).first == .chat {
                     DisclosureGroup("Run a task") {
                         taskPanel.padding(.top, WorkbenchSpacing.sm)
+                    }
+                }
+
+                if model.readiness == .ready {
+                    DisclosureGroup("Serving defaults") {
+                        ServingDefaultsEditor(endpoint: appHost.endpoint, model: model,
+                                              context: .resolve(model: model, chip: appHost.hardwareProfile.chip),
+                                              profiles: appHost.servingProfiles.profiles.filter { $0.modelPath == model.item.path && $0.hasPassedVerification })
+                            .padding(.top, WorkbenchSpacing.sm)
                     }
                 }
 

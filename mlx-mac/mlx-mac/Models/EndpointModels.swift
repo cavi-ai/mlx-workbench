@@ -1,5 +1,51 @@
 import Foundation
 
+/// The one table of valid ranges for local inference settings; validation and inspector captions read it.
+enum LocalInferenceBounds {
+    static let systemPromptBytes = 8192
+    static let temperature: ClosedRange<Double> = 0...2
+    static let topP: ClosedRange<Double> = 0...1
+    static let maximumTokens: ClosedRange<Int> = 256...65536
+    static let sharedPrefixCacheMiB: ClosedRange<Int> = 16...2048
+
+    static var systemPromptBytesText: String { systemPromptBytes.formatted(.number.locale(Locale(identifier: "en_US"))) }
+    static func text(_ range: ClosedRange<Int>) -> String { "\(range.lowerBound) to \(range.upperBound)" }
+    static func text(_ range: ClosedRange<Double>) -> String { "\(number(range.lowerBound)) to \(number(range.upperBound))" }
+    /// Picker choices: the lower bound doubled up to the upper bound, plus a saved value outside that list.
+    static func choices(_ range: ClosedRange<Int>, including saved: Int? = nil) -> [Int] {
+        var values: [Int] = []
+        var value = range.lowerBound
+        while value < range.upperBound { values.append(value); value *= 2 }
+        values.append(range.upperBound)
+        if let saved { values.append(saved) }
+        return Array(Set(values)).sorted()
+    }
+    private static func number(_ value: Double) -> String { String(format: "%g", value) }
+}
+
+/// Engine ranges for Splash and Strata settings; validation and the experimental controls read them.
+enum ServingRuntimeBounds {
+    static let splashMemoryGB: ClosedRange<Double> = 1...1024
+    static let splashContextTokens: ClosedRange<Int> = 512...1_010_000
+    static let splashThinkingTokens: ClosedRange<Int> = 0...1_010_000
+    static let splashCacheDiskGB: ClosedRange<Double> = 0...4096
+    static let strataExpertMemoryGB: ClosedRange<Double> = 0.5...64
+    static let strataContextTokens: ClosedRange<Int> = 512...131_072
+    static let launchPathBytes = 4096
+
+    /// A project cache name is a lowercase letter, then up to 63 lowercase letters, digits, `-` or `_`.
+    static func isProjectCacheName(_ name: String) -> Bool {
+        let scalars = name.unicodeScalars
+        guard let first = scalars.first, ("a"..."z").contains(first), scalars.count <= 64 else { return false }
+        return scalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" || $0 == "_" }
+    }
+
+    /// A launch file passed to the engine: an absolute local path without control characters.
+    static func isLaunchPath(_ path: String) -> Bool {
+        path.hasPrefix("/") && path.utf8.count <= launchPathBytes && !path.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+    }
+}
+
 struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var m5Prefill = false
     var promptLookup = false
@@ -10,33 +56,42 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
     var temperature: Double? = nil
     var topP: Double? = nil
     var sharedPrefixCacheMiB: Int? = nil
+    /// Splash launch files; nil uses the family's cached draft and the model's own chat template.
+    var splashDraftModel: String? = nil
+    var splashChatTemplate: String? = nil
     var hasRequestDefaults: Bool { !systemPrompt.isEmpty || temperature != nil || topP != nil }
     var textRequested: Bool { m5Prefill || promptLookup || thinkingOff }
     var accelerationRequested: Bool { m5Prefill || promptLookup || visionCache }
     var sharedPrefixCacheRequested: Bool { sharedPrefixCacheMiB != nil }
-    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults || sharedPrefixCacheRequested }
+    var splashLaunchRequested: Bool { splashDraftModel != nil || splashChatTemplate != nil }
+    var requested: Bool { textRequested || visionCache || maximumTokens != nil || hasRequestDefaults || sharedPrefixCacheRequested || splashLaunchRequested }
     var validationError: String? {
-        if systemPrompt.utf8.count > 8192 || systemPrompt.contains("\0") { return "System prompt must fit in 8,192 UTF-8 bytes without null characters." }
-        if let temperature, !temperature.isFinite || !(0...2).contains(temperature) { return "Temperature must be from 0 to 2." }
-        if let topP, !topP.isFinite || !(0...1).contains(topP) { return "Top-p must be from 0 to 1." }
-        if let maximumTokens, !(256...65536).contains(maximumTokens) { return "Default output length must be from 256 to 65536 tokens." }
+        typealias Bounds = LocalInferenceBounds
+        if systemPrompt.utf8.count > Bounds.systemPromptBytes || systemPrompt.contains("\0") { return "System prompt must fit in \(Bounds.systemPromptBytesText) UTF-8 bytes without null characters." }
+        if let temperature, !temperature.isFinite || !Bounds.temperature.contains(temperature) { return "Temperature must be from \(Bounds.text(Bounds.temperature))." }
+        if let topP, !topP.isFinite || !Bounds.topP.contains(topP) { return "Top-p must be from \(Bounds.text(Bounds.topP))." }
+        if let maximumTokens, !Bounds.maximumTokens.contains(maximumTokens) { return "Default output length must be from \(Bounds.text(Bounds.maximumTokens)) tokens." }
         if visionCache && (textRequested || maximumTokens != nil) { return "Choose vision feature reuse separately from text-server settings." }
         if let mib = sharedPrefixCacheMiB {
-            if !(16...2048).contains(mib) { return "Shared prefix cache must be from 16 to 2048 MiB." }
+            if !Bounds.sharedPrefixCacheMiB.contains(mib) { return "Shared prefix cache must be from \(Bounds.text(Bounds.sharedPrefixCacheMiB)) MiB." }
             if accelerationRequested { return "Shared prefix cache cannot be combined with M5 prefill, prompt lookup, or vision cache." }
             if !systemPrompt.isEmpty { return "Shared prefix cache cannot be combined with a default system prompt." }
         }
+        if let path = splashDraftModel, !ServingRuntimeBounds.isLaunchPath(path) { return "Choose the Splash draft model folder by its full local path." }
+        if let path = splashChatTemplate, !ServingRuntimeBounds.isLaunchPath(path) { return "Choose the Splash chat template file by its full local path." }
         return nil
     }
 
-    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil, sharedPrefixCacheMiB: Int? = nil) {
+    init(m5Prefill: Bool = false, promptLookup: Bool = false, visionCache: Bool = false, thinkingOff: Bool = false, maximumTokens: Int? = nil, systemPrompt: String = "", temperature: Double? = nil, topP: Double? = nil, sharedPrefixCacheMiB: Int? = nil,
+         splashDraftModel: String? = nil, splashChatTemplate: String? = nil) {
         self.m5Prefill = m5Prefill; self.promptLookup = promptLookup; self.visionCache = visionCache
         self.thinkingOff = thinkingOff; self.maximumTokens = maximumTokens
         self.systemPrompt = systemPrompt; self.temperature = temperature; self.topP = topP
         self.sharedPrefixCacheMiB = sharedPrefixCacheMiB
+        self.splashDraftModel = splashDraftModel; self.splashChatTemplate = splashChatTemplate
     }
 
-    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP, sharedPrefixCacheMiB }
+    enum CodingKeys: String, CodingKey { case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP, sharedPrefixCacheMiB, splashDraftModel, splashChatTemplate }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         m5Prefill = try values.decodeIfPresent(Bool.self, forKey: .m5Prefill) ?? false
@@ -48,6 +103,8 @@ struct LocalInferenceOptions: Codable, Equatable, Sendable {
         temperature = try values.decodeIfPresent(Double.self, forKey: .temperature)
         topP = try values.decodeIfPresent(Double.self, forKey: .topP)
         sharedPrefixCacheMiB = try values.decodeIfPresent(Int.self, forKey: .sharedPrefixCacheMiB)
+        splashDraftModel = try values.decodeIfPresent(String.self, forKey: .splashDraftModel)
+        splashChatTemplate = try values.decodeIfPresent(String.self, forKey: .splashChatTemplate)
     }
 }
 
@@ -55,14 +112,53 @@ struct EndpointInferencePreview {
     let slot: EndpointSlot
     let options: LocalInferenceOptions
     let hash: String
+    var overrides: Set<ServingSettingKey>? = nil
 }
 
 struct EndpointAuthenticationReview: Identifiable {
     let id = UUID()
     let slot: EndpointSlot
     let keySHA256: String?
-    let token: String?
     let previewHash: String
+}
+
+/// A reviewed trained-adapter endpoint: the plan hash was computed with the digest the endpoint will save.
+struct TrainedAdapterEndpointReview {
+    let binding: TrainedAdapterBinding
+    let port: Int
+    let hash: String
+    let loadOnRequest: Bool
+    let requireAPIKey: Bool
+    let keySHA256: String?
+    let workbenchToken: String?
+}
+
+/// A reviewed Workbench key reset: the new key and every endpoint that restarts onto it.
+struct WorkbenchKeyResetReview: Identifiable {
+    struct Endpoint: Equatable {
+        let slot: EndpointSlot
+        let previewHash: String
+    }
+    let id = UUID()
+    let oldDigest: String
+    let newDigest: String
+    let token: String
+    let workbenchAPIPort: Int
+    /// Protected endpoints in restart order; the Workbench API restarts after them.
+    let endpoints: [Endpoint]
+}
+
+/// A reviewed batch protect: every endpoint that moves onto the Workbench key, and which ones restart.
+struct WorkbenchKeyProtectReview: Identifiable {
+    struct Endpoint: Equatable {
+        let slot: EndpointSlot
+        let previewHash: String
+        let restarts: Bool
+    }
+    let id = UUID()
+    let workbenchDigest: String
+    /// In restart order (ascending port).
+    let endpoints: [Endpoint]
 }
 
 // MARK: - Endpoint models
@@ -145,14 +241,19 @@ struct SplashTuning: Equatable {
     var thinkingBudget: Int?
     var persistentCache: Bool?
     var maxCacheDiskGB: Double?
+    /// Named project SSD prompt cache; needs a keyed load-on-request endpoint, a cache quota and a write cap.
+    var projectCache: String?
+    var maxCacheDiskWritesGB: Double?
 
     static let efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
     init(verifyRows: String? = nil, cachedStates: String? = nil, kvFormat: String? = nil, reasoningEffort: String? = nil,
-         thinkingBudget: Int? = nil, persistentCache: Bool? = nil, maxCacheDiskGB: Double? = nil) {
+         thinkingBudget: Int? = nil, persistentCache: Bool? = nil, maxCacheDiskGB: Double? = nil,
+         projectCache: String? = nil, maxCacheDiskWritesGB: Double? = nil) {
         self.verifyRows = verifyRows; self.cachedStates = cachedStates; self.kvFormat = kvFormat
         self.reasoningEffort = reasoningEffort; self.thinkingBudget = thinkingBudget
         self.persistentCache = persistentCache; self.maxCacheDiskGB = maxCacheDiskGB
+        self.projectCache = projectCache; self.maxCacheDiskWritesGB = maxCacheDiskWritesGB
     }
 
     init(settings: [String: Any]) {
@@ -162,7 +263,9 @@ struct SplashTuning: Equatable {
                   reasoningEffort: settings["splash_reasoning_effort"] as? String,
                   thinkingBudget: settings["splash_thinking_token_budget"] as? Int,
                   persistentCache: settings["splash_persistent_cache"] as? Bool,
-                  maxCacheDiskGB: (settings["splash_max_cache_disk_gb"] as? NSNumber)?.doubleValue)
+                  maxCacheDiskGB: (settings["splash_max_cache_disk_gb"] as? NSNumber)?.doubleValue,
+                  projectCache: settings["splash_project_cache"] as? String,
+                  maxCacheDiskWritesGB: (settings["splash_max_cache_disk_writes_gb"] as? NSNumber)?.doubleValue)
     }
 
     /// Engine profile settings for the values set.
@@ -171,6 +274,7 @@ struct SplashTuning: Equatable {
             "splash_verify_rows": verifyRows, "splash_cached_states": cachedStates, "splash_kv_format": kvFormat,
             "splash_reasoning_effort": reasoningEffort, "splash_thinking_token_budget": thinkingBudget,
             "splash_persistent_cache": persistentCache, "splash_max_cache_disk_gb": maxCacheDiskGB,
+            "splash_project_cache": projectCache, "splash_max_cache_disk_writes_gb": maxCacheDiskWritesGB,
         ]
         return values.compactMapValues { $0 }
     }
@@ -185,14 +289,25 @@ struct SplashTuning: Equatable {
         if let thinkingBudget { argv += ["--splash-thinking-budget", String(thinkingBudget)] }
         if let persistentCache { argv.append(persistentCache ? "--splash-persistent-cache" : "--no-splash-persistent-cache") }
         if let maxCacheDiskGB { argv += ["--splash-max-cache-disk-gb", String(maxCacheDiskGB)] }
+        if let projectCache { argv += ["--splash-project-cache", projectCache] }
+        if let maxCacheDiskWritesGB { argv += ["--splash-max-cache-disk-writes-gb", String(maxCacheDiskWritesGB)] }
         return argv
     }
 
     /// A value Splash or the engine would refuse, named before saving.
     var problem: String? {
-        if let thinkingBudget, !(0...1_010_000).contains(thinkingBudget) { return "The thinking budget is 0 to 1,010,000 tokens." }
-        if let maxCacheDiskGB, !(0...4096).contains(maxCacheDiskGB) { return "The SSD cache quota is 0 to 4,096 GB." }
+        typealias Bounds = ServingRuntimeBounds
+        if let thinkingBudget, !Bounds.splashThinkingTokens.contains(thinkingBudget) { return "The thinking budget is 0 to 1,010,000 tokens." }
+        if let maxCacheDiskGB, !maxCacheDiskGB.isFinite || !Bounds.splashCacheDiskGB.contains(maxCacheDiskGB) { return "The SSD cache quota is 0 to 4,096 GB." }
         if persistentCache == true && maxCacheDiskGB == 0 { return "The persistent cache needs an SSD cache quota above 0." }
+        if let projectCache {
+            if !Bounds.isProjectCacheName(projectCache) { return "A project cache name starts with a lowercase letter and uses up to 64 lowercase letters, digits, - or _." }
+            if persistentCache == false { return "A project cache keeps the SSD cache across restarts; turn the persistent cache on." }
+            let positive: (Double?) -> Bool = { $0.map { $0.isFinite && $0 > 0 && $0 <= Bounds.splashCacheDiskGB.upperBound } ?? false }
+            if !positive(maxCacheDiskGB) || !positive(maxCacheDiskWritesGB) { return "A project cache needs an SSD cache quota and a write cap above 0 and up to 4,096 GB." }
+        } else if maxCacheDiskWritesGB != nil {
+            return "The write cap applies to a named project cache."
+        }
         return nil
     }
 
@@ -205,6 +320,8 @@ struct SplashTuning: Equatable {
         if let cachedStates { parts.append("States \(cachedStates)") }
         if persistentCache == true { parts.append("Persistent SSD cache") }
         if let maxCacheDiskGB { parts.append(maxCacheDiskGB == 0 ? "SSD cache off" : "SSD cache \(maxCacheDiskGB.formatted()) GB") }
+        if let projectCache { parts.append("Project cache \(projectCache)") }
+        if let maxCacheDiskWritesGB { parts.append("Writes ≤ \(maxCacheDiskWritesGB.formatted()) GB") }
         return parts
     }
 
@@ -288,6 +405,128 @@ struct SplashPresetReview: Identifiable {
     let previewHash: String
 }
 
+/// The one role vocabulary for fleet endpoints. Each role has a canonical
+/// loopback port and the model task types that may fill it.
+enum ServingRole: String, CaseIterable, Codable, Identifiable, Hashable, Sendable {
+    case embedding
+    case general
+    case vision
+    case reasoning
+    case coding
+    case classification
+    case image
+    case mesh
+    case voice
+    case transcription
+    case music
+    case video
+
+    var id: String { rawValue }
+
+    init(_ useCase: UseCase) {
+        switch useCase {
+        case .coding: self = .coding
+        case .generalChat: self = .general
+        case .reasoning: self = .reasoning
+        case .vision: self = .vision
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        let token = String(raw.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+        switch token {
+        case "generalchat": self = .general
+        case "research", "reasoningresearch": self = .reasoning
+        default:
+            guard let role = ServingRole(rawValue: token) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown serving role: \(raw)")
+            }
+            self = role
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var title: String {
+        switch self {
+        case .embedding: return ModelTaskType.embedding.title
+        case .general: return "General"
+        case .vision: return "Vision"
+        case .reasoning: return "Reasoning"
+        case .coding: return "Coding"
+        case .classification: return ModelTaskType.classification.title
+        case .image: return ModelTaskType.imageGeneration.title
+        case .mesh: return "3D"
+        case .voice: return ModelTaskType.textToSpeech.title
+        case .transcription: return ModelTaskType.speechToText.title
+        case .music: return ModelTaskType.musicGeneration.title
+        case .video: return ModelTaskType.videoGeneration.title
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .embedding: return ModelTaskType.embedding.symbolName
+        case .general, .reasoning, .coding: return ModelTaskType.textLLM.symbolName
+        case .vision: return ModelTaskType.visionLanguage.symbolName
+        case .classification: return ModelTaskType.classification.symbolName
+        case .image: return ModelTaskType.imageGeneration.symbolName
+        case .mesh: return ModelTaskType.meshGeneration.symbolName
+        case .voice: return ModelTaskType.textToSpeech.symbolName
+        case .transcription: return ModelTaskType.speechToText.symbolName
+        case .music: return ModelTaskType.musicGeneration.symbolName
+        case .video: return ModelTaskType.videoGeneration.symbolName
+        }
+    }
+
+    /// Default port of the Workbench API; distinct from every role's port.
+    static let workbenchAPIDefaultPort = 8090
+
+    var defaultPort: Int {
+        switch self {
+        case .embedding: return 8091
+        case .general: return 8092
+        case .vision: return 8093
+        case .reasoning: return 8094
+        case .coding: return 8095
+        case .classification: return 8096
+        case .image: return 8097
+        case .mesh: return 8098
+        case .voice: return 8099
+        case .transcription: return 8100
+        case .music: return 8101
+        case .video: return 8102
+        }
+    }
+
+    var eligibleTaskTypes: [ModelTaskType] {
+        switch self {
+        case .embedding: return [.embedding]
+        case .general, .reasoning, .coding: return [.textLLM, .visionLanguage]
+        case .vision: return [.visionLanguage]
+        case .classification: return [.classification]
+        case .image: return [.imageGeneration]
+        case .mesh: return [.meshGeneration]
+        case .voice: return [.textToSpeech]
+        case .transcription: return [.speechToText]
+        case .music: return [.musicGeneration]
+        case .video: return [.videoGeneration]
+        }
+    }
+
+    var isChat: Bool {
+        switch self {
+        case .general, .vision, .reasoning, .coding: return true
+        default: return false
+        }
+    }
+}
+
 /// One supervised endpoint: a model on its own stable loopback port.
 /// `role == nil` is first-class — an unassigned stable port, exactly like
 /// the original single endpoint.
@@ -296,7 +535,7 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var enabled: Bool
     var port: Int
     var modelPath: String
-    var role: UseCase?
+    var role: ServingRole?
     /// Absent in legacy fleets: preserve their eager-serving behavior.
     var loadOnRequest: Bool?
     var memoryPolicy: EndpointMemoryPolicy?
@@ -310,11 +549,13 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var apiKeySHA256: String? = nil
     /// Completed training receipt for an adapter endpoint. Nil for an ordinary model endpoint.
     var trainingReceipt: String? = nil
+    /// Nil: every field is this slot's own value. A set: fields outside it follow the model's defaults.
+    var overrides: Set<ServingSettingKey>? = nil
     var inferenceOptions: LocalInferenceOptions { acceleration ?? .init() }
     var isTrainedAdapter: Bool { trainingReceipt != nil }
     var usesJIT: Bool { loadOnRequest == true }
 
-    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
+    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: ServingRole? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
         self.id = id
         self.enabled = enabled
         self.port = port
@@ -331,37 +572,11 @@ struct FrontDoorSettings: Codable, Equatable, Sendable {
     var apiKeySHA256: String
 }
 
-/// The two endpoint roles the fleet can designate as defaults. Distinct from
-/// the legacy `UseCase` slot role, which is unchanged.
-enum EndpointDefaultRole: String, CaseIterable, Identifiable {
-    case coding
-    case utility
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .coding: return "Coding"
-        case .utility: return "Utility"
-        }
-    }
-}
-
-/// Saved per-role default endpoint choices, by slot UUID. Missing entries stay
-/// unresolved; stale UUIDs are never silently substituted.
-struct EndpointRoleDefaults: Codable, Equatable, Sendable {
+/// Legacy per-role default slot ids, read only so `migratingRoleDefaults()` can
+/// assign roles; never written.
+struct EndpointRoleDefaults: Decodable, Equatable, Sendable {
     var coding: UUID? = nil
     var utility: UUID? = nil
-
-    subscript(role: EndpointDefaultRole) -> UUID? {
-        get { role == .coding ? coding : utility }
-        set {
-            switch role {
-            case .coding: coding = newValue
-            case .utility: utility = newValue
-            }
-        }
-    }
 }
 
 struct EndpointFleetConfig: Codable, Equatable, Sendable {
@@ -369,22 +584,43 @@ struct EndpointFleetConfig: Codable, Equatable, Sendable {
     /// Whether the login LaunchAgent (boot persistence) is installed.
     var installedAtLogin: Bool
     var frontDoor: FrontDoorSettings? = nil
-    /// Absent in older fleets; synthesized decoding keeps them readable.
+    /// Decoded from older fleets for migration; encoding omits it.
     var roleDefaults: EndpointRoleDefaults? = nil
 
-    static let maxSlots = 8
+    enum CodingKeys: String, CodingKey { case slots, installedAtLogin, frontDoor, roleDefaults }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(slots, forKey: .slots)
+        try container.encode(installedAtLogin, forKey: .installedAtLogin)
+        try container.encodeIfPresent(frontDoor, forKey: .frontDoor)
+    }
+
+    static let maxSlots = 16
 
     static var empty: EndpointFleetConfig {
         EndpointFleetConfig(slots: [], installedAtLogin: false)
     }
 
-    /// The saved default slot for a role, only if it still exists, is enabled
-    /// and uses JIT. Both roles may resolve to the same slot.
-    func defaultSlot(for role: EndpointDefaultRole) -> EndpointSlot? {
-        guard let id = roleDefaults?[role],
-              let slot = slots.first(where: { $0.id == id }),
-              slot.enabled, slot.usesJIT else { return nil }
-        return slot
+    func slot(for role: ServingRole) -> EndpointSlot? {
+        slots.first { $0.role == role }
+    }
+
+    /// The assigned slot's port, else the role's canonical port.
+    func port(for role: ServingRole) -> Int {
+        slot(for: role)?.port ?? role.defaultPort
+    }
+
+    /// Assigns roles from the legacy `roleDefaults` slots that have none, when
+    /// no slot already holds that role. `roleDefaults` is left untouched.
+    func migratingRoleDefaults() -> EndpointFleetConfig {
+        var result = self
+        for (id, role) in [(roleDefaults?.coding, ServingRole.coding), (roleDefaults?.utility, ServingRole.general)] {
+            guard let id, !result.slots.contains(where: { $0.role == role }),
+                  let index = result.slots.firstIndex(where: { $0.id == id && $0.role == nil }) else { continue }
+            result.slots[index].role = role
+        }
+        return result
     }
 }
 
@@ -394,7 +630,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case tooManySlots(Int)
     case invalidPort(Int)
     case duplicatePort(Int)
-    case duplicateRole(UseCase)
+    case duplicateRole(ServingRole)
     case invalidMemoryPolicy(UUID)
     case invalidInference(UUID, String)
     case incompatibleAcceleration(UUID)
@@ -423,7 +659,7 @@ extension EndpointFleetValidation: LocalizedError {
         case .invalidAuthentication:
             return "API key authentication requires Load on request and a valid credential reference."
         case .invalidFrontDoorKey:
-            return "The front door needs a valid credential reference."
+            return "The Workbench API needs a valid credential reference."
         case .invalidAdapterEndpoint:
             return "A trained adapter endpoint uses explicit MLX-LM serving and does not inherit the base model's quality verdict."
         }
@@ -438,7 +674,7 @@ extension EndpointFleetConfig {
             throw EndpointFleetValidation.tooManySlots(slots.count)
         }
         var seenPorts = Set<Int>()
-        var seenRoles = Set<UseCase>()
+        var seenRoles = Set<ServingRole>()
         for slot in slots {
             if let digest = slot.apiKeySHA256,
                !slot.usesJIT || digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) == nil {

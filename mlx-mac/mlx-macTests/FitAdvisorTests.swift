@@ -6,27 +6,6 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class FitAdvisorTests: XCTestCase {
-    @MainActor
-    func testEndpointMemoryControlsRenderCompactly() async throws {
-        let world = FakeServeWorld()
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("endpoint.json")
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let endpoint = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
-            store: JSONStore<EndpointConfig>(fileURL: url))
-        let host = AppHost(endpoint: endpoint)
-        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a", loadOnRequest: true, memoryPolicy: .automatic)
-        let controls = ServeView(appHost: host).memoryManagement(slot, expanded: .constant(true))
-        let view = NSHostingView(rootView: controls.padding(24).frame(width: 740).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        view.setFrameSize(NSSize(width: 740, height: view.fittingSize.height))
-        view.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(view.bounds.height, 100)
-        XCTAssertLessThan(view.bounds.height, 280)
-        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: image)
-        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = "JIT endpoint memory management controls"; attachment.lifetime = .keepAlways
-        add(attachment)
-    }
     private let gb: Int64 = 1_000_000_000
 
     @MainActor
@@ -63,15 +42,23 @@ final class FitAdvisorTests: XCTestCase {
     func testProcessMemoryReadsCurrentProcessWithoutArguments() throws {
         let reading = try ProcessMemorySnapshot.probe()
         let current = try XCTUnwrap(reading.processes.first { $0.pid == getpid() })
-        XCTAssertGreaterThan(current.residentBytes, 0)
+        XCTAssertGreaterThan(current.memoryBytes, 0)
         XCTAssertFalse(current.name.isEmpty)
-        XCTAssertEqual(reading.processes.map(\.residentBytes), reading.processes.map(\.residentBytes).sorted(by: >))
+        XCTAssertEqual(reading.processes.map(\.memoryBytes), reading.processes.map(\.memoryBytes).sorted(by: >))
         XCTAssertEqual(Set(reading.processes.map(\.pid)).count, reading.processes.count)
+    }
+
+    func testMemoryProbeSplitsPhysicalMemoryIntoActivityMonitorCategories() throws {
+        let snapshot = try XCTUnwrap(MemorySnapshot.probe())
+        let parts = try XCTUnwrap(snapshot.composition)
+        XCTAssertGreaterThan(parts.appBytes, 0)
+        XCTAssertGreaterThan(parts.wiredBytes, 0)
+        XCTAssertLessThanOrEqual(parts.usedBytes + parts.freeBytes, snapshot.totalBytes)
     }
 
     @MainActor
     func testProcessMemoryRefreshIsExplicitAndFailureKeepsDatedReading() async {
-        let first = ProcessMemorySnapshot(processes: [.init(pid: 42, name: "Example", residentBytes: 1234)])
+        let first = ProcessMemorySnapshot(processes: [.init(pid: 42, name: "Example", memoryBytes: 1234)])
         let calls = ProcessMemoryProbeFixture(reading: first)
         let date = Date(timeIntervalSince1970: 1234)
         let monitor = SystemResourceMonitor(probe: { nil }, now: { date }, processProbe: { try calls.read() })

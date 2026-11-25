@@ -56,7 +56,7 @@ final class ServingInventoryCoordinator: ObservableObject {
     private let readMemory: ([Int]) async -> [Int: UInt64]?
     private var engineTask: Task<Result<ServingEngineSnapshot, Error>?, Never>?
     private var hostTask: Task<ServingHostSnapshot?, Never>?
-    private var monitoring: Task<Void, Never>?
+    private let fetchFreshEngine: (() async throws -> ServingEngineSnapshot)?
     private var lastEngine: ServingEngineSnapshot?
     private var lastEngineCapturedAt: Date?
     private var engineError: String?
@@ -66,19 +66,22 @@ final class ServingInventoryCoordinator: ObservableObject {
     init(managedReceipts: String, now: @escaping () -> Date = Date.init,
          fetchEngine: @escaping () async throws -> ServingEngineSnapshot,
          fetchHosts: @escaping (Bool) async -> ServingHostSnapshot = { _ in ServingHostSnapshot() },
+         fetchFreshEngine: (() async throws -> ServingEngineSnapshot)? = nil,
          readMemory: @escaping ([Int]) async -> [Int: UInt64]? = { pids in
              let captured = await WorkbenchIO.perform { try? ProcessMemorySnapshot.probe(pids: pids.map(Int32.init)) }
-             return captured.map { Dictionary(uniqueKeysWithValues: $0.processes.map { (Int($0.pid), $0.residentBytes) }) }
+             return captured.map { Dictionary(uniqueKeysWithValues: $0.processes.map { (Int($0.pid), $0.memoryBytes) }) }
          }) {
         self.managedReceipts = managedReceipts
         self.now = now
         self.fetchEngine = fetchEngine
         self.fetchHosts = fetchHosts
+        self.fetchFreshEngine = fetchFreshEngine
         self.readMemory = readMemory
     }
 
-    func refresh(refreshHosts: Bool = false) async {
-        async let engine = refreshEngine()
+    /// `fresh` reads a discovery that starts now; otherwise the shared snapshot may be reused.
+    func refresh(refreshHosts: Bool = false, fresh: Bool = false) async {
+        async let engine = refreshEngine(fresh: fresh)
         if refreshHosts { _ = await refreshHostConnections() }
         else {
             lastHosts = await fetchHosts(false)
@@ -89,7 +92,7 @@ final class ServingInventoryCoordinator: ObservableObject {
 
     /// Use the raw results of the completed refresh, not retained display observations.
     func pathsForRemoval() async throws -> [String] {
-        async let engineRead = refreshEngine()
+        async let engineRead = refreshEngine(fresh: true)
         async let hostRead = refreshHostConnections()
         let (engineResult, hostResult) = await (engineRead, hostRead)
         try Task.checkCancellation()
@@ -106,19 +109,12 @@ final class ServingInventoryCoordinator: ObservableObject {
 
     static func pathsForRemoval(engine: ServingEngineSnapshot?, engineError: String?,
                                 hosts: ServingHostSnapshot, managedReceipts: String) throws -> [String] {
-        var issues = hosts.errors
+        var issues = hostIssues(hosts, engine: engine?.servers ?? [])
         if let engineError { issues["engine"] = engineError }
         if let engine { issues.merge(engine.errors) { _, newer in newer } }
         if !issues.isEmpty {
             let details = issues.keys.sorted().map { key in
-                let name: String
-                if key == "local-listeners" { name = "Local server discovery" }
-                else if key == "host-settings" { name = "Saved model sources" }
-                else if key == "engine" { name = "Serving engine" }
-                else if key.hasPrefix("host:"), let inventory = hosts.inventories.first(where: { "host:" + $0.host.id.uuidString == key }) {
-                    name = inventory.host.name + " (" + inventory.host.baseURL + ")"
-                } else { name = key }
-                return name + ": " + (issues[key] ?? "Unavailable")
+                sourceName(key, hosts: hosts.inventories) + ": " + (issues[key] ?? "Unavailable")
             }.joined(separator: "\n")
             throw ReclaimError.servingOwnershipUnavailable("Model removal is paused because serving ownership could not be checked. Resolve these issues in Serving, then retry:\n" + details)
         }
@@ -131,8 +127,37 @@ final class ServingInventoryCoordinator: ObservableObject {
         return enginePaths + hostServices.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
     }
 
-    private func refreshEngine() async -> Result<ServingEngineSnapshot, Error>? {
-        if let engineTask { return await engineTask.value }
+    /// Host errors that leave serving ownership unknown. A local listener that is a running
+    /// engine server belongs to the engine, which reports its model; that server's own model
+    /// list, which may need its API key, does not decide ownership.
+    static func hostIssues(_ hosts: ServingHostSnapshot, engine: [ServerInfo]) -> [String: String] {
+        hosts.errors.filter { key, _ in
+            guard let inventory = hosts.inventories.first(where: { "host:" + $0.host.id.uuidString == key }),
+                  let pid = hosts.processIDs[inventory.host.id],
+                  let port = try? inventory.host.validatedURL().port else { return true }
+            return !engine.contains { $0.pid == pid && $0.port == port && $0.state == "running" }
+        }
+    }
+
+    func sourceName(_ key: String) -> String { Self.sourceName(key, hosts: lastHosts.inventories) }
+
+    static func sourceName(_ key: String, hosts: [HostInventory]) -> String {
+        if key == "local-listeners" { return "Local server discovery" }
+        if key == "host-settings" { return "Saved model sources" }
+        if key == "engine" || key == "engine-ownership" { return "Serving engine" }
+        if let host = hosts.first(where: { "host:" + $0.host.id.uuidString == key })?.host {
+            return host.name + " (" + host.baseURL + ")"
+        }
+        return key
+    }
+
+    private func refreshEngine(fresh: Bool = false) async -> Result<ServingEngineSnapshot, Error>? {
+        if let engineTask {
+            let shared = await engineTask.value
+            if !fresh { return shared }
+            if let newer = self.engineTask { return await newer.value }
+        }
+        let fetchEngine = fresh ? fetchFreshEngine ?? self.fetchEngine : self.fetchEngine
         isRefreshing = true
         let task = Task<Result<ServingEngineSnapshot, Error>?, Never> { [weak self] in
             guard let self else { return nil }
@@ -181,17 +206,22 @@ final class ServingInventoryCoordinator: ObservableObject {
             hosts: lastHosts.inventories, managedReceipts: managedReceipts,
             capturedAt: lastEngineCapturedAt ?? now(), hostProcessIDs: lastHosts.processIDs)
         next.capturedAt = now()
-        next.sourceErrors = lastHosts.errors.merging(lastEngine?.errors ?? [:]) { _, newer in newer }
+        let rawErrors = lastHosts.errors.merging(lastEngine?.errors ?? [:]) { _, newer in newer }
+        next.sourceErrors = Self.hostIssues(lastHosts, engine: engineError == nil ? lastEngine?.servers ?? [] : [])
+            .merging(lastEngine?.errors ?? [:]) { _, newer in newer }
         if let engineError { next.sourceErrors["engine"] = engineError }
+        else if let engine = lastEngine, !engine.supportsDiscovery || engine.servers.contains(where: { $0.modelIdentity.isEmpty }) {
+            next.sourceErrors["engine-ownership"] = "Serving ownership could not be checked. Update the engine or recheck connections before retrying model removal."
+        }
         let freshIDs = Set(next.services.map(\.id))
         for prior in snapshot.services where !freshIDs.contains(prior.id) {
             let engineFailed = prior.sourceID.hasPrefix("engine:") &&
                 (engineError != nil || lastEngine?.errors.isEmpty == false || lastEngine?.supportsDiscovery == false && !prior.isWorkbenchManaged)
-            if engineFailed || next.sourceErrors[prior.sourceID] != nil {
+            if engineFailed || rawErrors[prior.sourceID] != nil {
                 var stale = prior; stale.stale = true; next.services.append(stale)
             }
         }
-        for index in next.services.indices where next.sourceErrors[next.services[index].sourceID] != nil {
+        for index in next.services.indices where rawErrors[next.services[index].sourceID] != nil {
             next.services[index].stale = true
         }
         snapshot = next
@@ -246,20 +276,14 @@ final class ServingInventoryCoordinator: ObservableObject {
         await refresh()
     }
 
-    func startMonitoring(sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
-        guard monitoring == nil else { return }
-        monitoring = Task { [weak self] in
-            var untilHostRefresh = Duration.zero
-            while !Task.isCancelled {
-                let refreshHosts = untilHostRefresh <= .zero
-                await self?.refresh(refreshHosts: refreshHosts)
-                guard let idle = self?.discoveryIsIdle else { return }
-                let delay = Duration.seconds(idle ? 30 : 10)
-                let hostInterval = Duration.seconds(idle ? 60 : 30)
-                untilHostRefresh = (refreshHosts ? hostInterval : min(untilHostRefresh, hostInterval)) - delay
-                do { try await sleep(delay) } catch { return }
-            }
-        }
+    private var untilHostRefresh = Duration.zero
+
+    /// One clock tick: engine inventory every tick, host connections every 30 s (60 s when idle).
+    func refreshForTick(elapsed: Duration) async {
+        let refreshHosts = untilHostRefresh <= .zero
+        await refresh(refreshHosts: refreshHosts)
+        let hostInterval = Duration.seconds(discoveryIsIdle ? 60 : 30)
+        untilHostRefresh = (refreshHosts ? hostInterval : min(untilHostRefresh, hostInterval)) - elapsed
     }
 
     private var discoveryIsIdle: Bool {
@@ -267,5 +291,5 @@ final class ServingInventoryCoordinator: ObservableObject {
             && !snapshot.services.contains { $0.isLocal && ($0.server != nil || $0.residency == .loaded) }
     }
 
-    func stopMonitoring() { monitoring?.cancel(); monitoring = nil; engineTask?.cancel(); hostTask?.cancel() }
+    func stopMonitoring() { engineTask?.cancel(); hostTask?.cancel() }
 }

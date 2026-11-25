@@ -39,8 +39,10 @@ authentication, residency and inference settings, then add the endpoint.
 **Start now** offers a temporary server with **Preview serve** and **Confirm and
 run**. Model servers bind to loopback.
 
-Select the endpoint for **API & security**, **Inference**, **Memory** and
-**Connect apps**. Copy its base URL and model ID, or choose a client’s setup.
+Select the endpoint to see **Status**, **Load**, **Inference**, **Experimental**,
+**Server** and **Tasks** in one form. The bar above the form keeps the base URL with a copy
+button, the port, the key lock and **Start server…** in view. Copy the model ID from **Status**,
+or choose a client’s setup.
 Use **Monitor** for model status, reported token usage and response throughput.
 Closing the main window keeps serving; the CPU icon in the menu bar provides
 quick access. See [Serving and Monitor](../workflows/run.md).

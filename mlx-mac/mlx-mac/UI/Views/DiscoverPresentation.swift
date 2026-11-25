@@ -147,7 +147,7 @@ struct DiscoverFit: Equatable {
             memory: memory, reserveGB: reserveGB, contextTokens: contextTokens,
             subject: subject, hardware: hardware, hasProbed: hasProbed
         )
-        let weights = "~" + ModelBudgetPresentation.gb(gb) + " GB weights (est.)"
+        let weights = ModelBudgetPresentation.gb(gb) + " GB weights (est.)"
         let basis = candidate.fits.map {
             "Static check: weights \($0 ? "under" : "over") 80% of total memory"
         }
@@ -185,7 +185,7 @@ struct DiscoverLegend: Equatable {
     static let title = "Model budget"
 
     let reading: ModelBudgetPresentation.Reading
-    /// "~19.1 GB"; nil until a live reading exists.
+    /// "19.1 GB"; nil until a live reading exists.
     let lead: String?
     let caption: String
     let compactCaption: String
@@ -250,7 +250,7 @@ struct DiscoverRow: Equatable, Identifiable {
             likesText: "340",
             fit: DiscoverFit(
                 state: .redacted, tone: .neutral, word: "Won't fit", symbol: "questionmark.circle", fill: nil,
-                weightsText: "~00.0 GB weights (est.)", help: "", agentBasis: nil, basisNote: nil
+                weightsText: "00.0 GB weights (est.)", help: "", agentBasis: nil, basisNote: nil
             ),
             isInLibrary: false
         )

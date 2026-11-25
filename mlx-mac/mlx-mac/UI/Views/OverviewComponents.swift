@@ -188,9 +188,9 @@ struct ModelBudgetPresentation: Equatable {
 
     var hasReading: Bool { segments != nil }
 
-    /// "~12.4": the lead numeral, estimate-marked.
+    /// "12.4": the lead numeral.
     var leadText: String? {
-        budgetBytes.map { "~" + Self.gb($0) }
+        budgetBytes.map { Self.gb($0) }
     }
 
     var unitText: String { "GB" }
@@ -228,7 +228,7 @@ struct ModelBudgetPresentation: Equatable {
         let leadingFraction: Double
     }
 
-    static let placeholderLead = "~00.0"
+    static let placeholderLead = "00.0"
 
     static let placeholderLabels: [SegmentLabel] = [
         SegmentLabel(text: "In use 00.0 GB", leadingFraction: 0),

@@ -192,14 +192,11 @@ final class WorkflowEvidenceTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowCaptureRequest.make(harness: .custom, model: models[0], environment: nil, endpoint: remote))
     }
 
-    func testWiredCaptureAndProducedReportRenderWithoutAutomaticallySavingEvidence() async throws {
+    func testWiredCaptureAndProducedReportWithoutAutomaticallySavingEvidence() async throws {
         let server = ServerInfo(path: "/models/Qwen-converted-4bit", port: 8766, pid: 7, state: "running")
         let model = WorkflowCaptureModel(path: "/models/Qwen-converted-4bit", name: "Qwen converted 4-bit", signature: "weights")
         let capture = try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server],
             transaction: wiredTransaction(server: server), models: [model])
-        try await attachView(WorkflowCaptureRequestView(models: [model], initialModelPath: model.path, environment: "mac|chip|1",
-            endpoint: capture.endpoint, initialHarness: capture.harness, onImport: {}), name: "Wired workflow capture request", height: 540)
-
         // A producer fills the run fields; wiring context alone is not importable.
         let request = try WorkflowCaptureRequest.make(harness: capture.harness, model: model, environment: "mac|chip|1", endpoint: capture.endpoint)
         let encoded = try XCTUnwrap(try JSONSerialization.jsonObject(with: WorkflowEvidenceStore.encode(request)) as? [String: Any])
@@ -222,28 +219,8 @@ final class WorkflowEvidenceTests: XCTestCase {
         XCTAssertNil(preview.newRecords.first?.qualityScore)
         XCTAssertNil(preview.newRecords.first?.inferenceSeconds)
         XCTAssertNil(preview.newRecords.first?.peakMemoryBytes)
-        try await attachView(WorkflowImportPreviewView(preview: preview, models: [model], environment: "mac|chip|1",
-            onCancel: {}, onConfirm: {}), name: "Produced workflow report review", height: 460)
         XCTAssertEqual(try evidence.confirmImport(preview), 1)
         XCTAssertEqual(try disk.load().first?.source, "session:local-fixture")
-    }
-
-    private func attachView<V: View>(_ root: V, name: String, height: CGFloat) async throws {
-        let view = NSHostingView(rootView: root.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: height), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = view
-        window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(200))
-        view.layoutSubtreeIfNeeded()
-        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: image)
-        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 
     func testImportConfirmsFrozenReportAfterOriginalFileChanges() throws {

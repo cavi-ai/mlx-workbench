@@ -112,7 +112,7 @@ final class ServingInventoryPresentationTests: XCTestCase {
         XCTAssertEqual(tally.attention + tally.loaded + tally.loading + tally.onRequest,
                        rows.filter(ServingWorkspacePresentation.isRunning).count, "the toolbar counts what Monitor lists")
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: false),
-                       "A model failed to load · 1 loaded · 1 ready on request · ~12.0 GB available")
+                       "A model failed to load · 1 loaded · 1 ready on request · 12.0 GB available")
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: tally, compact: true), "A model failed to load")
         XCTAssertEqual(ServingWorkspacePresentation.sourceIssueTitle(1), "1 source did not answer the latest refresh.")
         XCTAssertEqual(ServingWorkspacePresentation.sourceIssueTitle(18), "18 sources did not answer the latest refresh.")
@@ -125,8 +125,8 @@ final class ServingInventoryPresentationTests: XCTestCase {
 
         let idleOnly = ServingWorkspacePresentation.tally(rows.filter { ServingWorkspacePresentation.server($0)?.port == 2 })
         XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: idleOnly, compact: false),
-                       "1 ready on request · ~12.0 GB available")
-        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(), compact: false), "~12.0 GB available")
+                       "1 ready on request · 12.0 GB available")
+        XCTAssertEqual(ResourceHeaderPresentation.memoryText(availableBytes: twelve, tally: ServingTally(), compact: false), "12.0 GB available")
     }
 
     func testLibraryLinksRequireKnownPathsAndDoNotGuessByName() {

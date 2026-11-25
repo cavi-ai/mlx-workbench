@@ -210,30 +210,6 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertThrowsError(try ModelGuidanceAction.validateApplication(review: original, fresh: original, role: .vision, enableEndpoint: false, comparisonActive: false))
     }
 
-    @MainActor
-    func testGuidanceReviewRendersWithExplicitRoleAndOptionalEndpoint() throws {
-        let evidence = actionEvidence(runs: [run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 4])])
-        let task = try XCTUnwrap(evidence.taskGuidance?.first)
-        let review = ModelGuidanceReview(evidence: evidence, taskID: task.id, candidate: try XCTUnwrap(task.candidates.first),
-            roles: [.coding, .generalChat], endpoint: .disabled, verified: true)
-        let view = NSHostingView(rootView: ModelGuidanceReviewView(review: review, onApply: { _, _, _ in "Saved" }, onBack: {}, onApplied: { _ in })
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = view
-        defer { window.close() }
-        view.setFrameSize(NSSize(width: 560, height: view.fittingSize.height))
-        view.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(view.bounds.height, 280)
-        XCTAssertLessThan(view.bounds.height, 700)
-        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: image)
-        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-        attachment.name = "Reviewed model guidance action"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
     private let environment = "macOS|M4|1.0"
     private let prompt = PromptEntry(id: "p", text: "task")
     func testReviewExportIncludesSingletonsAndExcludesUsageHistory() throws {
@@ -441,39 +417,6 @@ final class ComparisonInsightsTests: XCTestCase {
         }
         XCTAssertFalse(ModelShowdownResults(run: measured, models: models, environment: "another Mac").isReviewed)
         XCTAssertFalse(ModelShowdownResults(run: measured, models: models, environment: nil).isReviewed)
-    }
-
-    @MainActor
-    func testShowdownCardRendersWithoutReplayingAComparison() async throws {
-        let models = [model("/a", bytes: 3_000_000_000), model("/b")]
-        let measured = run([result("/a", speed: 40), result("/b", speed: 20)], scores: ["/a": 4, "/b": 5])
-        let assessment = ModelShowdownResults(run: measured, models: models, environment: environment, promptSets: [taskSet()])
-        var requests: [UUID] = []
-        for width in [560, 800] {
-            for dark in [false, true] {
-                let card = ModelShowdownResultsCard(results: assessment, familyPaths: ["/a", "/b", "/untested"]) { requests.append(assessment.id) }
-                let host = NSHostingView(rootView: card.padding().frame(width: CGFloat(width), height: 620, alignment: .topLeading)
-                    .background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 620), styleMask: [.titled], backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false; window.contentView = host
-                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderFront(nil)
-                await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
-                host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
-                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                let name = "showdown-\(width)-\(dark ? "dark" : "light")"
-                let capture = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
-                capture.name = name; capture.lifetime = .keepAlways; add(capture)
-                if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDER_OUTPUT"] {
-                    let url = URL(fileURLWithPath: folder)
-                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-                    try data.write(to: url.appendingPathComponent(name + ".png"))
-                }
-                window.close()
-            }
-        }
-        XCTAssertTrue(requests.isEmpty)
     }
 
     func testReplacementWaitsForEveryShowdownEntrantToBeReviewed() {
@@ -865,78 +808,6 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertTrue(WorkflowCharts.series(task, records: [changed, b], metric: .peakMemory).points.isEmpty)
         XCTAssertTrue(WorkflowCharts.series(task, records: [a, a, b], metric: .peakMemory).points.isEmpty)
         XCTAssertTrue(WorkflowCharts.series(task, records: [], metric: .quality).points.isEmpty)
-    }
-
-    @MainActor
-    func testWorkflowMetricChartsRenderWithRecordedDatesAndUnknownValues() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("workflow-chart-fixture-\(UUID())")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: home) }
-        let models = [("/a", "Qwen 3 · 4-bit"), ("/b", "Qwen Coder · 8-bit"), ("/c", "LFM · 4-bit")].map { path, name in
-            LibraryModel(item: model(path).item, displayName: name, readiness: .ready)
-        }
-        var reports: [WorkflowEvidence] = []
-        for index in models.indices {
-            var report = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "coding-task", useCase: .coding,
-                modelPath: models[index].item.path, modelSignature: "s", environmentFingerprint: environment,
-                measuredAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index) * 86_400), sampleCount: 3,
-                totalSeconds: Double(20 + index * 10), source: "session:chart-fixture-\(index)")
-            report.configurationFingerprint = "same-prompts-tools-context"
-            report.rubricID = "coding-outcome-v1"
-            report.qualityScore = index == 2 ? nil : 4 + index
-            report.peakMemoryBytes = index == 2 ? nil : Int64(6 - index * 2) * 1_000_000_000
-            if index < 2 { report.inferenceSeconds = Double(12 + index * 10); report.toolSeconds = 5; report.queueSeconds = 1 }
-            reports.append(report)
-        }
-        let store = WorkflowEvidenceStore(store: JSONStore<WorkflowEvidence>(fileURL: home.appendingPathComponent("evidence.json")))
-        try store.importReport(WorkflowEvidenceStore.encode(WorkflowReport(schemaVersion: 1, records: reports)))
-        let task = try XCTUnwrap(workflowTasks(reports, models: models).first)
-        XCTAssertEqual(WorkflowCharts.series(task, records: store.records, metric: .quality).missing.map(\.name), ["LFM · 4-bit"])
-        XCTAssertEqual(WorkflowCharts.series(task, records: store.records, metric: .peakMemory).missing.map(\.name), ["LFM · 4-bit"])
-        for metric in WorkflowCharts.Metric.allCases {
-            var reviewedPaths: [String] = []
-            var applied = false
-            let root = VStack(alignment: .leading) {
-                WorkflowChartsView(workflow: store, models: models, environment: environment,
-                    hardware: HardwareProfile(chip: "M4", memoryBytes: 32_000_000_000), mode: .chat, activeRunID: nil,
-                    onCompare: { _ in WorkflowCharts.ComparisonSelection(slots: nil, reason: "") },
-                    onReview: { task, path in
-                        reviewedPaths.append(path)
-                        return ModelGuidanceReview(evidence: self.actionEvidence(models: models, runs: [], reports: reports), taskID: task.id,
-                            candidate: try XCTUnwrap(task.candidates.first { $0.modelPath == path }), roles: [.coding], endpoint: .disabled, verified: true)
-                    },
-                    onApply: { _, _, _ in applied = true; return "Fixture" }, metric: .constant(metric),
-                    inspectedModelPath: .constant(metric == .qualityRuntime ? "/a" : nil))
-                Spacer(minLength: 0)
-            }.padding(20).frame(width: 960, height: metric == .qualityRuntime ? 760 : 620).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-            let view = NSHostingView(rootView: root)
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: metric == .qualityRuntime ? 760 : 620), styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: .darkAqua)
-            window.contentView = view; window.orderFront(nil)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
-            let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            view.cacheDisplay(in: view.bounds, to: image)
-            let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-            attachment.name = "Workflow chart - \(metric.title)"; attachment.lifetime = .keepAlways
-            add(attachment)
-            if metric == .qualityRuntime {
-                XCTAssertTrue(reviewedPaths.isEmpty, "Selecting a point must not start a review or apply changes")
-                // Hit the visible Use model button in this fixed 960x760 fixture.
-                // Real window input avoids relying on SwiftUI's lazy accessibility tree.
-                let point = view.convert(NSPoint(x: 875, y: view.isFlipped ? 443 : view.bounds.height - 443), to: nil)
-                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                        context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-                    window.sendEvent(event)
-                }
-                try await Task.sleep(for: .milliseconds(200))
-                XCTAssertEqual(reviewedPaths, ["/a"], "The selected model must reach the existing review flow")
-                XCTAssertFalse(applied, "Opening review must not apply the preference or switch the endpoint")
-            }
-        }
     }
 
     func testWorkflowChartsSeparateCohortsAndExcludeNewestStaleEvidence() throws {

@@ -83,6 +83,51 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertNil(try decode())
     }
 
+    func testMonitorListsSettingsADiscoveredServerReports() throws {
+        let row: [String: Any] = ["repo": "/Models/flash", "runtime": "splash", "port": 8095, "pid": 34790, "state": "running",
+            "jit": true, "api_key_sha256": String(repeating: "a", count: 64), "request_defaults": ["temperature": 0.6],
+            "memory_policy": ["idle_timeout_seconds": 300, "keep_loaded": false, "minimum_headroom_gb": 16.0]]
+        let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        let fields = Dictionary(uniqueKeysWithValues: MonitorSettings.reported(server).map { ($0.label, $0.value) })
+        XCTAssertEqual(fields["Runtime"], "Splash")
+        XCTAssertEqual(fields["Load on request"], "On")
+        XCTAssertEqual(fields["Residency"], "Unload after 5 minutes idle")
+        XCTAssertEqual(fields["Reserve"], "16 GB")
+        XCTAssertEqual(fields["Temperature"], "0.60")
+        XCTAssertEqual(fields["Top-p"], "Model default")
+        XCTAssertEqual(fields["API key"], "Required")
+
+        let embedding = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [["repo": "/Models/embed", "runtime": "tasks", "port": 8091,
+            "pid": 34660, "state": "running", "jit": true, "task_kinds": ["embedding"]]]])?.first)
+        let labels = MonitorSettings.reported(embedding).map(\.label)
+        XCTAssertEqual(MonitorSettings.reported(embedding).first { $0.label == "Tasks" }?.value, "Embedding")
+        XCTAssertFalse(labels.contains("Temperature"))
+        XCTAssertEqual(MonitorSettings.reported(embedding).last?.value, "Not required")
+    }
+
+    func testTelemetryReadsGatewayStageTimingAsResponseShares() throws {
+        var last: [String: Any] = ["completed_at": "2026-11-11T12:01:00Z", "outcome": "completed", "input_tokens": 100,
+            "output_tokens": 9, "response_seconds": 9.0, "output_tokens_per_second": 1.0, "wait_seconds": 3.0,
+            "first_token_seconds": 5.0, "prompt_tokens_per_second": 20.0, "decode_tokens_per_second": 2.0]
+        func decode() throws -> ServingTelemetry? {
+            let raw: [String: Any] = ["schema": 1, "scope": "gateway-process", "started_at": "2026-11-11T12:00:00Z",
+                "captured_at": "2026-11-11T12:02:00Z", "requests": 1, "completed_requests": 1, "failed_requests": 0,
+                "measured_requests": 1, "input_tokens": 100, "output_tokens": 9, "last_request": last]
+            return ServingTelemetry(raw: try JSONDecoder().decode(LabValue.self, from: JSONSerialization.data(withJSONObject: raw)))
+        }
+        let request = try XCTUnwrap(try XCTUnwrap(decode()).lastRequest)
+        XCTAssertEqual(request.promptTokensPerSecond, 20)
+        XCTAssertEqual(request.decodeTokensPerSecond, 2)
+        let stages = try XCTUnwrap(request.stages)
+        XCTAssertEqual(stages.wait, 3.0 / 9, accuracy: 1e-9)
+        XCTAssertEqual(stages.prompt, 2.0 / 9, accuracy: 1e-9)
+        XCTAssertEqual(stages.decode, 4.0 / 9, accuracy: 1e-9)
+        last["first_token_seconds"] = 12.0
+        XCTAssertNil(try XCTUnwrap(try XCTUnwrap(decode()).lastRequest).stages)
+        last["decode_tokens_per_second"] = -1.0
+        XCTAssertNil(try decode())
+    }
+
     func testClientSetupUsesTheExactEndpointAndRequiredProtocol() throws {
         var server = ServerInfo(repo: "org/model's-name", runtime: "mlx_lm", port: 8767, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r", jit: true)
         for client in ServingClient.allCases {
@@ -1356,5 +1401,21 @@ private final class ProbeStreamPeer: @unchecked Sendable {
             connections.forEach { $0.cancel() }
             connections.removeAll()
         }
+    }
+}
+
+final class SplashLaunchArgumentTests: XCTestCase {
+    func testSplashDraftModelAndChatTemplateReachServeStartArguments() {
+        let options = LocalInferenceOptions(splashDraftModel: "/models/drafts/qwen-dflash2", splashChatTemplate: "/templates/chat.jinja")
+        let argv = WorkbenchAPI.serveArguments(model: "/models/qwen", runtime: "splash", port: 8094, receipts: "/state",
+                                               jit: true, previewHash: "reviewed", requestDefaults: options, profileName: "agent")
+
+        func value(after flag: String) -> String? {
+            argv.firstIndex(of: flag).flatMap { argv.index(after: $0) < argv.endIndex ? argv[argv.index(after: $0)] : nil }
+        }
+        XCTAssertEqual(value(after: "--splash-draft-model"), "/models/drafts/qwen-dflash2")
+        XCTAssertEqual(value(after: "--splash-chat-template"), "/templates/chat.jinja")
+        XCTAssertEqual(value(after: "--profile"), "agent")
+        XCTAssertEqual(argv.suffix(3), ["--confirm", "--preview-hash", "reviewed"])
     }
 }

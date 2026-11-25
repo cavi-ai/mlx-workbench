@@ -42,6 +42,11 @@ enum WorkbenchStatePaths {
         return URL(fileURLWithPath: NSHomeDirectory())
     }
 
+    /// `model-defaults.json` beside the other durable stores.
+    static func modelDefaults() -> URL {
+        applicationSupport().appendingPathComponent("model-defaults.json", isDirectory: false)
+    }
+
     /// `<Application Support>/mlx-workbench`: JSON stores, receipts, and caches.
     static func applicationSupport(
         environment: [String: String] = ProcessInfo.processInfo.environment,

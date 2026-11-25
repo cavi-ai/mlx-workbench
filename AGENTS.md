@@ -71,6 +71,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   per-record storage, one-time JSON migration, legacy JSON kept as backup)
   through `ModelWorkflowStore`, `VerificationStore` and
   `ComparisonRecordArchive`, on their coordinators' serial I/O queues.
+  `ModelDefaultsStore` (`model-defaults.json`) holds per-model serving defaults on a serial queue;
+  `ServingSettings.effective` resolves a slot's `overrides` against them.
   Usage and Watch histories also use serial I/O queues. Watch batches new alerts
   in one locked JSON mutation and publishes them after the write succeeds.
 - Default state paths: `Services/WorkbenchStatePaths.swift`.
@@ -93,7 +95,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `ConversionWorkflow`; Quality Gate: `VerificationCoordinator` with
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:
   `ConvertedSourceCleanup`.
-- Run and endpoints: `ServedModelsView` and `MenuBarView` share `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
+- Run and endpoints: `ServingInspector` (`UI/Views/ServingInspector.swift`) owns the selected endpoint's form sections and captions; `ServedModelsView` and `MenuBarView` share `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
   JIT gateway, memory policy, source-bound acceleration settings). `ServeLaunch` decides which runtime,
   Splash preset, and memory policy may be combined. Transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
@@ -107,7 +109,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `TailnetSharingWizard` presents it; Serving, Monitor and the menu bar read its shared address.
   `FrontDoorCoordinator` (`Services/FrontDoor.swift`) owns one `mlx-agent serve front-door` child (`--watch-parent`) on the
   fleet's `frontDoor` port and shared key; `EndpointSupervisor` creates that key once and offers it in the authentication review.
-  `FrontDoorEditor` (Settings → Serving) presents it; `ClientSetupSession` offers it to OpenCode as one address for every routed model.
+  `WorkbenchAPIRowView` on Serving presents start, stop, copy and setup; `FrontDoorEditor` in Settings holds the port; `ClientSetupSession` offers it to OpenCode as one address for every routed model.
   `QuickConnectSnippets` builds the copyable curl and Python calls shown by `QuickConnectStrip`; protected routes reference `MLX_AGENT_API_KEY`.
 - Use: `UseWorkspaceCoordinator`, `UseSessionStore` (`RecordArchive` on a serial I/O queue),
   `UseChatClient` and `UseImageStore`; `UseWorkspaceView` composes conversation views and the

@@ -559,7 +559,7 @@ struct QuickConnectStrip: View {
                     if frontDoorTarget != nil {
                         Picker("Route", selection: $useFrontDoor) {
                             Text("Direct").tag(false)
-                            Text("Front door").tag(true)
+                            Text("Workbench API").tag(true)
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()

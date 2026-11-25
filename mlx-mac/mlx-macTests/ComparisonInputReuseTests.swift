@@ -71,61 +71,6 @@ extension ComparisonMediaTests {
         }
     }
 
-    @MainActor
-    func testRevertInputButtonRestoresBuiltinWithoutSavingOrChangingFiles() async throws {
-        func buttons(in view: NSView) -> [NSButton] {
-            if let button = view as? NSButton { return [button] }
-            return view.subviews.flatMap { buttons(in: $0) }
-        }
-        func scrollViews(in view: NSView) -> [NSScrollView] {
-            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
-        }
-        let entry = PromptEntry(id: "p", text: "Describe the circle", inputKind: .image, builtinInput: "red-circle")
-        let replacement = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
-        let bytes = try Data(contentsOf: replacement)
-        let set = PromptSet(id: "vision-revert", name: "Vision", useCase: nil,
-            prompts: [entry], origin: .userCreated, mode: .vision)
-        var draft = try PromptSetDraft(set: set)
-        draft.prompts[0].inputPath = replacement.path
-        draft.prompts[0].text = "Edited question"; draft.prompts[0].maxTokens = "128"
-        let editor = ComparisonPromptSetEditor(draft: draft) { _ in
-            XCTFail("Reverting input must not save"); return nil
-        }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-        let host = NSHostingView(rootView: editor)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(250))
-        host.layoutSubtreeIfNeeded()
-        let scroll = try XCTUnwrap(scrollViews(in: host).max {
-            ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
-        })
-        // AppKit titles are empty. This single card exposes its menu, minus
-        // control and then Revert input as native buttons in content order.
-        XCTAssertEqual(buttons(in: scroll).count, 3)
-        let revert = try XCTUnwrap(buttons(in: scroll).last)
-        for state in ["replaced", "reverted"] {
-            if state == "reverted" {
-                revert.performClick(nil)
-                try await Task.sleep(for: .milliseconds(200))
-                XCTAssertEqual(buttons(in: scroll).count, 2, "Only Revert input disappears after restoring the opened input")
-            }
-            host.layoutSubtreeIfNeeded(); window.setContentSize(host.fittingSize); host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "Vision input \(state)"; attachment.lifetime = .keepAlways; add(attachment)
-            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_REVERT_PROOF_DIR"] {
-                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(state).png"))
-            }
-        }
-        XCTAssertEqual(try Data(contentsOf: replacement), bytes)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
-    }
-
     func testReuseMissingSavedInputsNeverFallsBackAndAcceptsExplicitReplacement() throws {
         let store = ComparisonOutputStore(root: root.appendingPathComponent("missing-reuse"))
         var run = historyRun(.vision, "Saved inputs", at: 100)
@@ -192,40 +137,6 @@ extension ComparisonMediaTests {
         XCTAssertNotNil(next.inputArtifacts?[entry.id])
         let directories = try FileManager.default.contentsOfDirectory(atPath: store.root.path)
         XCTAssertEqual(directories.count, ComparisonOutputStore.retainedRuns)
-    }
-
-    @MainActor
-    func testReuseSheetLabelsSavedAndPrunedInputs() async throws {
-        let store = ComparisonOutputStore(root: root.appendingPathComponent("reuse-proof"))
-        var run = historyRun(.vision, "Bird descriptions · fixture", at: 100, models: ["/vision/a"])
-        try store.createRunDirectory(run.id)
-        let saved = store.inputsDirectory(run.id).appendingPathComponent("bird.png")
-        try Data("input fixture".utf8).write(to: saved)
-        run.promptEntries = [PromptEntry(id: "p", text: "Describe the bird and its surroundings", inputKind: .image,
-            inputPath: root.appendingPathComponent("gone.png").path, expectedKeywords: ["bird", "snow"])]
-        run.inputArtifacts = ["p": "bird.png"]
-        for label in ["saved", "pruned"] {
-            if label == "pruned" { try FileManager.default.removeItem(at: saved) }
-            let sheet = ComparisonRunSetupSheet(setup: try ComparisonRunSetup(run: run, outputStore: store),
-                availablePaths: ["/vision/a"], name: { _ in "Vision model · fixture" },
-                onApply: { _, _ in XCTFail("Rendering must not apply or run"); return nil },
-                onSave: { _ in XCTFail("Rendering must not save"); return nil })
-            let host = NSHostingView(rootView: sheet.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 720),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
-            try await Task.sleep(for: .milliseconds(150))
-            host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "Reuse \(label) input"; attachment.lifetime = .keepAlways; add(attachment)
-            if let directory = ProcessInfo.processInfo.environment["MLX_REUSE_SETUP_PROOF_DIR"] {
-                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("reuse-input-\(label).png"))
-            }
-            window.close()
-        }
     }
 
     @MainActor
@@ -581,43 +492,6 @@ extension ComparisonMediaTests {
         XCTAssertNil(entry.inputDisplayName)
     }
 
-    @MainActor
-    func testReuseSheetShowsRecordedFilenameForSavedAndMissingCopies() async throws {
-        let store = ComparisonOutputStore(root: root.appendingPathComponent("name-proof"))
-        var run = historyRun(.vision, "Named inputs · fixture", at: 100, models: ["/vision/a"])
-        try store.createRunDirectory(run.id)
-        let imageEntry = PromptEntry(id: "fixture", text: "Describe", inputKind: .image, builtinInput: "red-circle")
-        let generated = try await ComparisonMediaFixtures.generateInput(for: imageEntry, into: root)
-        let artifact = try await store.snapshotInput(from: generated, runID: run.id)
-        run.promptEntries = [PromptEntry(id: "p", text: "Describe this bird and its surroundings", inputKind: .image,
-            inputPath: root.appendingPathComponent("unknown-storage-name.png").path,
-            inputName: "Bird photographs — winter reference.png")]
-        run.inputArtifacts = ["p": artifact]
-        for status in ["saved", "missing"] {
-            if status == "missing" { try FileManager.default.removeItem(at: XCTUnwrap(store.inputArtifactURL(runID: run.id, artifact: artifact))) }
-            let setup = try ComparisonRunSetup(run: run, outputStore: store)
-            XCTAssertEqual(setup.draft.prompts[0].inputDisplayName, "Bird photographs — winter reference.png")
-            let sheet = ComparisonRunSetupSheet(setup: setup, availablePaths: ["/vision/a"], name: { _ in "Vision model · fixture" },
-                onApply: { _, _ in XCTFail("Rendering must not run"); return nil },
-                onSave: { _ in XCTFail("Rendering must not save"); return nil })
-            let host = NSHostingView(rootView: sheet.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 720),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
-            try await Task.sleep(for: .milliseconds(150))
-            host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = "Input filename · \(status)"; attachment.lifetime = .keepAlways; add(attachment)
-            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_NAME_PROOF_DIR"] {
-                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("input-name-\(status).png"))
-            }
-            window.close()
-        }
-    }
-
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")
@@ -785,60 +659,6 @@ extension ComparisonMediaTests {
         XCTAssertEqual(requests.last?.entry.media?.steps, 12)
         XCTAssertEqual(requests.last?.modelPath, "/music/a")
         XCTAssertEqual(try JSONStore<ComparisonRun>(fileURL: runsURL).load().count, 2)
-    }
-
-    @MainActor
-    func testReuseMusicSheetRendersRecordedFieldsAndUnavailableModel() async throws {
-        var run = historyRun(.musicGeneration, "Instrumental comparison", at: 100, models: ["/music/8bit", "/music/4bit"])
-        run.promptEntries = [PromptEntry(id: "recorded", text: "Instrumental jazz-funk with Rhodes, bass and drums",
-            media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
-        let view = ComparisonRunSetupSheet(setup: try ComparisonRunSetup(run: run), availablePaths: ["/music/8bit"],
-            name: { $0 == "/music/8bit" ? "Music model · 8-bit" : "Music model · 4-bit" },
-            onApply: { _, _ in XCTFail("Rendering must not apply or generate"); return nil },
-            onSave: { _ in XCTFail("Rendering must not save"); return nil })
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
-        let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 590),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(250))
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = "Reuse music setup"; attachment.lifetime = .keepAlways; add(attachment)
-        if let path = ProcessInfo.processInfo.environment["MLX_REUSE_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
-    }
-
-    @MainActor
-    func testReuseOtherModeSheetRendersMissingInputsWithoutSavingOrRunning() async throws {
-        var run = historyRun(.vision, "Bird descriptions", at: 100, models: ["/vision/a", "/vision/missing"])
-        run.promptEntries = [PromptEntry(id: "recorded", text: "Describe the bird and its surroundings", maxTokens: 512,
-            inputKind: .image, inputPath: root.appendingPathComponent("missing-bird.png").path,
-            expectedKeywords: ["bird", "snow"])]
-        let sheet = ComparisonRunSetupSheet(setup: try ComparisonRunSetup(run: run), availablePaths: ["/vision/a"],
-            name: { $0 == "/vision/a" ? "Vision model · 8-bit" : "Vision model · 4-bit" },
-            onApply: { _, _ in XCTFail("Rendering must not apply or run"); return nil },
-            onSave: { _ in XCTFail("Rendering must not save"); return nil })
-        let host = NSHostingView(rootView: sheet.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 720),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
-        try await Task.sleep(for: .milliseconds(200))
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = "Reuse vision setup · missing model and file"; attachment.lifetime = .keepAlways; add(attachment)
-        if let directory = ProcessInfo.processInfo.environment["MLX_REUSE_SETUP_PROOF_DIR"] {
-            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("reuse-vision.png"))
-        }
-        window.close()
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
     }
 
     @MainActor

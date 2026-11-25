@@ -58,7 +58,7 @@ enum FleetRouter {
             case .envVar(let name):
                 return "Auth via $\(name) (no raw key written)"
             case .frontDoor(let port):
-                return "Front Door :\(port) uses $\(FleetRouter.localAPIKeyEnvVar)"
+                return "Workbench API :\(port) uses $\(FleetRouter.localAPIKeyEnvVar)"
             }
         }
     }
@@ -69,7 +69,7 @@ enum FleetRouter {
     }
 
     struct Assignment: Equatable, Sendable, Identifiable {
-        let role: UseCase?
+        let role: ServingRole?
         let routeRole: RouteRole
         let repo: String
         let port: Int
@@ -80,9 +80,9 @@ enum FleetRouter {
         var id: String { fleetRole }
         var fleetRole: String { routeRole.rawValue }
 
-        /// Backward-compatible initializer for UseCase-based chat routes.
+        /// Backward-compatible initializer for role-based routes.
         init(
-            role: UseCase,
+            role: ServingRole,
             repo: String,
             port: Int,
             authMode: AuthMode = .none,
@@ -100,7 +100,7 @@ enum FleetRouter {
 
         init(
             routeRole: RouteRole,
-            role: UseCase? = nil,
+            role: ServingRole? = nil,
             repo: String,
             port: Int,
             authMode: AuthMode = .none,
@@ -118,20 +118,20 @@ enum FleetRouter {
     }
 
     struct SkippedRole: Equatable, Sendable, Identifiable {
-        let role: UseCase?
+        let role: ServingRole?
         let routeRole: RouteRole
         let reason: String
 
-        var id: String { "\(routeRole.rawValue)-\(reason)" }
+        var id: String { "\(role?.rawValue ?? "-")-\(routeRole.rawValue)-\(reason)" }
         var fleetRole: String { routeRole.rawValue }
 
-        init(role: UseCase, reason: String) {
+        init(role: ServingRole, reason: String) {
             self.role = role
             self.routeRole = FleetRouter.routeRole(for: role)
             self.reason = reason
         }
 
-        init(routeRole: RouteRole, role: UseCase? = nil, reason: String) {
+        init(routeRole: RouteRole, role: ServingRole? = nil, reason: String) {
             self.role = role
             self.routeRole = routeRole
             self.reason = reason
@@ -165,12 +165,15 @@ enum FleetRouter {
         WorkbenchStatePaths.applicationSupport().appendingPathComponent("fleet-router.yaml").path
     }
 
-    static func routeRole(for useCase: UseCase) -> RouteRole {
-        switch useCase {
+    static func routeRole(for role: ServingRole) -> RouteRole {
+        switch role {
         case .coding: return .coding
-        case .generalChat: return .general
+        case .general: return .general
         case .reasoning: return .reasoning
         case .vision: return .vision
+        case .embedding, .classification: return .embedding
+        case .image, .mesh, .video: return .media
+        case .voice, .transcription, .music: return .audio
         }
     }
 
@@ -257,13 +260,13 @@ enum FleetRouter {
             let matchingServer = servers.first(where: { $0.port == slot.port })
             let taskKinds = matchingServer?.taskKinds ?? []
             let isTypedServer = matchingServer.map { !$0.supportsChatCompletions } ?? false
-            let inferredRole = isTypedServer ? inferredTypedRole(from: taskKinds) : nil
 
+            // A slot's role decides its route; task_kinds only classify role-less typed slots.
             let resolvedRouteRole: RouteRole
-            if let inferred = inferredRole {
-                resolvedRouteRole = inferred
-            } else if let slotRole = slot.role {
+            if let slotRole = slot.role {
                 resolvedRouteRole = routeRole(for: slotRole)
+            } else if isTypedServer, let inferred = inferredTypedRole(from: taskKinds) {
+                resolvedRouteRole = inferred
             } else {
                 // Unassigned chat slot: ignored, not skipped.
                 continue

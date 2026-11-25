@@ -27,27 +27,27 @@ screen's title.
 
 ## Screens
 
-The sidebar groups seventeen screens. **Models** rows open the Library table, filtered to all models, one kind of model or **To convert**.
+The sidebar groups seventeen screens. The first group has no heading. **Models** rows open the Library table, filtered to all models, one kind of model or **To convert**. The **Go** menu lists every screen, with Cmd-1 to Cmd-9 for the first nine and Cmd-0 for Settings. The **Models** menu holds Add from Hugging Face and Rescan Models. Settings belongs to System and shows as its own row under System.
 
 | Group | Screen | Purpose |
 |---|---|---|
+| Home | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
+| | **Use** | Persistent conversations, selected model servers and typed task results |
 | Models | **Library** | One row per local model with size, fit and state; search or paste a Hugging Face link; an inspector led by Chat, Serve and Compare |
-| Sources | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
+| | **Model sources** | Inventories across local providers, connection setup and registered cache folders |
 | | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
-| Attention | **Disk space** | Disk by model, suggested removals, duplicate files, quarantine, Trash, source cleanup and restore |
-| Workspaces | **Use** | Persistent conversations, selected model servers and typed task results |
-| | **Serving** | Model APIs, authentication, inference settings, memory, media reuse and client connections |
-| | **Monitor** | Live serving status, reported token usage and response throughput |
-| | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Convert** | Preview and confirm conversions; follow verification |
-| | **Training** | Text LoRA training and base-versus-adapter evaluation |
-| | **Experiments** | Controlled experiments, generation jobs and blind review |
-| | **Terminal** | OpenCode or a shell in a chosen folder, run through your login shell |
-| System | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
-| | **Activity** | Conversion, server, experiment and training jobs on one timeline |
+| | **Disk space** | Disk by model, suggested removals, duplicate files, quarantine, Trash, source cleanup and restore |
+| Serving | **Serving** | Model APIs, authentication, inference settings, memory, media reuse and client connections |
 | | **Clients** | Guided setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code, connection tests, config wiring and rollback |
+| | **Monitor** | Live serving status, reported token usage and response throughput |
+| Studio | **Compare** | Measured model comparisons with recorded prompts and outputs |
+| | **Experiments** | Controlled experiments, generation jobs and blind review |
+| | **Training** | Text LoRA training and base-versus-adapter evaluation |
+| | **Terminal** | OpenCode or a shell in a chosen folder, run through your login shell |
+| System | **Activity** | Conversion, server, experiment and training jobs on one timeline |
 | | **Health** | Runtime readiness, model health and the Setup Assistant |
-| Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
+| | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
 
 Overview's flight path includes only stages supported by the selected model: verification requires an available canary, measurement requires a compatible comparison mode, and serving applies to chat and vision models. **Measured** requires a usable metric from a completed compatible comparison with the same path and a known matching model signature. Missing signatures remain unmeasured.
 

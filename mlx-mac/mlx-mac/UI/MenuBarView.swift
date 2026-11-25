@@ -15,6 +15,7 @@ struct MenuBarView: View {
     @ObservedObject private var useWorkspace: UseWorkspaceCoordinator
     @ObservedObject private var inventory: ServingInventoryCoordinator
     @ObservedObject private var tailnet: TailnetSharingCoordinator
+    @ObservedObject private var frontDoor: FrontDoorCoordinator
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.library.rawValue
 
     init(appHost: AppHost) {
@@ -26,24 +27,26 @@ struct MenuBarView: View {
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _inventory = ObservedObject(wrappedValue: appHost.servingInventory)
         _tailnet = ObservedObject(wrappedValue: appHost.tailnetSharing)
+        _frontDoor = ObservedObject(wrappedValue: appHost.frontDoor)
     }
 
     var body: some View {
         let models = appHost.librarySnapshot?.models ?? []
         let rows = ServingWorkspacePresentation.rows(ServingRows.build(slots: endpoint.fleet.slots, servers: workflow.servers, snapshot: inventory.snapshot), includeAvailable: false)
+        let sections = MenuBarPresentation.sections(slots: endpoint.fleet.slots, rows: rows)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack {
                 Text("Workbench").font(WorkbenchTypography.title)
                 Spacer()
                 ServingSystemHeadroom(resources: appHost.resources)
             }
-            if rows.isEmpty || ServingInventoryPresentation.summary(inventory.snapshot) != "No local serving models reported" {
-                Text(ServingInventoryPresentation.summary(inventory.snapshot))
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Text(MenuBarPresentation.fleetSummary(slots: endpoint.fleet.slots, states: endpoint.slotStates))
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            workbenchAPIRow()
+            ForEach(sections.roles) { item in
+                roleRow(item, models: models)
             }
-            ForEach(EndpointDefaultRole.allCases) { role in
-                roleRow(role, models: models)
-            }
+            tailscaleRow()
             if let review = inventory.actionReview, review.surface == .menuBar {
                 Divider()
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -67,22 +70,26 @@ struct MenuBarView: View {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
             }
             if !inventory.snapshot.sourceErrors.isEmpty {
-                Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Open Serving to inspect") { openManager() }
+                Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Open Serving Doctor") { openManager(showDoctor: true) }
             }
-            if !rows.isEmpty {
+            if !sections.others.isEmpty {
                 Divider()
-                if rows.count > 5 {
-                    ScrollView { modelActions(rows: rows, models: models) }.frame(height: 178)
-                } else {
-                    modelActions(rows: rows, models: models)
+                DisclosureGroup(MenuBarPresentation.otherServersTitle(count: sections.others.count)) {
+                    if sections.others.count > 5 {
+                        ScrollView { modelActions(rows: sections.others, models: models) }.frame(height: 178)
+                    } else {
+                        modelActions(rows: sections.others, models: models)
+                    }
                 }
+                .accessibilityIdentifier("serving-menu-other-servers")
             }
             Divider()
             HStack {
                 Button("Open Serving") { openManager() }
+                Button("Serving Doctor") { openManager(showDoctor: true) }
                 Button("Live Monitor") { selectedRouteID = AppRoute.monitor.rawValue; openApp() }
                 Spacer()
-                Button { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true) } } label: {
+                Button { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true, fresh: true) } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .accessibilityLabel("Refresh local services")
@@ -107,7 +114,14 @@ struct MenuBarView: View {
     private func modelActions(rows: [ServingRow], models: [LibraryModel]) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     ForEach(rows) { row in
-                        Menu(MenuBarPresentation.rowTitle(row, models: models)) {
+                        HStack(spacing: WorkbenchSpacing.xs) {
+                        if case .endpoint(let slot, _, _) = row {
+                            Circle().fill(menuStateColor(slot)).frame(width: 8, height: 8).accessibilityHidden(true)
+                        }
+                        Text(MenuBarPresentation.rowTitle(row, models: models)).font(WorkbenchTypography.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: WorkbenchSpacing.xs)
+                        Menu {
                             switch row {
                             case .endpoint(let slot, _, let service):
                                 Text(MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id]))
@@ -170,40 +184,95 @@ struct MenuBarView: View {
                                     Button("Copy model ID") { ServedModelsSelection.copy(service.modelID) }
                                 }
                             }
+                        } label: {
+                            Image(systemName: "ellipsis.circle").accessibilityLabel("Actions")
+                        }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         }
                         .accessibilityIdentifier("serving-menu-endpoint-\(row.id)")
                     }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The shared Workbench API address and its copy action, shown once it is set up.
     @ViewBuilder
-    private func roleRow(_ role: EndpointDefaultRole, models: [LibraryModel]) -> some View {
-        if let slot = endpoint.fleet.defaultSlot(for: role) {
-            Button { openManager(rowID: "endpoint-\(slot.id.uuidString)") } label: {
-                HStack {
-                    Text(role.title).font(WorkbenchTypography.emphasis)
-                    Text(MenuBarPresentation.modelName(slot.modelPath, models: models)).lineLimit(1)
-                    Spacer()
-                    Text(roleAvailability(slot))
-                        .font(WorkbenchTypography.secondary)
-                }
-            }.buttonStyle(.plain)
-                .accessibilityIdentifier("serving-menu-role-\(role.rawValue)")
-        } else {
+    private func workbenchAPIRow() -> some View {
+        let row = ServingRolesPresentation.workbenchAPIRow(settings: endpoint.fleet.frontDoor, isRunning: frontDoor.isRunning, slots: endpoint.fleet.slots)
+        if row.isConfigured {
             HStack {
-                Text(role.title).font(WorkbenchTypography.emphasis)
-                Spacer()
-                Text(endpoint.fleet.roleDefaults?[role] == nil ? "No default" : "Unavailable")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Label(row.title, systemImage: "point.3.connected.trianglepath.dotted").font(WorkbenchTypography.emphasis)
+                Text(row.address).font(WorkbenchTypography.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                Text(row.stateText).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Button(row.copyAddressTitle) { ServedModelsSelection.copy(row.address) }
             }
+            .accessibilityIdentifier("serving-menu-workbench-api")
         }
+    }
+
+    @ViewBuilder
+    private func tailscaleRow() -> some View {
+        if let address = tailnet.sharedAddress(port: tailnet.status?.endpointPort) {
+            HStack {
+                Label("Tailscale", systemImage: "network").font(WorkbenchTypography.emphasis)
+                Text(address).font(WorkbenchTypography.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                Button("Copy Tailscale URL") { ServedModelsSelection.copy(address) }
+                Button("Stop sharing") { Task { await tailnet.stop() } }.disabled(tailnet.busy)
+            }
+            .accessibilityIdentifier("serving-menu-tailscale")
+        }
+    }
+
+    /// One role: symbol, title, model, port and residency, then its copy and Unload or Stop actions.
+    @ViewBuilder
+    private func roleRow(_ item: ServingRolesPresentation.RoleRow, models: [LibraryModel]) -> some View {
+        if let slot = item.slot {
+            let service = ServingInventoryPresentation.service(for: slot, in: inventory.snapshot)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Button { openManager(rowID: "endpoint-\(slot.id.uuidString)") } label: {
+                    HStack {
+                        Label(item.title, systemImage: item.role.symbolName).font(WorkbenchTypography.emphasis)
+                        Text(MenuBarPresentation.modelName(slot.modelPath, models: models)).lineLimit(1)
+                        Text(item.portText).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        Spacer()
+                        Text(roleAvailability(slot)).font(WorkbenchTypography.secondary)
+                    }
+                }.buttonStyle(.plain)
+                HStack {
+                    Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
+                    if let connection = ServedModelsSelection.connection(slot: slot, state: endpoint.slotStates[slot.id], servers: workflow.servers) {
+                        Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) }
+                    }
+                    if let service, service.canUnload, service.residency == .loaded {
+                        Button("Unload") { prepare(.unload, service: service) }
+                            .disabled(inventory.isChanging || !inventory.mayChange(service))
+                    } else if slot.enabled {
+                        Button("Stop") {
+                            Task {
+                                guard appHost.servedModelChange(identity: slot.modelPath, workbenchManaged: true).allowed else { return }
+                                await endpoint.setSlotEnabled(id: slot.id, false)
+                            }
+                        }.disabled(!appHost.servedModelChange(identity: slot.modelPath, workbenchManaged: true).allowed)
+                    }
+                    Spacer()
+                }
+                .buttonStyle(.borderless).controlSize(.small).font(WorkbenchTypography.secondary)
+            }
+            .accessibilityIdentifier("serving-menu-role-\(item.role.rawValue)")
+        }
+    }
+
+    private func menuStateColor(_ slot: EndpointSlot) -> Color {
+        if case .running = endpoint.slotStates[slot.id] { return WorkbenchColor.success }
+        return slot.enabled ? WorkbenchColor.warning : WorkbenchColor.muted
     }
 
     private func roleAvailability(_ slot: EndpointSlot) -> String {
         guard let state = endpoint.slotStates[slot.id], case .running = state else { return "Unavailable" }
         switch ServingInventoryPresentation.service(for: slot, in: inventory.snapshot)?.residency {
-        case .loaded: return "Ready"
-        case .unloaded: return "On demand"
+        case .loaded: return "Loaded"
+        case .unloaded: return "Unloaded"
         case .loading: return "Loading"
         default: return MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id])
         }
@@ -219,8 +288,8 @@ struct MenuBarView: View {
         }
     }
 
-    private func openManager(rowID: String? = nil) {
-        appHost.handoffs.send(ServingFocusRequest(rowID: rowID), as: .openServing)
+    private func openManager(rowID: String? = nil, showDoctor: Bool = false) {
+        appHost.handoffs.send(ServingFocusRequest(rowID: rowID, showDoctor: showDoctor), as: .openServing)
         selectedRouteID = AppRoute.run.rawValue
         openApp()
     }
@@ -248,6 +317,13 @@ enum WorkbenchMenuBarItem {
     static let title = "MLX Workbench"
     static let systemImage = "cpu"
     static let storageKey = "showsWorkbenchMenuBarItem"
+
+    /// Writes only a changed value; returns whether it wrote. An absent key reads as shown.
+    static func store(_ shown: Bool, in defaults: UserDefaults) -> Bool {
+        guard shown != (defaults.object(forKey: storageKey) as? Bool ?? true) else { return false }
+        defaults.set(shown, forKey: storageKey)
+        return true
+    }
 }
 
 /// Strings the menu draws; pure so no file-system lookup happens during rendering.
@@ -268,6 +344,24 @@ enum MenuBarPresentation {
         case .service(let service): service.name + " · " + service.providerName + " · " + service.statusText
         }
     }
+
+    /// Assigned roles get top-level rows; role-less slots and servers outside the fleet go under "Other servers".
+    struct Sections {
+        let roles: [ServingRolesPresentation.RoleRow]
+        let others: [ServingRow]
+    }
+
+    static func sections(slots: [EndpointSlot], rows: [ServingRow]) -> Sections {
+        let roles = ServingRolesPresentation.roleRows(slots: slots, rows: rows).filter(\.isAssigned)
+        let shown = Set(roles.compactMap { $0.slot?.id })
+        let others = rows.filter { row in
+            if case .endpoint(let slot, _, _) = row { return !shown.contains(slot.id) }
+            return true
+        }
+        return Sections(roles: roles, others: others)
+    }
+
+    static func otherServersTitle(count: Int) -> String { "Other servers (\(count))" }
 
     static func availability(_ slot: EndpointSlot, state: EndpointState?, residency: String?) -> String {
         guard slot.enabled else { return "Stopped" }

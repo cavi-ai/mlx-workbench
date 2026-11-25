@@ -31,7 +31,7 @@ struct FrontDoorCollision: Equatable, Sendable, Identifiable {
 
     var warningMessage: String {
         let portList = ports.map { ":\($0)" }.joined(separator: ", ")
-        return "Model \"\(modelName)\" is served by multiple front door endpoints (\(portList)). Requests will fail with 409 ambiguous_model until only one endpoint uses the front door key for this model."
+        return "Model \"\(modelName)\" is served by multiple Workbench API endpoints (\(portList)). Requests will fail with 409 ambiguous_model until only one endpoint uses the Workbench API key for this model."
     }
 }
 
@@ -123,11 +123,11 @@ final class FrontDoorCoordinator: ObservableObject {
         defer { busy = false }
         let port = settings.port, digest = settings.apiKeySHA256
         guard !(await portInUse(port)) else {
-            error = "Port \(port) is in use on 127.0.0.1. Choose another front door port."; return
+            error = "Port \(port) is in use on 127.0.0.1. Choose another Workbench API port."; return
         }
         let key: String
         do { key = try await token(digest) }
-        catch { self.error = "The front door key is unavailable in Keychain."; return }
+        catch { self.error = "The Workbench API key is unavailable in Keychain."; return }
         let id = UUID(); generation = id
         session = Task { [weak self, run] in
             do {
@@ -148,7 +148,7 @@ final class FrontDoorCoordinator: ObservableObject {
         }
         if session != nil, generation == id {
             await end()
-            error = "The front door did not answer on port \(port). Start it again."
+            error = "The Workbench API did not answer on port \(port). Start it again."
         }
     }
 
@@ -160,7 +160,7 @@ final class FrontDoorCoordinator: ObservableObject {
             let discovered = try await fetchRoutes(current.port, try await token(current.apiKeySHA256))
             if session != nil, listening == current { listening = FrontDoorListener(port: current.port, apiKeySHA256: current.apiKeySHA256, routes: discovered) }
             error = nil
-        } catch { self.error = "The front door model list is unavailable: \(AppHost.render(error))" }
+        } catch { self.error = "The Workbench API model list is unavailable: \(AppHost.render(error))" }
     }
 
     func refreshAfterEndpointChange() {
@@ -189,6 +189,17 @@ final class FrontDoorCoordinator: ObservableObject {
         error = nil
     }
 
+    /// Restarts a running Workbench API on `settings`. True when it is not running, or is listening with the new key
+    /// digest; false when an operation stays in flight or the restart did not come back on that digest.
+    func restart(_ settings: FrontDoorSettings) async -> Bool {
+        for _ in 0..<60 where busy { try? await Task.sleep(for: .milliseconds(250)) }
+        guard !busy else { return false }
+        guard session != nil else { return true }
+        await stop()
+        await start(settings)
+        return session != nil && listening?.apiKeySHA256 == settings.apiKeySHA256
+    }
+
     private func end() async {
         let running = session
         endpointRefresh?.cancel(); endpointRefresh = nil
@@ -206,7 +217,7 @@ final class FrontDoorCoordinator: ObservableObject {
             let bridge = failure as? BridgeError
             error = bridge?.errorDescription ?? AppHost.render(failure)
         } else {
-            error = "The front door stopped. Start it again."
+            error = "The Workbench API stopped. Start it again."
         }
     }
 
@@ -253,7 +264,7 @@ final class FrontDoorCoordinator: ObservableObject {
     }
 
     nonisolated static let liveRoutes: Routes = { port, token in
-        let host = ModelHost(name: "Front door", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
+        let host = ModelHost(name: "Workbench API", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
         let data = try await HostHTTPClient().request(host: host, path: "v1/models", token: token, maximumBytes: 1_048_576, timeout: 5)
         return try parseRoutes(from: data)
     }
@@ -263,9 +274,9 @@ final class FrontDoorCoordinator: ObservableObject {
     }
 
     nonisolated static let livePortInUse: @Sendable (Int) async -> Bool = { port in
-        let host = ModelHost(name: "Front door", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
+        let host = ModelHost(name: "Workbench API", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
         do { _ = try await HostHTTPClient().request(host: host, path: "health", maximumBytes: 4_096, timeout: 2); return true }
-        catch HostHTTPError.requestFailed { return false }
+        catch HostHTTPError.requestFailed, HostHTTPError.notListening { return false }
         catch { return true }
     }
 }

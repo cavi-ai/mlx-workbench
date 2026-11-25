@@ -46,8 +46,10 @@ struct ServeView: View {
     @State private var mode = ServeMode.saveEndpoint
     @State private var action: EndpointChangeReview?
     @State private var authenticationReview: EndpointAuthenticationReview?
+    @State private var keyResetReview: WorkbenchKeyResetReview?
+    @State private var showsKeyWizard = false
     @State private var workspaceSelection: String?
-    @State private var workspaceTab = ServingWorkspaceTab.connection
+    @State private var inspectorScroll: ServingInspectorPresentation.Section?
     @State private var includesAvailable = false
     @State private var showsServerSetup = false
     @State private var showsSourceIssues = false
@@ -74,7 +76,6 @@ struct ServeView: View {
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
-    @State private var newSlotRole: UseCase?
     @State private var newSlotLoadOnRequest = true
     @StateObject private var fleetHold: FleetOverrideHold
     private var pendingFleetAction: PendingFleetAction? {
@@ -82,15 +83,13 @@ struct ServeView: View {
         nonmutating set { fleetHold.pending = newValue }
     }
     @State private var showFleetRouter = false
-    @State private var showsRoleDefaults = false
     @State private var showLoginItemPreview = false
     @State private var loginPlans: [LoginItemPlan] = []
     @State private var loginFitOverride = false
-    @State private var inferenceSlot: EndpointSlot?
+    @State private var profileSlot: EndpointSlot?
     @State private var memoryReviewSlot: EndpointSlot?
     @State private var loginPlist = ""
     @State private var loginBusy = false
-    @State private var expandedMemorySlots: Set<UUID> = []
     @State private var viewportWidth = WorkbenchSize.assumedContentWidth + WorkbenchSpacing.pageInset * 2
     @State private var loginItemMessage: String?
     @State private var loginItemMessageIsError = false
@@ -151,9 +150,13 @@ struct ServeView: View {
             Group {
                 if viewport.size.width >= WorkbenchSize.Serving.splitMinimum {
                     HStack(spacing: 0) {
-                        ServingModelList(rows: workspaceRows, models: models, states: endpoint.slotStates,
+                        ServingModelList(appHost: appHost, roleRows: ServingRolesPresentation.roleRows(slots: endpoint.fleet.slots, rows: workspaceRows),
+                            endpointRows: ServingRolesPresentation.endpointRows(workspaceRows),
+                            otherRows: ServingRolesPresentation.otherRows(workspaceRows),
+                            slots: endpoint.fleet.slots, models: models, states: endpoint.slotStates,
                             sourceIssueCount: inventory.snapshot.sourceErrors.count,
                             selectedID: $workspaceSelection, includesAvailable: $includesAvailable,
+                            choose: chooseModel, change: changeModel, toggle: toggleEndpoint,
                             add: openServerSetup, monitor: { onRouteSelection(.monitor) },
                             refresh: { Task { await refreshServing() } }, showSources: { showsSourceIssues = true })
                         Divider()
@@ -161,6 +164,8 @@ struct ServeView: View {
                     }
                 } else {
                     VStack(spacing: 0) {
+                        WorkbenchAPIRowView(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+                            .padding(.horizontal, WorkbenchSpacing.md).padding(.top, WorkbenchSpacing.xs)
                         HStack {
                             Menu(selectedWorkspaceRow.map { ServingWorkspacePresentation.name($0, models: models) } ?? "Choose endpoint") {
                                 ForEach(workspaceRows) { row in
@@ -172,11 +177,9 @@ struct ServeView: View {
                             Spacer()
                             Button("Serve a model", action: openServerSetup).accessibilityIdentifier("serving-add-model")
                             Button("Monitor") { onRouteSelection(.monitor) }
-                            if !inventory.snapshot.sourceErrors.isEmpty {
-                                Button { showsSourceIssues = true } label: { Image(systemName: "info.circle") }
-                                    .accessibilityLabel(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
-                                    .help(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
-                            }
+                            Button(inventory.snapshot.sourceErrors.isEmpty ? "Serving Doctor" : "Serving Doctor (\(inventory.snapshot.sourceErrors.count))") { showsSourceIssues = true }
+                                .help(inventory.snapshot.sourceErrors.isEmpty ? "Check serving connections and endpoints that need attention."
+                                      : ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
                         }.padding(WorkbenchSpacing.md)
                         Divider()
                         workspaceDetail
@@ -188,7 +191,7 @@ struct ServeView: View {
             }
         }
         .onChange(of: workspaceSelection) { _, new in
-            if new != nil { showsServerSetup = false; workspaceTab = .connection; synchronizeConnectionPort() }
+            if new != nil { showsServerSetup = false; synchronizeConnectionPort() }
         }
         .onChange(of: workspaceRows.map(\.id), initial: true) { _, ids in
             if isRouteActive, shownPath != revealedModelPath { focusShownModel() }
@@ -213,6 +216,8 @@ struct ServeView: View {
         .sheet(item: $portReview) { review in portReviewSheet(review) }
         .sheet(item: gated($action)) { pending in confirmation(pending) }
         .sheet(item: gated($authenticationReview)) { review in authenticationConfirmation(review) }
+        .sheet(item: gated($keyResetReview)) { review in keyResetConfirmation(review) }
+        .sheet(isPresented: $showsKeyWizard) { WorkbenchKeyWizard(appHost: appHost) }
         .sheet(item: $promptPresentation) { presentation in
             EndpointTestSheet(presentation: presentation, coordinator: endpointTest) {
                 guard let request = ClientWiringRequest.forServer(presentation.server) else { return }
@@ -220,21 +225,11 @@ struct ServeView: View {
                 onRouteSelection(.clientSetup)
             }
         }
-        .sheet(item: $inferenceSlot) { slot in
-            EndpointInferenceEditor(endpoint: endpoint, slot: slot,
-                context: ServingInferenceContext.resolve(model: models.first { $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath) }, profile: slot.servingProfile, chip: appHost.hardwareProfile.chip),
-                onManageProfile: { profile in
-                    guard let model = models.first(where: { $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath) }), model.readiness == .ready else { return }
-                    appHost.selectedModelPath = model.item.path
-                    modelWorkflow.prepareServe(model: model)
-                    modelWorkflow.selectServingProfile(profile)
-                    inferenceOptions = slot.inferenceOptions
-                    inferenceSlot = nil
-                    revealInferenceRevision = UUID()
-                })
-        }
         .sheet(item: $memoryReviewSlot) { slot in
             EndpointMemoryReviewSheet(slot: slot, endpoint: endpoint, api: appHost.api)
+        }
+        .sheet(item: $profileSlot) { slot in
+            EndpointProfileSheet(slot: slot, endpoint: endpoint, profiles: profiles)
         }
         .sheet(isPresented: $showingSplashEditor) {
             SplashPresetEditor(api: appHost.api) { preset in
@@ -332,15 +327,6 @@ struct ServeView: View {
 
     private var workspaceDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Button { showsRoleDefaults = true } label: {
-                    Label("Defaults", systemImage: "slider.horizontal.3")
-                }
-                .accessibilityIdentifier("serving-defaults")
-                Spacer()
-            }
-            .padding(.horizontal, WorkbenchSpacing.md)
-            .padding(.vertical, WorkbenchSpacing.sm)
             VStack(alignment: .leading, spacing: 0) {
                 if let pending = pendingFleetAction {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -353,6 +339,7 @@ struct ServeView: View {
                         }
                     }.padding(WorkbenchSpacing.md).accessibilityIdentifier("serving-memory-override")
                 }
+                if let row = selectedWorkspaceRow { connectionBar(row) }
                 if let error = visibleActionError {
                     InlineMessage(kind: .error, text: error).lineLimit(nil).fixedSize(horizontal: false, vertical: true).padding(WorkbenchSpacing.md)
                 }
@@ -361,16 +348,19 @@ struct ServeView: View {
             .accessibilityIdentifier("serving-model-workspace")
         }
         .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
-        .sheet(isPresented: $showsRoleDefaults) {
-            ServingRoleDefaultsSheet(endpoint: endpoint, models: models) { slot in
-                workspaceSelection = "endpoint-\(slot.id.uuidString)"
-                showsServerSetup = false
-                workspaceTab = .connection
+    }
+
+    private var workspaceScroll: some View {
+        ScrollViewReader { proxy in workspaceContent
+            .onChange(of: inspectorScroll) { _, target in
+                guard let target else { return }
+                withAnimation { proxy.scrollTo(target, anchor: .top) }
+                inspectorScroll = nil
             }
         }
     }
 
-    private var workspaceScroll: some View {
+    private var workspaceContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 if let request = appHost.handoffs[.returnToUse] {
@@ -381,11 +371,16 @@ struct ServeView: View {
                     }
                 }
                 if trainedAdapters.selectedJob != nil {
-                    TrainedAdapterRunPanel(coordinator: trainedAdapters, saveAsEndpoint: { preview, key in
+                    TrainedAdapterRunPanel(coordinator: trainedAdapters, reviewEndpoint: { preview in
+                        try await endpoint.reviewTrainedAdapterEndpoint(
+                            binding: preview.binding, port: preview.port,
+                            loadOnRequest: preview.loadOnRequest, requireAPIKey: preview.requireAPIKey
+                        )
+                    }, saveAsEndpoint: { review in
                         await endpoint.addTrainedAdapterSlot(
-                            binding: preview.binding, port: preview.port, allowUnverified: true,
-                            loadOnRequest: preview.loadOnRequest, requireAPIKey: preview.requireAPIKey,
-                            reviewedHash: preview.hash, reviewedKey: key
+                            binding: review.binding, port: review.port, allowUnverified: true,
+                            loadOnRequest: review.loadOnRequest, requireAPIKey: review.requireAPIKey,
+                            review: review
                         )
                         await modelWorkflow.refreshServers()
                         return endpoint.lastError
@@ -434,19 +429,140 @@ struct ServeView: View {
         }
     }
 
-    private func selectedWorkspace(_ row: ServingRow) -> some View {
+    /// The selected row's runtime: the running server's, else the endpoint's model and profile.
+    private func workspaceContext(_ row: ServingRow) -> ServingInferenceContext {
+        let server = ServingWorkspacePresentation.server(row)
+        if case .endpoint(let slot, _, _) = row {
+            return ServingInferenceContext.resolve(model: RunModels.model(for: slot.modelPath, in: models),
+                override: server?.runtime ?? "auto", profile: slot.servingProfile, chip: appHost.hardwareProfile.chip)
+        }
+        return ServingInferenceContext(runtime: server?.runtime ?? "auto", chip: appHost.hardwareProfile.chip)
+    }
+
+    /// Pinned above the scrolling inspector: state, address, port, key and Start or Stop.
+    private func connectionBar(_ row: ServingRow) -> some View {
+        ViewThatFits(in: .horizontal) {
+            connectionBarContent(row, showsStatus: true)
+            connectionBarContent(row, showsStatus: false)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, WorkbenchSpacing.lg)
+        .padding(.vertical, WorkbenchSpacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WorkbenchColor.surface)
+        .overlay(alignment: .bottom) { Divider() }
+        .onAppear(perform: synchronizeConnectionPort)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("serving-connection-bar")
+    }
+
+    private func connectionBarContent(_ row: ServingRow, showsStatus: Bool) -> some View {
         let server = ServingWorkspacePresentation.server(row)
         let name = ServingWorkspacePresentation.name(row, models: models)
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+        return HStack(spacing: WorkbenchSpacing.sm) {
+            Circle().fill(ServingWorkspacePresentation.dotColor(row)).frame(width: 8, height: 8).accessibilityHidden(true)
+            Text(name).font(WorkbenchTypography.emphasis).lineLimit(1).truncationMode(.middle).help(name)
+            if showsStatus {
+                ServingStatusLabel(row: row, states: endpoint.slotStates)
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1).fixedSize()
+            }
+            Spacer(minLength: WorkbenchSpacing.sm)
+            if let url = ServingWorkspacePresentation.baseURL(row) {
+                HStack(spacing: WorkbenchSpacing.xxs) {
+                    Text(url).font(WorkbenchTypography.compactValue).textSelection(.enabled).lineLimit(1).fixedSize()
+                        .help("Base URL. Loopback only: reachable from this Mac.")
+                    Button { ServedModelsSelection.copy(url) } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.borderless).help("Copy base URL")
+                        .accessibilityLabel("Copy base URL").accessibilityIdentifier("serving-copy-base-url")
+                }
+            }
+            if case .endpoint(let slot, _, _) = row {
+                HStack(spacing: WorkbenchSpacing.xxs) {
+                    TextField("Port", text: $connectionPort).labelsHidden().textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing).monospacedDigit().frame(width: 64)
+                        .accessibilityLabel("Port").accessibilityIdentifier("serving-endpoint-port")
+                    Button("Change…") { reviewConnectionPort(slot) }
+                        .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
+                }
+                .help(ServingInspectorPresentation.caption(.port))
+                Toggle(isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
+                    if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
+                })) {
+                    Image(systemName: slot.apiKeySHA256 != nil ? "lock.fill" : "lock.open")
+                }
+                .toggleStyle(.button)
+                .disabled(slot.enabled || endpoint.isChanging)
+                .accessibilityLabel("Protected by Workbench key")
+                .accessibilityIdentifier("serving-require-api-key")
+                .help((slot.apiKeySHA256 != nil ? "Protected: clients need the API key. " : "Open: any local client can connect. ")
+                      + ServingInspectorPresentation.caption(.requireKey))
+                Button(slot.enabled ? "Stop server" : "Start server…") {
+                    if slot.enabled { Task { if let error = await changes.stop(slot) { actionError = error } } }
+                    else { prepare(slot: slot, remove: false) }
+                }
+                .buttonStyle(.workbenchPrimary)
+                .disabled(slot.enabled ? !changes.mayStop(slot) : (endpoint.isChanging || !comparison.hasLoadedHistory))
+                .accessibilityIdentifier("serving-toggle-server")
+            } else {
+                if let server {
+                    Image(systemName: server.apiKeySHA256 == nil ? "lock.open" : "lock.fill")
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .help(server.apiKeySHA256 == nil ? "No API key required" : "API key required")
+                        .accessibilityLabel(server.apiKeySHA256 == nil ? "No API key required" : "API key required")
+                }
+                if let service = ServingWorkspacePresentation.service(row), service.canStop {
+                    Button("Stop server…") { Task { await inventory.prepare(.stop, service: service) } }
+                        .buttonStyle(.workbenchPrimary)
+                        .disabled(!inventory.mayChange(service) || inventory.isChanging)
+                }
+            }
+        }
+    }
+
+    private func selectedWorkspace(_ row: ServingRow) -> some View {
+        var slot: EndpointSlot?
+        if case .endpoint(let value, _, _) = row { slot = value }
+        let server = ServingWorkspacePresentation.server(row)
+        let context = workspaceContext(row)
+        return ServingInspector(
+            sections: ServingInspectorPresentation.sections(for: slot?.role, typedTasks: server?.runtime == "tasks"),
+            endpoint: endpoint, slot: slot, context: context,
+            onManageProfile: { profile in
+                guard let slot, let model = models.first(where: { $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath) }),
+                      model.readiness == .ready else { return }
+                appHost.selectedModelPath = model.item.path
+                modelWorkflow.prepareServe(model: model)
+                modelWorkflow.selectServingProfile(profile)
+                inferenceOptions = slot.inferenceOptions
+                revealInferenceRevision = UUID()
+            }
+        ) { section in
+            switch section {
+            case .status: statusSection(row)
+            case .load: loadSection(row)
+            case .inference, .acceleration: unmanagedInferenceSection(row, section)
+            case .access: accessSection(row)
+            case .tasks: tasksSection(row)
+            }
+        }
+        .id(row.id)
+    }
+
+    private func statusSection(_ row: ServingRow) -> some View {
+        let server = ServingWorkspacePresentation.server(row)
+        let name = ServingWorkspacePresentation.name(row, models: models)
+        var role = ServingWorkspacePresentation.provider(row)
+        if case .endpoint(let slot, _, _) = row { role = slot.role?.title ?? "Unassigned" }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            LabeledContent("Model") { Text(name).textSelection(.enabled) }
+            LabeledContent("Role", value: role)
+            LabeledContent("State") { ServingStatusLabel(row: row, states: endpoint.slotStates) }
+            if let server, server.jit == true {
+                LabeledContent("Model state", value: (server.modelState ?? "unknown").capitalized)
+            }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text(name).font(WorkbenchTypography.title).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: WorkbenchSpacing.xs) {
-                            Text(ServingWorkspacePresentation.provider(row) + " ·")
-                            ServingStatusLabel(row: row, states: endpoint.slotStates)
-                        }
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         servingObservabilityBadges(row, server: server)
                         if let reason = ServingWorkspacePresentation.attentionReason(row) {
                             Label {
@@ -458,49 +574,26 @@ struct ServeView: View {
                     }
                     Spacer()
                     if case .endpoint(let slot, _, let service) = row {
-                        Button(slot.enabled ? "Stop server" : "Start server…") {
-                            if slot.enabled { Task { if let error = await changes.stop(slot) { actionError = error } } }
-                            else { prepare(slot: slot, remove: false) }
-                        }.buttonStyle(.workbenchPrimary).disabled(slot.enabled ? !changes.mayStop(slot) : (endpoint.isChanging || !comparison.hasLoadedHistory))
-                            .accessibilityIdentifier("serving-toggle-server")
+                        if slot.usesJIT, slot.enabled, let service, service.canUnload {
+                            Button("Unload model…") { Task { await inventory.prepare(.unload, service: service) } }
+                                .disabled(inventory.isChanging || !inventory.mayChange(service))
+                                .accessibilityIdentifier("serving-unload-model")
+                        }
                         slotMenu(slot, server: server, service: service, name: name)
-                    } else if let service = ServingWorkspacePresentation.service(row), service.canStop {
-                        Button("Stop server…") { Task { await inventory.prepare(.stop, service: service) } }
-                            .disabled(!inventory.mayChange(service) || inventory.isChanging)
                     }
                 }
                 if let server { HStack(spacing: WorkbenchSpacing.sm) { promptButtons(server, name: name) } }
             }
             ServingSiblingEndpoints(row: row, rows: workspaceRows) { workspaceSelection = $0 }
-            Picker("Model settings", selection: $workspaceTab) {
-                ForEach(ServingWorkspaceTab.allCases) { tab in Text(tab.title).tag(tab) }
-            }.pickerStyle(.segmented).accessibilityIdentifier("serving-workspace-tabs")
-            switch workspaceTab {
-            case .connection: connectionWorkspace(row)
-            case .inference: inferenceWorkspace(row)
-            case .memory: memoryWorkspace(row)
-            case .clients:
-                if let server, WireEndpoint(server: server) != nil {
-                    ServingClientSetup(appHost: appHost, server: server, onRouteSelection: onRouteSelection)
-                        .id("clients-\(server.id)")
-                } else {
-                    Text(server?.runtime == "tasks" ? "This model uses the typed task API. Copy its API address and run a task from Inference." : "Start this endpoint to connect an app.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                    if let url = ServingWorkspacePresentation.baseURL(row) { ServingConnectionField(title: "Base URL", value: url) }
-                }
-            }
+            statusConnection(row)
         }
     }
 
-    private func connectionWorkspace(_ row: ServingRow) -> some View {
+    @ViewBuilder
+    private func statusConnection(_ row: ServingRow) -> some View {
         let server = ServingWorkspacePresentation.server(row)
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                if let url = ServingWorkspacePresentation.baseURL(row) {
-                    ServingConnectionField(title: "Base URL", value: url, identifier: "serving-copy-base-url", compact: true)
-                }
-                ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id", compact: true)
-            }
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            ServingConnectionField(title: "Model ID", value: ServingWorkspacePresentation.modelID(row), identifier: "serving-copy-model-id", compact: true)
             if let server {
                 Text(server.runtime == "tasks" ? "Typed task API · /v1/tasks" : server.jit == true ? "OpenAI Chat Completions · Responses · Anthropic Messages" : "OpenAI Chat Completions")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -541,6 +634,39 @@ struct ServeView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func accessSection(_ row: ServingRow) -> some View {
+        let server = ServingWorkspacePresentation.server(row)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            if case .endpoint(let slot, _, _) = row {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        if let hash = slot.apiKeySHA256 {
+                            HStack {
+                                Button("Copy API key") {
+                                    do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
+                                    catch { actionError = AppHost.render(error) }
+                                }.accessibilityIdentifier("serving-copy-api-key")
+                                if hash == endpoint.fleet.frontDoor?.apiKeySHA256 {
+                                    Button("Reset Workbench key…") { prepareWorkbenchKeyReset() }.disabled(endpoint.isChanging)
+                                        .accessibilityIdentifier("serving-reset-workbench-key")
+                                }
+                            }
+                        }
+                        if let door = endpoint.fleet.frontDoor {
+                            if slot.apiKeySHA256 == door.apiKeySHA256 {
+                                Text("Uses the Workbench key · routed at 127.0.0.1:\(String(door.port)) while the Workbench API runs.")
+                                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            } else if slot.apiKeySHA256 != nil {
+                                Button("Use Workbench key…") { prepareAuthentication(slot, required: true) }
+                                    .disabled(slot.enabled || endpoint.isChanging)
+                                    .accessibilityIdentifier("serving-use-front-door-key")
+                            }
+                        }
+                }
+            }
             if let server, server.jit == true, UseChatClient.supports(server) {
                 if let address = tailnet.sharedAddress(port: server.port) {
                     ServingConnectionField(title: "Tailscale URL", value: address, identifier: "serving-copy-tailnet-url", compact: true)
@@ -548,51 +674,14 @@ struct ServeView: View {
                 Button("Share via Tailscale…") { tailnetServer = server }
                     .accessibilityIdentifier("serving-share-tailnet")
             }
-            if case .endpoint(let slot, _, _) = row {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                        Text("Connection & security").font(WorkbenchTypography.label)
-                        LabeledContent("Address", value: "127.0.0.1 · loopback only")
-                        LabeledContent("Port") {
-                            TextField("Port", text: $connectionPort).accessibilityIdentifier("serving-endpoint-port")
-                            Button("Change…") { reviewConnectionPort(slot) }
-                                .disabled(slot.enabled || endpoint.isChanging || server?.state == "running" || Int(connectionPort) == slot.port)
-                        }
-                        Toggle("Require an API key", isOn: Binding(get: { slot.apiKeySHA256 != nil }, set: { value in
-                            if value != (slot.apiKeySHA256 != nil) { prepareAuthentication(slot, required: value) }
-                        })).toggleStyle(.checkbox).disabled(slot.enabled || endpoint.isChanging)
-                            .accessibilityIdentifier("serving-require-api-key")
-                        if let hash = slot.apiKeySHA256 {
-                            HStack {
-                                Button("Copy API key") {
-                                    do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
-                                    catch { actionError = AppHost.render(error) }
-                                }.accessibilityIdentifier("serving-copy-api-key")
-                                Button("Reset key…") { prepareAuthentication(slot, required: true) }.disabled(slot.enabled || endpoint.isChanging)
-                            }
-                        }
-                        if let door = endpoint.fleet.frontDoor {
-                            if slot.apiKeySHA256 == door.apiKeySHA256 {
-                                Text("Uses the front door key · routed at 127.0.0.1:\(String(door.port)) while the front door runs.")
-                                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                            } else {
-                                Button("Use front door key…") { prepareAuthentication(slot, required: true, frontDoorKey: true) }
-                                    .disabled(slot.enabled || endpoint.isChanging)
-                                    .accessibilityIdentifier("serving-use-front-door-key")
-                            }
-                        }
-                        if slot.enabled {
-                            Text("Stop the server to change its port or authentication. Existing settings remain visible here.")
-                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                        }
-                }
-            } else if let server {
-                LabeledContent("Authentication", value: server.apiKeySHA256 == nil ? "No API key required" : "API key required")
-                if let port = server.port { LabeledContent("Port", value: String(port)) }
+            if let server, WireEndpoint(server: server) != nil {
+                ServingClientSetup(appHost: appHost, server: server, onRouteSelection: onRouteSelection)
+                    .id("clients-\(server.id)")
+            } else {
+                Text(server?.runtime == "tasks" ? "This model uses the typed task API. Copy its API address and run a task from Tasks." : "Start this endpoint to connect an app.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-        }.padding(WorkbenchSpacing.md)
-            .frame(maxWidth: 680, alignment: .leading)
-            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
-        .onAppear(perform: synchronizeConnectionPort)
+        }
     }
 
     private func quickConnectTarget(for row: ServingRow) -> QuickConnectTarget? {
@@ -626,40 +715,69 @@ struct ServeView: View {
         return target
     }
 
+    /// Inference and Acceleration for rows without a saved endpoint: launch evidence only.
     @ViewBuilder
-    private func inferenceWorkspace(_ row: ServingRow) -> some View {
-        if let server = ServingWorkspacePresentation.server(row), server.runtime == "tasks",
-           let model = RunModels.model(for: server.modelIdentity, in: models), let origin = try? ServedTaskOrigin(server: server) {
-            TaskDestinationPanel(appHost: appHost, model: model, initialOrigin: origin)
-        } else if case .endpoint(let slot, _, _) = row {
-            EndpointInferenceEditor(endpoint: endpoint, slot: slot,
-                context: ServingInferenceContext.resolve(model: RunModels.model(for: slot.modelPath, in: models),
-                    override: ServingWorkspacePresentation.server(row)?.runtime ?? "auto",
-                    profile: slot.servingProfile, chip: appHost.hardwareProfile.chip), embedded: true)
-                .id(slot.id)
-        } else if let server = ServingWorkspacePresentation.server(row) {
-            ServingInferenceEvidenceView(rows: InferenceOptionEvidence.rows(prefill: server.prefillKernel, lookup: server.decodeProfile, vision: server.visionProfile))
-            Text("This server was started outside a saved endpoint. Its launch settings are owned by the process that started it.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            HStack { promptButtons(server, name: ServingWorkspacePresentation.name(row, models: models)) }
+    private func unmanagedInferenceSection(_ row: ServingRow, _ section: ServingInspectorPresentation.Section) -> some View {
+        if let server = ServingWorkspacePresentation.server(row) {
+            if section == .acceleration {
+                ServingInferenceEvidenceView(rows: InferenceOptionEvidence.rows(prefill: server.prefillKernel, lookup: server.decodeProfile, vision: server.visionProfile))
+            } else {
+                ServingCaption("This server was started outside a saved endpoint. Its launch settings are owned by the process that started it.")
+            }
         } else {
-            Text("Inference settings are managed by \(ServingWorkspacePresentation.provider(row)).")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            ServingCaption("Inference settings are managed by \(ServingWorkspacePresentation.provider(row)).")
         }
     }
 
     @ViewBuilder
-    private func memoryWorkspace(_ row: ServingRow) -> some View {
-        ServingSystemHeadroom(resources: appHost.resources)
-        fleetCoResidencyBudgetBar
-        if case .endpoint(let slot, _, _) = row {
-            Toggle("Load weights on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
-                Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
-            })).toggleStyle(.checkbox).disabled(endpoint.isChanging)
-            if slot.usesJIT {
-                memoryManagement(slot, inline: true)
-            }
+    private func tasksSection(_ row: ServingRow) -> some View {
+        if let server = ServingWorkspacePresentation.server(row), server.runtime == "tasks",
+           let model = RunModels.model(for: server.modelIdentity, in: models), let origin = try? ServedTaskOrigin(server: server) {
+            TaskDestinationPanel(appHost: appHost, model: model, initialOrigin: origin)
+        } else {
+            ServingCaption("Start this endpoint to run a task. Generation settings belong to each task request.")
         }
+    }
+
+    /// Runtime and headroom, loading, residency, memory check and execution wait; fleet actions share one footer row.
+    @ViewBuilder
+    private func loadSection(_ row: ServingRow) -> some View {
+        let server = ServingWorkspacePresentation.server(row)
+        let context = workspaceContext(row)
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.md) {
+            LabeledContent("Runtime") { Text(ServingWorkspacePresentation.runtimeTitle(context.runtime) ?? "Chosen at start") }
+                .help(ServingInspectorPresentation.caption(.runtime)
+                      + (context.runtime == "auto" ? " The engine picks it when the endpoint starts." : ""))
+            ServingSystemHeadroom(resources: appHost.resources).lineLimit(1).fixedSize()
+        }
+        if case .endpoint(let slot, _, _) = row, server?.runtime == "splash" || slot.splashPresetName != nil {
+            LabeledContent("Splash preset") {
+                Text(slot.splashPresetName ?? "None").lineLimit(1)
+                Button("Splash presets…") { splashPresetSlot = slot }.disabled(endpoint.pendingStops[slot.id] != nil)
+            }
+            .help(ServingInspectorPresentation.caption(.splashPreset))
+        }
+        if case .endpoint(let slot, _, _) = row, slot.splashPresetName == nil, context.isStrata {
+            LabeledContent("Serving profile") {
+                Text(slot.servingProfile?.name ?? "Runtime defaults").lineLimit(1)
+                if let profile = slot.servingProfile, !profile.hasPassedVerification || profile.modelPath != slot.modelPath {
+                    Text("Invalid profile").foregroundStyle(WorkbenchColor.failure)
+                }
+                Button("Change serving profile…") { profileSlot = slot }
+                    .disabled(slot.enabled || endpoint.isChanging || endpoint.pendingStops[slot.id] != nil)
+            }
+            .help("Stop the endpoint to change its verified profile. The endpoint stays stopped after the change.")
+        }
+        if case .endpoint(let slot, _, _) = row {
+            LabeledContent("Loading") {
+                Toggle("Load on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
+                    Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) }
+                })).toggleStyle(.checkbox).disabled(endpoint.isChanging)
+            }
+            .help(ServingInspectorPresentation.caption(.loadOnRequest))
+            if slot.usesJIT { residencyRows(slot) }
+        }
+        fleetCoResidencyBudgetBar
         if let service = ServingWorkspacePresentation.service(row) {
             ServingServiceDetails(service: service, inventory: inventory)
             if service.canUnload {
@@ -667,12 +785,21 @@ struct ServeView: View {
                     .disabled(inventory.isChanging || !inventory.mayChange(service))
             }
         }
-        Button("Model router…") { showFleetRouter = true }
-        loginItemSection
+        Divider()
+        HStack(spacing: WorkbenchSpacing.sm) {
+            if case .endpoint(let slot, _, _) = row, slot.usesJIT {
+                Button("Review memory policy…") { memoryReviewSlot = slot }
+                    .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
+                    .accessibilityIdentifier("endpoint-memory-review")
+            }
+            Button("Model router…") { showFleetRouter = true }
+            loginItemSection
+        }
+        .controlSize(.small)
     }
 
     private func openServerSetup() {
-        showsServerSetup = true; workspaceSelection = nil; workspaceTab = .connection
+        showsServerSetup = true; workspaceSelection = nil
         actionError = nil
     }
 
@@ -700,6 +827,7 @@ struct ServeView: View {
             workspaceSelection = id
         } else if workspaceSelection == nil { workspaceSelection = workspaceRows.first?.id }
         showsServerSetup = false
+        if request.showDoctor { showsSourceIssues = true }
         appHost.handoffs.finish(request, as: .openServing)
     }
 
@@ -708,9 +836,9 @@ struct ServeView: View {
     }
 
     private func reviewConnectionPort(_ slot: EndpointSlot) {
-        guard let port = Int(connectionPort), (1...65535).contains(port),
+        guard let port = Int(connectionPort), ServingPortBounds.range.contains(port),
               !endpoint.fleet.slots.contains(where: { $0.id != slot.id && $0.port == port }) else {
-            actionError = "Choose an unused endpoint port from 1 to 65535."; return
+            actionError = "Choose an unused endpoint port from \(ServingPortBounds.range.lowerBound) to \(ServingPortBounds.range.upperBound)."; return
         }
         portReview = ServingPortReview(slot: slot, port: port)
     }
@@ -741,22 +869,39 @@ struct ServeView: View {
     private var sourceIssuesSheet: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             HStack {
-                Text("Connections").font(WorkbenchTypography.cardTitle)
+                Text("Serving Doctor").font(WorkbenchTypography.cardTitle)
                 Spacer()
-                Button("Refresh") { Task { await refreshServing() } }.disabled(inventory.isRefreshing)
+                Button("Recheck connections") { Task { await inventory.refresh(refreshHosts: true) } }.disabled(inventory.isRefreshing)
                 Button("Done") { showsSourceIssues = false }.keyboardShortcut(.cancelAction)
             }
-            Text("These sources did not answer the latest refresh. Other endpoints remain available.")
+            Text("Recheck connections before retrying model removal. Running services and saved sources are listed separately in Serving and Model Sources.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    let attentionRows = servingRows.filter { ServingWorkspacePresentation.attentionReason($0) != nil }
+                    if inventory.snapshot.sourceErrors.isEmpty && attentionRows.isEmpty { Text("No connection issues reported.") }
+                    ForEach(attentionRows) { row in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.label)
+                            if let reason = ServingWorkspacePresentation.attentionReason(row) {
+                                Text(reason).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                            }
+                            Button("Open endpoint") {
+                                workspaceSelection = row.id; showsServerSetup = false; showsSourceIssues = false
+                            }
+                        }
+                    }
                     ForEach(inventory.snapshot.sourceErrors.keys.sorted(), id: \.self) { source in
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                            Text(source).font(WorkbenchTypography.label).textSelection(.enabled)
+                            Text(inventory.sourceName(source)).font(WorkbenchTypography.label).textSelection(.enabled)
                             Text(inventory.snapshot.sourceErrors[source] ?? "Unavailable").font(WorkbenchTypography.secondary).textSelection(.enabled)
                         }
                     }
                 }
+            }
+            HStack {
+                Button("Model Sources") { showsSourceIssues = false; onRouteSelection(.sources) }
+                Button("Health") { showsSourceIssues = false; onRouteSelection(.health) }
             }
         }.padding(WorkbenchSpacing.lg).frame(minWidth: WorkbenchSize.Run.memoryPopoverWidth, idealWidth: WorkbenchSize.windowDefaultWidth / 2, minHeight: WorkbenchSize.Serving.promptMaximum * 2)
     }
@@ -896,12 +1041,6 @@ struct ServeView: View {
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
                     .lineLimit(1)
-                Text(item.path)
-                    .font(WorkbenchTypography.compactValue)
-                    .foregroundStyle(WorkbenchColor.muted)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
             }
         }
     }
@@ -1022,7 +1161,8 @@ struct ServeView: View {
 
     @ViewBuilder
     private var inferenceSettings: some View {
-        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest)
+        ServingInferenceControls(options: $inferenceOptions, context: inferenceContext, allowRequestDefaults: mode == .saveEndpoint && newSlotLoadOnRequest,
+                                 showsAcceleration: mode != .saveEndpoint)
             .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
         if mode == .saveEndpoint && newSlotLoadOnRequest && requireAPIKey && selectedSplashPreset == nil && modelWorkflow.servingProfile == nil && !inferenceContext.isStrata && !inferenceContext.isSplash {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -1204,7 +1344,7 @@ struct ServeView: View {
         guard let row = ServingRows.existingEndpoint(expected, in: servingRows) else {
             actionError = "The endpoint changed or is unavailable. Refresh and try again."; return
         }
-        workspaceSelection = row.id; showsServerSetup = false; workspaceTab = .connection; actionError = nil
+        workspaceSelection = row.id; showsServerSetup = false; actionError = nil
     }
 
     private func refreshServing() async {
@@ -1323,7 +1463,7 @@ struct ServeView: View {
     private func taskButton(_ server: ServerInfo) -> some View {
         if (try? ServedTaskOrigin(server: server)) != nil,
            models.contains(where: { $0.readiness == .ready && Quarantine.resolve($0.item.path) == Quarantine.resolve(server.path!) }) {
-            Button("Run a task…") { workspaceTab = .inference }
+            Button("Run a task…") { inspectorScroll = .tasks }
                 .buttonStyle(.bordered).controlSize(.small)
                 .disabled(modelWorkflow.serversError != nil)
                 .accessibilityIdentifier("run-model-task-\(server.port ?? 0)")
@@ -1366,7 +1506,7 @@ struct ServeView: View {
             Button("Configure clients…") {
                 guard modelWorkflow.serversError == nil else { return }
                 appHost.handoffs.send(request, as: .wireClient)
-                workspaceTab = .clients
+                inspectorScroll = .access
             }
             .buttonStyle(.bordered).controlSize(.small)
             .disabled(modelWorkflow.serversError != nil)
@@ -1399,30 +1539,19 @@ struct ServeView: View {
                 Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
                 Divider()
             }
-            Picker("Role", selection: Binding(
-                get: { slot.role },
-                set: { newRole in
-                    Task { await endpoint.updateSlot(id: slot.id, modelPath: slot.modelPath, port: slot.port, role: newRole) }
-                }
-            )) {
-                Text("Unassigned").tag(UseCase?.none)
-                ForEach(UseCase.allCases) { role in
-                    Text(role.title).tag(UseCase?.some(role))
-                }
-            }
             Toggle("Load on request", isOn: Binding(
                 get: { slot.usesJIT },
                 set: { value in Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) } }))
                 .help("Keep the endpoint reachable without resident weights. Changing load mode restarts this endpoint.")
                 .disabled(endpoint.isUnloading)
             if slot.usesJIT {
-                Button("Memory management…") { workspaceTab = .memory }
+                Button("Memory management…") { inspectorScroll = .load }
             }
             if server?.runtime == "splash" || slot.splashPresetName != nil {
                 Button("Splash presets…") { splashPresetSlot = slot }
                     .disabled(endpoint.pendingStops[slot.id] != nil)
             }
-            Button("Inference settings…") { inferenceSlot = slot }
+            Button("Inference settings…") { inspectorScroll = .inference }
                 .disabled(endpoint.pendingStops[slot.id] != nil)
                 .help("Review inference settings. Stop the endpoint before changing them.")
             if let connection { Button("Copy model ID") { ServedModelsSelection.copy(connection.modelName) } }
@@ -1434,10 +1563,12 @@ struct ServeView: View {
                     do { ServedModelsSelection.copyCredential(try EndpointCredentialStore.token(for: hash)) }
                     catch { actionError = AppHost.render(error) }
                 }
-                Button("Reset API key…") { prepareAuthentication(slot, required: true) }
-                    .disabled(slot.enabled).help("Stop this endpoint before resetting its key.")
+                if hash == endpoint.fleet.frontDoor?.apiKeySHA256 {
+                    Button("Reset Workbench key…") { prepareWorkbenchKeyReset() }
+                        .disabled(endpoint.isChanging)
+                }
             }
-            Button(slot.apiKeySHA256 == nil ? "Require API key…" : "Disable authentication…") {
+            Button(slot.apiKeySHA256 == nil ? "Protect with Workbench key…" : "Disable authentication…") {
                 prepareAuthentication(slot, required: slot.apiKeySHA256 == nil)
             }.disabled(slot.enabled).help("Stop this endpoint before changing authentication.")
             if modelWorkflow.servers.contains(where: { $0.port == slot.port && $0.runtime == "tasks" }) {
@@ -1456,130 +1587,95 @@ struct ServeView: View {
         }
     }
 
-    private func memoryPopoverBinding(_ slot: EndpointSlot) -> Binding<Bool> {
-        Binding(
-            get: { expandedMemorySlots.contains(slot.id) },
-            set: { value in
-                if value { expandedMemorySlots.insert(slot.id) } else { expandedMemorySlots.remove(slot.id) }
+    /// Residency, memory check with reserve, and execution wait for a load-on-request endpoint.
+    @ViewBuilder
+    private func residencyRows(_ slot: EndpointSlot) -> some View {
+        let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
+        let residency = EndpointResidency(policy)
+        Group {
+            if slot.splashPresetName != nil {
+                Text("Memory settings come from the selected Splash preset. Review another preset to change them.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
-        )
+            LabeledContent("Residency") {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { residencyPickers(slot, policy: policy, residency: residency) }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { residencyPickers(slot, policy: policy, residency: residency) }
+                }
+            }
+            .help("Release weights after each request: " + ServingInspectorPresentation.caption(.releaseAfterRequest)
+                  + " Keep loaded: " + ServingInspectorPresentation.caption(.keepLoaded)
+                  + " Unload after idle: " + ServingInspectorPresentation.caption(.idleUnload))
+            LabeledContent("Memory check") {
+                Toggle("Check before loading", isOn: Binding(get: { policy.minimumHeadroomGB != nil }, set: { enabled in
+                    var updated = policy
+                    updated.minimumHeadroomGB = enabled ? 2 : nil
+                    if !enabled { updated.unloadUnderPressure = nil; updated.contextTokens = nil; updated.modelMemoryBudgetGB = nil }
+                    saveMemoryPolicy(slot, updated)
+                }))
+                .toggleStyle(.checkbox).fixedSize()
+                if let reserve = policy.minimumHeadroomGB {
+                    Picker("Reserve", selection: Binding(get: { reserve }, set: { value in
+                        var updated = policy
+                        updated.minimumHeadroomGB = value
+                        saveMemoryPolicy(slot, updated)
+                    })) {
+                        ForEach([1.0, 2, 4, 8], id: \.self) { value in Text("\(Int(value)) GB").tag(value) }
+                        if ![1.0, 2, 4, 8].contains(reserve) { Text("\(reserve, specifier: "%.1f") GB").tag(reserve) }
+                    }
+                    .fixedSize()
+                }
+            }
+            .help(ServingInspectorPresentation.caption(.memoryPolicy) + " Uses estimated weights + runtime allowance + reserve; other processes and larger contexts can change actual use. Unknown headroom blocks loading.")
+            LabeledContent("Execution wait") {
+                Picker("Execution wait", selection: Binding(get: { policy.executionWaitSeconds ?? 0 }, set: { value in
+                    var updated = policy
+                    updated.executionWaitSeconds = value == 0 ? nil : value
+                    saveMemoryPolicy(slot, updated)
+                })) {
+                    Text("Off (0 s)").tag(0)
+                    Text("30 seconds").tag(30)
+                    Text("1 minute").tag(60)
+                    Text("2 minutes").tag(120)
+                    Text("5 minutes").tag(300)
+                    Text("10 minutes").tag(600)
+                    Text("30 minutes").tag(1800)
+                    Text("1 hour").tag(3600)
+                    if let current = policy.executionWaitSeconds, ![0, 30, 60, 120, 300, 600, 1800, 3600].contains(current) {
+                        Text(verbatim: "\(current) seconds").tag(current)
+                    }
+                }
+                .labelsHidden().fixedSize()
+            }
+            .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
+        }
+        .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
     }
 
+    /// The residency choice, and its idle duration when it unloads after idle.
     @ViewBuilder
-    func memoryManagement(_ slot: EndpointSlot, expanded: Binding<Bool>? = nil, inline: Bool = false) -> some View {
-        if inline { memoryFields(slot) }
-        else {
-            DisclosureGroup("Memory management", isExpanded: expanded ?? memoryPopoverBinding(slot)) { memoryFields(slot) }
-                .font(WorkbenchTypography.secondary)
+    private func residencyPickers(_ slot: EndpointSlot, policy: EndpointMemoryPolicy, residency: EndpointResidency) -> some View {
+        Picker("Residency", selection: Binding(get: { residency.kind }, set: { kind in
+            saveMemoryPolicy(slot, EndpointResidency(kind, from: policy).applied(to: policy))
+        })) {
+            ForEach(EndpointResidency.Kind.allCases) { Text($0.title).tag($0) }
+        }
+        .labelsHidden().fixedSize()
+        .accessibilityIdentifier("endpoint-memory-release-after-request")
+        if case .unloadAfterIdle(let seconds) = residency {
+            let choices = EndpointResidency.idleChoices + (EndpointResidency.idleChoices.contains(seconds) ? [] : [seconds])
+            Picker("Idle time", selection: Binding(get: { seconds }, set: { value in
+                saveMemoryPolicy(slot, EndpointResidency.unloadAfterIdle(seconds: value).applied(to: policy))
+            })) {
+                ForEach(choices, id: \.self) { Text(EndpointResidency.duration($0)).tag($0) }
+            }
+            .labelsHidden().fixedSize()
+            .accessibilityIdentifier("endpoint-memory-idle")
         }
     }
 
-    private func memoryFields(_ slot: EndpointSlot) -> some View {
-        let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
-        return
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                if slot.splashPresetName != nil {
-                    Text("Memory settings come from the selected Splash preset. Review another preset to change them.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                }
-                HStack {
-                    Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
-                        Text("Never").tag(0)
-                        Text("1 minute").tag(60)
-                        Text("2 minutes").tag(120)
-                        Text("5 minutes").tag(300)
-                        Text("10 minutes").tag(600)
-                        Text("30 minutes").tag(1800)
-                        Text("1 hour").tag(3600)
-                        if ![0, 60, 120, 300, 600, 1800, 3600].contains(policy.idleTimeoutSeconds) {
-                            Text(verbatim: "\(policy.idleTimeoutSeconds) seconds").tag(policy.idleTimeoutSeconds)
-                        }
-                    }
-                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
-                    .disabled(policy.keepLoaded || policy.releaseAfterRequest == true)
-                    Toggle("Keep loaded after use", isOn: memoryBinding(slot, \.keepLoaded))
-                        .toggleStyle(.checkbox)
-                        .help("Prevent automatic unload after the first request. Manual unload remains available.")
-                }
-                Toggle("Release weights after each request", isOn: Binding(
-                    get: { policy.releaseAfterRequest == true },
-                    set: { enabled in
-                        var updated = policy
-                        updated.releaseAfterRequest = enabled
-                        if enabled { updated.keepLoaded = false; updated.idleTimeoutSeconds = 0 }
-                        Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                    }))
-                    .toggleStyle(.checkbox)
-                    .accessibilityIdentifier("endpoint-memory-release-after-request")
-                HStack {
-                    Toggle("Check memory before loading", isOn: Binding(
-                        get: { policy.minimumHeadroomGB != nil },
-                        set: { enabled in
-                            var updated = policy
-                            updated.minimumHeadroomGB = enabled ? 2 : nil
-                            if !enabled { updated.unloadUnderPressure = nil; updated.contextTokens = nil; updated.modelMemoryBudgetGB = nil }
-                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                        }))
-                        .toggleStyle(.checkbox)
-                    if let reserve = policy.minimumHeadroomGB {
-                        Picker("Reserve after loading", selection: Binding(
-                            get: { reserve },
-                            set: { value in
-                                var updated = policy
-                                updated.minimumHeadroomGB = value
-                                Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                            })) {
-                            ForEach([1.0, 2, 4, 8], id: \.self) { value in Text("\(Int(value)) GB").tag(value) }
-                            if ![1.0, 2, 4, 8].contains(reserve) { Text("\(reserve, specifier: "%.1f") GB").tag(reserve) }
-                        }
-                        .frame(maxWidth: WorkbenchSize.Run.reservePickerMaximum)
-                    }
-                }
-                HStack {
-                    Picker("Execution wait", selection: Binding(
-                        get: { policy.executionWaitSeconds ?? 0 },
-                        set: { value in
-                            var updated = policy
-                            updated.executionWaitSeconds = value == 0 ? nil : value
-                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
-                        })) {
-                        Text("Off (0 s)").tag(0)
-                        Text("30 seconds").tag(30)
-                        Text("1 minute").tag(60)
-                        Text("2 minutes").tag(120)
-                        Text("5 minutes").tag(300)
-                        Text("10 minutes").tag(600)
-                        Text("30 minutes").tag(1800)
-                        Text("1 hour").tag(3600)
-                        if let current = policy.executionWaitSeconds, ![0, 30, 60, 120, 300, 600, 1800, 3600].contains(current) {
-                            Text(verbatim: "\(current) seconds").tag(current)
-                        }
-                    }
-                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
-                    .help("Wait up to this many seconds for host compute before rejecting a queued request (0–3600 s).")
-                }
-                Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
-                    .font(WorkbenchTypography.metadata)
-                    .foregroundStyle(WorkbenchColor.muted)
-                Button("Review memory policy…") { memoryReviewSlot = slot }
-                    .accessibilityIdentifier("endpoint-memory-review")
-            }
-            .padding(.top, WorkbenchSpacing.sm)
-            .controlSize(.small)
-            .disabled(endpoint.isUnloading || slot.splashPresetName != nil)
-    }
-
-    private func memoryBinding<Value>(_ slot: EndpointSlot, _ keyPath: WritableKeyPath<EndpointMemoryPolicy, Value>) -> Binding<Value> {
-        Binding(get: { (slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy)[keyPath: keyPath] },
-                set: { value in
-                    var policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
-                    policy[keyPath: keyPath] = value
-                    if policy.keepLoaded {
-                        policy.unloadUnderPressure = nil
-                        if policy.releaseAfterRequest == true { policy.releaseAfterRequest = false }
-                    }
-                    Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
-                })
+    private func saveMemoryPolicy(_ slot: EndpointSlot, _ policy: EndpointMemoryPolicy) {
+        Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
     }
 
     @ViewBuilder
@@ -1588,30 +1684,21 @@ struct ServeView: View {
             designedState(symbol: "square.stack.3d.up.slash", text: "Endpoint cap reached (\(EndpointFleetConfig.maxSlots)). Remove one to add another.")
         } else {
             let unverified = selectedModel.map { !appHost.isModelVerified($0.item.path) } ?? false
-            ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.xs) {
-                addEndpointPortAndRole
-                addEndpointLoadToggle
-                if newSlotLoadOnRequest {
-                    Picker("Model residency", selection: $keepModelLoaded) {
-                        Text("Release weights after each request").tag(false)
-                        Text("Keep loaded between requests").tag(true)
-                    }
-                    .fixedSize()
-                    .accessibilityIdentifier("serve-model-residency")
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                    addEndpointLoadColumn.frame(width: 320, alignment: .topLeading)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { inferenceSettings }
+                        .frame(minWidth: 420, maxWidth: 620, alignment: .topLeading)
+                }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    addEndpointLoadColumn
+                    inferenceSettings
                 }
             }
-            if let endpointPortError {
-                Text(endpointPortError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
-            }
-            inferenceSettings
             if unverified {
                 InlineMessage(kind: .warning, text: "This model has not passed verification. Confirm only if you intend to serve it unverified.")
             }
             HStack(spacing: WorkbenchSpacing.xs) {
-                Toggle("Require API key", isOn: $requireAPIKey)
-                    .toggleStyle(.checkbox)
-                    .accessibilityIdentifier("serve-model-authentication")
-                    .help("Only clients with this key can use inference. The endpoint stays on loopback; the key is saved in Keychain when you confirm.")
                 Spacer(minLength: WorkbenchSpacing.xs)
                 Button(unverified ? "Add unverified endpoint…" : "Add endpoint…") { prepareAddEndpoint() }
                     .buttonStyle(.workbenchPrimary)
@@ -1619,6 +1706,44 @@ struct ServeView: View {
                     .help(presentation.addEndpointBlockedReason ?? "Review and add the model shown above as a saved endpoint.")
             }
         }
+    }
+
+    /// Load and server settings for a new endpoint, then the runtime's experimental features.
+    private var addEndpointLoadColumn: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            addEndpointLoadCard
+            ServingExperimentalCard(options: $inferenceOptions, context: inferenceContext)
+                .disabled(modelWorkflow.isServeSubmissionInFlight || profiles.activeID != nil)
+        }
+    }
+
+    private var addEndpointLoadCard: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Label("Load", systemImage: "memorychip").font(WorkbenchTypography.cardTitle)
+            addEndpointPortAndRole
+            if let endpointPortError {
+                Text(endpointPortError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            addEndpointLoadToggle
+            if newSlotLoadOnRequest {
+                Text("After each request").font(WorkbenchTypography.label)
+                Picker("After each request", selection: $keepModelLoaded) {
+                    Text("Release weights").tag(false)
+                    Text("Keep loaded").tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("serve-model-residency")
+                .help("Release weights after each request, or keep them loaded between requests.")
+            }
+            Toggle("Require API key", isOn: $requireAPIKey)
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("serve-model-authentication")
+                .help("Only clients with this key can use inference. The endpoint stays on loopback; the key is saved in Keychain when you confirm.")
+        }
+        .padding(WorkbenchSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
     }
 
     @ViewBuilder
@@ -1629,13 +1754,6 @@ struct ServeView: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: WorkbenchSize.Run.portField)
         }
-        Picker("Role", selection: $newSlotRole) {
-            Text("Unassigned").tag(UseCase?.none)
-            ForEach(UseCase.allCases) { role in
-                Text(role.title).tag(UseCase?.some(role))
-            }
-        }
-        .frame(width: WorkbenchSize.Run.roleWidth)
     }
 
     private var addEndpointLoadToggle: some View {
@@ -1653,12 +1771,32 @@ struct ServeView: View {
     private var changes: EndpointChanges { EndpointChanges(appHost: appHost) }
 
     private func prepareAddEndpoint() {
-        switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: newSlotRole,
+        switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: nil,
                                  loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey, inference: inferenceOptions, profile: modelWorkflow.servingProfile, splashPreset: inferenceContext.isSplash ? selectedSplashPreset : nil) {
-        case .noModel: return
+        case .noModel, .chooseRole: return
         case .portRejected(let message): endpointPortError = message
         case .review(let review): endpointPortError = nil; action = review
         }
+    }
+
+    /// Reviews a new endpoint for a role on that role's canonical port.
+    private func chooseModel(for role: ServingRole, _ model: LibraryModel) {
+        switch changes.reviewAdd(model: model, portText: "", suggestedPort: endpoint.fleet.port(for: role), role: role,
+                                 loadOnRequest: true, keepLoaded: false, requireKey: false) {
+        case .noModel, .chooseRole: return
+        case .portRejected(let message): actionError = message
+        case .review(let review): actionError = nil; action = review
+        }
+    }
+
+    private func changeModel(of slot: EndpointSlot, to model: LibraryModel) {
+        actionError = nil
+        action = changes.reviewSwap(slot: slot, to: model)
+    }
+
+    private func toggleEndpoint(_ slot: EndpointSlot) {
+        if slot.enabled { Task { actionError = await changes.stop(slot) } }
+        else { prepare(slot: slot, remove: false) }
     }
 
     private func prepare(slot: EndpointSlot, remove: Bool) {
@@ -1667,7 +1805,7 @@ struct ServeView: View {
 
     private func confirmation(_ pending: EndpointChangeReview) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text(pending.remove ? "Remove endpoint?" : pending.slot == nil ? "Add this endpoint?" : "Start this endpoint?")
+            Text(pending.remove ? "Remove endpoint?" : pending.slot == nil ? "Add this endpoint?" : pending.swapTo != nil ? "Change this endpoint's model?" : "Start this endpoint?")
                 .font(WorkbenchTypography.cardTitle)
             Text(pending.model?.displayName ?? pending.slot?.modelPath ?? "Model").textSelection(.enabled)
             Text(verbatim: pending.remove ? "Its endpoint will stop. Model files stay in Library."
@@ -1693,7 +1831,7 @@ struct ServeView: View {
             HStack {
                 Button("Cancel") { action = nil }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(pending.remove ? "Remove endpoint" : pending.slot != nil ? "Start endpoint" : pending.unverified ? "Add unverified endpoint" : "Add endpoint") {
+                Button(pending.remove ? "Remove endpoint" : pending.swapTo != nil ? (pending.unverified ? "Change to unverified model" : "Change model") : pending.slot != nil ? "Start endpoint" : pending.unverified ? "Add unverified endpoint" : "Add endpoint") {
                     Task { await apply(pending) }
                 }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
             }
@@ -1713,22 +1851,52 @@ struct ServeView: View {
         }
     }
 
-    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool, frontDoorKey: Bool = false) {
+    private func prepareAuthentication(_ slot: EndpointSlot, required: Bool) {
+        if required, endpoint.fleet.frontDoor == nil { showsKeyWizard = true; return }
         Task {
-            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required, frontDoorKey: frontDoorKey) }
+            do { authenticationReview = try await endpoint.previewAuthentication(slot: slot, required: required) }
             catch { actionError = AppHost.render(error) }
         }
     }
 
+    private func prepareWorkbenchKeyReset() {
+        Task {
+            do { keyResetReview = try await endpoint.resetWorkbenchKeyPreview() }
+            catch { actionError = AppHost.render(error) }
+        }
+    }
+
+    private func keyResetConfirmation(_ review: WorkbenchKeyResetReview) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Reset the Workbench key?").font(WorkbenchTypography.cardTitle)
+            Text("These restart in order, then the previous key stops working:")
+            ForEach(review.endpoints, id: \.slot.id) { entry in
+                Text("Endpoint 127.0.0.1:\(entry.slot.port)\(entry.slot.enabled ? " (running)" : " (stopped)")").textSelection(.enabled)
+            }
+            Text("Workbench API 127.0.0.1:\(review.workbenchAPIPort)").textSelection(.enabled)
+            Text("Copy the new key after saving and update each client. If a restart fails, the previous key stays in Keychain.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            HStack {
+                Button("Cancel") { keyResetReview = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Reset key") {
+                    Task {
+                        let done = await endpoint.confirmWorkbenchKeyReset(review)
+                        if done { keyResetReview = nil }
+                        actionError = endpoint.lastError
+                    }
+                }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
+    }
+
     private func authenticationConfirmation(_ review: EndpointAuthenticationReview) -> some View {
-        let sharesFrontDoorKey = review.token == nil && review.keySHA256 != nil
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text(review.keySHA256 == nil ? "Disable API key authentication?" : sharesFrontDoorKey ? "Use the front door key?" : "Require a new API key?")
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text(review.keySHA256 == nil ? "Disable API key authentication?" : "Protect with the Workbench key?")
                 .font(WorkbenchTypography.cardTitle)
             Text("Endpoint: 127.0.0.1:\(review.slot.port)").textSelection(.enabled)
             Text(review.keySHA256 == nil ? "Any local client will be able to use this endpoint after you start it."
-                 : sharesFrontDoorKey ? "Clients holding the front door key can use this endpoint directly or through the front door. Previous keys stop working."
-                 : "Only clients holding the new key can use this endpoint. Copy the key after saving and configure it in each client. Previous keys stop working.")
+                 : "Clients holding the Workbench key can use this endpoint directly or through the Workbench API. Previous keys for this endpoint stop working.")
             Text("The endpoint stays stopped. Model files stay in place.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             HStack {
@@ -1895,7 +2063,7 @@ struct EndpointChangeReview: Identifiable {
     let model: LibraryModel?
     let slot: EndpointSlot?
     let port: Int
-    let role: UseCase?
+    let role: ServingRole?
     let loadOnRequest: Bool
     let keepLoaded: Bool
     let requireKey: Bool
@@ -1905,6 +2073,8 @@ struct EndpointChangeReview: Identifiable {
     var inference = LocalInferenceOptions()
     var profile: ServingProfile? = nil
     var splashPreset: SplashPreset? = nil
+    /// Set for a model change on `slot`: confirmation swaps the slot to this model on its port.
+    var swapTo: LibraryModel? = nil
 }
 
 /// Reviews endpoint changes and rechecks them against current state when confirmed.
@@ -1916,6 +2086,8 @@ struct EndpointChanges {
         case review(EndpointChangeReview)
         case portRejected(String)
         case noModel
+        /// The model has no endpoint yet; the caller picks one of the chat roles.
+        case chooseRole(LibraryModel)
     }
 
     enum Confirmation: Equatable {
@@ -1927,15 +2099,11 @@ struct EndpointChanges {
     private var models: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
 
     /// Workbench's servers plus the local servers other tools run, whose ports a new endpoint must not take.
-    private var occupiedServers: [ServerInfo] {
+    var occupiedServers: [ServerInfo] {
         appHost.modelWorkflow.servers + appHost.servingInventory.snapshot.services.compactMap(\.server)
     }
 
-    func nextAvailablePort() -> Int? {
-        ServedModelsSelection.nextPort(slots: appHost.endpoint.fleet.slots, servers: occupiedServers)
-    }
-
-    func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: UseCase?, loadOnRequest: Bool,
+    func reviewAdd(model: LibraryModel?, portText: String, suggestedPort: Int, role: ServingRole?, loadOnRequest: Bool,
                    keepLoaded: Bool, requireKey: Bool, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) -> AddOutcome {
         guard let model else { return .noModel }
         if let error = inference.validationError { return .portRejected(error) }
@@ -1961,6 +2129,13 @@ struct EndpointChanges {
             slot: slot, port: slot.port, role: slot.role, loadOnRequest: slot.usesJIT, keepLoaded: false, requireKey: false,
             memoryWarning: remove ? nil : memoryWarning(for: slot.modelPath),
             unverified: !remove && !appHost.isModelVerified(slot.modelPath), remove: remove)
+    }
+
+    /// Reviews moving an endpoint to another model on the same port.
+    func reviewSwap(slot: EndpointSlot, to model: LibraryModel) -> EndpointChangeReview {
+        EndpointChangeReview(model: model, slot: slot, port: slot.port, role: slot.role, loadOnRequest: slot.usesJIT,
+            keepLoaded: false, requireKey: false, memoryWarning: memoryWarning(for: model.item.path),
+            unverified: !appHost.isModelVerified(model.item.path), remove: false, swapTo: model)
     }
 
     private func memoryWarning(for path: String) -> String? {
@@ -1997,6 +2172,22 @@ struct EndpointChanges {
                 if let refusal = stopRefusal(slot) { return .refused(refusal) }
                 await endpoint.removeSlot(id: slot.id)
                 return endpoint.lastError.map(Confirmation.refused) ?? .completed
+            }
+            if let target = review.swapTo {
+                if let refusal = stopRefusal(slot) { return .refused(refusal) }
+                guard ServedModelsSelection.canConfirm(model: target, models: models),
+                      ServedModelsSelection.candidates(models: models, slots: endpoint.fleet.slots.filter { $0.id != slot.id }, query: "")
+                          .contains(where: { $0.item.path == target.item.path }) else {
+                    return .refused("The model changed; review it again.")
+                }
+                guard review.memoryWarning == memoryWarning(for: target.item.path) else { return .refused("Memory conditions changed; review the endpoint again.") }
+                guard review.unverified == !appHost.isModelVerified(target.item.path) else { return .refused("Verification changed; review the endpoint again.") }
+                if !overrideMemory, let hold = memoryHold(for: target.item.path) { return .memoryHold(hold) }
+                await endpoint.swapSlot(id: slot.id, to: target.item.path, allowUnverified: review.unverified)
+                if let error = endpoint.lastError, endpoint.fleet.slots.first(where: { $0.id == slot.id })?.modelPath != target.item.path {
+                    return .refused(error)
+                }
+                return startResult(slotID: slot.id)
             }
             guard review.memoryWarning == memoryWarning(for: slot.modelPath) else { return .refused("Memory conditions changed; review the endpoint again.") }
             guard review.unverified == !appHost.isModelVerified(slot.modelPath) else { return .refused("Verification changed; review the endpoint again.") }
@@ -2042,131 +2233,6 @@ struct EndpointChanges {
         }
     }
 }
-
-private struct EndpointInferenceEditor: View {
-    @ObservedObject var endpoint: EndpointSupervisor
-    let slot: EndpointSlot
-    let context: ServingInferenceContext
-    var embedded = false
-    var onManageProfile: ((ServingProfile) -> Void)? = nil
-    @Environment(\.dismiss) private var dismiss
-    @State private var options: LocalInferenceOptions
-    @State private var preview: EndpointInferencePreview?
-    @State private var busy = false
-    @State private var error: String?
-
-    init(endpoint: EndpointSupervisor, slot: EndpointSlot, context: ServingInferenceContext, embedded: Bool = false, onManageProfile: ((ServingProfile) -> Void)? = nil) {
-        self.endpoint = endpoint
-        self.slot = slot
-        self.context = context
-        self.embedded = embedded
-        self.onManageProfile = onManageProfile
-        _options = State(initialValue: slot.inferenceOptions)
-    }
-
-    var body: some View {
-        Group {
-            if embedded {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) { fields; actions }
-            } else {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    ScrollView { fields }.frame(maxHeight: 560)
-                    actions
-                }.padding(WorkbenchSpacing.md).frame(width: 560)
-            }
-        }
-        .disabled(busy)
-        .onChange(of: options) { _, _ in preview = nil; error = nil }
-        .onChange(of: slot) { _, value in options = value.inferenceOptions; preview = nil }
-        .interactiveDismissDisabled(busy)
-    }
-    private var fields: some View {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    Text("Inference settings").font(WorkbenchTypography.cardTitle)
-                    Text(verbatim: "\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) · :\(slot.port)")
-                        .font(WorkbenchTypography.secondary)
-                    if slot.enabled {
-                        InlineMessage(kind: .info, text: "Stop this endpoint to change its inference settings.")
-                    }
-                    ServingInferenceControls(options: $options, context: context, allowRequestDefaults: slot.usesJIT).disabled(slot.enabled)
-                    if slot.usesJIT && slot.apiKeySHA256 != nil && slot.splashPresetName == nil && slot.servingProfile == nil && !slot.isTrainedAdapter {
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                            HStack(spacing: WorkbenchSpacing.sm) {
-                                Toggle("Shared prefix cache (MLX-LM)", isOn: Binding(
-                                    get: { options.sharedPrefixCacheMiB != nil },
-                                    set: { enabled in options.sharedPrefixCacheMiB = enabled ? 256 : nil }
-                                ))
-                                .toggleStyle(.checkbox)
-                                .disabled(slot.enabled || options.accelerationRequested || !options.systemPrompt.isEmpty)
-                                if let mib = options.sharedPrefixCacheMiB {
-                                    Picker("Budget", selection: Binding(
-                                        get: { mib },
-                                        set: { options.sharedPrefixCacheMiB = $0 }
-                                    )) {
-                                        ForEach([64, 128, 256, 512, 1024, 2048], id: \.self) { value in
-                                            Text("\(value) MiB").tag(value)
-                                        }
-                                        if ![64, 128, 256, 512, 1024, 2048].contains(mib) {
-                                            Text("\(mib) MiB").tag(mib)
-                                        }
-                                    }
-                                    .frame(maxWidth: 140)
-                                    .disabled(slot.enabled)
-                                }
-                            }
-                            Text("Reuses identical system-prompt prefixes on keyed MLX-LM endpoints (16–2048 MiB). Requires no acceleration or default system prompt.")
-                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                        }
-                    }
-                    if let profile = slot.servingProfile {
-                        Text("Profile: \(profile.name) · \(profile.options.decodingTitle)").font(WorkbenchTypography.secondary)
-                        if let onManageProfile {
-                            Button("Manage profile in Run") { onManageProfile(profile) }.disabled(slot.enabled)
-                        }
-                    }
-                    if let error { InlineMessage(kind: .error, text: error) }
-                    if busy { ProgressView("Checking launch configuration…") }
-                    if let preview {
-                        Text("Launch preview: \(preview.hash)")
-                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                            .textSelection(.enabled)
-                    }
-                    Text("After saving, enable the endpoint. Reinstall an existing login item to capture the changed settings.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                }
-    }
-    private var actions: some View {
-            HStack {
-                Button(embedded ? "Discard changes" : "Cancel") { options = slot.inferenceOptions; preview = nil; error = nil; if !embedded { dismiss() } }.disabled(busy)
-                Spacer()
-                if let preview {
-                    Button("Confirm and save") {
-                        busy = true
-                        Task {
-                            if await endpoint.confirmSlotInference(preview) { self.preview = nil; if !embedded { dismiss() } }
-                            else { error = endpoint.lastError; self.preview = nil }
-                            busy = false
-                        }
-                    }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
-                } else {
-                    Button("Preview settings") {
-                        busy = true; error = nil
-                        Task {
-                            do {
-                                guard endpoint.fleet.slots.contains(slot) else {
-                                    throw WorkflowEvidenceError.invalid("Endpoint settings changed. Close and reopen inference settings.")
-                                }
-                                preview = try await endpoint.previewSlotInference(id: slot.id, options: options)
-                            }
-                            catch { self.error = AppHost.render(error) }
-                            busy = false
-                        }
-                    }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
-                }
-            }
-    }
-}
-
 
 private struct SplashPresetEditor: View {
     let api: WorkbenchAPI
@@ -2282,6 +2348,69 @@ private struct SplashPresetEditor: View {
         defer { busy = false }
         do { try await api.saveSplashPreset(preset); await saved(preset); dismiss() }
         catch { self.error = AppHost.render(error) }
+    }
+}
+
+private struct EndpointProfileSheet: View {
+    let slot: EndpointSlot
+    @ObservedObject var endpoint: EndpointSupervisor
+    @ObservedObject var profiles: ServingProfileCoordinator
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: UUID?
+    @State private var review: EndpointServingProfileReview?
+    @State private var error: String?
+    @State private var busy = false
+
+    private var choices: [ServingProfile] {
+        profiles.profiles.filter { $0.modelPath == slot.modelPath && $0.hasPassedVerification }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Serving profile").font(WorkbenchTypography.cardTitle)
+            Text("Endpoint on port \(slot.port)")
+            Picker("Profile", selection: $selected) {
+                Text("Runtime defaults").tag(Optional<UUID>.none)
+                ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
+            }.onChange(of: selected) { _, _ in review = nil; error = nil }
+            if review != nil { Text("Confirm the launch settings for this stopped endpoint. It will not start automatically.").font(WorkbenchTypography.secondary) }
+            if let error { InlineMessage(kind: .error, text: error) }
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                if let review {
+                    Button("Save profile") {
+                        Task {
+                            busy = true
+                            if let profile = review.profile, !choices.contains(profile) {
+                                error = "The verified profile changed. Review it again."
+                                self.review = nil
+                            } else if await endpoint.confirmSlotProfile(review) { dismiss() }
+                            else { error = endpoint.lastError; self.review = nil }
+                            busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy)
+                } else {
+                    Button("Review change") {
+                        Task {
+                            busy = true
+                            do {
+                                let profile = selected.flatMap { id in choices.first { $0.id == id } }
+                                guard selected == nil || profile != nil else { throw WorkflowEvidenceError.invalid("The verified profile is no longer available.") }
+                                review = try await endpoint.previewSlotProfile(slot: slot, profile: profile)
+                                error = nil
+                            } catch { self.error = AppHost.render(error) }
+                            busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy)
+                }
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
+        .onAppear {
+            let current = endpoint.effectiveSlot(slot).servingProfile?.id
+            selected = choices.contains(where: { $0.id == current }) ? current : nil
+        }
+        .interactiveDismissDisabled(busy)
     }
 }
 

@@ -28,12 +28,11 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
 
     /// Sidebar sections, in display order.
     enum Group: String, CaseIterable, Hashable {
+        case home = "Home"
         case models = "Models"
-        case sources = "Sources"
-        case attention = "Attention"
-        case workspaces = "Workspaces"
+        case serving = "Serving"
+        case studio = "Studio"
         case system = "System"
-        case settings = "Settings"
     }
 
     enum BadgeDestination: String, Hashable {
@@ -71,12 +70,11 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     /// The one sidebar order: `AppSidebar` renders it and ⌘1…⌘9 follow it.
     /// Independent of the enum case order, which stays fixed for `order` and mount order.
     private static let sidebarOrder: [Group: [AppRoute]] = [
-        .models: [.library],
-        .sources: [.sources, .discover],
-        .attention: [.reclaim],
-        .workspaces: [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal],
-        .system: [.overview, .activity, .clientSetup, .health],
-        .settings: [.settings],
+        .home: [.overview, .use],
+        .models: [.library, .sources, .discover, .prepare, .reclaim],
+        .serving: [.run, .clientSetup, .monitor],
+        .studio: [.compare, .studies, .training, .terminal],
+        .system: [.activity, .health, .settings],
     ]
 
     /// Pages of one sidebar section, in order; legacy destinations never appear.
@@ -91,12 +89,11 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
 
     var group: Group {
         switch self {
-        case .library, .lmStudio: return .models
-        case .sources, .discover, .adopt: return .sources
-        case .reclaim: return .attention
-        case .use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal: return .workspaces
-        case .overview, .activity, .clientSetup, .health: return .system
-        case .settings: return .settings
+        case .overview, .use: return .home
+        case .library, .lmStudio, .sources, .discover, .adopt, .prepare, .reclaim: return .models
+        case .run, .clientSetup, .monitor: return .serving
+        case .compare, .studies, .training, .terminal: return .studio
+        case .activity, .health, .settings: return .system
         }
     }
 

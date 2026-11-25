@@ -29,7 +29,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
-	start run test test-live-scan test-swift test-native-ui test-swift-live-scan render-clients render-discover render-lmstudio render-settings accept-native-gguf accept-native-mlx accept-native-training open check check-convert doctor clean clean-venv \
+	start run test test-live-scan test-swift test-native-ui test-swift-live-scan accept-native-gguf accept-native-mlx accept-native-training open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release version-bump dmg build-swift-dist build-swift-devid
 
 help:
@@ -53,10 +53,6 @@ help:
 	row "make test-native-ui" "isolated macOS VM UI tests; NATIVE_UI_BASE_VM names a prepared Tart VM"; \
 	row "make test-live-scan" "validate live model bytes against configured filesystem paths"; \
 	row "make test-swift-live-scan" "validate native app scan bytes against configured filesystem paths"; \
-	row "make render-clients" "render the Clients states into an xcresult bundle"; \
-	row "make render-discover" "render the Discover states into an xcresult bundle"; \
-	row "make render-lmstudio" "render the LM Studio states into an xcresult bundle"; \
-	row "make render-settings" "render the Settings states into an xcresult bundle"; \
 	row "make accept-native-gguf" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native GGUF-to-Run acceptance"; \
 	row "make accept-native-mlx" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in ready-MLX verification and serving acceptance"; \
 	row "make accept-native-training" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native LoRA training and evaluation acceptance"; \
@@ -214,42 +210,6 @@ test-swift-live-scan:
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		OTHER_SWIFT_FLAGS='$(OTHER_SWIFT_FLAGS) -DMLX_WORKBENCH_LIVE_SCAN' test
-
-CLIENTS_RENDER_BUNDLE ?= $(RUN_DIR)/clients-render-$(shell git rev-parse --short HEAD).xcresult
-
-render-clients:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
-		-configuration Debug -destination 'platform=macOS' \
-		-derivedDataPath $(MLX_SWIFT_DD) \
-		-only-testing:mlx-workbenchTests/ClientsRenderTests \
-		-resultBundlePath $(CLIENTS_RENDER_BUNDLE) test
-
-DISCOVER_RENDER_BUNDLE ?= $(RUN_DIR)/discover-render-$(shell git rev-parse --short HEAD).xcresult
-
-render-discover:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
-		-configuration Debug -destination 'platform=macOS' \
-		-derivedDataPath $(MLX_SWIFT_DD) \
-		-only-testing:mlx-workbenchTests/DiscoverRenderTests \
-		-resultBundlePath $(DISCOVER_RENDER_BUNDLE) test
-
-LMSTUDIO_RENDER_BUNDLE ?= $(RUN_DIR)/lmstudio-render-$(shell git rev-parse --short HEAD).xcresult
-
-render-lmstudio:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
-		-configuration Debug -destination 'platform=macOS' \
-		-derivedDataPath $(MLX_SWIFT_DD) \
-		-only-testing:mlx-workbenchTests/LMStudioRenderTests \
-		-resultBundlePath $(LMSTUDIO_RENDER_BUNDLE) test
-
-SETTINGS_RENDER_BUNDLE ?= $(RUN_DIR)/settings-render-$(shell git rev-parse --short HEAD).xcresult
-
-render-settings:
-	@TEST_RUNNER_MLX_WORKBENCH_RENDERS=1 xcodebuild -skipPackagePluginValidation -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
-		-configuration Debug -destination 'platform=macOS' \
-		-derivedDataPath $(MLX_SWIFT_DD) \
-		-only-testing:mlx-workbenchTests/SettingsRenderTests \
-		-resultBundlePath $(SETTINGS_RENDER_BUNDLE) test
 
 accept-native-gguf accept-native-mlx accept-native-training:
 	@case "$(RUNTIME_MANIFEST)" in \

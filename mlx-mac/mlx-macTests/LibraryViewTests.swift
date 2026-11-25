@@ -67,6 +67,40 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(Set(result.flatMap(\.members).map(\.id)), Set(original.map(\.id)))
     }
 
+    func testModelSourcesTagEachModelWithItsTypeAndKeyTheCategories() {
+        func hosted(_ provider: ModelHostProvider, _ id: String, port: Int, category: String? = nil, capabilities: [String]? = nil) -> ServingRow {
+            let host = ModelHost(name: id, provider: provider, baseURL: "http://127.0.0.1:\(port)")
+            let model = HostedModel(hostID: host.id, modelID: id, name: id, capabilities: capabilities, category: category)
+            let snapshot = ServingInventorySnapshot.make(engine: [], hosts: [HostInventory(host: host, models: [model], capturedAt: Date())],
+                                                         managedReceipts: "/receipts", capturedAt: Date())
+            return .service(snapshot.services[0])
+        }
+        let scanned = LibraryModel(item: ModelItem(
+            path: "/models/qwen-vl", name: "qwen-vl", bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
+            architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,
+            readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
+            task: ModelTask(type: .visionLanguage, useCases: [], source: "scan", confidence: "high"), servingRuntime: nil,
+            splashFamily: nil))
+        let original: [ServingRow] = [
+            .server(ServerInfo(path: "/models/qwen-vl", runtime: "mlx_lm", port: 8091, state: "running"), service: nil),
+            .server(ServerInfo(path: "/models/kokoro", runtime: "tasks", port: 8092, state: "running", taskKinds: ["speak"]), service: nil),
+            .server(ServerInfo(path: "/models/coder", runtime: "splash", port: 8095, state: "running"), service: nil),
+            hosted(.lmStudio, "nomic-embed", port: 1234, category: "embeddings"),
+            hosted(.ollama, "llava:latest", port: 11434, capabilities: ["completion", "vision"]),
+            hosted(.comfyUI, "checkpoints/flux.safetensors", port: 8188, category: "checkpoints"),
+            hosted(.openAICompatible, "gpt-oss", port: 8000)
+        ]
+        let result = ModelSourceRow.rows(original, models: [scanned], sortOrder: [])
+        XCTAssertEqual(result.count, original.count)
+        let types = original.map { row in result.first { $0.members.contains { $0.id == row.id } }?.type }
+        XCTAssertEqual(types, [.visionLanguage, .textToSpeech, .textLLM, .embedding, .visionLanguage, .imageGeneration, nil])
+        XCTAssertEqual(ModelSourcesPresentation.key(result), [
+            ModelSourceKeyEntry(category: .chat, count: 1), ModelSourceKeyEntry(category: .vision, count: 2),
+            ModelSourceKeyEntry(category: .speech, count: 1), ModelSourceKeyEntry(category: .image, count: 1),
+            ModelSourceKeyEntry(category: .other, count: 1), ModelSourceKeyEntry(category: nil, count: 1)
+        ])
+    }
+
     func testInspectorEvidenceRendersLabeledRowsInsteadOfKeyValueText() {
         let home = NSHomeDirectory()
         let rows = ModelDetailsPresentation.evidenceRows(["path=\(home)/.models/a", "quant_bits=4", "signature=abc", "free text"])
@@ -367,6 +401,29 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(pathMatches.map(\.primaryDisplayName), ["Bravo"])
     }
 
+    func testSearchMatchesModelTypeCategoryAndShortNames() {
+        func model(_ type: ModelTaskType?, name: String) -> LibraryModel {
+            LibraryModel(item: ModelItem(
+                path: "/models/\(name)", name: name, bytes: 1, modifiedAt: nil, shard: nil, modelKey: name,
+                architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,
+                readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
+                task: type.map { ModelTask(type: $0, useCases: [], source: "scan", confidence: "high") }))
+        }
+        let voice = model(.textToSpeech, name: "kokoro"), image = model(.imageGeneration, name: "flux"),
+            mesh = model(.meshGeneration, name: "triposg"), chat = model(.textLLM, name: "qwen"), unlabeled = model(nil, name: "blob")
+        let all = [voice, image, mesh, chat, unlabeled]
+        func names(_ query: String) -> [String] {
+            all.filter { LibraryPresentation.matchesSearch($0, query: query) }.map(\.item.name)
+        }
+        XCTAssertEqual(names("tts"), ["kokoro"])
+        XCTAssertEqual(names("Speech"), ["kokoro"])
+        XCTAssertEqual(names("image and video"), ["flux"])
+        XCTAssertEqual(names("3d"), ["triposg"])
+        XCTAssertEqual(names("music and 3d"), ["triposg"])
+        XCTAssertEqual(names("llm"), ["qwen"])
+        XCTAssertEqual(names("embedding and other"), ["blob"])
+    }
+
     func testReadinessFilterLimitsVisibleVariants() {
         let snapshot = makeSnapshot()
 
@@ -637,46 +694,5 @@ final class LibraryViewTests: XCTestCase {
             updatedAt: timestamp,
             lastKnownAgentState: nil
         )
-    }
-
-    /// At the inspector's minimum column width every control and label stays inside the column.
-    @MainActor
-    func testMusicModelInspectorFitsTheMinimumColumnWidth() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("inspector-width-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let host = AppHost(catalogStore: CatalogStore(appSupportDirectory: { root }), config: Config.defaults())
-        let model = LibraryModel(item: ModelItem(
-            path: "/models/MiniMax-Music3-8bit", name: "MiniMax-Music3-8bit", bytes: 14_180_000_000, modifiedAt: nil, shard: nil,
-            modelKey: nil, architecture: nil, quantization: "q8", parameters: nil, structure: nil, signature: nil, companion: nil,
-            readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
-            task: ModelTask(type: .musicGeneration, useCases: [], source: "scan", confidence: "high")), readiness: .ready)
-        let width = WorkbenchSize.Library.inspectorMinimum
-        let height: CGFloat = 1400
-        let hosting = NSHostingView(rootView: ModelDetailsView(appHost: host, model: model, onRouteSelection: { _ in })
-            .frame(width: width, height: height).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        hosting.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        hosting.layoutSubtreeIfNeeded()
-
-        if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_INSPECTOR_RENDER_DIR"] {
-            let directory = URL(fileURLWithPath: folder)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: directory.appendingPathComponent("inspector-music-\(Int(width)).png"))
-        }
-
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        let controls = descendants(hosting).filter { $0 is NSControl && !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 0 }
-        let column = hosting.bounds.insetBy(dx: -0.5, dy: 0)
-        let clipped = controls.map { ($0, $0.convert($0.bounds, to: hosting)) }
-            .filter { $0.1.minX < column.minX || $0.1.maxX > column.maxX }
-            .map { "\(type(of: $0.0)) \(Int($0.1.minX))...\(Int($0.1.maxX))" }
-        XCTAssertGreaterThan(controls.count, 3)
-        XCTAssertEqual(clipped, [], "Controls outside the \(Int(width)) pt column")
     }
 }

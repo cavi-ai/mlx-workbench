@@ -3,6 +3,18 @@ import XCTest
 
 final class QuickConnectSnippetsTests: XCTestCase {
 
+    // MARK: - Client setup
+
+    func testProtectedClientSetupsUseTheSharedKeyVariable() throws {
+        let server = ServerInfo(repo: "/Models/a", runtime: "mlx_lm", port: 8766, pid: 1, state: "running",
+                                logPath: nil, startedAt: nil, receipt: nil, jit: true, apiKeySHA256: String(repeating: "a", count: 64))
+        for client in ServingClient.allCases where client != .hermes {
+            let setup = try XCTUnwrap(client.setup(server: server), client.title)
+            XCTAssertTrue(setup.contains(QuickConnectSnippets.apiKeyEnvVar), client.title)
+            XCTAssertFalse(setup.contains("WORKBENCH_API_KEY"), client.title)
+        }
+    }
+
     // MARK: - Shell & Python Escaping
 
     func testShellQuoteEscapesSingleQuotesAndMetacharactersSafely() {

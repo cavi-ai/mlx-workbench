@@ -15,7 +15,7 @@ final class FleetRouterTests: XCTestCase {
     private func slot(
         port: Int,
         modelPath: String,
-        role: UseCase?,
+        role: ServingRole?,
         enabled: Bool = true,
         apiKeySHA256: String? = nil,
         id: UUID = UUID()
@@ -137,7 +137,7 @@ final class FleetRouterTests: XCTestCase {
     func testFilesystemModelWithoutUpstreamRepoIDIsExcludedFromEngineRender() {
         let id = UUID()
         let plan = FleetRouter.plan(
-            slots: [slot(port: 8766, modelPath: localPath, role: .generalChat, id: id)],
+            slots: [slot(port: 8766, modelPath: localPath, role: .general, id: id)],
             states: running(id, path: localPath, port: 8766)
         )
         XCTAssertTrue(plan.cliAssignments.isEmpty)
@@ -162,4 +162,38 @@ final class FleetRouterTests: XCTestCase {
         XCTAssertEqual(plan.skipped.first?.routeRole, .coding)
     }
 
+    func testClassifierSlotRoutesFromItsRoleWhenServerReportsNoTaskKinds() {
+        let id = UUID()
+        let plan = FleetRouter.plan(
+            slots: [slot(port: 8766, modelPath: hfPath, role: .classification, id: id)],
+            states: running(id, path: hfPath, port: 8766),
+            servers: [ServerInfo(path: hfPath, runtime: "tasks", port: 8766, pid: 41, state: "running", taskKinds: nil)]
+        )
+        XCTAssertTrue(plan.skipped.isEmpty)
+        XCTAssertEqual(plan.assignments.map(\.routeRole), [.embedding])
+        XCTAssertEqual(plan.assignments.map(\.role), [.classification])
+        XCTAssertEqual(plan.assignments.map(\.port), [8766])
+    }
+
+    func testStoppedImageAndMeshSlotsGetDistinctSkippedIDs() {
+        let plan = FleetRouter.plan(
+            slots: [slot(port: 8766, modelPath: hfPath, role: .image),
+                    slot(port: 8767, modelPath: localPath, role: .mesh)],
+            states: [:]
+        )
+        XCTAssertEqual(plan.skipped.count, 2)
+        XCTAssertEqual(Set(plan.skipped.map(\.id)).count, 2)
+    }
+
+    func testMeshSlotRoutesToMediaFromItsRole() {
+        let id = UUID()
+        let plan = FleetRouter.plan(
+            slots: [slot(port: 8767, modelPath: localPath, role: .mesh, id: id)],
+            states: running(id, path: localPath, port: 8767),
+            servers: [ServerInfo(path: localPath, runtime: "tasks", port: 8767, pid: 42, state: "running", taskKinds: ["transcribe"])]
+        )
+        XCTAssertTrue(plan.skipped.isEmpty)
+        XCTAssertEqual(plan.assignments.map(\.routeRole), [.media])
+        XCTAssertEqual(plan.assignments.map(\.port), [8767])
+    }
 }

@@ -149,7 +149,7 @@ struct ModelFamilyReviewView: View {
             editing = PurposeDraft(model: model)
         }.disabled(!purposes.hasLoadedHistory || purposes.isSaving || reclaim.isApplying)
         if candidate {
-            Button("Review removal…") { onReviewRemoval(model.item.path) }
+            Button("Remove…") { onReviewRemoval(model.item.path) }
                 .disabled(!purposes.hasLoadedHistory || purposes.isSaving || comparison.activeRunID != nil)
         }
     }

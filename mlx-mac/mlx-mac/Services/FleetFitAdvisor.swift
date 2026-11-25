@@ -254,7 +254,7 @@ enum FleetFitAdvisor {
     static func modality(
         for model: LibraryModel?,
         server: ServerInfo? = nil,
-        role: UseCase? = nil
+        role: ServingRole? = nil
     ) -> Modality {
         if let kinds = server?.taskKinds, !kinds.isEmpty {
             let lowered = Set(kinds.map { $0.lowercased() })

@@ -94,7 +94,7 @@ final class ServingUXRealUITests: XCTestCase {
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "http://127.0.0.1:19081/v1")
         let settings = application.buttons["monitor-open-settings"].firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.click()
-        let tabs = application.radioGroups["serving-workspace-tabs"].firstMatch
+        let tabs = application.descendants(matching: .any)["serving-inspector"].firstMatch
         XCTAssertTrue(tabs.waitForExistence(timeout: 15)); XCTAssertTrue(tabs.isHittable)
     }
 

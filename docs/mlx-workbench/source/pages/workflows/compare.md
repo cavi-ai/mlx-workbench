@@ -1,6 +1,6 @@
 # Compare
 
-**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. **Open Experiments** opens the separate [controlled studies](training.md#controlled-studies) workspace in the Workspaces sidebar group.
+**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. **Open Experiments** opens the separate [controlled studies](training.md#controlled-studies) workspace in the Studio sidebar group.
 
 When the selected mode has no results, setup comes first, followed by compact history and empty-state guidance. Existing results remain above setup when a run is available.
 

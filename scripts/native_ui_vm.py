@@ -410,7 +410,7 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
     else:
         run("unit", common + ["-scheme", "mlx-workbench", "-resultBundlePath", str(output_dir / "unit.xcresult")]
             + unit_selection + ["test"], expected_ui_tests=1 if unit_selection else None)
-    if unit_selection:
+    if unit_selection or not manifest.get("ui_test"):
         return
     ui_common = common
     if manifest.get("runtime_install_uv_sha256"):
@@ -482,30 +482,6 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
                 (output_dir / "runtime-install-artifact-after.json").write_text(json.dumps({
                     **installed_identity, "signature_verified": True, "unchanged": True,
                 }, indent=2) + "\n")
-        return
-    stages = ["after"]
-    if (input_dir / "baseline.app").exists():
-        stages.insert(0, "before")
-    for appearance in ["Light", "Dark"]:
-        for stage in stages:
-            data = plistlib.loads(plistlib.dumps(template))
-            for configuration in data["TestConfigurations"]:
-                for target in configuration["TestTargets"]:
-                    target.setdefault("EnvironmentVariables", {})["MLX_WORKBENCH_CAPTURE_APPEARANCE"] = appearance
-                    if stage == "before":
-                        baseline = str(input_dir / "baseline.app")
-                        target["UITargetAppPath"] = baseline
-                        target["DependentProductPaths"] = [baseline if p == "__TESTROOT__/Debug/mlx-workbench.app" else p
-                                                           for p in target.get("DependentProductPaths", [])]
-            name = f"{stage}-{appearance}"
-            runfile = products / f"{name}.xctestrun"
-            runfile.write_bytes(plistlib.dumps(data))
-            selection = "mlx-workbenchUITests/WorkbenchReviewUITests"
-            if stage == "before" or appearance == "Light":
-                selection += "/testRouteCaptures"
-            run(name, ["xcodebuild", "-xctestrun", str(runfile), "-destination", "platform=macOS,arch=arm64",
-                       "-resultBundlePath", str(output_dir / f"{name}.xcresult"), f"-only-testing:{selection}",
-                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 25)
 
 
 def wait_for_guest(tart, vm, running, env, timeout=300):

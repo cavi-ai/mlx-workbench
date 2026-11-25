@@ -189,15 +189,15 @@ final class ClientSetupSession: ObservableObject {
                 if selectedID == nil { error = "This endpoint changed or stopped. Choose a running endpoint." }
                 initialServer = nil
             } else if selectedID == nil {
-                if client == .opencode, let fleet = readFleet(), fleet.roleDefaults?.coding != nil {
-                    if let slot = fleet.defaultSlot(for: .coding) {
+                if client == .opencode, let fleet = readFleet(), fleet.slot(for: .coding) != nil {
+                    if let slot = fleet.slot(for: .coding), slot.enabled, slot.usesJIT {
                         let matches = servers.filter {
                             $0.port == slot.port && $0.jit == true && $0.apiKeySHA256 == slot.apiKeySHA256 &&
                             $0.matchesUnadaptedModel(slot.modelPath) && (slot.splashPresetName == nil || $0.runtime == "splash")
                         }
                         if matches.count == 1 { selectedID = matches[0].id; error = nil }
                     }
-                    if selectedID == nil { error = "The Coding default is unavailable. Choose a running endpoint or update Serving defaults." }
+                    if selectedID == nil { error = "The Coding endpoint is unavailable. Choose a running endpoint or assign a Coding model in Serving." }
                 } else {
                     selectedID = servers.first?.id ?? (client.supportsFrontDoor && frontDoor != nil ? Self.frontDoorID : nil)
                 }
@@ -305,7 +305,7 @@ final class ClientSetupSession: ObservableObject {
         } catch { self.error = error is CancellationError ? "Connection test stopped." : AppHost.render(error) }
     }
     private func changedFrontDoor() -> WorkflowEvidenceError {
-        .invalid("The front door changed or stopped. Refresh and review setup again.")
+        .invalid("The Workbench API changed or stopped. Refresh and review setup again.")
     }
     private func current(_ expected: ServerInfo) async throws -> [ServerInfo] {
         let latest = try await readServers()

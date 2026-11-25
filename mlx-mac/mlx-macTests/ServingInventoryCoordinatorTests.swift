@@ -58,11 +58,9 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
     }
 
     func testBackgroundPollingSlowsWhenEmptyAndResumesWhenServing() async {
-        let published = expectation(description: "four background passes")
         let live = server()
         var engineReads = 0
         var hostProbes: [Bool] = []
-        var waits: [Duration] = []
         let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts, fetchEngine: {
             engineReads += 1
             return ServingEngineSnapshot(servers: engineReads <= 2 ? [] : [live])
@@ -70,18 +68,10 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
             hostProbes.append(refresh)
             return ServingHostSnapshot()
         }, readMemory: { _ in [:] })
-        coordinator.startMonitoring(sleep: { delay in
-            waits.append(delay)
-            if waits.count == 4 {
-                published.fulfill()
-                throw CancellationError()
-            }
-        })
-        await fulfillment(of: [published], timeout: 2)
+        for _ in 0..<8 { await coordinator.refreshForTick(elapsed: .seconds(10)) }
         coordinator.stopMonitoring()
 
-        XCTAssertEqual(waits, [.seconds(30), .seconds(30), .seconds(10), .seconds(10)])
-        XCTAssertEqual(hostProbes, [true, false, true, false])
+        XCTAssertEqual(hostProbes, [true, false, false, false, false, true, false, false])
     }
 
     func testRemovedListenerDoesNotBlockRemovalAfterSuccessfulDiscovery() async throws {
@@ -118,6 +108,53 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
         XCTAssertNil(hosts.discoveredProcessIDs[inventory.host.id])
     }
 
+    func testSavedHostWithNoServerDoesNotBlockRemoval() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET),
+                                  sin_port: 0, sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, length) == 0 && getsockname(listener, $0, &length) == 0 } }
+        let port = Int(UInt16(bigEndian: address.sin_port))
+        close(listener)
+        XCTAssertTrue(bound)
+        let store = JSONStore<ModelHost>(fileURL: root.appendingPathComponent("hosts.json"))
+        let saved = ModelHost(name: "Stopped server", provider: .openAICompatible, baseURL: "http://127.0.0.1:\(port)")
+        try store.replaceAll([saved])
+        let hosts = ModelHostsCoordinator(store: store, discoverLocal: { [] }, readToken: { _ in nil })
+        let managedServer = server()
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [managedServer]) },
+            fetchHosts: { await hosts.servingSnapshot(refreshLocal: $0) }, readMemory: { _ in [:] })
+
+        let paths = try await coordinator.pathsForRemoval()
+        XCTAssertTrue(paths.contains("/models/model"))
+        XCTAssertEqual(hosts.offline, [saved.id])
+        XCTAssertNil(hosts.errors[saved.id])
+    }
+
+    func testEngineGatewayModelListErrorDoesNotBlockRemoval() throws {
+        let gateway = ModelHost(name: "Local model server · :8095", provider: .openAICompatible, baseURL: "http://127.0.0.1:8095")
+        let other = ModelHost(name: "Local model server · :9000", provider: .openAICompatible, baseURL: "http://127.0.0.1:9000")
+        let engine = ServingEngineSnapshot(servers: [server(path: "/models/served", pid: 34790, port: 8095)])
+        func hosts(_ listeners: [ModelHost]) -> ServingHostSnapshot {
+            ServingHostSnapshot(inventories: listeners.map { HostInventory(host: $0, models: [], capturedAt: capturedAt) },
+                                errors: Dictionary(uniqueKeysWithValues: listeners.map { ("host:" + $0.id.uuidString, "HTTP 401") }),
+                                processIDs: [gateway.id: 34790, other.id: 5150])
+        }
+
+        let paths = try ServingInventoryCoordinator.pathsForRemoval(
+            engine: engine, engineError: nil, hosts: hosts([gateway]), managedReceipts: managedReceipts)
+        XCTAssertTrue(paths.contains("/models/served"))
+        XCTAssertThrowsError(try ServingInventoryCoordinator.pathsForRemoval(
+            engine: engine, engineError: nil, hosts: hosts([gateway, other]), managedReceipts: managedReceipts)) { error in
+            XCTAssertTrue(error.localizedDescription.contains(":9000"))
+            XCTAssertFalse(error.localizedDescription.contains(":8095"))
+        }
+    }
+
     func testRemovalNamesUnavailableSourcesAndFailsClosed() throws {
         let host = hostInventory()
         let key = "host:" + host.host.id.uuidString
@@ -134,6 +171,21 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
         XCTAssertThrowsError(try ServingInventoryCoordinator.pathsForRemoval(
             engine: ServingEngineSnapshot(servers: [], supportsDiscovery: false),
             engineError: nil, hosts: ServingHostSnapshot(), managedReceipts: managedReceipts))
+    }
+
+    func testDoctorReportsUnavailableEngineDiscovery() async {
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [], supportsDiscovery: false) }, readMemory: { _ in [:] })
+        await coordinator.refresh(refreshHosts: true)
+        XCTAssertNotNil(coordinator.snapshot.sourceErrors["engine-ownership"])
+        XCTAssertEqual(coordinator.sourceName("engine-ownership"), "Serving engine")
+    }
+
+    func testDoctorReportsUnknownEngineModelIdentity() async {
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [self.server(path: "")]) }, readMemory: { _ in [:] })
+        await coordinator.refresh(refreshHosts: true)
+        XCTAssertNotNil(coordinator.snapshot.sourceErrors["engine-ownership"])
     }
 
     func testCancelledRefreshCannotReusePriorOwnership() async throws {

@@ -1,6 +1,12 @@
 import Darwin
 import Foundation
 
+struct EndpointServingProfileReview {
+    let slot: EndpointSlot
+    let profile: ServingProfile?
+    let hash: String
+}
+
 // MARK: - EndpointSupervisor
 //
 // Always-on Endpoint (premium spec 06), fleet-shaped internally (spec 09
@@ -64,9 +70,18 @@ final class EndpointSupervisor: ObservableObject {
     var splashPresetLookup: ((String) async throws -> SplashPreset)?
     /// Explicit MLX-LM launch for a trained-adapter endpoint. Nil in tests that do not serve adapters.
     var adapterLaunch: AdapterEndpointLaunch?
+    /// Per-model defaults that slots with `overrides != nil` follow. Nil in tests that do not use them.
+    var modelDefaultsStore: ModelDefaultsStore?
+    /// Resolves a default's serving profile id through the profile owner.
+    var profileResolver: ((UUID) -> ServingProfile?)?
+    /// Occupancy gate for stopping a slot's model; nil allows it.
+    var mayStopSlot: ((EndpointSlot) -> Bool)?
     var generateAPIKey: () throws -> String = EndpointCredentialStore.generate
     var saveAPIKey: (String) throws -> Void = EndpointCredentialStore.save
     var removeAPIKey: (String) throws -> Void = EndpointCredentialStore.remove
+    var readAPIKey: (String) throws -> String = EndpointCredentialStore.token(for:)
+    /// Restarts the running Workbench API on its new key; true when restarted or not running.
+    var restartWorkbenchAPI: ((FrontDoorSettings) async -> Bool)?
     private let lifecycle: ServeLifecycle
     private let statusProvider: @Sendable () async throws -> [ServerInfo]
     private let fleetStore: EndpointFleetStore
@@ -114,7 +129,12 @@ final class EndpointSupervisor: ObservableObject {
     private var pendingUserServeBySlot: [UUID: (modelPath: String, port: Int)] = [:]
     private var queuedUserReconcileIDs: [UUID] = []
     private var cachedFleetLoad: (fleetStamp: FleetFileStamp, legacyStamp: FleetFileStamp, load: EndpointFleetLoad)?
-    private var monitorTask: Task<Void, Never>?
+    /// A slot started within this window is waiting for its server, not restarted.
+    private static let startGrace: TimeInterval = 30
+    /// Status source for periodic reconcile passes; user-requested passes always read live status.
+    var reconcileStatus: (@Sendable () async throws -> [ServerInfo])?
+    /// Called after a user-requested pass changed serving state.
+    var servingChanged: (() -> Void)?
 
     init(
         lifecycle: ServeLifecycle,
@@ -187,11 +207,12 @@ final class EndpointSupervisor: ObservableObject {
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let old = fleet.slots.first
         var slot = old ?? EndpointSlot(enabled: false, port: port, modelPath: modelPath)
-        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
+        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil; slot.overrides = [] }
         slot.enabled = true; slot.port = port; slot.modelPath = modelPath
         slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
         if let mode = loadOnRequest ?? (old == nil ? lifecycle.jitPreview != nil : nil) { slot.loadOnRequest = mode }
         if old == nil, slot.usesJIT { slot.memoryPolicy = .automatic }
+        if old == nil { slot.overrides = [] }
         guard validate(slot, isNew: old == nil), commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: slot.id)
         slotAttemptTimestamps[slot.id] = []
@@ -227,7 +248,7 @@ final class EndpointSupervisor: ObservableObject {
 
     func disable() async {
         guard beginUserOperation() else { return }
-        defer { activeUserOperations -= 1 }
+        defer { activeUserOperations -= 1; servingChanged?() }
         guard var slot = fleet.slots.first else { return }
         slot.enabled = false
         guard commit(replacing: slot) else { return }
@@ -250,30 +271,11 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Fleet actions (spec 09; P2 UI consumes these)
 
-    @discardableResult
-    func setRoleDefault(_ role: EndpointDefaultRole, slotID: UUID?) -> Bool {
-        guard beginUserOperation() else { return false }
-        defer { activeUserOperations -= 1 }
-        if let slotID, !fleet.slots.contains(where: { $0.id == slotID && $0.enabled && $0.usesJIT }) {
-            lastError = "Choose an enabled load-on-request endpoint."
-            return false
-        }
-        if fleet.roleDefaults?[role] == slotID {
-            lastError = nil
-            return true
-        }
-        var candidate = fleet
-        var defaults = candidate.roleDefaults ?? EndpointRoleDefaults()
-        defaults[role] = slotID
-        candidate.roleDefaults = defaults.coding == nil && defaults.utility == nil ? nil : defaults
-        return commit(candidate)
-    }
-
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
     /// Returns the saved slot ID so callers can read its startup state.
     @discardableResult
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async -> UUID? {
+    func addSlot(modelPath: String, port: Int, role: ServingRole? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, requireAPIKey: Bool = false, inference: LocalInferenceOptions = .init(), profile: ServingProfile? = nil, splashPreset: SplashPreset? = nil) async -> UUID? {
         guard beginUserOperation() else { return nil }
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return nil }
@@ -286,6 +288,11 @@ final class EndpointSupervisor: ObservableObject {
                                      loadOnRequest: usesJIT, memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil)
         candidate.acceleration = inference.requested ? inference : nil
         candidate.servingProfile = profile
+        candidate.overrides = ServingSettings.changedKeys(from: .init(), to: inference)
+        if loadOnRequest != nil { candidate.overrides?.insert(.loadOnRequest) }
+        if memoryPolicy != nil { candidate.overrides?.insert(.memoryPolicy) }
+        if profile != nil { candidate.overrides?.insert(.servingProfile) }
+        if splashPreset != nil { candidate.overrides?.insert(.splashPreset) }
         if let splashPreset {
             guard profile == nil, usesJIT, let lookup = splashPresetLookup else { lastError = "Splash presets require a load-on-request endpoint."; return nil }
             do { guard try await lookup(splashPreset.name) == splashPreset else { lastError = "The preset changed. Review it again."; return nil } }
@@ -293,34 +300,24 @@ final class EndpointSupervisor: ObservableObject {
             candidate.splashPresetName = splashPreset.name
             candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy, jit: candidate.usesJIT, splashPresetName: splashPreset.name)
         }
-        var savedKey: String?
         do {
-            var token: String?
+            var draft: (digest: String, created: String?)?
             if requireAPIKey {
-                let created = try generateAPIKey()
-                token = created
-                candidate.apiKeySHA256 = EndpointCredentialStore.digest(created)
-                candidate.loadOnRequest = true
-                candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName)
+                let key = try draftWorkbenchKey()
+                draft = key
+                candidate = authenticationCandidate(candidate, digest: key.digest)
             }
-            guard validate(candidate, isNew: true) else { return nil }
+            let effective = effectiveSlot(candidate)
+            guard validate(candidate, isNew: true), validate(effective, isNew: true) else { return nil }
             if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
-                let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
+                let hash = try await accelerationPreviewHash(effective, pendingKey: try planKey(effective, pending: draft?.created))
                 guard !hash.isEmpty, fleet == before else { throw WorkflowEvidenceError.invalid("Endpoint configuration changed. Review the new endpoint again.") }
                 if inference.requested { candidate.accelerationPreviewHash = hash }
                 if profile != nil || splashPreset != nil { candidate.profilePreviewHash = hash }
             }
-            if let token {
-                try saveAPIKey(token)
-                savedKey = candidate.apiKeySHA256
-            }
-            guard validate(candidate, isNew: true), commit(replacing: candidate) else {
-                if let savedKey { try removeAPIKey(savedKey) }
-                return nil
-            }
+            guard validate(candidate, isNew: true), try commit(adding: candidate, key: draft) else { return nil }
         } catch {
-            if let savedKey { try? removeAPIKey(savedKey) }
             lastError = AppHost.render(error); return nil
         }
         await reconcile(userRequestedSlotID: candidate.id)
@@ -337,8 +334,7 @@ final class EndpointSupervisor: ObservableObject {
         loadOnRequest: Bool = false,
         requireAPIKey: Bool = false,
         memoryPolicy: EndpointMemoryPolicy? = nil,
-        reviewedHash: String? = nil,
-        reviewedKey: String? = nil
+        review: TrainedAdapterEndpointReview? = nil
     ) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
@@ -363,42 +359,56 @@ final class EndpointSupervisor: ObservableObject {
             memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil
         )
         candidate.trainingReceipt = binding.receiptPath
-        var savedKey: String?
         do {
-            var token: String?
+            var draft: (digest: String, created: String?)?
             if requireAPIKey {
-                guard reviewedHash == nil || reviewedKey != nil else {
-                    throw WorkflowEvidenceError.invalid("The reviewed adapter key is missing. Preview serving again.")
+                if let review {
+                    // The reviewed plan used this Workbench digest; a key that appeared or changed since is drift.
+                    let current = fleet.frontDoor?.apiKeySHA256
+                    guard review.keySHA256 != nil, review.workbenchToken == nil ? current == review.keySHA256 : current == nil else {
+                        throw WorkflowEvidenceError.invalid("The Workbench key changed. Review the endpoint again.")
+                    }
+                    draft = (review.keySHA256 ?? "", review.workbenchToken)
+                } else {
+                    draft = try draftWorkbenchKey()
                 }
-                let key = try reviewedKey ?? generateAPIKey()
-                token = key
-                candidate.apiKeySHA256 = EndpointCredentialStore.digest(key)
+                candidate.apiKeySHA256 = draft?.digest
             }
             guard validate(candidate, isNew: true) else { return }
-            if let reviewedHash {
+            if let review {
                 let current = try await reviewTrainedAdapter(candidate)
-                guard current.hash == reviewedHash, current.binding == binding else {
-                    throw WorkflowEvidenceError.invalid("The trained adapter plan changed. Preview serving again.")
+                guard current.hash == review.hash, current.binding == binding, review.port == port,
+                      review.requireAPIKey == requireAPIKey, review.loadOnRequest == usesJIT else {
+                    throw WorkflowEvidenceError.invalid("The trained adapter plan changed. Review the endpoint again.")
                 }
             }
-            if let token {
-                try saveAPIKey(token)
-                savedKey = candidate.apiKeySHA256
-            }
-            guard validate(candidate, isNew: true), commit(replacing: candidate) else {
-                if let savedKey { try? removeAPIKey(savedKey) }
-                return
-            }
+            guard validate(candidate, isNew: true), try commit(adding: candidate, key: draft) else { return }
         } catch {
-            if let savedKey { try? removeAPIKey(savedKey) }
             lastError = AppHost.render(error)
             return
         }
         await reconcile(userRequestedSlotID: candidate.id)
     }
 
+    /// Reviews the adapter endpoint as it will be saved, with the Workbench key digest in the plan. Nothing is saved.
+    func reviewTrainedAdapterEndpoint(binding: TrainedAdapterBinding, port: Int, loadOnRequest: Bool, requireAPIKey: Bool, memoryPolicy: EndpointMemoryPolicy? = nil) async throws -> TrainedAdapterEndpointReview {
+        guard binding.isValid, (1...65535).contains(port) else {
+            throw WorkflowEvidenceError.invalid("Historical training receipts without a pinned base identity cannot be saved as endpoints.")
+        }
+        let usesJIT = loadOnRequest || requireAPIKey
+        var candidate = EndpointSlot(enabled: true, port: port, modelPath: binding.basePath, loadOnRequest: usesJIT,
+                                     memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil)
+        candidate.trainingReceipt = binding.receiptPath
+        let draft = requireAPIKey ? try draftWorkbenchKey() : nil
+        candidate.apiKeySHA256 = draft?.digest
+        let reviewed = try await reviewTrainedAdapter(candidate)
+        guard reviewed.binding == binding else { throw WorkflowEvidenceError.invalid("The training receipt no longer matches this endpoint. Review it again.") }
+        return TrainedAdapterEndpointReview(binding: binding, port: port, hash: reviewed.hash, loadOnRequest: usesJIT,
+                                            requireAPIKey: requireAPIKey, keySHA256: draft?.digest, workbenchToken: draft?.created)
+    }
+
     /// Change a slot's model/port/role without toggling its enabled flag.
-    func updateSlot(id: UUID, modelPath: String, port: Int, role: UseCase?) async {
+    func updateSlot(id: UUID, modelPath: String, port: Int, role: ServingRole?) async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
         guard let old = fleet.slots.first(where: { $0.id == id }) else { return }
@@ -455,7 +465,7 @@ final class EndpointSupervisor: ObservableObject {
         }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         var slot = old
-        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
+        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil; slot.overrides = [] }
         slot.modelPath = modelPath; slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
         guard commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
@@ -466,15 +476,10 @@ final class EndpointSupervisor: ObservableObject {
     /// Remove a slot entirely, stopping its server first when it is ours.
     func removeSlot(id: UUID) async {
         guard beginUserOperation() else { return }
-        defer { activeUserOperations -= 1 }
+        defer { activeUserOperations -= 1; servingChanged?() }
         guard let slot = fleet.slots.first(where: { $0.id == id }) else { return }
         var candidate = fleet
         candidate.slots.removeAll { $0.id == id }
-        if var defaults = candidate.roleDefaults {
-            if defaults.coding == id { defaults.coding = nil }
-            if defaults.utility == id { defaults.utility = nil }
-            candidate.roleDefaults = defaults.coding == nil && defaults.utility == nil ? nil : defaults
-        }
         guard commit(candidate) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         if slot.enabled, !(await stopServing(slot)) { syncShim(); return }
@@ -692,7 +697,8 @@ final class EndpointSupervisor: ObservableObject {
             }
             var candidate = fleet
             candidate.slots[index].loadOnRequest = enabled
-            if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic }
+            candidate.slots[index].overrides?.insert(.loadOnRequest)
+            if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic; candidate.slots[index].overrides?.insert(.memoryPolicy) }
             if !enabled && candidate.slots[index].isTrainedAdapter { candidate.slots[index].memoryPolicy = nil }
             guard validate(candidate.slots[index], isNew: false), commit(candidate) else { return }
             if let current, (current.jit == true) != enabled {
@@ -711,6 +717,52 @@ final class EndpointSupervisor: ObservableObject {
         }
     }
 
+    func previewSlotProfile(slot: EndpointSlot, profile: ServingProfile?) async throws -> EndpointServingProfileReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        let candidate = try slotProfileCandidate(slot, profile: profile)
+        try await requireStoppedForAuthentication(slot)
+        let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
+        guard !hash.isEmpty, fleet.slots.contains(slot) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the profile again.")
+        }
+        try await requireStoppedForAuthentication(slot)
+        return EndpointServingProfileReview(slot: slot, profile: profile, hash: hash)
+    }
+
+    private func slotProfileCandidate(_ slot: EndpointSlot, profile: ServingProfile?) throws -> EndpointSlot {
+        guard fleet.slots.contains(slot), effectiveSlot(slot).splashPresetName == nil,
+              profile.map({ $0.hasPassedVerification && $0.modelPath == slot.modelPath }) ?? true else {
+            throw WorkflowEvidenceError.invalid("Endpoint or verified profile changed. Review it again.")
+        }
+        var candidate = slot
+        candidate.servingProfile = profile
+        candidate.overrides?.insert(.servingProfile)
+        candidate.profilePreviewHash = nil
+        candidate.accelerationPreviewHash = nil
+        return candidate
+    }
+
+    func confirmSlotProfile(_ review: EndpointServingProfileReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        do {
+            let candidate = try slotProfileCandidate(review.slot, profile: review.profile)
+            try await requireStoppedForAuthentication(review.slot)
+            let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
+            guard hash == review.hash, fleet.slots.contains(review.slot) else {
+                throw WorkflowEvidenceError.invalid("Launch plan changed. Review the profile again.")
+            }
+            try await requireStoppedForAuthentication(review.slot)
+            guard fleet.slots.contains(review.slot) else {
+                throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the profile again.")
+            }
+            guard let stamped = stampedCandidate(candidate, hash: hash), commit(replacing: stamped) else { return false }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
+    }
+
     /// Inference setting changes never stop a running endpoint. Disable it first,
     /// review a launch preview, then save the same source-bound configuration.
     func previewSlotInference(id: UUID, options: LocalInferenceOptions) async throws -> EndpointInferencePreview {
@@ -722,11 +774,243 @@ final class EndpointSupervisor: ObservableObject {
         try await requireStoppedForInference(slot)
         var candidate = slot
         candidate.acceleration = options.requested ? options : nil
-        let hash = try await accelerationPreviewHash(candidate)
+        if let current = slot.overrides {
+            candidate.overrides = current.union(ServingSettings.changedKeys(from: effectiveSlot(slot).inferenceOptions, to: options))
+        }
+        let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
         guard !hash.isEmpty, fleet.slots.contains(slot) else {
             throw WorkflowEvidenceError.invalid("Endpoint settings changed. Preview inference settings again.")
         }
-        return EndpointInferencePreview(slot: slot, options: options, hash: hash)
+        return EndpointInferencePreview(slot: slot, options: options, hash: hash, overrides: candidate.overrides)
+    }
+
+    // MARK: - Model defaults
+
+    /// Looks up a model's saved defaults; nil without a store.
+    func modelDefaults(for modelPath: String) -> ModelServingDefaults? { modelDefaultsStore?.defaults(for: modelPath) }
+
+    /// The slot with model defaults applied; a slot with `overrides == nil` is returned unchanged.
+    func effectiveSlot(_ slot: EndpointSlot) -> EndpointSlot {
+        effectiveSlot(slot, defaults: modelDefaults(for: slot.modelPath))
+    }
+
+    /// The one merge site: the slot resolved against the given defaults and the profile owner.
+    func effectiveSlot(_ slot: EndpointSlot, defaults: ModelServingDefaults?) -> EndpointSlot {
+        guard slot.overrides != nil else { return slot }
+        let profile = defaults?.servingProfileID.flatMap { id in profileResolver?(id) ?? (slot.servingProfile?.id == id ? slot.servingProfile : nil) }
+        return ServingSettings.effective(slot: slot, defaults: defaults, profile: profile)
+    }
+
+    /// Lists slots that follow the model's defaults. `restarting` are running ones whose launch plan changes, each with
+    /// its post-change plan hash. Refused when the resulting fleet is not legal.
+    func previewModelDefaultsChange(modelPath: String, to defaults: ModelServingDefaults?) async throws -> ModelDefaultsChangePreview {
+        let following = fleet.slots.filter { $0.overrides != nil && HFRepoID.matches($0.modelPath, modelPath) }
+        var resolved = fleet
+        for index in resolved.slots.indices where following.contains(where: { $0.id == resolved.slots[index].id }) {
+            resolved.slots[index] = effectiveSlot(resolved.slots[index], defaults: defaults)
+        }
+        try resolved.validated()
+        var restarting: [EndpointSlot] = []
+        var plans: [UUID: String] = [:]
+        for slot in following {
+            let before = effectiveSlot(slot), after = effectiveSlot(slot, defaults: defaults)
+            guard Self.launchSettingsDiffer(before, after) else { continue }
+            let running: Bool
+            if slot.enabled, case .some(.running) = slotStates[slot.id] { running = true }
+            else { running = false }
+            guard running || before.splashPresetName != nil || after.splashPresetName != nil else { continue }
+            let hash = try await accelerationPreviewHash(after)
+            guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+            plans[slot.id] = hash
+            if running { restarting.append(slot) }
+        }
+        return ModelDefaultsChangePreview(modelPath: modelPath, defaults: defaults, following: following, restarting: restarting, plans: plans)
+    }
+
+    private static func launchSettingsDiffer(_ before: EndpointSlot, _ after: EndpointSlot) -> Bool {
+        before.inferenceOptions != after.inferenceOptions || before.memoryPolicy != after.memoryPolicy
+            || before.loadOnRequest != after.loadOnRequest || before.splashPresetName != after.splashPresetName
+            || before.servingProfile?.id != after.servingProfile?.id
+    }
+
+    /// Named settings profiles saved for a model.
+    func settingsProfiles(for modelPath: String) -> [ServingSettingsProfile] { modelDefaultsStore?.profiles(for: modelPath) ?? [] }
+
+    /// Saves the endpoint's effective settings under a name. Nothing is restarted.
+    @discardableResult
+    func saveSettingsProfile(name: String, fromSlot id: UUID) throws -> ServingSettingsProfile {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        guard let slot = fleet.slots.first(where: { $0.id == id }) else { throw WorkflowEvidenceError.invalid("Endpoint no longer exists.") }
+        let profile = ServingSettingsProfile(name: name, settings: ServingSettings.defaults(from: effectiveSlot(slot)))
+        try modelDefaultsStore.saveProfile(profile, for: slot.modelPath)
+        return profile
+    }
+
+    func renameSettingsProfile(_ profile: ServingSettingsProfile, to name: String, modelPath: String) throws {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        var renamed = profile
+        renamed.name = name
+        try modelDefaultsStore.saveProfile(renamed, for: modelPath)
+    }
+
+    func removeSettingsProfile(id: UUID, modelPath: String) throws {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        try modelDefaultsStore.removeProfile(id: id, for: modelPath)
+    }
+
+    /// Previews writing a profile's values into one endpoint, listing it when a running server must restart. The change goes
+    /// through `confirmModelDefaultsChange`.
+    func previewApplyingProfile(slotID: UUID, profile: ServingSettingsProfile) async throws -> ModelDefaultsChangePreview {
+        guard let slot = fleet.slots.first(where: { $0.id == slotID }) else { throw WorkflowEvidenceError.invalid("Endpoint no longer exists.") }
+        func resolve(_ id: UUID?) -> ServingProfile? {
+            id.flatMap { id in profileResolver?(id) ?? (slot.servingProfile?.id == id ? slot.servingProfile : nil) }
+        }
+        let defaults = modelDefaults(for: slot.modelPath)
+        var servingProfile: ServingProfile?
+        if let id = profile.settings.servingProfileID {
+            servingProfile = resolve(id)
+            guard servingProfile?.modelPath == slot.modelPath else {
+                throw WorkflowEvidenceError.invalid("The serving profile saved in this profile is unavailable for this model.")
+            }
+        }
+        let candidate = ServingSettings.applying(profile.settings, to: slot, servingProfile: servingProfile,
+                                                 modelDefaults: defaults, defaultsServingProfile: resolve(defaults?.servingProfileID))
+        if let message = candidate.inferenceOptions.validationError { throw WorkflowEvidenceError.invalid(message) }
+        var resolved = fleet
+        if let index = resolved.slots.firstIndex(where: { $0.id == slotID }) { resolved.slots[index] = effectiveSlot(candidate) }
+        try resolved.validated()
+        let after = effectiveSlot(candidate)
+        let hash = try await accelerationPreviewHash(after)
+        guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        var restarting: [EndpointSlot] = []
+        if slot.enabled, case .some(.running) = slotStates[slot.id], Self.launchSettingsDiffer(effectiveSlot(slot), after) {
+            restarting.append(slot)
+        }
+        return ModelDefaultsChangePreview(modelPath: slot.modelPath, defaults: nil, following: [slot], restarting: restarting,
+                                          plans: [slot.id: hash], appliedSlot: candidate, appliedProfile: profile)
+    }
+
+    /// Rechecks the preview, stops the listed running endpoints through the occupancy and idle checks, saves the defaults (or the
+    /// profile-applied endpoint), then restarts them. Fails, naming the endpoint, when one does not come back.
+    func confirmModelDefaultsChange(_ preview: ModelDefaultsChangePreview) async -> Bool {
+        guard beginUserOperation() else { lastError = "Wait for the endpoint operation to finish."; return false }
+        defer { activeUserOperations -= 1 }
+        let applying = preview.appliedSlot != nil
+        do {
+            let current: ModelDefaultsChangePreview
+            if let applied = preview.appliedSlot, let profile = preview.appliedProfile {
+                current = try await previewApplyingProfile(slotID: applied.id, profile: profile)
+            } else {
+                current = try await previewModelDefaultsChange(modelPath: preview.modelPath, to: preview.defaults)
+            }
+            guard current == preview else {
+                throw WorkflowEvidenceError.invalid(applying
+                    ? "The endpoint or its launch plan changed. Review the profile again."
+                    : "Endpoints or launch plans changed. Review the model defaults again.")
+            }
+            do {
+                try await stopIdleRunning(preview.restarting, purpose: applying ? "applying a profile" : "changing its model defaults")
+                if let applied = preview.appliedSlot {
+                    guard let hash = preview.plans[applied.id],
+                          let stamped = stampedCandidate(applied, hash: hash),
+                          commit(replacing: stamped) else {
+                        throw WorkflowEvidenceError.invalid(lastError ?? "Endpoint settings could not be saved.")
+                    }
+                } else {
+                    try saveReviewedModelDefaults(preview)
+                }
+            } catch {
+                await restartSavedSlots(preview.restarting)
+                throw error
+            }
+            var failed: [Int] = []
+            for slot in preview.restarting {
+                pendingUserServeBySlot.removeValue(forKey: slot.id)
+                slotAttemptTimestamps[slot.id] = []
+                await reconcile(userRequestedSlotID: slot.id)
+                let live = (try? await statusProvider()) ?? []
+                if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }) { failed.append(slot.port) }
+            }
+            guard failed.isEmpty else {
+                throw WorkflowEvidenceError.invalid((applying ? "Profile applied, but did not restart: " : "Defaults saved, but did not restart: ") + failed.map { ":\($0)" }.joined(separator: ", "))
+            }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
+    }
+
+    private func saveReviewedModelDefaults(_ preview: ModelDefaultsChangePreview) throws {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        let previousDefaults = modelDefaultsStore.defaults(for: preview.modelPath)
+        var next = fleet
+        for index in next.slots.indices {
+            let slot = next.slots[index]
+            guard let hash = preview.plans[slot.id] else { continue }
+            let before = effectiveSlot(slot, defaults: previousDefaults)
+            let after = effectiveSlot(slot, defaults: preview.defaults)
+            guard before.splashPresetName != nil || after.splashPresetName != nil else { continue }
+            next.slots[index].profilePreviewHash = after.splashPresetName != nil || after.servingProfile != nil ? hash : nil
+        }
+        try modelDefaultsStore.save(preview.defaults, for: preview.modelPath)
+        if next != fleet, !commit(next) {
+            let message = lastError ?? "Reviewed launch settings could not be saved."
+            do { try modelDefaultsStore.save(previousDefaults, for: preview.modelPath) }
+            catch {
+                throw WorkflowEvidenceError.invalid("\(message) The previous model defaults could not be restored. \(AppHost.render(error))")
+            }
+            throw WorkflowEvidenceError.invalid(message)
+        }
+    }
+
+    /// Stops the running servers of `slots` through the occupancy and idle checks, then confirms none is still running.
+    /// Refuses before stopping anything when one is claimed, busy or not running.
+    private func stopIdleRunning(_ slots: [EndpointSlot], purpose: String) async throws {
+        guard !slots.isEmpty else { return }
+        guard let stop = lifecycle.stopObservedIfIdle else {
+            throw WorkflowEvidenceError.invalid("Idle-checked stop is unavailable in this runtime. No endpoint was changed.")
+        }
+        let live = try await statusProvider()
+        var generations: [ServerInfo] = []
+        for slot in slots {
+            if let mayStopSlot, !mayStopSlot(slot) {
+                throw WorkflowEvidenceError.invalid("Finish the operation using :\(slot.port) before \(purpose).")
+            }
+            guard let server = live.first(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }),
+                  (server.activeRequests ?? 0) == 0 else {
+                throw WorkflowEvidenceError.invalid("Endpoint :\(slot.port) is not running or has active requests. Review again.")
+            }
+            generations.append(server)
+        }
+        for server in generations { try await stop(server) }
+        let after = try await statusProvider()
+        if let port = generations.compactMap(\.port).first(where: { port in after.contains { $0.port == port && $0.state?.lowercased() == "running" } }) {
+            throw WorkflowEvidenceError.invalid("Endpoint :\(port) is still running. Nothing was saved.")
+        }
+    }
+
+    /// Saves the slot's current values as its model's defaults, previewed like any other defaults change.
+    func previewSavingAsModelDefault(id: UUID) async throws -> ModelDefaultsChangePreview {
+        guard let slot = fleet.slots.first(where: { $0.id == id }) else { throw WorkflowEvidenceError.invalid("Endpoint no longer exists.") }
+        return try await previewModelDefaultsChange(modelPath: slot.modelPath, to: ServingSettings.defaults(from: effectiveSlot(slot)))
+    }
+
+    /// Previews returning fields to the model's defaults; `confirmSlotInference` saves it. The endpoint must be stopped.
+    func previewResettingOverrides(id: UUID, keys: Set<ServingSettingKey>) async throws -> EndpointInferencePreview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard let slot = fleet.slots.first(where: { $0.id == id }), let current = slot.overrides else {
+            throw WorkflowEvidenceError.invalid("Endpoint no longer exists.")
+        }
+        try await requireStoppedForInference(slot)
+        var candidate = slot
+        candidate.overrides = current.subtracting(keys)
+        let resolved = effectiveSlot(candidate)
+        candidate.acceleration = resolved.acceleration
+        let hash = try await accelerationPreviewHash(resolved)
+        guard !hash.isEmpty, fleet.slots.contains(slot) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Preview again.")
+        }
+        return EndpointInferencePreview(slot: slot, options: resolved.inferenceOptions, hash: hash, overrides: candidate.overrides)
     }
 
     func confirmSlotInference(_ preview: EndpointInferencePreview) async -> Bool {
@@ -739,8 +1023,9 @@ final class EndpointSupervisor: ObservableObject {
             try await requireStoppedForInference(preview.slot)
             var candidate = preview.slot
             candidate.acceleration = preview.options.requested ? preview.options : nil
+            candidate.overrides = preview.overrides
             candidate.accelerationPreviewHash = nil
-            let hash = try await accelerationPreviewHash(candidate)
+            let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
             guard hash == preview.hash, fleet.slots.contains(preview.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Preview inference settings again.")
             }
@@ -855,6 +1140,7 @@ final class EndpointSupervisor: ObservableObject {
             var candidate = review.slot
             candidate.splashPresetName = review.preset.name
             candidate.memoryPolicy = nil
+            candidate.overrides?.formUnion([.splashPreset, .memoryPolicy])
             candidate.profilePreviewHash = review.previewHash
             guard commit(replacing: candidate) else { return false }
             saved = true
@@ -887,73 +1173,239 @@ final class EndpointSupervisor: ObservableObject {
     func configureFrontDoor(port: Int) async -> Bool {
         guard beginUserOperation() else { return false }
         defer { activeUserOperations -= 1 }
-        var candidate = fleet
-        var created: String?
         do {
             if let existing = fleet.frontDoor {
+                var candidate = fleet
                 candidate.frontDoor = FrontDoorSettings(port: port, apiKeySHA256: existing.apiKeySHA256)
+                try candidate.validated()
+                guard commit(candidate) else { return false }
             } else {
-                let token = try generateAPIKey()
-                created = token
-                candidate.frontDoor = FrontDoorSettings(port: port, apiKeySHA256: EndpointCredentialStore.digest(token))
+                try ensureWorkbenchKey(port: port)
             }
-            try candidate.validated()
-            if let created { try saveAPIKey(created) }
         } catch { lastError = AppHost.render(error); return false }
+        return true
+    }
+
+    /// The Workbench key digest: the Workbench API's shared key, created once with its default port.
+    @discardableResult
+    func ensureWorkbenchKey(port: Int = ServingRole.workbenchAPIDefaultPort) throws -> String {
+        let draft = try draftWorkbenchKey()
+        guard let created = draft.created else { return draft.digest }
+        var next = fleet
+        next.frontDoor = FrontDoorSettings(port: port, apiKeySHA256: draft.digest)
+        try next.validated()
+        guard try commit(next, savingKey: created) else {
+            throw WorkflowEvidenceError.invalid(lastError ?? "The Workbench key could not be saved.")
+        }
+        return draft.digest
+    }
+
+    /// The Workbench key for a change under review. Nothing is saved: `created` is a new in-memory key
+    /// when none exists yet, and is saved with the change that confirms it.
+    private func draftWorkbenchKey() throws -> (digest: String, created: String?) {
+        if let existing = fleet.frontDoor { return (existing.apiKeySHA256, nil) }
+        let token = try generateAPIKey()
+        return (EndpointCredentialStore.digest(token), token)
+    }
+
+    /// The key the launch plan needs: the pending key, or the saved one when the plan carries it (shared prefix cache).
+    private func planKey(_ slot: EndpointSlot, pending: String?) throws -> String? {
+        if let pending { return pending }
+        guard slot.inferenceOptions.sharedPrefixCacheRequested, let digest = slot.apiKeySHA256 else { return nil }
+        return try readAPIKey(digest)
+    }
+
+    /// Saves a key made by `draftWorkbenchKey` before committing, and removes it again if the commit fails.
+    private func commit(_ candidate: EndpointFleetConfig, savingKey token: String?) throws -> Bool {
+        if let token { try saveAPIKey(token) }
         guard commit(candidate) else {
-            if let created { try? removeAPIKey(EndpointCredentialStore.digest(created)) }
+            if let token { try? removeAPIKey(EndpointCredentialStore.digest(token)) }
             return false
         }
         return true
+    }
+
+    /// Commits a slot, and the Workbench API settings when its key was drafted in memory.
+    private func commit(adding candidate: EndpointSlot, key draft: (digest: String, created: String?)?) throws -> Bool {
+        var next = fleet
+        if let index = next.slots.firstIndex(where: { $0.id == candidate.id }) { next.slots[index] = candidate }
+        else { next.slots.append(candidate) }
+        if let created = draft?.created {
+            next.frontDoor = FrontDoorSettings(port: ServingRole.workbenchAPIDefaultPort, apiKeySHA256: EndpointCredentialStore.digest(created))
+            try next.validated()
+        }
+        return try commit(next, savingKey: draft?.created)
+    }
+
+    /// Slots that keep their own key digest instead of the Workbench key.
+    var slotsWithOwnKey: [EndpointSlot] {
+        fleet.slots.filter { $0.apiKeySHA256 != nil && $0.apiKeySHA256 != fleet.frontDoor?.apiKeySHA256 }
+    }
+
+    /// Slots protected by the Workbench key, in restart order (ascending port).
+    var protectedSlots: [EndpointSlot] {
+        guard let digest = fleet.frontDoor?.apiKeySHA256 else { return [] }
+        return fleet.slots.filter { $0.apiKeySHA256 == digest }.sorted { $0.port < $1.port }
     }
 
     private func keyInUse(_ digest: String) -> Bool {
         fleet.frontDoor?.apiKeySHA256 == digest || fleet.slots.contains { $0.apiKeySHA256 == digest }
     }
 
-    /// `frontDoorKey` uses the front door's shared key instead of creating one for this endpoint.
-    func previewAuthentication(slot: EndpointSlot, required: Bool, frontDoorKey: Bool = false) async throws -> EndpointAuthenticationReview {
+    /// The slot as saved with `digest`; a protected endpoint loads on request with its memory policy retained.
+    private func authenticationCandidate(_ slot: EndpointSlot, digest: String?) -> EndpointSlot {
+        var candidate = slot
+        candidate.apiKeySHA256 = digest
+        if digest != nil {
+            let splash = effectiveSlot(slot).splashPresetName
+            candidate.loadOnRequest = true
+            candidate.overrides?.insert(.loadOnRequest)
+            candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: splash)
+            if splash != nil { candidate.overrides?.insert(.memoryPolicy) }
+        }
+        return candidate
+    }
+
+    private func authenticationPreviewHash(_ candidate: EndpointSlot, pendingKey: String? = nil) async throws -> String {
+        let effective = effectiveSlot(candidate)
+        return try await accelerationPreviewHash(effective, pendingKey: try planKey(effective, pending: pendingKey))
+    }
+
+    /// Lists the endpoints a batch protect restarts; nothing is saved.
+    func previewProtectEndpoints(_ slots: [EndpointSlot]) async throws -> WorkbenchKeyProtectReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard let door = fleet.frontDoor else { throw WorkflowEvidenceError.invalid("Create the Workbench key first.") }
+        guard !slots.isEmpty, slots.allSatisfy({ fleet.slots.contains($0) && $0.apiKeySHA256 != door.apiKeySHA256 }) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.")
+        }
+        let live = try await statusProvider()
+        var entries: [WorkbenchKeyProtectReview.Endpoint] = []
+        for slot in slots.sorted(by: { $0.port < $1.port }) {
+            let candidate = authenticationCandidate(slot, digest: door.apiKeySHA256)
+            let hash = try await authenticationPreviewHash(candidate)
+            guard !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.") }
+            let running = live.contains { $0.port == slot.port && $0.state?.lowercased() == "running" }
+            entries.append(.init(slot: slot, previewHash: hash, restarts: running))
+        }
+        guard fleet.frontDoor == door, entries.allSatisfy({ fleet.slots.contains($0.slot) }) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.")
+        }
+        return WorkbenchKeyProtectReview(workbenchDigest: door.apiKeySHA256, endpoints: entries)
+    }
+
+    /// Puts every reviewed endpoint on the Workbench key. Running ones stop through the idle gate and restart
+    /// by ascending port; on any refusal nothing is saved. Previous own keys leave Keychain once unused.
+    func confirmProtectEndpoints(_ review: WorkbenchKeyProtectReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        var next = fleet
+        do {
+            guard let door = fleet.frontDoor, door.apiKeySHA256 == review.workbenchDigest,
+                  review.endpoints.allSatisfy({ fleet.slots.contains($0.slot) }) else {
+                throw WorkflowEvidenceError.invalid("The Workbench key or its endpoints changed. Review protection again.")
+            }
+            for entry in review.endpoints {
+                let candidate = authenticationCandidate(entry.slot, digest: review.workbenchDigest)
+                let hash = try await authenticationPreviewHash(candidate)
+                guard hash == entry.previewHash else { throw WorkflowEvidenceError.invalid("Launch plan changed. Review protection again.") }
+                guard let stamped = stampedCandidate(candidate, hash: hash) else { return false }
+                guard let index = next.slots.firstIndex(where: { $0.id == entry.slot.id }) else {
+                    throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review protection again.")
+                }
+                next.slots[index] = stamped
+            }
+            guard fleet.frontDoor == door, review.endpoints.allSatisfy({ fleet.slots.contains($0.slot) }) else {
+                throw WorkflowEvidenceError.invalid("The Workbench key or its endpoints changed. Review protection again.")
+            }
+            try next.validated()
+        } catch { lastError = AppHost.render(error); return false }
+        guard let failed = await stopCommitRestart(next, slots: review.endpoints.map(\.slot), savingKey: nil,
+                                                    digest: review.workbenchDigest, purpose: "protecting endpoints") else { return false }
+        guard failed.isEmpty else {
+            lastError = "Endpoints were protected, but port \(failed.map(String.init).joined(separator: ", ")) did not restart. Previous keys stay in Keychain."
+            return false
+        }
+        for old in Set(review.endpoints.compactMap(\.slot.apiKeySHA256)) where !keyInUse(old) {
+            do { try removeAPIKey(old) }
+            catch {
+                lastError = "Endpoints were protected, but a previous unused key could not be removed from Keychain."
+                return true
+            }
+        }
+        lastError = nil
+        return true
+    }
+
+    /// Stops the idle running servers of `slots`, saves `next`, then restarts them by ascending port and reads back
+    /// that each runs on `digest`. Returns the ports that did not; nil (with `lastError`) when nothing was saved.
+    private func stopCommitRestart(_ next: EndpointFleetConfig, slots: [EndpointSlot], savingKey token: String?,
+                                   digest: String, purpose: String) async -> [Int]? {
+        var running: [EndpointSlot] = []
+        do {
+            let live = try await statusProvider()
+            running = slots.sorted { $0.port < $1.port }.filter { slot in live.contains { $0.port == slot.port && $0.state?.lowercased() == "running" } }
+            try await stopIdleRunning(running, purpose: purpose)
+        } catch {
+            // Endpoints already stopped come back on their current key; nothing was saved.
+            await restartSavedSlots(running)
+            lastError = AppHost.render(error)
+            return nil
+        }
+        do { guard try commit(next, savingKey: token) else { await restartSavedSlots(running); return nil } }
+        catch { await restartSavedSlots(running); lastError = AppHost.render(error); return nil }
+        var failed: [Int] = []
+        for slot in running where fleet.slots.contains(where: { $0.id == slot.id && $0.enabled }) {
+            await restartSavedSlots([slot])
+            let live = (try? await statusProvider()) ?? []
+            if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" && $0.apiKeySHA256 == digest }) {
+                failed.append(slot.port)
+            }
+        }
+        return failed
+    }
+
+    /// Protecting an endpoint uses the Workbench key digest; no per-endpoint key is created.
+    func previewAuthentication(slot: EndpointSlot, required: Bool) async throws -> EndpointAuthenticationReview {
         guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
         defer { activeUserOperations -= 1 }
         try await requireStoppedForAuthentication(slot)
-        guard !frontDoorKey || (required && fleet.frontDoor != nil) else {
-            throw WorkflowEvidenceError.invalid("Set up the front door in Settings before using its key.")
+        var digest: String?
+        if required {
+            guard let door = fleet.frontDoor else { throw WorkflowEvidenceError.invalid("Create the Workbench key first.") }
+            digest = door.apiKeySHA256
         }
-        let token = required && !frontDoorKey ? try generateAPIKey() : nil
-        var candidate = slot
-        candidate.apiKeySHA256 = frontDoorKey ? fleet.frontDoor?.apiKeySHA256 : token.map(EndpointCredentialStore.digest)
-        if required { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-        let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
+        let candidate = authenticationCandidate(slot, digest: digest)
+        let hash = try await authenticationPreviewHash(candidate)
         guard fleet.slots.contains(slot), !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review authentication again.") }
-        return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, token: token, previewHash: hash)
+        return EndpointAuthenticationReview(slot: slot, keySHA256: candidate.apiKeySHA256, previewHash: hash)
+    }
+
+    /// The candidate carrying its reviewed plan hash, or nil (with `lastError`) when it does not validate.
+    private func stampedCandidate(_ candidate: EndpointSlot, hash: String) -> EndpointSlot? {
+        var stamped = candidate
+        let effective = effectiveSlot(candidate)
+        stamped.accelerationPreviewHash = effective.inferenceOptions.requested ? hash : nil
+        stamped.profilePreviewHash = effective.splashPresetName != nil || effective.servingProfile != nil ? hash : nil
+        return validate(stamped, isNew: false) && validate(effective, isNew: false) ? stamped : nil
     }
 
     func confirmAuthentication(_ review: EndpointAuthenticationReview) async -> Bool {
         guard beginUserOperation() else { return false }
         defer { activeUserOperations -= 1 }
-        var savedKey: String?
         do {
             try await requireStoppedForAuthentication(review.slot)
-            var candidate = review.slot
-            candidate.apiKeySHA256 = review.keySHA256
-            if review.keySHA256 != nil { candidate.loadOnRequest = true; candidate.memoryPolicy = ServeLaunch.retainedMemoryPolicy(candidate.memoryPolicy ?? .automatic, jit: true, splashPresetName: candidate.splashPresetName) }
-            let hash = try await accelerationPreviewHash(candidate, pendingKey: review.token)
+            let candidate = authenticationCandidate(review.slot, digest: review.keySHA256)
+            let hash = try await authenticationPreviewHash(candidate)
             guard hash == review.previewHash, fleet.slots.contains(review.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Review authentication again.")
             }
             try await requireStoppedForAuthentication(review.slot)
-            if let token = review.token {
-                guard EndpointCredentialStore.digest(token) == review.keySHA256 else { throw WorkflowEvidenceError.invalid("The API key review changed.") }
-                try saveAPIKey(token); savedKey = review.keySHA256
-            } else if let shared = review.keySHA256, fleet.frontDoor?.apiKeySHA256 != shared {
-                throw WorkflowEvidenceError.invalid("The front door key changed. Review authentication again.")
+            if let shared = review.keySHA256, fleet.frontDoor?.apiKeySHA256 != shared {
+                throw WorkflowEvidenceError.invalid("The Workbench API key changed. Review authentication again.")
             }
-            if candidate.inferenceOptions.requested { candidate.accelerationPreviewHash = hash }
-            candidate.profilePreviewHash = candidate.splashPresetName == nil ? nil : hash
-            guard validate(candidate, isNew: false), commit(replacing: candidate) else {
-                if let savedKey { try removeAPIKey(savedKey) }
-                return false
-            }
+            guard let stamped = stampedCandidate(candidate, hash: hash),
+                  try commit(adding: stamped, key: nil) else { return false }
             if let old = review.slot.apiKeySHA256, !keyInUse(old) {
                 do { try removeAPIKey(old) }
                 catch {
@@ -964,6 +1416,88 @@ final class EndpointSupervisor: ObservableObject {
             lastError = nil
             return true
         } catch { lastError = AppHost.render(error); return false }
+    }
+
+    /// Lists every endpoint on the Workbench key, then the Workbench API, in the order a reset restarts them.
+    func resetWorkbenchKeyPreview() async throws -> WorkbenchKeyResetReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard let door = fleet.frontDoor else { throw WorkflowEvidenceError.invalid("No Workbench key exists yet.") }
+        let token = try generateAPIKey()
+        let digest = EndpointCredentialStore.digest(token)
+        var entries: [WorkbenchKeyResetReview.Endpoint] = []
+        for slot in protectedSlots {
+            var candidate = slot
+            candidate.apiKeySHA256 = digest
+            let hash = try await authenticationPreviewHash(candidate, pendingKey: token)
+            guard !hash.isEmpty else { throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the key reset again.") }
+            entries.append(.init(slot: slot, previewHash: hash))
+        }
+        guard fleet.frontDoor == door, protectedSlots == entries.map(\.slot) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the key reset again.")
+        }
+        return WorkbenchKeyResetReview(oldDigest: door.apiKeySHA256, newDigest: digest, token: token, workbenchAPIPort: door.port, endpoints: entries)
+    }
+
+    /// Saves the new key, restarts endpoints by ascending port, then the Workbench API. The old key leaves
+    /// Keychain only after every restart succeeded; otherwise it stays and the failed ports are reported.
+    func confirmWorkbenchKeyReset(_ review: WorkbenchKeyResetReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        guard EndpointCredentialStore.digest(review.token) == review.newDigest,
+              let door = fleet.frontDoor, door.apiKeySHA256 == review.oldDigest,
+              protectedSlots == review.endpoints.map(\.slot) else {
+            lastError = "The Workbench key or its endpoints changed. Review the key reset again."
+            return false
+        }
+        var next = fleet
+        do {
+            for entry in review.endpoints {
+                var candidate = entry.slot
+                candidate.apiKeySHA256 = review.newDigest
+                guard try await authenticationPreviewHash(candidate, pendingKey: review.token) == entry.previewHash else {
+                    throw WorkflowEvidenceError.invalid("Launch plan changed. Review the key reset again.")
+                }
+            }
+            guard fleet.frontDoor == door, protectedSlots == review.endpoints.map(\.slot) else {
+                throw WorkflowEvidenceError.invalid("The Workbench key or its endpoints changed. Review the key reset again.")
+            }
+            next.frontDoor = FrontDoorSettings(port: door.port, apiKeySHA256: review.newDigest)
+            for entry in review.endpoints {
+                guard let index = next.slots.firstIndex(where: { $0.id == entry.slot.id }) else { continue }
+                next.slots[index].apiKeySHA256 = review.newDigest
+                if next.slots[index].accelerationPreviewHash != nil { next.slots[index].accelerationPreviewHash = entry.previewHash }
+                if next.slots[index].profilePreviewHash != nil { next.slots[index].profilePreviewHash = entry.previewHash }
+            }
+            try next.validated()
+        } catch { lastError = AppHost.render(error); return false }
+        guard var failed = await stopCommitRestart(next, slots: review.endpoints.map(\.slot), savingKey: review.token,
+                                                    digest: review.newDigest, purpose: "resetting the Workbench key") else { return false }
+        if let restart = restartWorkbenchAPI, !(await restart(FrontDoorSettings(port: door.port, apiKeySHA256: review.newDigest))) {
+            failed.append(door.port)
+        }
+        guard failed.isEmpty else {
+            lastError = "The Workbench key was reset, but port \(failed.map(String.init).joined(separator: ", ")) did not restart. The previous key stays in Keychain."
+            return false
+        }
+        if !keyInUse(review.oldDigest) {
+            do { try removeAPIKey(review.oldDigest) }
+            catch {
+                lastError = "The Workbench key was reset, but the previous key could not be removed from Keychain."
+                return true
+            }
+        }
+        lastError = nil
+        return true
+    }
+
+    /// Starts the enabled slots again from the saved fleet, as a user-requested serve.
+    private func restartSavedSlots(_ slots: [EndpointSlot]) async {
+        for slot in slots where fleet.slots.contains(where: { $0.id == slot.id && $0.enabled }) {
+            pendingUserServeBySlot.removeValue(forKey: slot.id)
+            slotAttemptTimestamps[slot.id] = []
+            await reconcile(userRequestedSlotID: slot.id)
+        }
     }
 
     private func requireStoppedForAuthentication(_ slot: EndpointSlot) async throws {
@@ -1043,6 +1577,7 @@ final class EndpointSupervisor: ObservableObject {
             }
             var candidate = fleet
             candidate.slots[index].memoryPolicy = policy
+            candidate.slots[index].overrides?.insert(.memoryPolicy)
             guard commit(candidate) else { return }
             saved = true
             if let current, let pid = current.pid {
@@ -1128,7 +1663,7 @@ final class EndpointSupervisor: ObservableObject {
             return false
         }
         isUnloading = true
-        defer { isUnloading = false }
+        defer { isUnloading = false; servingChanged?() }
         do {
             let current = try await statusProvider()
             guard let selected = current.first(where: { $0.sameProcess(as: expected) && $0.state?.lowercased() == "running" }) else {
@@ -1210,6 +1745,7 @@ final class EndpointSupervisor: ObservableObject {
             guard !isUnloading, !queuedUserReconcileIDs.isEmpty else { break }
             nextTarget = queuedUserReconcileIDs.removeFirst()
         }
+        if userRequestedSlotID != nil { servingChanged?() }
     }
 
     private func performReconcilePass(userRequestedSlotID: UUID?) async {
@@ -1221,7 +1757,7 @@ final class EndpointSupervisor: ObservableObject {
         }
         let servers: [ServerInfo]
         do {
-            servers = try await statusProvider()
+            servers = try await (userRequestedSlotID == nil ? reconcileStatus ?? statusProvider : statusProvider)()
             if pendingStops.isEmpty { lastError = nil }
         } catch {
             // Status is the authority; when it is unavailable, preserve the
@@ -1270,8 +1806,9 @@ final class EndpointSupervisor: ObservableObject {
         syncShim()
     }
 
-    private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
-        guard pendingStops[slot.id] == nil, fleet.slots.contains(slot) else { return }
+    private func reconcileSlot(_ stored: EndpointSlot, running: [ServerInfo]) async {
+        guard pendingStops[stored.id] == nil, fleet.slots.contains(stored) else { return }
+        let slot = effectiveSlot(stored)
         if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath || slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
@@ -1313,7 +1850,7 @@ final class EndpointSupervisor: ObservableObject {
             if ours.matchesUnadaptedModel(slot.modelPath) {
                 do {
                     if let hash = try await confirmedAccelerationHash(ours, slot: slot), hash != slot.accelerationPreviewHash {
-                        guard fleet.slots.contains(slot), let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) else { return }
+                        guard fleet.slots.contains(stored), let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) else { return }
                         var candidate = fleet
                         candidate.slots[index].accelerationPreviewHash = hash
                         guard commit(candidate) else {
@@ -1362,6 +1899,8 @@ final class EndpointSupervisor: ObservableObject {
         // Desired but not running: restart, with a per-slot crash-loop guard.
         let cutoff = now().addingTimeInterval(-restartWindow)
         var attempts = (slotAttemptTimestamps[slot.id] ?? []).filter { $0 > cutoff }
+        if case .waitingForServer = slotStates[slot.id], let latest = attempts.last,
+           now().timeIntervalSince(latest) < Self.startGrace { return }
         guard attempts.count < maxRestarts else {
             pendingUserServeBySlot.removeValue(forKey: slot.id)
             slotAttemptTimestamps[slot.id] = attempts
@@ -1396,6 +1935,7 @@ final class EndpointSupervisor: ObservableObject {
                 slotStates[slot.id] = .waitingForServer
                 return
             }
+            if stored.overrides != nil { try EndpointFleetConfig(slots: [slot], installedAtLogin: false).validated() }
             let lifecycle = try servingLifecycle(slot)
             let preview: @Sendable (String, Int) async throws -> String
             let start: @Sendable (String, Int, String) async throws -> Void
@@ -1411,7 +1951,7 @@ final class EndpointSupervisor: ObservableObject {
             }
             let hash = try await preview(slot.modelPath, slot.port)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
-            guard fleet.slots.contains(slot) else { return }
+            guard fleet.slots.contains(stored) else { return }
             if slot.splashPresetName != nil, let reviewed = slot.profilePreviewHash, reviewed != hash {
                 throw WorkflowEvidenceError.invalid("The Splash preset changed. Review it before restarting.")
             }
@@ -1448,23 +1988,19 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Monitoring
 
-    var isMonitoring: Bool { monitorTask != nil }
+    private(set) var isMonitoring = false
 
-    /// Poll authoritative status on a slow timer. Idempotent.
-    func startMonitoring(intervalNanoseconds: UInt64 = 30_000_000_000) {
-        guard monitorTask == nil else { return }
-        monitorTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.reconcile()
-                try? await Task.sleep(nanoseconds: intervalNanoseconds)
-            }
+    /// Reconciles once now, then on every tick of `clock`. Idempotent.
+    func startMonitoring(on clock: LiveStateClock) async {
+        guard !isMonitoring else { return }
+        isMonitoring = true
+        clock.addConsumer { [weak self] in
+            if self?.isMonitoring == true { await self?.reconcile() }
         }
+        await reconcile()
     }
 
-    func stopMonitoring() {
-        monitorTask?.cancel()
-        monitorTask = nil
-    }
+    func stopMonitoring() { isMonitoring = false }
 
     // MARK: - Internals
 

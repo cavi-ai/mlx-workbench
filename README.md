@@ -26,7 +26,7 @@ The native Library keeps model readiness and memory fit beside the selected mode
 
 ## Install
 
-Requires an Apple Silicon Mac, Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended) and Apple's Command Line Tools (`xcode-select --install`). Git is needed when using a source checkout.
+Requires macOS 14 or newer on Apple Silicon, Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended) and Apple's Command Line Tools (`xcode-select --install`). Git is needed when using a source checkout.
 
 Download `mlx-workbench-<version>.dmg` from the [latest release](https://github.com/cavi-ai/mlx-workbench/releases/latest) and drag **MLX Workbench** into **Applications**. In Setup Assistant, choose **Use bundled engine…**, confirm **Prepare engine**, then use **Install Runtime…** to install its Python dependencies. Preparing the engine copies the packaged sources; it does not install packages or download models.
 
@@ -44,21 +44,27 @@ To build from source instead, run `make start` in the checkout after `make insta
 
 ## First model
 
+Start with a model already on disk when possible. Open **Library**, select it,
+and inspect its readiness and memory-fit estimate; **Health** explains missing
+runtime prerequisites. This inspection does not download weights or start a server.
+Fit is an estimate, not reserved memory. Follow the verification steps below
+before serving a model that has not passed its engine canary.
+
 1. The app opens on **Library**: one row per GGUF or MLX model on disk with its size, whether it fits in memory now and its state. The sidebar filters by kind of model or to **To convert**; **Model sources** shows local providers and registered cache folders.
 2. Paste a Hugging Face link into the Library search field and press **Add**, or anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
 3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
 4. Select the model and choose **Chat** to try it, or **Serve** to preview and start a loopback server. **Monitor** shows live status, token usage and response throughput.
-5. **Serving → Connect apps** sets up OpenCode, OpenClaw, Hermes, Codex or Claude Code against that endpoint, tests the connection over Chat Completions, Responses or Messages, and keeps backups with **Undo setup**.
+5. **Serving → Access** sets up OpenCode, OpenClaw, Hermes, Codex or Claude Code against that endpoint, tests the connection over Chat Completions, Responses or Messages, and keeps backups with **Undo setup**.
 
 See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
 
 ## Serve securely. Load just in time.
 
-Keep model endpoints on your Mac with loopback binding. Enable **Require API key** to control client access; keys are stored in Keychain. Manage the address, authentication and inference settings together in **Serving → API & security**.
+Keep model endpoints on your Mac with loopback binding. Enable **Require API key** to control client access; keys are stored in Keychain. Manage the address, authentication and inference settings together in the **Serving** inspector.
 
 Saved endpoints support JIT loading through **Load on request**: the endpoint stays available while weights load for the first inference request. Concurrent cold requests share one load. Unload idle models to free memory, keep frequently used models resident, and let active streams finish before unloading.
 
-Run up to eight endpoints side by side and put them behind one address: **Settings → Serving → Front door** routes chat, embeddings and classification requests by model name with one shared key. **Quick Connect** copies ready-to-run curl and Python calls for any running endpoint without exposing its key.
+Run up to eight endpoints side by side and put them behind one address: the **Workbench API** row in Serving routes chat, embeddings and classification requests by model name with one shared key. **Quick Connect** copies ready-to-run curl and Python calls for any running endpoint without exposing its key.
 
 See [Serving and Monitor](docs/mlx-workbench/source/pages/workflows/run.md) for endpoint setup, API keys and residency controls.
 
@@ -81,9 +87,11 @@ Strata and Splash are optional installations. Splash requires an M3 or newer Mac
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Models | Library, Model sources, Discover, Disk space | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
-| Workspaces | Use, Serving, Monitor, Compare, Convert, Training, Experiments, Terminal | Persistent conversations, always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, live token, throughput and memory-owner monitoring, measured comparisons in ten modes, previewed conversion from FP32 to 2-bit with quality gate canaries, text LoRA training with evaluation, controlled studies, OpenCode or a shell in a chosen folder |
-| System | Overview, Activity, Clients, Health | Model budget, job timeline, guided client setup with connection tests and undo, runtime readiness |
+| Home | Overview, Use | Model budget, persistent conversations |
+| Models | Library, Model sources, Discover, Convert, Disk space | One row per model with fit and state, filters by kind, an inspector led by Chat, Serve and Compare, lineage and evidence, provider inventories and cache folders, Hub candidates and task recommendations, previewed conversion from FP32 to 2-bit with quality gate canaries, disk by model with suggested removals and duplicate-file checks, quarantine and Trash with restore |
+| Serving | Serving, Clients, Monitor | Always-on endpoints with load on request, API keys and memory policy, opt-in video and mesh reuse, guided client setup with connection tests and undo, live token, throughput and memory-owner monitoring |
+| Studio | Compare, Experiments, Training, Terminal | Measured comparisons in ten modes, controlled studies, text LoRA training with evaluation, OpenCode or a shell in a chosen folder |
+| System | Activity, Health, Settings | Job timeline, runtime readiness |
 
 Served music models also generate sound effects and ambience.
 
@@ -108,7 +116,11 @@ make test-swift  # XCTest suite for the native app
 make docs-test   # documentation contract tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/mlx-workbench/source/pages/guides/development.md). The docs are built from `docs/mlx-workbench/source` with `make docs-build` into the release asset `mlx-workbench-docs-v<version>.tar.gz`; the [consumer contract](docs/mlx-workbench/CONSUMER.md) describes it.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/mlx-workbench/source/pages/guides/development.md).
+`make docs-build` builds `docs/mlx-workbench/source`, `make docs-verify` checks the
+result, and `make docs-release` creates `mlx-workbench-docs-v<version>.tar.gz`.
+The [consumer contract](docs/mlx-workbench/CONSUMER.md) describes that artifact;
+check the selected release's assets for its published documentation.
 
 ## License
 

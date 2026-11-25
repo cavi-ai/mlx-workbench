@@ -299,8 +299,8 @@ class NativeUIVMTests(unittest.TestCase):
         self.assertEqual(launch.call_args.args[0].runtime_install_uv, "/tools/uv")
 
     def test_focused_run_preserves_multiple_requested_cases(self):
-        cases = ["mlx-workbenchUITests/WorkbenchReviewUITests/testLibraryClassifierTaskAndMissingModelHistory",
-                 "mlx-workbenchUITests/WorkbenchReviewUITests/testLibraryMusicTaskLifecycle"]
+        cases = ["mlx-workbenchUITests/ExistingEndpointRealUITests/testOpenDiscoveredExistingEndpoint",
+                 "mlx-workbenchUITests/StandaloneReclaimUITests/testRealEngineComparisonQuarantineAndRestore"]
         with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture",
                                          "--ui-test", cases[0], "--ui-test", cases[1]]), \
                 patch.object(vm, "host") as launch:

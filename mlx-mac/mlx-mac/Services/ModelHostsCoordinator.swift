@@ -11,6 +11,8 @@ final class ModelHostsCoordinator: ObservableObject {
     @Published private(set) var inventories: [UUID: HostInventory] = [:]
     @Published private(set) var refreshing: Set<UUID> = []
     @Published private(set) var errors: [UUID: String] = [:]
+    /// Saved hosts whose address refused the last read: no server runs there, so they serve no model.
+    @Published private(set) var offline: Set<UUID> = []
     @Published private(set) var storageError: String?
     @Published private(set) var resourcePreview: HostResourcePreview?
     @Published private(set) var resourceBusy = false
@@ -86,6 +88,7 @@ final class ModelHostsCoordinator: ObservableObject {
                 for host in discoveredHosts where !current.contains(host.id) {
                     inventories[host.id] = nil
                     errors[host.id] = nil
+                    offline.remove(host.id)
                     generations[host.id] = nil
                     refreshing.remove(host.id)
                 }
@@ -108,7 +111,10 @@ final class ModelHostsCoordinator: ObservableObject {
         if let storageError { sourceErrors["host-settings"] = storageError }
         for (id, message) in errors { sourceErrors["host:" + id.uuidString] = message }
         var observed = Array(inventories.values)
-        for host in knownHosts where inventories[host.id] == nil {
+        for host in knownHosts where offline.contains(host.id) {
+            observed.append(HostInventory(host: host, models: [], capturedAt: Date()))
+        }
+        for host in knownHosts where inventories[host.id] == nil && !offline.contains(host.id) {
             observed.append(HostInventory(host: host, models: [], capturedAt: Date()))
             sourceErrors["host:" + host.id.uuidString] = errors[host.id] ?? "Model inventory has not been read. Refresh this source."
         }
@@ -149,7 +155,7 @@ final class ModelHostsCoordinator: ObservableObject {
             if hosts[index] != host { inventories[host.id] = nil }
             hosts[index] = host
         } else { hosts.append(host) }
-        generations[host.id] = UUID(); refreshing.remove(host.id); errors[host.id] = nil
+        generations[host.id] = UUID(); refreshing.remove(host.id); errors[host.id] = nil; offline.remove(host.id)
         cancelResourcePreview()
     }
 
@@ -160,7 +166,7 @@ final class ModelHostsCoordinator: ObservableObject {
             throw HostedIntegrationError.invalid("This host is no longer saved. Reopen the host list.")
         }
         hosts.removeAll { $0.id == id }; inventories[id] = nil; generations[id] = UUID()
-        refreshing.remove(id); errors[id] = nil
+        refreshing.remove(id); errors[id] = nil; offline.remove(id)
         cancelResourcePreview()
         do { try writeToken(nil, id) }
         catch { throw HostedIntegrationError.invalid("The host was removed, but its Keychain credential could not be removed.") }
@@ -264,9 +270,16 @@ final class ModelHostsCoordinator: ObservableObject {
                 }
             }
             inventories[id] = result
+            offline.remove(id)
             return true
         } catch {
             guard generations[id] == generation, knownHosts.contains(host) else { return false }
+            if model == nil, case HostHTTPError.notListening = error {
+                inventories[id] = nil
+                offline.insert(id)
+                return false
+            }
+            offline.remove(id)
             let retained = inventories[id] == nil ? "No inventory is available yet." : "Previous inventory retained."
             let action = model == nil ? "Refresh" : "Model details read"
             var guidance = ModelHostConnectionCheck.guidance(for: error)

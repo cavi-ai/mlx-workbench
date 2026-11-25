@@ -1,18 +1,5 @@
 import SwiftUI
 
-enum ServingWorkspaceTab: String, CaseIterable, Identifiable {
-    case connection, inference, memory, clients
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .connection: "API & security"
-        case .inference: "Inference"
-        case .memory: "Memory"
-        case .clients: "Connect apps"
-        }
-    }
-}
-
 enum ServingWorkspacePresentation {
     /// The count is how many sources missed the latest refresh. The sheet lists each one.
     static func sourceIssueTitle(_ count: Int) -> String {
@@ -79,14 +66,23 @@ enum ServingWorkspacePresentation {
     }
     static func provider(_ row: ServingRow) -> String {
         if let service = service(row), !service.isWorkbenchManaged { return service.providerName }
-        switch server(row)?.runtime {
+        return runtimeTitle(server(row)?.runtime) ?? "Workbench"
+    }
+    /// Display name of a known runtime; nil for `auto` or an unknown one.
+    static func runtimeTitle(_ runtime: String?) -> String? {
+        switch runtime {
         case "strata": return "Strata"
         case "splash": return "Splash"
         case "mlx_lm": return "MLX-LM"
         case "mlx-vlm": return "MLX-VLM"
         case "tasks": return "Task server"
-        default: return "Workbench"
+        default: return nil
         }
+    }
+    /// Red when the row needs attention, green while running, muted otherwise.
+    static func dotColor(_ row: ServingRow) -> Color {
+        if attentionReason(row) != nil { return WorkbenchColor.failure }
+        return isRunning(row) ? WorkbenchColor.success : WorkbenchColor.muted
     }
     static func baseURL(_ row: ServingRow) -> String? {
         if case .endpoint(let slot, _, _) = row { return "http://127.0.0.1:\(slot.port)/v1" }
@@ -231,71 +227,151 @@ private struct ServingModelRow: View {
                 }
             }
             HStack(spacing: WorkbenchSpacing.xs) {
+                Circle().fill(ServingWorkspacePresentation.dotColor(row)).frame(width: 7, height: 7).accessibilityHidden(true)
+                if case .endpoint(let slot, _, _) = row, let role = slot.role {
+                    Text(role.title)
+                    Text("·")
+                }
                 Text(ServingWorkspacePresentation.provider(row))
                 Text("·")
                 ServingStatusLabel(row: row, states: states)
             }.font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1)
-            if let address = ServingWorkspacePresentation.baseURL(row) {
-                Text(address).font(WorkbenchTypography.metadata).foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.muted).lineLimit(1).truncationMode(.middle).help(address)
-            }
-        }.foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
+        }
+        .foregroundStyle(prominence == .increased ? WorkbenchColor.onSelection : WorkbenchColor.ink)
+        .help(ServingWorkspacePresentation.baseURL(row) ?? "")
     }
 }
 
 struct ServingModelList: View {
-    let rows: [ServingRow]
+    let appHost: AppHost
+    let roleRows: [ServingRolesPresentation.RoleRow]
+    let endpointRows: [ServingRow]
+    let otherRows: [ServingRow]
+    let slots: [EndpointSlot]
     let models: [LibraryModel]
     let states: [UUID: EndpointState]
     let sourceIssueCount: Int
     @Binding var selectedID: String?
     @Binding var includesAvailable: Bool
+    let choose: (ServingRole, LibraryModel) -> Void
+    let change: (EndpointSlot, LibraryModel) -> Void
+    let toggle: (EndpointSlot) -> Void
     let add: () -> Void
     let monitor: () -> Void
     let refresh: () -> Void
     let showSources: () -> Void
     @State private var query = ""
-    private var visibleRows: [ServingRow] {
+    @State private var showsKeyWizard = false
+    @State private var othersExpanded = false
+    @State private var rolesExpanded = false
+    private func visible(_ rows: [ServingRow]) -> [ServingRow] {
         rows.filter { query.isEmpty || (ServingWorkspacePresentation.name($0, models: models) + " " + ServingWorkspacePresentation.provider($0)).localizedCaseInsensitiveContains(query) }
+    }
+
+    private func modelMenu(_ title: String, role: ServingRole, assigned: Bool, pick: @escaping (LibraryModel) -> Void) -> some View {
+        let candidates = ServingRolesPresentation.candidates(for: role, models: models, slots: slots)
+        return Menu(title) {
+            ForEach(candidates, id: \.item.path) { model in
+                Button(model.displayName) { pick(model) }
+            }
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .disabled(candidates.isEmpty)
+        .help(candidates.isEmpty ? "No ready \(role.title) models in Library." : "")
+        .accessibilityIdentifier("serving-role-\(role.rawValue)-\(assigned ? "change" : "choose")")
+    }
+
+    @ViewBuilder
+    private func roleRow(_ entry: ServingRolesPresentation.RoleRow) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack {
+                Label(entry.title, systemImage: entry.role.symbolName).font(WorkbenchTypography.emphasis)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if entry.isAssigned {
+                    Text(verbatim: entry.portText).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            if let slot = entry.slot, let row = entry.row {
+                Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.secondary).lineLimit(1)
+                ServingStatusLabel(row: row, states: states).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
+                HStack {
+                    Button(slot.enabled ? "Stop" : "Start…") { toggle(slot) }.buttonStyle(.borderless)
+                        .accessibilityIdentifier("serving-role-\(entry.role.rawValue)-toggle")
+                    modelMenu("Change model…", role: entry.role, assigned: true) { change(slot, $0) }
+                }
+            } else {
+                Text(entry.unassignedText).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                modelMenu("Choose model…", role: entry.role, assigned: false) { choose(entry.role, $0) }
+            }
+        }
+        .padding(.vertical, WorkbenchSpacing.xs)
+        .tag(entry.row?.id ?? entry.id)
+        .accessibilityIdentifier("serving-\(entry.id)")
     }
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack {
                 Text("Endpoints").font(WorkbenchTypography.cardTitle)
                 Spacer()
+                Button { showsKeyWizard = true } label: { Image(systemName: "key") }.buttonStyle(.borderless)
+                    .accessibilityLabel("Workbench key").help("Workbench key…").accessibilityIdentifier("serving-workbench-key")
                 Button(action: refresh) { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).accessibilityLabel("Refresh serving models")
-                Button(action: add) { Image(systemName: "plus") }.buttonStyle(.borderless).accessibilityLabel("Serve a model").accessibilityIdentifier("serving-add-model")
             }.padding(.horizontal, WorkbenchSpacing.md).padding(.top, WorkbenchSpacing.md)
-            TextField("Filter models", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
+                .sheet(isPresented: $showsKeyWizard) { WorkbenchKeyWizard(appHost: appHost) }
+            Button(action: add) {
+                Label("Load model…", systemImage: "plus").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.workbenchPrimary).controlSize(.large).padding(.horizontal, WorkbenchSpacing.md)
+            .accessibilityIdentifier("serving-add-model")
+            TextField("Filter", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
                 .accessibilityIdentifier("serving-model-filter")
             List(selection: $selectedID) {
-                ForEach(ServingWorkspacePresentation.Section.allCases, id: \.self) { section in
-                    let entries = visibleRows.filter { ServingWorkspacePresentation.section($0) == section }
-                    if !entries.isEmpty { Section(section.rawValue) {
-                ForEach(entries) { row in
-                    ServingModelRow(row: row, models: models, states: states)
-                        .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
-                        .accessibilityIdentifier("serving-model-\(row.id)")
+                Section {
+                    if visible(endpointRows).isEmpty {
+                        Text(endpointRows.isEmpty ? "No endpoints yet. Load a model to get an address." : "No endpoints match the filter.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(visible(endpointRows)) { row in
+                        ServingModelRow(row: row, models: models, states: states)
+                            .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
+                            .accessibilityIdentifier("serving-model-\(row.id)")
+                    }
                 }
-                    } }
+                Section {
+                    DisclosureGroup(ServingRolesPresentation.rolesTitle(roleRows), isExpanded: $rolesExpanded) {
+                        ForEach(roleRows) { roleRow($0) }
+                    }.accessibilityIdentifier("serving-roles")
                 }
-            }.listStyle(.sidebar).accessibilityIdentifier("serving-model-list")
-            .overlay {
-                if rows.isEmpty { ContentUnavailableView("No endpoints", systemImage: "server.rack", description: Text("Serve a model to get started.")) }
-                else if visibleRows.isEmpty { ContentUnavailableView.search(text: query) }
+                Section {
+                    WorkbenchAPIRowView(appHost: appHost, coordinator: appHost.frontDoor, endpoint: appHost.endpoint)
+                        .accessibilityIdentifier("serving-workbench-api")
+                }
+                Section {
+                    DisclosureGroup(ServingRolesPresentation.othersTitle(count: otherRows.count), isExpanded: $othersExpanded) {
+                        ForEach(visible(otherRows)) { row in
+                            ServingModelRow(row: row, models: models, states: states)
+                                .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
+                                .accessibilityIdentifier("serving-model-\(row.id)")
+                        }
+                    }.accessibilityIdentifier("serving-other-servers")
+                }
             }
+            .listStyle(.inset)
+            .scrollContentBackground(.hidden)
+            .accessibilityIdentifier("serving-model-list")
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 Toggle("Include available models", isOn: $includesAvailable).toggleStyle(.checkbox)
                     .font(WorkbenchTypography.secondary).accessibilityIdentifier("serving-include-available")
                 Button("Open live Monitor", action: monitor).buttonStyle(.borderless)
-                if sourceIssueCount > 0 {
-                    Button(ServingWorkspacePresentation.sourceIssueTitle(sourceIssueCount), action: showSources)
-                        .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.muted)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("serving-source-issues")
-                }
+                Button(sourceIssueCount > 0 ? "Serving Doctor (\(sourceIssueCount))" : "Serving Doctor", action: showSources)
+                    .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.muted)
+                    .help(sourceIssueCount > 0 ? ServingWorkspacePresentation.sourceIssueTitle(sourceIssueCount) : "Check serving connections and endpoints that need attention.")
+                    .accessibilityIdentifier("serving-source-issues")
             }.padding(WorkbenchSpacing.md)
-        }.frame(minWidth: WorkbenchSize.Serving.sidebar, idealWidth: WorkbenchSize.Serving.sidebar, maxWidth: WorkbenchSize.Serving.sidebar)
+        }
+        .frame(minWidth: WorkbenchSize.Serving.sidebar, idealWidth: WorkbenchSize.Serving.sidebar, maxWidth: WorkbenchSize.Serving.sidebar)
+        .background(WorkbenchColor.sidebar)
     }
 }
 

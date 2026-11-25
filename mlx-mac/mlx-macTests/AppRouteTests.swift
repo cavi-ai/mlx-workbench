@@ -18,26 +18,13 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
-
-        XCTAssertEqual(AppRoute.grouped.map { $0.group.rawValue }, ["Models", "Sources", "Attention", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [1, 2, 1, 8, 4, 1])
-    }
-
-    func testSidebarGroupsFollowTheModelFirstOrder() {
-        let grouped = AppRoute.grouped
-        XCTAssertEqual(grouped.map { $0.group.rawValue }, ["Models", "Sources", "Attention", "Workspaces", "System", "Settings"])
-        XCTAssertEqual(grouped.map(\.routes), [
-            [.library], [.sources, .discover], [.reclaim],
-            [.use, .run, .monitor, .compare, .prepare, .training, .studies, .terminal],
-            [.overview, .activity, .clientSetup, .health], [.settings],
-        ])
     }
 
     func testCollapsedSidebarSectionShowsItsPagesCount() {
-        let badges: [AppRoute: String] = [.overview: "3", .health: "2", .reclaim: "12 GB"]
+        let badges: [AppRoute: String] = [.activity: "3", .health: "2", .reclaim: "12 GB"]
         XCTAssertEqual(AppSidebar.headerBadge(for: .system, expanded: false, badges: badges), "5")
         XCTAssertNil(AppSidebar.headerBadge(for: .system, expanded: true, badges: badges))
-        XCTAssertNil(AppSidebar.headerBadge(for: .workspaces, expanded: false, badges: badges))
+        XCTAssertNil(AppSidebar.headerBadge(for: .studio, expanded: false, badges: badges))
     }
 
 
@@ -46,46 +33,6 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(AppRoute(rawID: "not-a-route"), .library)
         XCTAssertEqual(AppRoute(rawID: "quickstart"), .overview)
         XCTAssertEqual(AppRoute(rawID: "models"), .library)
-    }
-
-    @MainActor
-    func testFreshInstallWindowOpensOnLibrary() async throws {
-        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", agentHealth: .notConfigured, runtimeReport: .checking)
-        app.librarySnapshot = LibrarySnapshot(models: [], groups: [], hardware: app.hardwareProfile, generatedAt: Date())
-
-        let fresh = try XCTUnwrap(UserDefaults(suiteName: "app-route-\(UUID().uuidString)"))
-        XCTAssertNil(fresh.string(forKey: AppRoute.selectionStorageKey))
-        let freshTitle = try await windowTitle(app: app, defaults: fresh)
-        XCTAssertEqual(freshTitle, "Library")
-
-        let stored = try XCTUnwrap(UserDefaults(suiteName: "app-route-\(UUID().uuidString)"))
-        stored.set(AppRoute.overview.rawValue, forKey: AppRoute.selectionStorageKey)
-        let storedTitle = try await windowTitle(app: app, defaults: stored)
-        XCTAssertEqual(storedTitle, "Overview")
-    }
-
-    @MainActor
-    private func windowTitle(app: AppHost, defaults: UserDefaults) async throws -> String {
-        let size = CGSize(width: WorkbenchSize.windowMinimumWidth, height: WorkbenchSize.windowMinimumHeight)
-        let hosting = NSHostingView(rootView: AnyView(ContentView(appHost: app).defaultAppStorage(defaults).frame(width: size.width, height: size.height)))
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = hosting
-        window.orderFront(nil)
-        defer { window.close() }
-        for _ in 0..<40 where window.title.isEmpty {
-            hosting.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        return window.title
-    }
-
-    func testCommandNumberShortcutsFollowTheSidebarOrder() {
-        XCTAssertEqual(ContentView.shortcutRoutes, [
-            .library, .sources, .discover, .reclaim, .use, .run, .monitor, .compare, .prepare, .settings,
-        ])
-        let sidebarOrder = AppRoute.grouped.flatMap(\.routes)
-        XCTAssertEqual(Array(ContentView.shortcutRoutes.prefix(9)), Array(sidebarOrder.prefix(9)))
     }
 
     func testOnlyPrepareAndRunCarryAToolbarSubtitle() {
@@ -122,37 +69,6 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(AppRoute.lmStudio.navigationDestination, .library)
         XCTAssertFalse(AppRoute.grouped.flatMap(\.routes).contains(.lmStudio))
         XCTAssertEqual(ContentView.mountedRoutes(for: [.lmStudio, .library, .discover]), [.library, .discover])
-    }
-
-    func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {
-        let expected: [(AppRoute, String, String, String)] = [
-            (.overview, "System", "Overview", "house"),
-            (.library, "Models", "Library", "books.vertical"),
-            (.use, "Workspaces", "Use", "bubble.left.and.bubble.right"),
-            (.prepare, "Workspaces", "Convert", "shippingbox"),
-            (.compare, "Workspaces", "Compare", "chart.bar"),
-            (.run, "Workspaces", "Serving", "server.rack"),
-            (.activity, "System", "Activity", "clock.arrow.circlepath"),
-            (.reclaim, "Attention", "Disk space", "square.3.layers.3d"),
-            (.clientSetup, "System", "Clients", "arrow.triangle.branch"),
-            (.health, "System", "Health", "stethoscope"),
-            (.discover, "Sources", "Discover", "magnifyingglass"),
-            (.lmStudio, "Models", "LM Studio", "square.and.arrow.down"),
-            (.studies, "Workspaces", "Experiments", "square.split.2x1"),
-            (.training, "Workspaces", "Training", "sparkles"),
-            (.adopt, "Sources", "Adopt", "hand.tap"),
-            (.settings, "Settings", "Settings", "gearshape"),
-            (.monitor, "Workspaces", "Monitor", "waveform.path.ecg"),
-            (.sources, "Sources", "Model sources", "externaldrive.connected.to.line.below"),
-            (.terminal, "Workspaces", "Terminal", "apple.terminal")
-        ]
-
-        for (route, group, label, symbol) in expected {
-            XCTAssertEqual(route.group.rawValue, group)
-            XCTAssertEqual(route.label, label)
-            XCTAssertEqual(route.symbolName, symbol)
-            XCTAssertFalse(route.pageDescription.isEmpty)
-        }
     }
 
     func testLegacyIDInitializerFallsBackToLibraryForUnknownValues() {

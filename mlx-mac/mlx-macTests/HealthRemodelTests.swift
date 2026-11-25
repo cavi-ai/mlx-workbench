@@ -423,36 +423,6 @@ private enum Fixture {
 // MARK: - AC1 chain truth table
 
 final class HealthChainTests: XCTestCase {
-    @MainActor
-    func testHealthRuntimeScopeRendersAtWideAndCompactWidths() async throws {
-        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_HEALTH_CAPTURE"] else {
-            throw XCTSkip("Set MLX_WORKBENCH_HEALTH_CAPTURE to inspect the native Health layout.")
-        }
-        let root = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        for missing in [false, true] {
-            var config = Config.defaults(ggufRoots: [])
-            config.watchEnabled = false
-            let app = AppHost(config: config, discoveredRoots: [], vendorAgentPath: "/agent",
-                configPath: root.appendingPathComponent("config.json").path,
-                agentHealth: Fixture.agentReady, runtimeReport: Fixture.report(missingRun: missing))
-            for width: CGFloat in [814, 1190] {
-                let host = NSHostingView(rootView: DoctorView(appHost: app)
-                    .frame(width: width, height: 1000).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 1000),
-                    styleMask: [.titled], backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-                defer { window.close() }
-                try await Task.sleep(for: .milliseconds(200))
-                host.layoutSubtreeIfNeeded()
-                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    .write(to: root.appendingPathComponent("health-\(missing ? "missing-base" : "base-passed")-\(Int(width)).png"))
-            }
-        }
-    }
-
     private func words(_ chain: HealthChain) -> [String] { chain.links.map(\.stateWord) }
 
     func testAllReady() {

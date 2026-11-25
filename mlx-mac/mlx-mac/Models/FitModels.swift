@@ -58,8 +58,38 @@ struct MemorySnapshot: Codable, Equatable, Sendable {
     /// Free (including speculative) + reclaimable inactive memory, right now.
     let availableBytes: Int64
 
+    /// Where physical memory sits, from the same Mach reading; nil when not read.
+    var composition: Composition? = nil
+
     /// Derived system-wide estimate, not a per-process or GPU allocation.
     var unavailableBytes: Int64 { max(0, totalBytes - availableBytes) }
+
+    /// Activity Monitor's categories: app (anonymous, not purgeable), wired, compressed,
+    /// cached files (file-backed plus purgeable) and free pages.
+    struct Composition: Codable, Equatable, Sendable {
+        let appBytes: Int64
+        let wiredBytes: Int64
+        let compressedBytes: Int64
+        let cachedFilesBytes: Int64
+        let freeBytes: Int64
+
+        var usedBytes: Int64 { appBytes + wiredBytes + compressedBytes }
+
+        init(appBytes: Int64, wiredBytes: Int64, compressedBytes: Int64, cachedFilesBytes: Int64, freeBytes: Int64) {
+            (self.appBytes, self.wiredBytes, self.compressedBytes, self.cachedFilesBytes, self.freeBytes)
+                = (max(0, appBytes), max(0, wiredBytes), max(0, compressedBytes), max(0, cachedFilesBytes), max(0, freeBytes))
+        }
+
+        init(_ stats: vm_statistics64, pageSize: UInt64) {
+            func bytes(_ pages: UInt64) -> Int64 { Int64(clamping: pages &* pageSize) }
+            let internalPages = UInt64(stats.internal_page_count), purgeable = UInt64(stats.purgeable_count)
+            self.init(appBytes: bytes(internalPages > purgeable ? internalPages - purgeable : 0),
+                      wiredBytes: bytes(UInt64(stats.wire_count)),
+                      compressedBytes: bytes(UInt64(stats.compressor_page_count)),
+                      cachedFilesBytes: bytes(UInt64(stats.external_page_count) + purgeable),
+                      freeBytes: bytes(UInt64(stats.free_count)))
+        }
+    }
 
     static func probe() -> MemorySnapshot? {
         var total: UInt64 = 0
@@ -81,7 +111,8 @@ struct MemorySnapshot: Codable, Equatable, Sendable {
         // other categories, so use free + inactive as a headroom estimate.
         // https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/mach/vm_statistics.h
         let pages = UInt64(stats.free_count) + UInt64(stats.inactive_count)
-        return MemorySnapshot(totalBytes: Int64(total), availableBytes: min(Int64(total), Int64(pages * UInt64(pageSize))))
+        return MemorySnapshot(totalBytes: Int64(total), availableBytes: min(Int64(total), Int64(pages * UInt64(pageSize))),
+                              composition: Composition(stats, pageSize: UInt64(pageSize)))
     }
 }
 

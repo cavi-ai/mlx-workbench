@@ -227,6 +227,51 @@ final class EndpointFleetTests: XCTestCase {
         }
     }
 
+    // MARK: - Serving roles
+
+    func testLegacyFleetRolesMigrateToServingRoles() throws {
+        let general = UUID()
+        let coding = UUID()
+        let json = """
+        {"slots":[
+          {"id":"\(general.uuidString)","enabled":true,"port":8766,"modelPath":"/a","role":"general_chat"},
+          {"id":"\(coding.uuidString)","enabled":true,"port":8767,"modelPath":"/b"}
+        ],"installedAtLogin":false,"roleDefaults":{"coding":"\(coding.uuidString)"}}
+        """
+        let decoded = try JSONDecoder().decode(EndpointFleetConfig.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.slots[0].role, .general)
+        XCTAssertNil(decoded.slots[1].role)
+        let migrated = decoded.migratingRoleDefaults()
+        XCTAssertEqual(migrated.slots.first { $0.id == general }?.role, .general)
+        XCTAssertEqual(migrated.slots.first { $0.id == coding }?.role, .coding)
+        XCTAssertEqual(migrated.roleDefaults, decoded.roleDefaults)
+        let reencoded = try JSONEncoder().encode(migrated)
+        let keys = try XCTUnwrap(try JSONSerialization.jsonObject(with: reencoded) as? [String: Any]).keys
+        XCTAssertFalse(keys.contains("roleDefaults"))
+        XCTAssertNil(try JSONDecoder().decode(EndpointFleetConfig.self, from: reencoded).roleDefaults)
+    }
+
+    func testSixteenSlotsPassAndSeventeenAreRejected() {
+        func fleet(_ count: Int) -> EndpointFleetConfig {
+            EndpointFleetConfig(slots: (0..<count).map {
+                EndpointSlot(enabled: false, port: 8200 + $0, modelPath: "/m\($0)")
+            }, installedAtLogin: false)
+        }
+        XCTAssertEqual(EndpointFleetConfig.maxSlots, 16)
+        XCTAssertNoThrow(try fleet(16).validated())
+        XCTAssertThrowsError(try fleet(17).validated()) { error in
+            XCTAssertEqual(error as? EndpointFleetValidation, .tooManySlots(17))
+        }
+    }
+
+    func testPortForRoleUsesAssignedSlotOrDefault() {
+        let config = EndpointFleetConfig(slots: [
+            EndpointSlot(enabled: true, port: 8766, modelPath: "/a", role: .coding),
+        ], installedAtLogin: false)
+        XCTAssertEqual(config.port(for: .coding), 8766)
+        XCTAssertEqual(config.port(for: .classification), 8096)
+    }
+
     // MARK: - Supervisor: multi-slot reconcile
 
     func testExplicitStartLeavesOtherMissingSlotsForTheMonitor() async throws {
@@ -235,6 +280,7 @@ final class EndpointFleetTests: XCTestCase {
         world.recorder = lifecycle
         let supervisor = makeSupervisor(world: world)
         await supervisor.addSlot(modelPath: "/Models/first", port: 8766)
+        await supervisor.reconcile()
         world.kill(port: 8766)
         lifecycle.record("before-request")
 
@@ -254,7 +300,8 @@ final class EndpointFleetTests: XCTestCase {
         let supervisor = makeSupervisor(world: world)
 
         await supervisor.addSlot(modelPath: "/Models/coding", port: 8766, role: .coding)
-        await supervisor.addSlot(modelPath: "/Models/chat", port: 8767, role: .generalChat)
+        await supervisor.addSlot(modelPath: "/Models/chat", port: 8767, role: .general)
+        await supervisor.reconcile()
         lifecycle.record("reset-marker")
         world.kill(port: 8766)
 
@@ -270,17 +317,41 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertEqual(supervisor.slotStates.values.count, 2)
     }
 
+    func testSlotWaitingForServerIsNotRestartedWithinTheStartGrace() async {
+        let world = FakeServeWorld()
+        world.survives = false
+        let lifecycle = LifecycleRecorder()
+        world.recorder = lifecycle
+        let clock = TestClock()
+        let supervisor = makeSupervisor(world: world, clock: clock)
+        await supervisor.addSlot(modelPath: "/Models/slow", port: 8766)
+        let slot = supervisor.fleet.slots[0]
+        XCTAssertEqual(supervisor.slotStates[slot.id], .waitingForServer)
+        let starts = { lifecycle.events.filter { $0.hasPrefix("start:") }.count }
+        let before = starts()
+
+        clock.date.addTimeInterval(10)
+        await supervisor.reconcile()
+        XCTAssertEqual(starts(), before)
+
+        clock.date.addTimeInterval(21)
+        await supervisor.reconcile()
+        XCTAssertEqual(starts(), before + 1)
+    }
+
     func testCrashLoopGuardIsPerSlot() async {
         let world = FakeServeWorld()
         world.survives = false
-        let supervisor = makeSupervisor(world: world)
+        let clock = TestClock()
+        let supervisor = makeSupervisor(world: world, clock: clock)
         await supervisor.addSlot(modelPath: "/Models/crasher", port: 8766)
 
-        // Three failed attempts put the crasher into degraded on the next
-        // pass — before the healthy slot even exists.
-        await supervisor.reconcile()
-        await supervisor.reconcile()
-        await supervisor.reconcile()
+        // Three failed attempts, each past the start grace, put the crasher
+        // into degraded on the next pass — before the healthy slot even exists.
+        for _ in 0..<3 {
+            clock.date.addTimeInterval(31)
+            await supervisor.reconcile()
+        }
 
         let crasher = supervisor.fleet.slots.first { $0.port == 8766 }!
         guard case .degraded = supervisor.slotStates[crasher.id] else {
@@ -312,16 +383,19 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertEqual(supervisor.lastError, EndpointFleetValidation.duplicateRole(.coding).localizedDescription)
         XCTAssertEqual(supervisor.fleet.slots.count, 1)
 
-        await supervisor.addSlot(modelPath: "/Models/b", port: 8768, role: .generalChat)
+        await supervisor.addSlot(modelPath: "/Models/b", port: 8768, role: .general)
         await supervisor.addSlot(modelPath: "/Models/c", port: 8769, role: .reasoning)
         await supervisor.addSlot(modelPath: "/Models/d", port: 8770, role: .vision)
         await supervisor.addSlot(modelPath: "/Models/e", port: 8771)
         await supervisor.addSlot(modelPath: "/Models/f", port: 8772)
         await supervisor.addSlot(modelPath: "/Models/g", port: 8773)
         await supervisor.addSlot(modelPath: "/Models/h", port: 8774)
+        for index in 0..<8 {
+            await supervisor.addSlot(modelPath: "/Models/x\(index)", port: 8775 + index)
+        }
         XCTAssertEqual(supervisor.fleet.slots.count, EndpointFleetConfig.maxSlots)
 
-        await supervisor.addSlot(modelPath: "/Models/i", port: 8775)
+        await supervisor.addSlot(modelPath: "/Models/i", port: 8783)
         XCTAssertNotNil(supervisor.lastError)
         XCTAssertEqual(supervisor.fleet.slots.count, EndpointFleetConfig.maxSlots)
     }
@@ -419,13 +493,16 @@ final class EndpointFleetTests: XCTestCase {
         )
     }
 
-    private func makeSupervisor(world: FakeServeWorld = FakeServeWorld()) -> EndpointSupervisor {
+    private final class TestClock { var date = Date() }
+
+    private func makeSupervisor(world: FakeServeWorld = FakeServeWorld(), clock: TestClock? = nil) -> EndpointSupervisor {
         let urls = makeStoreURLs()
         return EndpointSupervisor(
             lifecycle: world.lifecycle,
             statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: urls.legacy),
             fleetStore: JSONStore<EndpointFleetConfig>(fileURL: urls.fleet),
+            now: clock.map { clock in { clock.date } } ?? Date.init,
             maxRestarts: 3,
             restartWindow: 300
         )

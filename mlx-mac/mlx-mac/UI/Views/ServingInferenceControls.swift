@@ -165,105 +165,244 @@ struct ServingInferenceControls: View {
     @Binding var options: LocalInferenceOptions
     let context: ServingInferenceContext
     var allowRequestDefaults = false
+    /// False when `ServingExperimentalCard` shows the runtime's features beside this card.
+    var showsAcceleration = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack(alignment: .firstTextBaseline) {
-                Label("Inference settings", systemImage: "slider.horizontal.3").font(WorkbenchTypography.cardTitle)
+                Label("Inference", systemImage: "slider.horizontal.3").font(WorkbenchTypography.cardTitle)
                 Spacer(minLength: WorkbenchSpacing.xs)
                 if options.requested {
                     Button("Reset") { options = .init() }.buttonStyle(.borderless)
                         .accessibilityIdentifier("serve-inference-reset")
                 }
             }
-            if context.isText {
-                Picker("Decoding", selection: $options.promptLookup) {
-                    Text("Standard").tag(false)
-                    Text("Reuse prompt text").tag(true)
-                }
-                .pickerStyle(.segmented).accessibilityIdentifier("serve-text-decoding")
-                Text(options.promptLookup
-                     ? "For code edits that copy text from the prompt. Use temperature 0 in your client; these requests run one at a time. No draft model is needed."
-                     : "Native decoding and batching for general chat and concurrent requests.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                DisclosureGroup("Hardware acceleration") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Toggle("M5 prompt processing", isOn: $options.m5Prefill).toggleStyle(.checkbox)
-                            .disabled(!context.supportsM5 && !options.m5Prefill)
-                            .accessibilityIdentifier("serve-m5-prefill")
-                        Text(context.supportsM5
-                             ? "Experimental kernel for supported M5 Q4 models. First load compiles kernels; unsupported inputs use native MLX."
-                             : "Requires an M5 GPU and supported Q4 models. The engine checks runtime compatibility.")
-                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                    }.padding(.top, WorkbenchSpacing.xs)
-                }
-            } else if context.isVision {
-                Toggle("Reuse image features", isOn: $options.visionCache).toggleStyle(.checkbox)
-                    .accessibilityIdentifier("serve-vision-cache")
-                Text("For repeated questions about the same image on supported Qwen2.5-VL and Qwen3-VL models. Keeps up to 128 MiB of features while loaded; other models use native processing.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            } else if context.isStrata {
-                Text("A serving profile controls decoding, expert memory and context. Verify the profile before use.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            } else if context.isSplash {
-                Text("Splash serves quantized MLX, GGUF and Strata profile weights in place with a DFlash2 draft. Install Splash and the family draft first; the preview checks both.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            } else {
-                Text(context.runtime == "tasks"
-                     ? "Generation settings belong to each task request. Use model residency and memory controls to manage the server's footprint."
-                     : "The engine identifies this model's runtime during preview. Select a known runtime to review its inference controls.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-            if context.hasGenerationDefaults || context.supportsReasoningOverride {
-                Group {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        if context.supportsReasoningOverride {
-                            Picker("Reasoning", selection: $options.thinkingOff) {
-                                Text("Model default").tag(false)
-                                Text("Skip reasoning").tag(true)
-                            }.accessibilityIdentifier("serve-thinking")
-                            Text("Skipping reasoning can shorten responses at the cost of deliberation. Support depends on the model's chat template.")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                        if context.hasGenerationDefaults {
-                            Picker("Default output length", selection: $options.maximumTokens) {
-                                Text("Engine default · 8,192 tokens").tag(Int?.none)
-                                ForEach(Array(Set([256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] + (options.maximumTokens.map { [$0] } ?? []))).sorted(), id: \.self) { value in
-                                    Text("\(value.formatted()) tokens").tag(Optional(value))
-                                }
-                            }.accessibilityIdentifier("serve-output-length")
-                            Text("Used when a client omits its output length. Explicit client settings take precedence.")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                    }.padding(.top, WorkbenchSpacing.xs)
-                }
-            }
-            if allowRequestDefaults && context.supportsRequestDefaults {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                    Text("Default system prompt").font(WorkbenchTypography.label)
-                    TextEditor(text: $options.systemPrompt)
-                        .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
-                        .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
-                    Text("Used when a client supplies no system or developer prompt.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                    LabeledContent("Temperature") {
-                        TextField("Model default", value: $options.temperature, format: .number)
-                            .accessibilityIdentifier("serve-default-temperature")
-                    }
-                    LabeledContent("Top-p") {
-                        TextField("Model default", value: $options.topP, format: .number)
-                            .accessibilityIdentifier("serve-default-top-p")
-                    }
-                    Text("Sampling defaults apply only when the client omits the setting.")
-                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                }
-            }
+            if showsAcceleration { ServingAccelerationRows(options: $options, context: context) }
+            ServingInferenceRows(options: $options, context: context, allowRequestDefaults: allowRequestDefaults)
             if let error = options.validationError { InlineMessage(kind: .warning, text: error) }
         }
         .padding(WorkbenchSpacing.md)
         .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("serve-inference-settings")
+    }
+}
+
+/// The chosen runtime's experimental features as one card.
+struct ServingExperimentalCard: View {
+    @Binding var options: LocalInferenceOptions
+    let context: ServingInferenceContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Label("Experimental", systemImage: "flask").font(WorkbenchTypography.cardTitle)
+            ServingAccelerationRows(options: $options, context: context)
+        }
+        .padding(WorkbenchSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("serve-experimental")
+    }
+}
+
+/// Acceleration controls for the chosen runtime; captions come from `ServingInspectorPresentation`.
+struct ServingAccelerationRows<Accessory: View>: View {
+    @Binding var options: LocalInferenceOptions
+    let context: ServingInferenceContext
+    @ViewBuilder var accessory: (ServingInspectorPresentation.Field) -> Accessory
+    typealias Field = ServingInspectorPresentation.Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if context.isText {
+                ServingFeatureCard(title: "Prompt lookup decoding", detail: ServingInspectorPresentation.caption(Field.promptLookup),
+                                   availability: "MLX-LM text models") {
+                    Toggle("Prompt lookup decoding", isOn: $options.promptLookup).accessibilityIdentifier("serve-text-decoding")
+                }
+                accessory(.promptLookup)
+                ServingFeatureCard(title: "M5 prompt processing", detail: ServingInspectorPresentation.caption(Field.m5Prefill),
+                                   availability: context.supportsM5 ? "Q4 models on this M5" : "Needs an Apple M5 chip",
+                                   unavailable: !context.supportsM5) {
+                    Toggle("M5 prompt processing", isOn: $options.m5Prefill)
+                        .disabled(!context.supportsM5 && !options.m5Prefill)
+                        .accessibilityIdentifier("serve-m5-prefill")
+                }
+                accessory(.m5Prefill)
+            } else if context.isVision {
+                ServingFeatureCard(title: "Image feature reuse", detail: ServingInspectorPresentation.caption(Field.visionCache),
+                                   availability: "Qwen2.5-VL and Qwen3-VL") {
+                    Toggle("Image feature reuse", isOn: $options.visionCache).accessibilityIdentifier("serve-vision-cache")
+                }
+                accessory(.visionCache)
+            } else if context.isStrata {
+                ServingStrataExperimentalControls()
+            } else if context.isSplash {
+                ServingSplashExperimentalControls(options: $options)
+            } else {
+                Text(context.runtime == "tasks"
+                     ? "Generation settings belong to each task request. Use model residency and memory controls to manage the server's footprint."
+                     : "The engine identifies this model's runtime during preview. Select a known runtime to review its inference controls.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+    }
+}
+
+extension ServingAccelerationRows where Accessory == EmptyView {
+    init(options: Binding<LocalInferenceOptions>, context: ServingInferenceContext) {
+        self.init(options: options, context: context, accessory: { _ in EmptyView() })
+    }
+}
+
+/// Reasoning, output length and request defaults; captions come from `ServingInspectorPresentation`.
+struct ServingInferenceRows<Accessory: View>: View {
+    @Binding var options: LocalInferenceOptions
+    let context: ServingInferenceContext
+    var allowRequestDefaults = false
+    /// Per-field accessory (source marker) shown under each field's caption.
+    @ViewBuilder var accessory: (ServingInspectorPresentation.Field) -> Accessory
+    typealias Field = ServingInspectorPresentation.Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if context.hasGenerationDefaults {
+                LabeledContent("Max response tokens") {
+                    Picker("Max response tokens", selection: $options.maximumTokens) {
+                        Text("Engine default").tag(Int?.none)
+                        ForEach(LocalInferenceBounds.choices(LocalInferenceBounds.maximumTokens, including: options.maximumTokens), id: \.self) { value in
+                            Text(value.formatted()).tag(Optional(value))
+                        }
+                    }.labelsHidden().fixedSize().accessibilityIdentifier("serve-output-length")
+                }
+                .help(ServingInspectorPresentation.caption(Field.maximumTokens))
+                accessory(.maximumTokens)
+            }
+            if context.supportsReasoningOverride {
+                LabeledContent("Reasoning") {
+                    Picker("Reasoning", selection: $options.thinkingOff) {
+                        Text("Model default").tag(false)
+                        Text("Off").tag(true)
+                    }.labelsHidden().pickerStyle(.segmented).fixedSize().accessibilityIdentifier("serve-thinking")
+                }
+                .help(ServingInspectorPresentation.caption(Field.thinkingOff))
+                accessory(.thinkingOff)
+            }
+            if allowRequestDefaults && context.supportsRequestDefaults {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    ServingSamplingRow(title: "Temperature", value: $options.temperature, range: LocalInferenceBounds.temperature,
+                                       step: 0.05, start: 0.8, identifier: "serve-default-temperature",
+                                       help: ServingInspectorPresentation.caption(Field.temperature))
+                    accessory(.temperature)
+                    ServingSamplingRow(title: "Top-p", value: $options.topP, range: LocalInferenceBounds.topP,
+                                       step: 0.01, start: 0.95, identifier: "serve-default-top-p",
+                                       help: ServingInspectorPresentation.caption(Field.topP))
+                    accessory(.topP)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        HStack {
+                            Text("System prompt").font(WorkbenchTypography.label)
+                            Spacer(minLength: WorkbenchSpacing.xs)
+                            Text("\(options.systemPrompt.utf8.count.formatted()) / \(LocalInferenceBounds.systemPromptBytesText) bytes")
+                                .font(WorkbenchTypography.metadata).monospacedDigit()
+                                .foregroundStyle(options.systemPrompt.utf8.count > LocalInferenceBounds.systemPromptBytes ? WorkbenchColor.failure : WorkbenchColor.muted)
+                        }
+                        TextEditor(text: $options.systemPrompt)
+                            .font(WorkbenchTypography.secondary)
+                            .scrollContentBackground(.hidden)
+                            .padding(WorkbenchSpacing.xs)
+                            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                            .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
+                            .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
+                    }
+                    .contentShape(Rectangle())
+                    .help(ServingInspectorPresentation.caption(Field.systemPrompt))
+                    accessory(.systemPrompt)
+                }
+            } else if context.supportsRequestDefaults {
+                ServingCaption("System prompt, temperature and top-p apply to load-on-request endpoints. Turn on Load on request to set them.")
+            }
+        }
+    }
+}
+
+extension ServingInferenceRows where Accessory == EmptyView {
+    init(options: Binding<LocalInferenceOptions>, context: ServingInferenceContext, allowRequestDefaults: Bool = false) {
+        self.init(options: options, context: context, allowRequestDefaults: allowRequestDefaults, accessory: { _ in EmptyView() })
+    }
+}
+
+/// One optional sampling default: a checkbox overrides the model's value, then a slider over the engine's range and the value.
+struct ServingSamplingRow: View {
+    let title: String
+    @Binding var value: Double?
+    let range: ClosedRange<Double>
+    let step: Double
+    /// Value set when the override is turned on.
+    let start: Double
+    let identifier: String
+    /// Plain-English explanation shown when hovering anywhere on the row.
+    var help: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Toggle(title, isOn: Binding(get: { value != nil }, set: { value = $0 ? (value ?? start) : nil }))
+                    .toggleStyle(.checkbox).font(WorkbenchTypography.label)
+                    .accessibilityIdentifier("\(identifier)-override")
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if value != nil {
+                    TextField(title, value: $value, format: .number.precision(.fractionLength(0...2)))
+                        .labelsHidden().textFieldStyle(.roundedBorder).monospacedDigit()
+                        .multilineTextAlignment(.trailing).frame(width: 60)
+                        .accessibilityIdentifier(identifier)
+                } else {
+                    Text("Model default").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            Slider(value: Binding(get: { min(max(value ?? start, range.lowerBound), range.upperBound) },
+                                  set: { value = (($0 / step).rounded() * step * 100).rounded() / 100 }),
+                   in: range) {
+                Text(title)
+            } minimumValueLabel: {
+                Text(Self.text(range.lowerBound)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            } maximumValueLabel: {
+                Text(Self.text(range.upperBound)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+            .labelsHidden().controlSize(.small)
+            .disabled(value == nil)
+        }
+        .contentShape(Rectangle())
+        .help(help ?? "")
+    }
+
+    private static func text(_ value: Double) -> String { String(format: "%g", value) }
+}
+
+/// An optional engine feature: its name, where it works and its control. `detail` explains it on hover.
+struct ServingFeatureCard<Control: View>: View {
+    let title: String
+    let detail: String
+    let availability: String
+    var unavailable = false
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Text(title).font(WorkbenchTypography.emphasis)
+                Label(availability, systemImage: unavailable ? "xmark.circle" : "checkmark.circle")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(unavailable ? WorkbenchColor.warning : WorkbenchColor.muted)
+            }
+            Spacer(minLength: WorkbenchSpacing.sm)
+            control.toggleStyle(.switch).labelsHidden().controlSize(.small)
+        }
+        .padding(WorkbenchSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: WorkbenchRadius.control).strokeBorder(WorkbenchColor.muted.opacity(.stroke)))
+        .contentShape(Rectangle())
+        .help(detail)
     }
 }
 

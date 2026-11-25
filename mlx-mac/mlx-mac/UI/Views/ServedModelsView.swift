@@ -5,71 +5,6 @@ enum ServedModelsWindow {
     static let mainID = "workbench"
 }
 
-struct ServingRoleDefaultsSheet: View {
-    @ObservedObject var endpoint: EndpointSupervisor
-    let models: [LibraryModel]
-    let onOpen: (EndpointSlot) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var assignmentError: String?
-
-    private var eligible: [EndpointSlot] { endpoint.fleet.slots.filter { $0.enabled && $0.usesJIT } }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Serving defaults").font(WorkbenchTypography.title)
-            Text("Choose a load-on-request endpoint for each role.")
-                .font(WorkbenchTypography.secondary)
-            ForEach(EndpointDefaultRole.allCases) { role in
-                let slot = endpoint.fleet.roleDefaults?[role].flatMap { id in eligible.first { $0.id == id } }
-                HStack(alignment: .top) {
-                    Text(role.title).frame(width: 65, alignment: .leading)
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        Picker(role.title, selection: Binding<UUID?>(
-                            get: { endpoint.fleet.roleDefaults?[role] },
-                            set: { assignmentError = endpoint.setRoleDefault(role, slotID: $0) ? nil : endpoint.lastError }
-                        )) {
-                            Text("No default").tag(UUID?.none)
-                            if let saved = endpoint.fleet.roleDefaults?[role], !eligible.contains(where: { $0.id == saved }) {
-                                Text("Unavailable endpoint").tag(Optional(saved))
-                            }
-                            ForEach(eligible) { slot in
-                                Text("\(MenuBarPresentation.modelName(slot.modelPath, models: models)) · :\(String(slot.port))")
-                                    .tag(Optional(slot.id))
-                            }
-                        }
-                        .labelsHidden().pickerStyle(.menu)
-                        .accessibilityLabel(role.title)
-                        .accessibilityIdentifier("serving-default-\(role.rawValue)")
-                        .disabled(endpoint.isChanging)
-                        if let slot, let detail = residency(slot) {
-                            Text(detail).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                        }
-                    }
-                    Spacer()
-                    if let slot { Button("Open endpoint") { dismiss(); onOpen(slot) } }
-                }
-            }
-            Text("Use a short idle timeout for Coding or release after each Utility request. Roles sharing an endpoint also share its memory policy.")
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            ErrorBanner(text: assignmentError)
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-            }
-        }
-        .padding(WorkbenchSpacing.lg)
-        .frame(width: 460)
-    }
-    private func residency(_ slot: EndpointSlot) -> String? {
-        guard let policy = endpoint.slotMemoryPolicies[slot.id] ?? slot.memoryPolicy else { return nil }
-        if policy.keepLoaded { return "Keep loaded" }
-        if policy.releaseAfterRequest == true { return "Release after each request" }
-        if policy.idleTimeoutSeconds > 0 { return "Unload after \(policy.idleTimeoutSeconds.formatted()) seconds idle" }
-        return "No idle unload"
-    }
-
-}
-
 enum ServedModelsSelection {
     static func candidates(models: [LibraryModel], slots: [EndpointSlot], query: String) -> [LibraryModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -248,7 +183,7 @@ struct ServingSystemHeadroom: View {
 
     var body: some View {
         if let memory = resources.memory {
-            Text(String(format: "System headroom: ~%.1f GB available", Double(memory.availableBytes) / 1e9))
+            Text(String(format: "System headroom: %.1f GB available", Double(memory.availableBytes) / 1e9))
                 .font(WorkbenchTypography.label.monospacedDigit())
                 .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
         } else {
@@ -329,48 +264,51 @@ struct ServingServiceRow: View {
 }
 
 struct ServingServiceDetails: View {
+    enum Section: Hashable { case source, memory }
     let service: ServingServiceObservation
     @ObservedObject var inventory: ServingInventoryCoordinator
+    var sections: Set<Section> = [.source, .memory]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-            Text("Model: " + (service.hostedModel == nil && service.server == nil ? "Not reported" : service.modelID)).font(WorkbenchTypography.compactValue)
-            Text("Endpoint: " + (service.baseURL ?? "Not reported")).font(WorkbenchTypography.compactValue)
-            Text("Model path: " + (service.modelPath ?? "Not reported")).font(WorkbenchTypography.compactValue)
-            if let receipts = service.server?.receiptsDirectory {
-                Text("Receipts: " + receipts).font(WorkbenchTypography.compactValue)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            if sections.contains(.source) {
+                MonitorField(label: "Model", value: service.hostedModel == nil && service.server == nil ? "Not reported" : service.modelID)
+                MonitorField(label: "Endpoint", value: service.baseURL ?? "Not reported", monospaced: true)
+                MonitorField(label: "Model path", value: service.modelPath ?? "Not reported", monospaced: true)
+                if let receipts = service.server?.receiptsDirectory {
+                    MonitorField(label: "Receipts", value: receipts, monospaced: true)
+                }
+                if let runtime = service.runtime {
+                    MonitorField(label: "Runtime", value: ServingWorkspacePresentation.runtimeTitle(runtime) ?? runtime)
+                }
+                if let active = service.server?.activeRequests { MonitorField(label: "Active requests", value: active.formatted()) }
             }
-            if let runtime = service.runtime { Text("Runtime: " + runtime) }
-            if let active = service.server?.activeRequests { Text("Active requests: \(active)") }
-            if let pid = service.modelProcessID {
-                Text("Model process RAM: " + memory(for: pid) + " · PID \(pid)")
-            } else {
-                Text("Model process RAM: Unknown")
+            if sections.contains(.memory) {
+                MonitorField(label: "Model process", value: service.modelProcessID.map { memory(for: $0) + " · PID \($0)" } ?? "Unknown")
+                if let pid = service.server?.pid, pid != service.modelProcessID {
+                    MonitorField(label: "Server process", value: memory(for: pid) + " · PID \(pid)")
+                }
+                if let pid = service.hostProcessID {
+                    MonitorField(label: "Shared host", value: memory(for: pid) + " · PID \(pid)")
+                }
+                if let reading = service.server?.workerMemory {
+                    MonitorField(label: "MLX allocator", value: ServingInventoryPresentation.allocatorSummary(reading))
+                }
+                if let bytes = service.reportedMemoryBytes {
+                    MonitorField(label: "Provider allocation", value: byteCount(bytes))
+                }
+                if let allocation = service.server?.memoryAllocation {
+                    if let bytes = allocation.estimatedResidentBytes { MonitorField(label: "Source estimate", value: byteCount(bytes)) }
+                    if let bytes = allocation.budgetBytes { MonitorField(label: "Memory budget", value: byteCount(bytes)) }
+                    if let mode = allocation.mode { MonitorField(label: "Allocation mode", value: mode) }
+                }
+                if let date = inventory.processMemoryCapturedAt, service.modelProcessID != nil || service.server?.pid != nil {
+                    MonitorField(label: "Process memory read", value: date.formatted(date: .omitted, time: .standard))
+                }
             }
-            if let pid = service.server?.pid, pid != service.modelProcessID {
-                Text("Server process RAM: " + memory(for: pid) + " · PID \(pid)")
-            }
-            if let pid = service.hostProcessID {
-                Text("Shared host process RAM: " + memory(for: pid) + " · PID \(pid)")
-            }
-            if let reading = service.server?.workerMemory {
-                Text("MLX allocator: " + ServingInventoryPresentation.allocatorSummary(reading))
-            }
-            if let date = inventory.processMemoryCapturedAt, service.modelProcessID != nil || service.server?.pid != nil {
-                Text("Process RAM read " + date.formatted(date: .omitted, time: .standard))
-            }
-            if let bytes = service.reportedMemoryBytes {
-                Text("Provider-reported model memory: " + byteCount(bytes))
-            }
-            if let allocation = service.server?.memoryAllocation {
-                if let bytes = allocation.estimatedResidentBytes { Text("Source estimate: " + byteCount(bytes)) }
-                if let bytes = allocation.budgetBytes { Text("Configured memory budget: " + byteCount(bytes)) }
-                if let mode = allocation.mode { Text("Allocation mode: " + mode) }
-            }
-            Text("Last observed " + service.capturedAt.formatted(date: .abbreviated, time: .standard))
+            MonitorField(label: "Last observed", value: service.capturedAt.formatted(date: .abbreviated, time: .standard))
         }
-        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func memory(for pid: Int) -> String {

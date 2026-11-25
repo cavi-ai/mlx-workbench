@@ -41,6 +41,9 @@ struct ServeLaunch: Equatable, Sendable {
         guard !conflictsWithProfile, !textOnVision, !visionOnText else {
             throw WorkflowEvidenceError.invalid("Choose text acceleration for MLX-LM or vision feature reuse for MLX-VLM, without a Strata profile.")
         }
+        guard splashLaunchIsLegal(runtime: runtime, options: options) else {
+            throw WorkflowEvidenceError.invalid(splashLaunchMessage)
+        }
         if options.sharedPrefixCacheRequested {
             guard sharedPrefixCacheIsLegal(runtime: runtime, jit: jit, hasAPIKey: hasAPIKey, hasSplashPreset: false, hasServingProfile: hasServingProfile, hasTrainingReceipt: false, options: options) else {
                 throw WorkflowEvidenceError.invalid("Shared prefix cache requires a keyed MLX-LM load-on-request endpoint with a 16–2048 MiB budget and no incompatible options.")
@@ -51,6 +54,13 @@ struct ServeLaunch: Equatable, Sendable {
     static func splashPresetIsLegal(jit: Bool, hasServingProfile: Bool, accelerationRequested: Bool, sharedPrefixCacheRequested: Bool = false) -> Bool {
         jit && !hasServingProfile && !accelerationRequested && !sharedPrefixCacheRequested
     }
+
+    /// A Splash draft model or chat template needs the Splash runtime; `auto` leaves the choice to the engine preview.
+    static func splashLaunchIsLegal(runtime: String, options: LocalInferenceOptions?) -> Bool {
+        !(options?.splashLaunchRequested ?? false) || ["splash", "auto"].contains(runtime)
+    }
+
+    static let splashLaunchMessage = "A Splash draft model or chat template needs the Splash runtime. Choose a Splash preset or clear the Splash files."
 
     static func profileAllows(accelerationRequested: Bool, thinkingOff: Bool, sharedPrefixCacheRequested: Bool = false) -> Bool {
         !accelerationRequested && !thinkingOff && !sharedPrefixCacheRequested

@@ -48,6 +48,9 @@ struct ContentView: View {
         NavigationSplitView {
             AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges,
                        models: appHost.librarySnapshot?.models ?? [])
+                // An opaque sidebar instead of the vibrant list material, so the desktop never shows through.
+                .scrollContentBackground(.hidden)
+                .background(WorkbenchColor.sidebar)
                 .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations
@@ -77,7 +80,6 @@ struct ContentView: View {
         .frame(minWidth: WorkbenchSize.windowMinimumWidth, minHeight: WorkbenchSize.windowMinimumHeight)
         .environment(\.workbenchViewport, viewport)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewport = $0 }
-        .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
             visitedRoutes.insert(selectedRoute)
             acknowledgeOutcomeOnItsPage()
@@ -96,20 +98,9 @@ struct ContentView: View {
     }
 
     /// ⌘1…⌘9 open the first nine sidebar pages in order; ⌘0 opens Settings.
+    /// The Go menu (`WorkbenchCommands`) binds these keys.
     static let shortcutRoutes: [AppRoute] =
         Array(AppRoute.grouped.flatMap(\.routes).filter { $0 != .settings }.prefix(9)) + [.settings]
-    private static let shortcutKeys: [KeyEquivalent] = [
-        "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
-    ]
-
-    private var routeShortcutButtons: some View {
-        ForEach(Array(Self.shortcutRoutes.enumerated()), id: \.element) { index, route in
-            Button(route.label) { selectedRouteID = route.rawValue }
-                .keyboardShortcut(Self.shortcutKeys[index], modifiers: .command)
-                .hidden()
-                .accessibilityHidden(true)
-        }
-    }
 
     /// Keeps a destination mounted after its first visit, preserving local
     /// view state without eagerly constructing every feature view.
@@ -182,6 +173,7 @@ struct ContentView: View {
 
     private func navigate(to route: AppRoute) {
         selectedRouteID = route.rawValue
+        if appHost.liveServicesStarted { Task { await appHost.liveClock.activate() } }
     }
 
     private var inventoryReviewBinding: Binding<Bool> {

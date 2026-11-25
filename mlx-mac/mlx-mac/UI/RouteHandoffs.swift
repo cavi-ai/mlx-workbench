@@ -30,6 +30,7 @@ struct ServeRuntimeRequest: Equatable {
 struct ServingFocusRequest: Equatable {
     let id = UUID()
     var rowID: String? = nil
+    var showDoctor = false
 }
 
 /// Read a recorded comparison; this request never starts or replays inference.

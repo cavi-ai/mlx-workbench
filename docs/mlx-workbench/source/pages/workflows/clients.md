@@ -22,7 +22,7 @@ Write targets are these files, in their standard folder or a folder chosen with 
 
 **Connect app…** opens setup for OpenCode, OpenClaw, Hermes, Codex and Claude Code. Choose the app and a running model endpoint, **Review setup**, then **Apply setup**. Workbench creates missing config files, retains unrelated setting values and backs up existing files. JSON5, YAML and TOML files are reformatted; the review warns when comments may be removed. API keys are supplied automatically for protected endpoints, except OpenClaw, which reads `MLX_AGENT_API_KEY`.
 
-For OpenCode, the endpoint list also offers **Front door** while the front door runs (**Settings → Serving → Front door**, see [Run](run.md)). Setup writes the front door's base URL and key and lists every model it routes, with the first as OpenCode's default; models already listed for the same port stay. Workbench reads the front door's model list again before writing and refuses the write when it changed.
+For OpenCode, the endpoint list also offers **Workbench API** while it runs (the **Workbench API** row in Serving, see [Run](run.md)). Setup writes the Workbench API's base URL and key and lists every model it routes, with the first as OpenCode's default. Each setup writes exactly the models the endpoint serves, keeping the settings of model names that remain. Workbench reads the Workbench API's model list again before writing and refuses the write when it changed.
 
 **Test connection** sends a short prompt through the bundled CAVI API client using Chat Completions, Responses or Messages, according to the selected app. It checks the exact written configuration and server identity before and after testing. Testing may load the selected model. Success means the server responded using that protocol; open a new client session to use the configuration. App detection is separate from connection testing. Missing apps have an official installation link and can be configured before installation. OpenClaw gateways need a restart to reload configuration. Project settings and launch options can override user settings.
 
@@ -33,9 +33,9 @@ The tool-call check has a 10-second time limit and reports a timeout separately.
 
 ## Terminal
 
-**Terminal**, in the Workspaces sidebar group, runs OpenCode or a shell inside Workbench. Choose **OpenCode** or **Shell** and a folder, then **Launch OpenCode** or **Launch Shell**. The command runs through your login shell, so the PATH and settings from your shell configuration apply. When the login shell cannot find OpenCode, the page says so and links to its installation guide. **Stop** ends the running process; after it exits the terminal keeps its last output until the next launch. The terminal stays open while you use other pages.
+**Terminal**, in the Studio sidebar group, runs OpenCode or a shell inside Workbench. Choose **OpenCode** or **Shell** and a folder, then **Launch OpenCode** or **Launch Shell**. The command runs through your login shell, so the PATH and settings from your shell configuration apply. When the login shell cannot find OpenCode, the page says so and links to its installation guide. **Stop** ends the running process; after it exits the terminal keeps its last output until the next launch. The terminal stays open while you use other pages.
 
-**Launch OpenCode** first reads serving status and OpenCode's global config: `config.json`, `opencode.json` and `opencode.jsonc` in `~/.config/opencode`, or the folder chosen for OpenCode, merged in that order with later files winning. OpenCode launches when the merged `mlx-local` provider points at a port where a running chat server serves OpenCode's selected `mlx-local` model, or, when another provider is selected, one of the models `mlx-local` lists. It also launches when `mlx-local` points at the running front door and lists a model the front door routes. Otherwise the page shows **OpenCode has no Workbench models.** with the reason, **Set up OpenCode**, which opens **Connect app…** for OpenCode with the front door preselected while it runs, or else the only running chat server, and **Launch anyway**. When neither a chat server nor the front door is running, the page says so and offers **Open Run** instead of setup.
+**Launch OpenCode** first reads serving status and OpenCode's global config: `config.json`, `opencode.json` and `opencode.jsonc` in `~/.config/opencode`, or the folder chosen for OpenCode, merged in that order with later files winning. OpenCode launches when the merged `mlx-agent` provider (or the deprecated `provider` entry `mlx-local`) points at a port where a running chat server serves OpenCode's selected model under the provider entry that was found (`mlx-agent` or the legacy `mlx-local`), or, when another provider is selected, one of the models that entry lists. It also launches when that provider points at the running Workbench API and lists a model the Workbench API routes. Otherwise the page shows **OpenCode has no Workbench models.** with the reason, **Set up OpenCode**, which opens **Connect app…** for OpenCode with the Workbench API preselected while it runs, or else the only running chat server, and **Launch anyway**. When neither a chat server nor the Workbench API is running, the page says so and offers **Open Run** instead of setup.
 
 **Check existing setup…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable files, links that loop, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
 
@@ -55,7 +55,7 @@ The board reads each writable client's config and draws what it points at agains
 2. **Preview client wiring** shows the exact change to each config file. The preview binds the server's identity.
 3. **Confirm client wiring** reads fresh serving status first and refuses a server that stopped, was replaced or is ambiguous. It then rechecks each file for changes since the preview, backs it up and writes it atomically.
 
-The result reports zero, partial or full outcomes per client. The opencode adapter adds opencode's `$schema` when it is missing or empty, since opencode rewrites a loaded config without one. It sets the wired model as the default and keeps the models, with their settings, already listed in `mlx-local` for the same port; a different port replaces that list. Other providers are unchanged.
+The result reports zero, partial or full outcomes per client. The OpenCode adapter adds OpenCode's `$schema` when it is missing or empty. For new setups it writes `providers["mlx-agent"]` and selects `mlx-agent/<model>`. Rewiring an existing `mlx-agent` provider preserves its other connection options. Workbench migrates a legacy `provider["mlx-local"]` entry when its fields fit the current schema. If the entry uses legacy-only fields, Workbench updates its endpoint and key in the existing format to preserve those settings.
 
 ## API-key protected endpoints
 
@@ -87,24 +87,24 @@ A partial rollback keeps the action available for retry. Clients already restore
 
 Every running endpoint in **Serving** (under **Connection**) and on the **Clients** board exposes a **Quick Connect** strip with a live status pill and one-click copy for ready-to-run API calls:
 
-- **curl**: Chat Completions (`/v1/chat/completions`), Responses (`/v1/responses` on load-on-request gateways and Front door), Anthropic Messages (`/v1/messages`), and Embeddings (`/v1/embeddings` on typed embeddings routes).
+- **curl**: Chat Completions (`/v1/chat/completions`), Responses (`/v1/responses` on load-on-request gateways and the Workbench API), Anthropic Messages (`/v1/messages`), and Embeddings (`/v1/embeddings` on typed embeddings routes).
 - **Python OpenAI SDK**: `OpenAI(base_url=..., api_key=...)` for chat or embeddings routes.
 - **Python Anthropic SDK**: `Anthropic(base_url=..., api_key=...)` pointed at the gateway root URL.
 
-When an endpoint shares the **Front door** key, the Quick Connect strip includes a **Direct / Front door** route switcher so you can copy snippets for either the single endpoint or the unified Front door listener.
+When an endpoint shares the **Workbench API** key, the Quick Connect strip includes a **Direct / Workbench API** route switcher so you can copy snippets for either the single endpoint or the unified Workbench API listener.
 
-Quick Connect snippets never read or embed raw Keychain secrets. For API-key protected endpoints and Front door routes, shell snippets reference `${MLX_AGENT_API_KEY}` and Python snippets read `os.environ["MLX_AGENT_API_KEY"]`. Export the key into your shell from **Connection & security → Copy API key** before running a protected snippet:
+Quick Connect snippets never read or embed raw Keychain secrets. For API-key protected endpoints and Workbench API routes, shell snippets reference `${MLX_AGENT_API_KEY}` and Python snippets read `os.environ["MLX_AGENT_API_KEY"]`. Export the key into your shell from **Connection & security → Copy API key** before running a protected snippet:
 
 ```bash
 export MLX_AGENT_API_KEY="<paste copied key>"
 ```
 
-For **OpenClaw** and other multi-model clients using **Front door**, point the provider base URL at `http://127.0.0.1:<front-door-port>/v1`, supply the shared Front door key via `MLX_AGENT_API_KEY` (or let **Connect app…** write the reviewed config), and select any routed model ID advertised at `/v1/models`.
+For **OpenClaw** and other multi-model clients using the **Workbench API**, point the provider base URL at `http://127.0.0.1:<workbench-api-port>/v1`, supply the shared Workbench API key via `MLX_AGENT_API_KEY` (**Workbench key…** on the Workbench API row copies it and offers an export template; or let **Connect app…** write the reviewed config), and select any routed model ID advertised at `/v1/models`.
 
 ## Connect from the serving model
 
-In **Serving**, select a running chat endpoint and open **Connect apps**. Choose the app, then **Connect…** to open the same reviewed setup with that endpoint preselected. Address, port, model and authentication stay bound to the selected process.
+In **Serving**, select a running chat endpoint and scroll to **Access**. Choose the app, then **Connect…** to open the same reviewed setup with that endpoint preselected. Address, port, model and authentication stay bound to the selected process.
 
-**Manual setup** offers copyable provider fragments or launch commands for temporary overrides. Protected recipes refer to `WORKBENCH_API_KEY`; copy the key from **API & security** and supply it through the client’s environment. Recipes contain no inference key.
+**Manual setup** offers copyable provider fragments or launch commands for temporary overrides. Protected recipes refer to `MLX_AGENT_API_KEY`; copy the key from **Access** and supply it through the client’s environment. Recipes contain no inference key.
 
 Codex and Claude Code require a managed load-on-request chat gateway, which supports Responses and Messages respectively. A model’s tool support determines its usefulness in coding agents. Setup links to each client’s documentation.

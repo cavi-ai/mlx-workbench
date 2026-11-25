@@ -69,7 +69,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         libraryButton.click()
         XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 20))
 
-        let search = app.textFields["Search or paste a Hugging Face link"]
+        let search = app.textFields["Search name, type or category, or paste a Hugging Face link"]
         XCTAssertTrue(search.waitForExistence(timeout: 180), "The real local inventory did not finish scanning into Library.")
         search.click()
         search.typeText(modelQuery)
@@ -427,7 +427,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
     }
 
     private func requestFreshLibraryScan() {
-        let search = app.textFields["Search or paste a Hugging Face link"]
+        let search = app.textFields["Search name, type or category, or paste a Hugging Face link"]
         XCTAssertTrue(search.waitForExistence(timeout: 180), "Library did not expose a completed scan.")
         XCTAssertTrue(waitForButtonEnabled("Refresh", timeout: 180), "Library refresh did not become available.")
         app.buttons["Refresh"].click()

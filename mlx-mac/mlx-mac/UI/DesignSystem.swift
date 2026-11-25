@@ -1,18 +1,130 @@
 import SwiftUI
 import AppKit
+import Observation
 
-/// The shared black-and-yellow palette. Dynamic AppKit colors also give
-/// isolated light-appearance panels a legible counterpart.
+/// A window theme. System follows the macOS appearance with Midnight and
+/// Paper; the others fix one appearance.
+enum WorkbenchTheme: String, CaseIterable, Identifiable, Sendable {
+    case system, midnight, graphite, paper
+
+    static let storageKey = "workbenchTheme"
+
+    var id: String { rawValue }
+
+    /// A missing or unknown stored identifier is System.
+    init(storedID: String?) {
+        self = storedID.flatMap(Self.init(rawValue:)) ?? .system
+    }
+
+    static func stored(in defaults: UserDefaults) -> WorkbenchTheme {
+        WorkbenchTheme(storedID: defaults.string(forKey: storageKey))
+    }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .midnight: "Midnight"
+        case .graphite: "Graphite"
+        case .paper: "Paper"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .system: "Follows the macOS appearance: Midnight when dark, Paper when light."
+        case .midnight: "Near-black canvas with layered surfaces."
+        case .graphite: "Neutral dark grey."
+        case .paper: "Crisp, high-contrast light."
+        }
+    }
+
+    /// The appearance the theme forces; nil follows macOS.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .midnight, .graphite: .dark
+        case .paper: .light
+        }
+    }
+
+    /// Palettes per appearance, so a panel in the other appearance stays legible.
+    var dark: WorkbenchPalette { self == .graphite ? .graphite : .midnight }
+    var light: WorkbenchPalette { .paper }
+}
+
+/// One appearance's colors as sRGB hex values.
+struct WorkbenchPalette: Sendable {
+    let canvas, sidebar, surface, well, hairline, ink, muted: UInt32
+    let accent, action, actionPressed, onAccent, onAccentFill: UInt32
+    let success, warning, failure: UInt32
+    /// Model category tones for type icons and tags.
+    let chatTone, visionTone, speechTone, imageTone, creativeTone: UInt32
+
+    static let midnight = WorkbenchPalette(
+        canvas: 0x0D0E11, sidebar: 0x07080A, surface: 0x181A1E, well: 0x22252B, hairline: 0x2E3138,
+        ink: 0xF4F5F7, muted: 0x9599A3, accent: 0xFFD43B, action: 0xFFD43B, actionPressed: 0xE7BA24,
+        onAccent: 0x111111, onAccentFill: 0x111111, success: 0x3DD68C, warning: 0xFFA53D, failure: 0xFF6B6B,
+        chatTone: 0x6CB6FF, visionTone: 0xB392F0, speechTone: 0x3CCFCF, imageTone: 0xF27BD9, creativeTone: 0xB8E05A)
+
+    static let graphite = WorkbenchPalette(
+        canvas: 0x1D1D1D, sidebar: 0x161616, surface: 0x282828, well: 0x333333, hairline: 0x404040,
+        ink: 0xF2F2F2, muted: 0xA6A6A6, accent: 0xFFD43B, action: 0xFFD43B, actionPressed: 0xE7BA24,
+        onAccent: 0x111111, onAccentFill: 0x111111, success: 0x3CCB7F, warning: 0xFFA53D, failure: 0xFF7066,
+        chatTone: 0x6CB6FF, visionTone: 0xB392F0, speechTone: 0x3CCFCF, imageTone: 0xF27BD9, creativeTone: 0xB8E05A)
+
+    static let paper = WorkbenchPalette(
+        canvas: 0xF3F3EF, sidebar: 0xE9E9E4, surface: 0xFFFFFF, well: 0xE7E7E1, hairline: 0xD1D1C9,
+        ink: 0x111111, muted: 0x5C5C56, accent: 0x785900, action: 0xFFD43B, actionPressed: 0xE7BA24,
+        onAccent: 0x111111, onAccentFill: 0xFFFFFF, success: 0x146C3A, warning: 0x8C4600, failure: 0xB0241E,
+        chatTone: 0x0B5CAD, visionTone: 0x6E40C9, speechTone: 0x066A6B, imageTone: 0xA3219A, creativeTone: 0x4A6600)
+
+    /// A fixed swatch of one role, independent of the active theme.
+    func color(_ role: KeyPath<WorkbenchPalette, UInt32>) -> Color {
+        Color(nsColor: WorkbenchColor.rgb(self[keyPath: role]))
+    }
+}
+
+/// The theme every token resolves against. Views that read a token re-render when it changes.
+final class WorkbenchThemeState: Observable, @unchecked Sendable {
+    /// Hosted unit tests start from System instead of the stored choice.
+    static let shared = WorkbenchThemeState(
+        WorkbenchStatePaths.isHostedUnitTest() ? .system : WorkbenchTheme.stored(in: .standard))
+
+    private let registrar = ObservationRegistrar()
+    private let lock = NSLock()
+    private var stored: WorkbenchTheme
+
+    init(_ theme: WorkbenchTheme) {
+        stored = theme
+    }
+
+    var theme: WorkbenchTheme {
+        get {
+            registrar.access(self, keyPath: \.theme)
+            return lock.withLock { stored }
+        }
+        set {
+            guard newValue != lock.withLock({ stored }) else { return }
+            registrar.withMutation(of: self, keyPath: \.theme) {
+                lock.withLock { stored = newValue }
+            }
+        }
+    }
+}
+
+/// The black-and-yellow tokens, resolved for the active theme and the
+/// drawing appearance. Every role is opaque.
 enum WorkbenchColor {
-    static let canvas = adaptive("Canvas", dark: 0x111111, light: 0xF8F8F5)
-    static let sidebar = adaptive("Sidebar", dark: 0x0C0C0C, light: 0xEFEFEB)
-    /// Translucent steps above whatever is behind them: white in dark appearance, black in light.
-    static let surface = overlay("Surface", darkAlpha: 0.07, lightAlpha: 0.05)
-    static let well = overlay("Well", darkAlpha: 0.13, lightAlpha: 0.10)
+    static var canvas: Color { active.canvas }
+    static var sidebar: Color { active.sidebar }
+    /// A raised card on the canvas.
+    static var surface: Color { active.surface }
+    /// A stronger step for fields, tracks and chips.
+    static var well: Color { active.well }
     /// Yellow controls always use dark text, including in dark appearance.
-    static let onAccent = Color(nsColor: rgb(0x111111))
+    static var onAccent: Color { active.onAccent }
     /// Text or symbols on an `accent` fill.
-    static let onAccentFill = adaptive("OnAccentFill", dark: 0x111111, light: 0xFFFFFF)
+    static var onAccentFill: Color { active.onAccentFill }
     /// Text or symbols on the system selection fill; picks the higher-contrast of #111111 and white.
     static let onSelection = Color(nsColor: NSColor(name: NSColor.Name("WorkbenchOnSelection")) { appearance in
         var fill = NSColor.selectedContentBackgroundColor
@@ -25,18 +137,74 @@ enum WorkbenchColor {
         let withWhite = 1.05 / (fillLuminance + 0.05)
         return withDark >= withWhite ? dark : rgb(0xFFFFFF)
     })
-    static let ink = Color(nsColor: .labelColor)
-    static let muted = Color(nsColor: .secondaryLabelColor)
-    static let hairline = adaptive("Hairline", dark: 0x343434, light: 0xD3D3CB)
+    static var ink: Color { active.ink }
+    /// Secondary text; at least 4.5:1 on canvas, surface and well.
+    static var muted: Color { active.muted }
+    static var hairline: Color { active.hairline }
 
-    static let accent = adaptive("Accent", dark: 0xFFD43B, light: 0x785900)
-    static let action = Color(nsColor: rgb(0xFFD43B))
-    static let actionPressed = Color(nsColor: rgb(0xE7BA24))
-    static let success = Color(nsColor: .systemGreen)
-    static let warning = Color(nsColor: .systemOrange)
-    static let failure = Color(nsColor: .systemRed)
+    static var accent: Color { active.accent }
+    static var action: Color { active.action }
+    static var actionPressed: Color { active.actionPressed }
+    static var success: Color { active.success }
+    static var warning: Color { active.warning }
+    static var failure: Color { active.failure }
+    /// Model category tones; each reads at 4.5:1 on canvas, surface and well.
+    static var chatTone: Color { active.chatTone }
+    static var visionTone: Color { active.visionTone }
+    static var speechTone: Color { active.speechTone }
+    static var imageTone: Color { active.imageTone }
+    static var creativeTone: Color { active.creativeTone }
 
-    private static func rgb(_ value: UInt32) -> NSColor {
+    private static var active: Tokens {
+        switch WorkbenchThemeState.shared.theme {
+        case .system: Tokens.system
+        case .midnight: Tokens.midnight
+        case .graphite: Tokens.graphite
+        case .paper: Tokens.paper
+        }
+    }
+
+    /// Each theme's roles, built once so a token keeps its identity between renders.
+    private struct Tokens {
+        static let system = Tokens(.system)
+        static let midnight = Tokens(.midnight)
+        static let graphite = Tokens(.graphite)
+        static let paper = Tokens(.paper)
+
+        let canvas, sidebar, surface, well, hairline, ink, muted: Color
+        let accent, action, actionPressed, onAccent, onAccentFill: Color
+        let success, warning, failure: Color
+        let chatTone, visionTone, speechTone, imageTone, creativeTone: Color
+
+        private init(_ theme: WorkbenchTheme) {
+            func role(_ name: String, _ value: KeyPath<WorkbenchPalette, UInt32>) -> Color {
+                WorkbenchColor.adaptive(theme.title + name, dark: theme.dark[keyPath: value],
+                                        light: theme.light[keyPath: value])
+            }
+            canvas = role("Canvas", \.canvas)
+            sidebar = role("Sidebar", \.sidebar)
+            surface = role("Surface", \.surface)
+            well = role("Well", \.well)
+            hairline = role("Hairline", \.hairline)
+            ink = role("Ink", \.ink)
+            muted = role("Muted", \.muted)
+            accent = role("Accent", \.accent)
+            action = role("Action", \.action)
+            actionPressed = role("ActionPressed", \.actionPressed)
+            onAccent = role("OnAccent", \.onAccent)
+            onAccentFill = role("OnAccentFill", \.onAccentFill)
+            success = role("Success", \.success)
+            warning = role("Warning", \.warning)
+            failure = role("Failure", \.failure)
+            chatTone = role("ChatTone", \.chatTone)
+            visionTone = role("VisionTone", \.visionTone)
+            speechTone = role("SpeechTone", \.speechTone)
+            imageTone = role("ImageTone", \.imageTone)
+            creativeTone = role("CreativeTone", \.creativeTone)
+        }
+    }
+
+    fileprivate static func rgb(_ value: UInt32) -> NSColor {
         NSColor(srgbRed: Double((value >> 16) & 255) / 255,
                 green: Double((value >> 8) & 255) / 255,
                 blue: Double(value & 255) / 255, alpha: 1)
@@ -48,13 +216,6 @@ enum WorkbenchColor {
             return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
         }
         return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
-    }
-
-    private static func overlay(_ name: String, darkAlpha: Double, lightAlpha: Double) -> Color {
-        Color(nsColor: NSColor(name: NSColor.Name("Workbench" + name)) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return isDark ? NSColor(white: 1, alpha: darkAlpha) : NSColor(white: 0, alpha: lightAlpha)
-        })
     }
 
     private static func adaptive(_ name: String, dark: UInt32, light: UInt32) -> Color {
@@ -82,36 +243,36 @@ extension Color {
     }
 }
 
-/// Type roles mapped onto the system text styles so Dynamic Type and the
-/// system font stack apply. One voice: SF Pro with tabular figures for
-/// measurements. Nothing renders below 11 points (macOS caption and
-/// footnote are 10 points).
+/// One type scale: 11 · 12 · 13 · 14 · 16 · 18 · 22 · 28 · 40 points.
+/// SF Pro switches to its Display optical size and tracking at 20 points and
+/// above, so titles get Display and body roles get Text. SF Mono carries values;
+/// measurements use tabular digits. Nothing renders below 11 points.
 enum WorkbenchTypography {
-    static let pageTitle = Font.system(size: 30, weight: .semibold)
-    static let inspectorTitle = Font.system(size: 22, weight: .semibold)
-    static let brand = Font.system(size: 14, weight: .semibold)
+    static let pageTitle = Font.system(size: 28, weight: .bold).leading(.tight)
+    static let inspectorTitle = Font.system(size: 22, weight: .semibold).leading(.tight)
+    static let brand = Font.system(size: 14, weight: .bold)
     /// The one lead numeral on a page, with tabular digits.
     static let hero = Font.system(size: WorkbenchSize.heroNumeral, weight: .semibold).monospacedDigit()
     /// Large numerals in stats and meters, with tabular digits.
-    static let display = Font.title.weight(.semibold).monospacedDigit()
+    static let display = Font.system(size: 22, weight: .semibold).monospacedDigit()
     /// Sheet and window headings.
-    static let title = Font.title2.weight(.semibold)
+    static let title = Font.system(size: 18, weight: .semibold)
     /// Section headings inside a page.
-    static let section = Font.title3.weight(.semibold)
+    static let section = Font.system(size: 16, weight: .semibold)
     /// Card headers.
-    static let cardTitle = Font.headline
-    static let emphasis = Font.body.weight(.semibold)
+    static let cardTitle = Font.system(size: 14, weight: .semibold)
+    static let emphasis = Font.system(size: 14, weight: .semibold)
     static let body = Font.system(size: 14)
     static let reading = Font.system(size: 16)
     static let secondary = Font.system(size: 13)
-    static let label = Font.subheadline.weight(.medium)
-    /// Paths, hashes, receipts: monospaced at body size.
-    static let value = Font.body.monospaced()
+    static let label = Font.system(size: 11, weight: .medium)
+    /// Paths, hashes, receipts: SF Mono, one step under body to match its width.
+    static let value = Font.system(size: 13, design: .monospaced)
     /// Numbers in tables and prose: proportional text with tabular digits.
-    static let tabular = Font.body.monospacedDigit()
-    static let secondaryTabular = Font.callout.monospacedDigit()
-    static let metadata = Font.subheadline
-    static let compactValue = Font.subheadline.monospaced()
+    static let tabular = Font.system(size: 13).monospacedDigit()
+    static let secondaryTabular = Font.system(size: 12).monospacedDigit()
+    static let metadata = Font.system(size: 11)
+    static let compactValue = Font.system(size: 11, design: .monospaced)
 }
 
 /// A 4-point grid; `xxxs` exists for hairline gaps inside dense clusters.
@@ -370,7 +531,6 @@ extension WorkbenchSize {
         static let runtimeWidth: CGFloat = 210
         static let portField: CGFloat = 96
         static let contextWidth: CGFloat = 190
-        static let roleWidth: CGFloat = 150
         static let loadToggle: CGFloat = 170
         static let overflow: CGFloat = 28
         static let slotModelMinimum: CGFloat = 160
@@ -503,6 +663,11 @@ extension WorkbenchSize {
         static let bitsPickerWidth: CGFloat = 180
         static let channelPickerMaximum: CGFloat = 320
         static let updateLogMaxHeight: CGFloat = 160
+
+        static let themeSwatchWidth: CGFloat = 96
+        static let themeSwatchHeight: CGFloat = 60
+        static let themeSwatchLine: CGFloat = 4
+        static let themeSelectionStroke: CGFloat = 2
     }
 }
 
@@ -622,9 +787,9 @@ extension PrimitiveButtonStyle where Self == WorkbenchPrimaryButtonStyle {
 }
 
 extension View {
-    /// Apply at window roots. The appearance and accent come from the system and the asset catalog.
+    /// Apply at window roots: the stored theme's tokens, appearance and opaque window canvas.
     func workbenchTheme() -> some View {
-        self
+        modifier(WorkbenchThemeRoot())
     }
 
     func workbenchCanvas() -> some View {

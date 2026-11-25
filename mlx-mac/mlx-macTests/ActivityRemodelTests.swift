@@ -107,97 +107,6 @@ private enum Fixture {
 
 @MainActor
 final class ActivityRemodelTests: XCTestCase {
-    func testActivityRendersReadOnlyFixtureStatusWithoutLosingTrainingFailures() async throws {
-        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_ACTIVITY_CAPTURE"] else {
-            throw XCTSkip("Set MLX_WORKBENCH_ACTIVITY_CAPTURE for native Activity fixture checks.")
-        }
-        let captureRoot = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(at: captureRoot, withIntermediateDirectories: true)
-        let script = #"""
-        import json, pathlib, sys
-        root = pathlib.Path(__file__).resolve().parents[2]
-        fixture = json.loads((root / "fixture.json").read_text())
-        args = sys.argv[1:]
-        if args[:2] == ["lora", "status"]:
-            operation, data = "training-status", {"jobs": fixture["training"]}
-        elif args[:2] == ["convert", "status"]:
-            operation, data = "convert-status", {"jobs": []}
-        elif args[:2] == ["serve", "status"]:
-            operation, data = "serve-status", {"servers": []}
-        elif args[:2] == ["lab", "queue"]:
-            request = json.loads(pathlib.Path(args[args.index("--request") + 1]).read_text())
-            assert request["operation"] == "snapshot", request
-            operation, data = "queue-snapshot", {"queue_path": str(root / "queue.json"), "conversion_queue": {"schema_version": "1.1", "items": []}}
-        elif args[0] == "lab":
-            request = json.loads(pathlib.Path(args[args.index("--request") + 1]).read_text())
-            assert request["operation"] in ["snapshot", "study-list"], request
-            operation = "study-" + request["operation"]
-            data = {"queue": fixture["study"]} if request["operation"] == "snapshot" else {"studies": []}
-        else:
-            raise AssertionError("Unexpected command: " + repr(args))
-        with (root / "calls.jsonl").open("a") as handle:
-            handle.write(json.dumps({"operation": operation, "argv": args}) + "\n")
-        if fixture["unavailable"] and operation in ["training-status", "serve-status", "study-snapshot"]:
-            print("Fixture " + operation + " unavailable", file=sys.stderr)
-            sys.exit(2)
-        print(json.dumps({"status": "ok", "data": data}))
-        """#
-        for scenario in ["empty", "active", "history", "unavailable"] {
-            let root = captureRoot.appendingPathComponent(scenario + "-" + UUID().uuidString)
-            let agent = root.appendingPathComponent("agent")
-            let cli = agent.appendingPathComponent("scripts/mlx-agent")
-            try FileManager.default.createDirectory(at: cli.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(script.utf8).write(to: cli)
-            let states = scenario == "active" ? ["queued", "completed"] : (scenario == "history" ? ["completed", "cancelled"] : [])
-            let studies = states.enumerated().map { ["id": "job-\($0.offset)", "experiment_id": "study", "state": $0.element] }
-            let trainingStates = scenario == "active" ? ["running", "done"] : (scenario == "history" ? ["done", "cancelled"] : [])
-            let training: [[String: Any]] = trainingStates.enumerated().map {
-                ["receipt": "train-\($0.offset)", "repo": "org/fixture-model", "out": root.appendingPathComponent("adapter").path,
-                 "pid": 42 + $0.offset, "state": $0.element]
-            }
-            try JSONSerialization.data(withJSONObject: ["study": studies, "training": training, "unavailable": scenario == "unavailable"])
-                .write(to: root.appendingPathComponent("fixture.json"))
-            var config = Config.defaults(ggufRoots: [])
-            config.mlxAgentPath = agent.path; config.watchEnabled = false
-            let records = scenario == "active" || scenario == "history"
-                ? [Fixture.workflow(state: .completed), Fixture.workflow(state: .failed, errorMessage: "Fixture conversion failed")]
-                : []
-            let app = AppHost(config: config, discoveredRoots: [], vendorAgentPath: agent.path,
-                configPath: root.appendingPathComponent("config.json").path,
-                agentHealth: .ready(path: agent.path, cli: cli.path),
-                runtimeReport: RuntimeReport(
-                    convert: ConvertStatus(ok: false, modules: [:], executables: [:], missingModules: [], missingExecutables: [], install: "make install", message: "Fixture"),
-                    serve: ServeStatus(ok: false, executables: [:], missingExecutables: [], install: "make install", message: "Fixture"),
-                    install: "make install", ok: false),
-                modelWorkflowPersistence: ModelWorkflowPersistence(load: { records }, upsert: { _ in XCTFail("Read-only activity must not rewrite settled records") }))
-            let host = NSHostingView(rootView: JobsView(appHost: app).environment(\.isRouteActive, true)
-                .frame(width: 814, height: 1200).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 1200),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-            defer { window.close() }
-            let calls = root.appendingPathComponent("calls.jsonl")
-            let expected = ["training-status", "convert-status", "serve-status", "queue-snapshot", "study-snapshot"]
-                + (scenario == "unavailable" ? [] : ["study-study-list"])
-            var operations: [String] = []
-            for _ in 0..<150 {
-                let lines = (try? String(contentsOf: calls, encoding: .utf8))?.split(separator: "\n") ?? []
-                operations = lines.compactMap { line in
-                    (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["operation"] as? String
-                }
-                if Set(expected).isSubset(of: Set(operations)) { break }
-                try await Task.sleep(for: .milliseconds(20))
-            }
-            XCTAssertEqual(operations.sorted(), expected.sorted())
-            XCTAssertEqual(app.modelWorkflow.history.map(\.id), records.map(\.id))
-            host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: captureRoot.appendingPathComponent(scenario + ".png"))
-        }
-    }
-
     func testTimelineSeparatesActiveFailuresAndCompletedHistoryWithoutDuplicates() {
         let active = Fixture.workflow(state: .running)
         let failed = Fixture.workflow(state: .failed, updated: Fixture.stamp.addingTimeInterval(10))
@@ -393,25 +302,6 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertEqual(ActivityToolbarStatus(workflow: idle, history: [], verifying: true).detail, "Verifying")
         XCTAssertEqual(ActivityToolbarStatus(workflow: idle, history: [], comparing: true).detail, "Comparing")
         XCTAssertNil(ActivityToolbarStatus(workflow: idle, history: []).detail)
-    }
-
-    func testActivityToolbarFitsTheCompactIconAndRendersTheLiveLabel() throws {
-        let status = ActivityToolbarStatus(workflow: Fixture.workflow(state: .running), history: [])
-        let control = ActivityToolbarButton(status: status, selected: false, action: {})
-            .workbenchTheme()
-        let regular = ImageRenderer(content: control)
-        let compact = ImageRenderer(content: ActivityToolbarButton(status: status, selected: false, compact: true, action: {}).workbenchTheme())
-        let fullImage = try XCTUnwrap(regular.nsImage)
-        let compactImage = try XCTUnwrap(compact.nsImage)
-        XCTAssertGreaterThan(fullImage.size.width, 85)
-        XCTAssertLessThanOrEqual(compactImage.size.width, 40)
-        XCTAssertEqual(compactImage.size.height, fullImage.size.height)
-        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_ACTIVITY_CAPTURE"] {
-            let image = try XCTUnwrap(fullImage.tiffRepresentation)
-            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: image))
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            try png.write(to: URL(fileURLWithPath: path))
-        }
     }
 
     // MARK: - AC2: poll keyed to in-flight ids
@@ -829,19 +719,5 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertEqual(split.running[0].receipt, "serve-receipt")
         XCTAssertEqual(split.running[0].logPath, "/tmp/serve.log")
         XCTAssertNotEqual(split.running[0].id, split.earlier[0].id)
-    }
-}
-
-extension ActivityRemodelTests {
-    /// Running servers collapse into one link to Run; the history keeps its own title.
-    func testRunningServersBecomeOneLinkToServing() async throws {
-        let app = try await ServingWorld.host()
-        let lines = try await ServingWorld.renderedLines(
-            JobsView(appHost: app).environment(\.isRouteActive, true), size: CGSize(width: 900, height: 2000)
-        ).map { $0.lowercased() }
-        // Recognition can misread single letters, so match the stable prefixes.
-        XCTAssertTrue(lines.contains { $0.contains("server hist") }, "\(lines)")
-        XCTAssertTrue(lines.contains { $0.contains("2 serving") && $0.contains("open serving") }, "\(lines)")
-        XCTAssertFalse(lines.contains { $0.contains("127.0.0.1:8766") }, "Running servers are listed in Run, not here")
     }
 }

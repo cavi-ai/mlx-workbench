@@ -264,10 +264,19 @@ enum LibraryPresentation {
         + model.sourcePaths
         + model.outputPaths
         + userFacingEvidence(model.evidence)
+        + typeTerms(model)
 
         return searchFields
             .compactMap { $0 }
             .contains { $0.localizedLowercase.contains(normalizedQuery) }
+    }
+
+    /// The model's type, its sidebar category and its use cases, so a search for "tts" or "Image and video" finds it.
+    private static func typeTerms(_ model: LibraryModel) -> [String] {
+        let type = model.item.task?.type ?? .other
+        return type.searchTerms
+            + ModelCategory.allCases.filter { $0.types.contains(type) }.map(\.title)
+            + (model.item.task?.useCases ?? [])
     }
 
     private static func matchesReadiness(_ model: LibraryModel, readiness: ModelReadiness?) -> Bool {
@@ -670,10 +679,24 @@ struct LibraryView: View {
                         .interactiveDismissDisabled(reclaim.isApplying)
                 }
             }
-            .alert("Model removal unavailable", isPresented: Binding(get: { trashError != nil }, set: { if !$0 { trashError = nil } })) {
-                Button("OK", role: .cancel) { trashError = nil }
-            } message: {
-                Text(trashError ?? "")
+            .sheet(isPresented: Binding(get: { trashError != nil && isRouteActive }, set: { if !$0 { trashError = nil } })) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Text("Model removal unavailable").font(WorkbenchTypography.title)
+                    Text("The model could not be moved to Trash. Check whether it is in use, then try again.")
+                    DisclosureGroup("Details") {
+                        ScrollView { Text(trashError ?? "").textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                            .frame(maxHeight: 180)
+                    }
+                    HStack {
+                        Button("Open Serving Doctor") {
+                            trashError = nil
+                            appHost.handoffs.send(ServingFocusRequest(showDoctor: true), as: .openServing)
+                            onRouteSelection(.run)
+                        }
+                        Spacer()
+                        Button("Done") { trashError = nil }.keyboardShortcut(.cancelAction)
+                    }
+                }.padding(WorkbenchSpacing.lg).frame(width: 480)
             }
             .sheet(isPresented: inspectorSheetBinding) {
                 let size = LibraryInspectorPresentation.sheetSize(in: viewport)
@@ -834,7 +857,7 @@ struct LibraryView: View {
 
     private var searchControls: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
-            TextField("Search or paste a Hugging Face link", text: $search)
+            TextField("Search name, type or category, or paste a Hugging Face link", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .focused($searchFocused)
                 .onSubmit { if searchIsLink { addModel() } }
@@ -1035,22 +1058,32 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func contextMenuItems(for actions: ModelActions) -> some View {
-        Button("Copy Path") { actions.copyPath() }
-        Button("Reveal in Finder") { actions.revealInFinder() }
-        Divider()
+        if actions.canUse { Button("Use") { actions.use() } }
+        if actions.canServe, actions.model.readiness == .ready {
+            Button("Serve…") { actions.run() }
+        }
+        if !actions.linkedServices.isEmpty {
+            Button("Manage serving") { actions.manageServing() }
+        }
+        if actions.linkedServices.count == 1, let service = actions.linkedServices.first, service.canUnload {
+            Button("Unload model…") {
+                actions.manageServing(service: service)
+                Task { await appHost.servingInventory.prepare(.unload, service: service) }
+            }
+        }
         if ModelRuntimeRecoveryRequest(model: actions.model) != nil {
             Button("Repair runtime…") { actions.repairRuntime() }
-        } else if actions.canPrepare {
+        }
+        if actions.canPrepare {
             Button(actions.prepareTitle) { actions.prepare() }
         }
         if actions.canCompare {
             Button("Select for Compare") { actions.compare() }
         }
-        if actions.canServe, actions.model.readiness != .needsRuntime {
-            Button("Select for Run") { actions.run() }
-        }
         Divider()
-        Button("Delete…", role: .destructive) {
+        Button("Copy Path") { actions.copyPath() }
+        Button("Reveal in Finder") { actions.revealInFinder() }
+        Button("Move to Trash…", role: .destructive) {
             Task {
                 await reclaim.previewLibraryTrash(actions.model.item.path)
                 if let error = reclaim.libraryTrashError { trashError = error }
@@ -1065,8 +1098,7 @@ struct LibraryView: View {
         if let selectedModel {
             VStack(spacing: 0) {
                 LibraryServingLinks(model: selectedModel, inventory: appHost.servingInventory) {
-                    appHost.handoffs.send(ServingFocusRequest(), as: .openServing)
-                    onRouteSelection(.run)
+                    ModelActions(appHost: appHost, model: selectedModel, onRouteSelection: onRouteSelection).manageServing()
                 }
                 ModelDetailsView(appHost: appHost, model: selectedModel, prominentTitle: usesInspectorColumn, onRouteSelection: onRouteSelection)
             }

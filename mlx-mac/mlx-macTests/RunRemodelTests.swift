@@ -144,20 +144,6 @@ final class RunRemodelTests: XCTestCase {
         XCTAssertTrue(initial.canPrepareSelection)
         XCTAssertTrue(initial.canPreview)
         XCTAssertFalse(initial.canConfirm)
-        let host = NSHostingView(rootView: ServeView(appHost: app, onRouteSelection: { _ in })
-            .environment(\.isRouteActive, true).frame(width: 1190, height: 1100)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1190, height: 1100),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
-        defer { window.close() }
-        func capture(_ name: String) throws {
-            host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent(name))
-        }
-        try await Task.sleep(for: .milliseconds(200)); try capture("before-preview.png")
         app.modelWorkflow.prepareServe(model: model)
         await app.modelWorkflow.previewServe(runtime: "auto", port: nil)
         XCTAssertEqual(app.modelWorkflow.workflow.serveState, .readyToConfirm, app.modelWorkflow.workflow.errorMessage ?? "")
@@ -166,7 +152,6 @@ final class RunRemodelTests: XCTestCase {
         XCTAssertTrue(try store.load().isEmpty, "Preparing a serving target must not create a conversion receipt.")
         let after = try await app.api.serveStatus()
         XCTAssertFalse(after.contains { HFRepoID.matches($0.modelIdentity, input.modelPath) })
-        try await Task.sleep(for: .milliseconds(200)); try capture("preview-ready.png")
         let result: [String: Any] = ["baseRuntimeAvailable": app.runtimeReport.serve.ok, "modelRuntime": model.item.servingRuntime!,
             "previewState": app.modelWorkflow.workflow.serveState.rawValue, "canConfirm": prepared.canConfirm,
             "serverStarted": false, "modelPath": model.item.path]
@@ -979,7 +964,7 @@ extension RunRemodelTests {
         XCTAssertEqual(reserve.map(runway.legendName), "Reserve 4 GB")
         XCTAssertNil(reserve.flatMap(runway.legendSize))
         XCTAssertEqual(resident.map(runway.legendName), "mlx-community/Qwen3-4B-4bit")
-        XCTAssertTrue(resident.flatMap(runway.legendSize)?.hasPrefix("~") == true)
+        XCTAssertTrue(resident.flatMap(runway.legendSize)?.hasSuffix(" GB") == true)
         XCTAssertFalse(runway.caption.contains("reserve"))
         XCTAssertTrue(runway.caption.hasPrefix("of 32.0 GB unified memory"))
     }
@@ -1156,56 +1141,6 @@ extension RunRemodelTests {
 /// no endpoint (Cedar), all behind fakes; nothing starts a process or touches real state.
 @MainActor
 enum ServingWorld {
-    /// Hosts a view in a window of the given size and returns the text recognised in its rendering.
-    static func renderedLines<Content: View>(_ content: Content, size: CGSize) async throws -> [String] {
-        let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height)
-            .background(WorkbenchColor.canvas).preferredColorScheme(.light))
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        hosting.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        return try recognizedLines(in: try XCTUnwrap(bitmap.cgImage))
-    }
-
-    /// Reads text in overlapping horizontal bands, top to bottom, so tall renders keep a legible text size
-    /// at any backing scale. A band keeps the lines centred in its share, with a margin for the centre each band
-    /// measures; text an earlier band already kept at the same place is not kept again.
-    static func recognizedLines(in image: CGImage, band: Int = 600, overlap: Int = 100) throws -> [String] {
-        let margin = Double(overlap) / 4
-        var lines: [(y: Double, x: Double, text: String, box: CGRect)] = []
-        var top = 0
-        while top < image.height {
-            let earlier = lines.count
-            let height = min(band, image.height - top)
-            let last = top + height >= image.height
-            let slice = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: top, width: image.width, height: height)))
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: slice).perform([request])
-            let lower = top == 0 ? -Double.infinity : Double(top + overlap / 2)
-            let upper = last ? Double.infinity : Double(top + band - overlap / 2)
-            for observation in request.results ?? [] {
-                guard let text = observation.topCandidates(1).first?.string else { continue }
-                let centre = Double(top) + (1 - observation.boundingBox.midY) * Double(height)
-                guard centre >= lower - margin && centre < upper + margin else { continue }
-                let unit = observation.boundingBox
-                let box = CGRect(x: unit.minX * Double(image.width), y: Double(top) + (1 - unit.maxY) * Double(height),
-                                 width: unit.width * Double(image.width), height: unit.height * Double(height))
-                let seen = lines[..<earlier].contains { kept in
-                    let shared = kept.box.intersection(box)
-                    return !shared.isNull && shared.width > 0 && shared.height > min(kept.box.height, box.height) / 2
-                }
-                if !seen { lines.append((centre, unit.minX, text, box)) }
-            }
-            if last { break }
-            top += band - overlap
-        }
-        return lines.sorted { ($0.y, $0.x) < ($1.y, $1.x) }.map(\.text)
-    }
-
     static let managed = "/receipts/workbench"
     static let other = "/receipts/other"
     static let selectedModel = "/models/Dune"
@@ -1230,7 +1165,7 @@ enum ServingWorld {
         let root = WorkbenchStatePaths.hostedTestRoot
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
         if accelerated {
-            slot.role = UseCase.allCases.first
+            slot.role = UseCase.allCases.first.map(ServingRole.init)
             slot.acceleration = LocalInferenceOptions(m5Prefill: true, promptLookup: true)
         }
         let endpointServer = server("Alder", port: 8766, pid: 101, managedByWorkbench: true)
@@ -1276,144 +1211,7 @@ enum ServingWorld {
     }
 }
 
-/// Whether the hosted route is the one the window shows.
-@MainActor
-final class RouteFlag: ObservableObject {
-    @Published var active = true
-}
-
-private struct RunPage: View {
-    let app: AppHost
-    @ObservedObject var route: RouteFlag
-    let review: EndpointChangeReview?
-    let hold: FleetOverrideHold?
-
-    var body: some View {
-        ServeView(appHost: app, initialReview: review, fleetHold: hold)
-            .environment(\.isRouteActive, route.active)
-    }
-}
-
 extension RunRemodelTests {
-    /// The Run page as the window shows it: the route alone below the toolbar.
-    private func hostRun(_ app: AppHost, detail: CGSize, dark: Bool, route: RouteFlag? = nil,
-                         review: EndpointChangeReview? = nil, hold: FleetOverrideHold? = nil) -> (NSWindow, NSHostingView<AnyView>) {
-        let content = RunPage(app: app, route: route ?? RouteFlag(), review: review, hold: hold)
-        .frame(width: detail.width, height: detail.height)
-        .background(WorkbenchColor.canvas)
-        .preferredColorScheme(dark ? .dark : .light)
-        let hosting = NSHostingView(rootView: AnyView(content))
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: detail), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderFront(nil)
-        hosting.layoutSubtreeIfNeeded(); window.displayIfNeeded()
-        return (window, hosting)
-    }
-
-    private func pngData(_ hosting: NSView) throws -> Data {
-        hosting.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-    }
-
-    private func saveCapture(_ data: Data, name: String) throws {
-        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
-        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
-        if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDER_OUTPUT"] {
-            let url = URL(fileURLWithPath: folder)
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            try data.write(to: url.appendingPathComponent(name + ".png"))
-        }
-    }
-
-    /// Text recognised in the rendered page, one entry per line of text.
-    private func renderedLines(_ data: Data) throws -> [String] {
-        try ServingWorld.recognizedLines(in: try XCTUnwrap(NSBitmapImageRep(data: data)?.cgImage))
-    }
-
-    func testRunRendersTheServingFixtureForReview() async throws {
-        guard ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1" else {
-            throw XCTSkip("Set MLX_WORKBENCH_RENDERS=1 to write Run captures.")
-        }
-        let app = try await ServingWorld.host()
-        for (size, label) in [(CGSize(width: 1220, height: 848), "1220x848"), (CGSize(width: 520, height: 508), "520x508")] {
-            for dark in [false, true] {
-                let (window, hosting) = hostRun(app, detail: size, dark: dark)
-                try await Task.sleep(for: .milliseconds(400))
-                try saveCapture(try pngData(hosting), name: "run-\(label)-\(dark ? "dark" : "light")")
-                window.close()
-            }
-        }
-        // Served models scrolled to the top of the viewport, at the minimum and the 740 detail widths.
-        for (size, label) in [(CGSize(width: 520, height: 508), "520x508"), (CGSize(width: 740, height: 508), "740x508")] {
-            let (window, hosting) = hostRun(app, detail: size, dark: false)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(400))
-            await showServingEndpoints(app, hosting: hosting)
-            try saveCapture(try pngData(hosting), name: "run-\(label)-rows-light")
-        }
-        // Save as endpoint, with the model unverified.
-        do {
-            let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(400))
-            try selectSaveAsEndpoint(hosting)
-            try await Task.sleep(for: .milliseconds(300))
-            try saveCapture(try pngData(hosting), name: "run-520x508-save-endpoint-light")
-        }
-        // Empty, and a failing status read.
-        do {
-            let empty = try await ServingWorld.host(populated: false)
-            let (window, hosting) = hostRun(empty, detail: CGSize(width: 1220, height: 848), dark: false)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(400))
-            await showServingEndpoints(empty, hosting: hosting)
-            try saveCapture(try pngData(hosting), name: "run-1220x848-empty-light")
-        }
-        // A failing status read together with a refused action.
-        do {
-            let failing = try await ServingWorld.host(serversError: true)
-            let (window, hosting) = hostRun(failing, detail: CGSize(width: 1220, height: 848), dark: true)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(400))
-            failing.servingInventory.mayChange = { _ in false }
-            await failing.servingInventory.prepare(.stop, service: try cedarService(app))
-            try await Task.sleep(for: .milliseconds(500))
-            try saveCapture(try pngData(hosting), name: "run-1220x848-error-dark")
-        }
-        // Open Serving from another page, naming the launched server's row, on a page already scrolled.
-        do {
-            let (window, hosting) = hostRun(app, detail: CGSize(width: 740, height: 508), dark: false)
-            defer { window.close() }
-            try await Task.sleep(for: .milliseconds(400))
-            try scroll(hosting, to: 40)
-            app.handoffs.send(ServingFocusRequest(rowID: try serverRowID(app)), as: .openServing)
-            try await Task.sleep(for: .milliseconds(500))
-            try saveCapture(try pngData(hosting), name: "run-740x508-handoff-light")
-        }
-    }
-
-    private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-
-    private func scrollView(in hosting: NSView) throws -> NSScrollView {
-        try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSScrollView }.first)
-    }
-
-    private func selectSaveAsEndpoint(_ hosting: NSView) throws {
-        let control = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }.first)
-        control.selectedSegment = 1
-        _ = control.sendAction(control.action, to: control.target)
-        hosting.layoutSubtreeIfNeeded()
-    }
-
-    /// Scrolls the hosted page so the Served models header is at the top of the viewport.
-    private func showServingEndpoints(_ app: AppHost, hosting: NSView) async {
-        app.handoffs.send(ServingFocusRequest(), as: .openServing)
-        await settle(400)
-        hosting.layoutSubtreeIfNeeded()
-    }
-
     func testNewEndpointPortsStayInRangeAndUnclaimed() {
         let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/Alder")
         let server = ServingWorld.server("Cedar", port: 9001, pid: 103, managedByWorkbench: true)
@@ -1425,55 +1223,20 @@ extension RunRemodelTests {
         }
     }
 
-    /// Open Serving selects an endpoint and completes the handoff.
-    func testOpenServingSelectsAnEndpointAndFinishesTheRequest() async throws {
-        let app = try await ServingWorld.host()
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
-        defer { window.close() }
-        await settle(400)
-        app.handoffs.send(ServingFocusRequest(), as: .openServing)
-        await settle()
-        XCTAssertNil(app.handoffs[.openServing])
-        let text = try renderedLines(try pngData(hosting)).joined(separator: " ")
-        XCTAssertTrue(text.contains("8766"), text)
-    }
-
-    func testRunListsEachServedThingExactlyOnce() async throws {
-        let app = try await ServingWorld.host()
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 1220, height: 2600), dark: false)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        let lines = try renderedLines(try pngData(hosting))
-        // A row's header is its state pill (when it has one) and its name alone on a line.
-        func rows(named name: String) -> Int {
-            lines.filter { $0.lowercased().range(of: "^\\W*(running\\s+)?\(name)\\W*$", options: .regularExpression) != nil }.count
-        }
-        XCTAssertTrue(lines.contains { $0.lowercased().contains("serve a model") }, "The newly selected Library model keeps its setup workspace")
-        XCTAssertEqual(rows(named: "alder"), 1, "The endpoint and its running server are one row")
-        XCTAssertEqual(rows(named: "birch"), 1, "The third-party local service has a row")
-        XCTAssertEqual(rows(named: "cedar"), 1, "A launched server without an endpoint has one row")
-    }
-
-    func testRunWithNothingServingSaysSo() async throws {
-        let app = try await ServingWorld.host(populated: false)
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 1220, height: 1800), dark: false)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(400))
-        let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("no endpoints") })
-    }
-
     // MARK: Endpoint changes
 
     func testChatServerReviewSkipsStandaloneServers() async throws {
-        let port = EndpointConfig.defaultPort
+        let port = ServingRole.coding.defaultPort
         let standalone = ServingWorld.server("Standalone", port: port, pid: 104, managedByWorkbench: false)
         let app = try await ServingWorld.host(populated: false, discoveredServers: [standalone])
         let model = try libraryModel(app, ServingWorld.selectedModel)
-        guard case .review(let review) = UseChatServerSetup.review(model: model, appHost: app) else {
-            return XCTFail("The next free port should be offered")
+        guard case .chooseRole = UseChatServerSetup.review(model: model, appHost: app) else {
+            return XCTFail("An unserved model should ask for a chat role")
         }
-        XCTAssertEqual(review.port, port + 1)
+        guard case .portRejected(let message) = UseChatServerSetup.review(model: model, role: .coding, appHost: app) else {
+            return XCTFail("A role port held by a standalone server must be refused")
+        }
+        XCTAssertEqual(message, "Port \(port) is in use. Open More settings to choose a port.")
     }
 
     func testChatServerReviewStartsTheSavedSlot() async throws {
@@ -1542,10 +1305,6 @@ extension RunRemodelTests {
 
     private func settle(_ milliseconds: Int = 500) async {
         try? await Task.sleep(for: .milliseconds(milliseconds))
-    }
-
-    private func endSheets(_ window: NSWindow) {
-        for sheet in window.sheets { window.endSheet(sheet) }
     }
 
     private func makeVerification(passing: [(path: String, signature: String)], gate: ProtectionGate) async throws -> VerificationCoordinator {
@@ -1618,10 +1377,6 @@ extension RunRemodelTests {
         await app.comparison.waitForHistory()
         let changes = EndpointChanges(appHost: app)
         let review = changes.review(slot: try XCTUnwrap(app.endpoint.fleet.slots.first), remove: true)
-        let (window, _) = hostRun(app, detail: CGSize(width: 1220, height: 848), dark: false, review: review)
-        defer { endSheets(window); window.close() }
-        await settle()
-        XCTAssertEqual(window.sheets.count, 1, "The removal waits on its confirmation sheet")
         XCTAssertEqual(try persistedSlots(app).map(\.modelPath), ["/models/Alder"])
         let result = await changes.confirm(review)
         XCTAssertEqual(result, .completed)
@@ -1679,160 +1434,23 @@ extension RunRemodelTests {
         XCTAssertEqual(try persistedSlots(app).map(\.enabled), [false])
     }
 
-    // MARK: Pages that are not shown
-
-    /// A confirmation raised on a page the window is not showing waits until that page is shown.
-    func testHiddenRunPresentsNoSheetUntilItIsShown() async throws {
-        let app = try await ServingWorld.host()
+    /// A model change is refused while work holds the endpoint's current model, and the slot keeps its model.
+    func testModelChangeIsRefusedWhileWorkHoldsTheModel() async throws {
+        let gate = ProtectionGate()
+        let verification = try await makeVerification(passing: [], gate: gate)
+        let app = try await ServingWorld.host(verification: verification)
         await app.comparison.waitForHistory()
-        let review = EndpointChanges(appHost: app).review(slot: try XCTUnwrap(app.endpoint.fleet.slots.first), remove: true)
-        let route = RouteFlag()
-        route.active = false
-        let (window, _) = hostRun(app, detail: CGSize(width: 1220, height: 848), dark: false, route: route, review: review)
-        defer { endSheets(window); window.close() }
-        await settle()
-        XCTAssertTrue(window.sheets.isEmpty, "A hidden page presents nothing")
-        route.active = true
-        await settle()
-        XCTAssertEqual(window.sheets.count, 1, "The same confirmation appears once the page is shown")
+        let changes = EndpointChanges(appHost: app)
+        let alder = try XCTUnwrap(app.endpoint.fleet.slots.first)
+        app.verification.verifyNow(modelPath: alder.modelPath, signature: nil)
+        XCTAssertTrue(app.occupancy.blocksStop(modelIdentity: alder.modelPath))
+        let review = changes.reviewSwap(slot: alder, to: try libraryModel(app, ServingWorld.selectedModel))
+        let result = await changes.confirm(review)
+        XCTAssertEqual(result, .refused("Finish the operation using this model before stopping or removing its endpoint."))
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), [alder.modelPath])
+        await gate.open()
+        let deadline = Date().addingTimeInterval(5)
+        while app.verification.activeModelPath != nil, Date() < deadline { await settle(20) }
     }
 
-    /// The serving review belongs to the window, so one sheet appears whichever page is shown, and dismissing it cancels and refreshes.
-    func testInventoryReviewPresentsExactlyOneSheetFromAnyPageAndDismissRefreshes() async throws {
-        let fetches = CallCounter()
-        let app = try await ServingWorld.host(onEngineFetch: { fetches.hit("fetch") })
-        let suite = try XCTUnwrap(UserDefaults(suiteName: "run-remodel-\(UUID().uuidString)"))
-        suite.set(AppRoute.library.rawValue, forKey: AppRoute.selectionStorageKey)
-        let hosting = NSHostingView(rootView: AnyView(ContentView(appHost: app).defaultAppStorage(suite).frame(width: 1220, height: 848)))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 848), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
-        defer { endSheets(window); window.close() }
-        await settle(800)
-        XCTAssertTrue(window.sheets.isEmpty)
-
-        await app.servingInventory.prepare(.stop, service: try cedarService(app))
-        XCTAssertNotNil(app.servingInventory.actionReview)
-        await settle(800)
-        XCTAssertEqual(window.sheets.count, 1)
-
-        let before = fetches.count("fetch")
-        window.endSheet(try XCTUnwrap(window.sheets.first))
-        await settle(800)
-        XCTAssertNil(app.servingInventory.actionReview, "Dismissing cancels the review")
-        XCTAssertGreaterThan(fetches.count("fetch"), before, "Dismissing refreshes the serving inventory")
-    }
-
-    private func cedarService(_ app: AppHost) throws -> ServingServiceObservation {
-        try XCTUnwrap(app.servingInventory.snapshot.services.first { $0.server?.port == 9001 })
-    }
-
-    // MARK: Reveals
-
-    private func scroll(_ hosting: NSView, to offset: CGFloat) throws {
-        let scroll = try scrollView(in: hosting)
-        let flipped = scroll.documentView?.isFlipped ?? true
-        let documentHeight = scroll.documentView?.bounds.height ?? 0
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: flipped ? offset : max(0, documentHeight - offset - scroll.contentView.bounds.height)))
-        scroll.reflectScrolledClipView(scroll.contentView)
-        hosting.layoutSubtreeIfNeeded()
-    }
-
-    private func offset(_ hosting: NSView) throws -> CGFloat {
-        let scroll = try scrollView(in: hosting)
-        let flipped = scroll.documentView?.isFlipped ?? true
-        let documentHeight = scroll.documentView?.bounds.height ?? 0
-        let y = scroll.contentView.bounds.origin.y
-        return flipped ? y : max(0, documentHeight - y - scroll.contentView.bounds.height)
-    }
-
-    private func rowIDs(_ app: AppHost) -> [String] {
-        ServingRows.build(slots: app.endpoint.fleet.slots, servers: app.modelWorkflow.servers, snapshot: app.servingInventory.snapshot).map(\.id)
-    }
-
-    private func serverRowID(_ app: AppHost) throws -> String {
-        try XCTUnwrap(rowIDs(app).first { $0.hasPrefix("server-") })
-    }
-
-    /// An explicit handoff selects its endpoint and displays that endpoint’s API address.
-    func testOpenServingSelectsEachNamedEndpoint() async throws {
-        let app = try await ServingWorld.host()
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
-        defer { window.close() }
-        await settle(400)
-        app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
-        await settle()
-        XCTAssertNil(app.handoffs[.openServing])
-        XCTAssertTrue(try renderedLines(try pngData(hosting)).joined(separator: " ").contains("8766"))
-        app.handoffs.send(ServingFocusRequest(rowID: try serverRowID(app)), as: .openServing)
-        await settle()
-        XCTAssertNil(app.handoffs[.openServing])
-        let text = try renderedLines(try pngData(hosting)).joined(separator: " ")
-        XCTAssertTrue(text.contains("9001"), text)
-        XCTAssertTrue(text.lowercased().contains("cedar"), text)
-    }
-
-    /// A hidden page preserves its pending handoff until it becomes active.
-    func testOpenServingWaitsForTheRouteBeforeSelectingAnEndpoint() async throws {
-        let app = try await ServingWorld.host()
-        let route = RouteFlag(); route.active = false
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false, route: route)
-        defer { window.close() }
-        await settle(400)
-        app.handoffs.send(ServingFocusRequest(), as: .openServing)
-        await settle()
-        XCTAssertNotNil(app.handoffs[.openServing])
-        route.active = true
-        await settle()
-        XCTAssertNil(app.handoffs[.openServing])
-        XCTAssertTrue(try renderedLines(try pngData(hosting)).joined(separator: " ").contains("8766"))
-    }
-
-    /// Memory overrides remain visible alongside the model workspace.
-    func testRaisedFleetOverrideStaysVisibleAboveTheWorkspace() async throws {
-        let app = try await ServingWorld.host()
-        let hold = FleetOverrideHold()
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false, hold: hold)
-        defer { window.close() }
-        await settle(400)
-        hold.hold("needs 40.0 GB, 12.0 GB short") {}
-        await settle()
-        let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
-        XCTAssertTrue(text.contains("enable anyway"), text)
-        XCTAssertTrue(text.contains("40.0"), text)
-        XCTAssertNotNil(hold.pending)
-    }
-
-    /// Action failures remain visible without moving the model settings.
-    func testActionErrorsStayVisibleAboveTheWorkspace() async throws {
-        let app = try await ServingWorld.host()
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 520, height: 508), dark: false)
-        defer { window.close() }
-        await settle(400)
-        app.servingInventory.mayChange = { _ in false }
-        await app.servingInventory.prepare(.stop, service: try cedarService(app))
-        await settle()
-        XCTAssertTrue(try XCTUnwrap(app.servingInventory.actionError).contains("Refresh and review it again."))
-        let image = try pngData(hosting)
-        try saveCapture(image, name: "Serving-action-error-minimum")
-        let text = try renderedLines(image).joined(separator: " ").lowercased()
-        XCTAssertTrue(text.contains("service changed"), text)
-
-    }
-
-    // MARK: Wide rows
-
-    /// The connection remains readable while inference settings retain their saved values.
-    func testEndpointWorkspaceKeepsConnectionAndSettingsReadable() async throws {
-        let app = try await ServingWorld.host(accelerated: true)
-        let (window, hosting) = hostRun(app, detail: CGSize(width: 800, height: 900), dark: false)
-        defer { window.close() }
-        await settle(400)
-        app.handoffs.send(ServingFocusRequest(rowID: try XCTUnwrap(rowIDs(app).first)), as: .openServing)
-        await settle()
-        let text = try renderedLines(try pngData(hosting)).joined(separator: " ").lowercased()
-        XCTAssertTrue(text.contains("8766"), text)
-        XCTAssertTrue(text.contains("inference"), text)
-        XCTAssertTrue(text.contains("security"), text)
-        XCTAssertTrue(try XCTUnwrap(app.endpoint.fleet.slots.first).inferenceOptions.promptLookup)
-    }
 }

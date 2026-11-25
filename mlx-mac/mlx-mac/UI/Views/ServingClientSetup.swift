@@ -39,10 +39,11 @@ enum ServingClient: String, CaseIterable, Identifiable {
         let base = "http://127.0.0.1:\(port)/v1"
         let model = server.modelIdentity
         let protected = server.apiKeySHA256 != nil
-        let key = protected ? "${WORKBENCH_API_KEY}" : "workbench"
+        let envVar = QuickConnectSnippets.apiKeyEnvVar
+        let key = protected ? "${\(envVar)}" : "workbench"
         switch self {
         case .opencode:
-            return Self.json(["provider": ["mlx-local": ["npm": "@ai-sdk/openai-compatible", "options": ["baseURL": base, "apiKey": protected ? "{env:WORKBENCH_API_KEY}" : "workbench"], "models": [model: [String: String]()]]], "model": "mlx-local/" + model])
+            return Self.json(["providers": ["mlx-agent": ["name": "mlx-agent (local)", "package": "aisdk:@ai-sdk/openai-compatible", "settings": ["baseURL": base, "apiKey": protected ? "{env:\(envVar)}" : "workbench"], "models": [model: [String: String]()]]], "model": "mlx-agent/" + model])
         case .openclaw:
             var provider: [String: Any] = ["baseUrl": base, "api": "openai-completions", "models": [["id": model, "name": URL(fileURLWithPath: model).lastPathComponent]]]
             if protected { provider["apiKey"] = key } else { provider["auth"] = "none" }
@@ -51,10 +52,10 @@ enum ServingClient: String, CaseIterable, Identifiable {
             return "hermes model\n\nAPI mode: Chat Completions\nBase URL: \(base)\nModel: \(model)\nAPI key: \(protected ? "Paste the key from API & security" : "Leave blank")"
         case .codex:
             var args = ["codex", "-c", Self.shell("model_provider=\"workbench\""), "-c", Self.shell("model=" + Self.jsonString(model)), "-c", Self.shell("model_providers.workbench.name=\"MLX Workbench\""), "-c", Self.shell("model_providers.workbench.base_url=" + Self.jsonString(base)), "-c", Self.shell("model_providers.workbench.wire_api=\"responses\"")]
-            if protected { args += ["-c", Self.shell("model_providers.workbench.env_key=\"WORKBENCH_API_KEY\"")] }
+            if protected { args += ["-c", Self.shell("model_providers.workbench.env_key=\"\(envVar)\"")] }
             return args.joined(separator: " \\\n  ")
         case .claude:
-            return "ANTHROPIC_API_KEY='' ANTHROPIC_AUTH_TOKEN=\(protected ? "\"$WORKBENCH_API_KEY\"" : "'workbench'") \\\nANTHROPIC_BASE_URL=\(Self.shell("http://127.0.0.1:\(port)")) \\\nclaude --model \(Self.shell(model))"
+            return "ANTHROPIC_API_KEY='' ANTHROPIC_AUTH_TOKEN=\(protected ? "\"$\(envVar)\"" : "'workbench'") \\\nANTHROPIC_BASE_URL=\(Self.shell("http://127.0.0.1:\(port)")) \\\nclaude --model \(Self.shell(model))"
         }
     }
     private static func shell(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
@@ -85,7 +86,7 @@ struct ServingClientSetup: View {
                 Text(client.instructions(protected: server.apiKeySHA256 != nil)).font(WorkbenchTypography.secondary)
                 if let setup = client.setup(server: server) {
                 if server.apiKeySHA256 != nil && client != .hermes {
-                    Text("Set WORKBENCH_API_KEY in the client’s environment using Copy API key in API & security. The setup below contains no secret.")
+                    Text("Set \(QuickConnectSnippets.apiKeyEnvVar) in the client’s environment using Copy API key in API & security. The setup below contains no secret.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 Text(setup).font(WorkbenchTypography.compactValue).textSelection(.enabled)

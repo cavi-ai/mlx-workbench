@@ -12,6 +12,8 @@
 		FD0D00000000000000000001 /* FrontDoor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000002 /* FrontDoor.swift */; };
 		C5C000000000000000000001 /* QuickConnectSnippets.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C000000000000000000002 /* QuickConnectSnippets.swift */; };
 		FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0D00000000000000000006 /* FrontDoorEditor.swift */; };
+		AB5E000000000000000000A1 /* WorkbenchKeyWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5E000000000000000000A2 /* WorkbenchKeyWizard.swift */; };
+		AB5E000000000000000000A3 /* WorkbenchKeySetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5E000000000000000000A4 /* WorkbenchKeySetupTests.swift */; };
         E71300000000000000000011 /* TOMLKit in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000021; };
         E71300000000000000000012 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000022; };
         E71300000000000000000015 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E71300000000000000000023; };
@@ -21,12 +23,14 @@
 		E71200000000000000000402 /* ServingClientSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000401 /* ServingClientSetup.swift */; };
 		E71200000000000000000302 /* ServingMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000301 /* ServingMonitorView.swift */; };
 		E71200000000000000000502 /* ModelSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000501 /* ModelSourcesView.swift */; };
+		7C3A91E0D4B25F6A8E1C0B01 /* ServingRolesPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3A91E0D4B25F6A8E1C0F01 /* ServingRolesPresentation.swift */; };
 		E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000201 /* ServingWorkspaceViews.swift */; };
 		E71200000000000000000102 /* ServingTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000101 /* ServingTelemetry.swift */; };
 		INVTSTB1 /* ServingInventoryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = INVTSTF1 /* ServingInventoryCoordinatorTests.swift */; };
 		MEMTSTB1 /* EndpointMemoryPolicyReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */; };
 		MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNGTSTF1 /* ManagedModelInstallStoreTests.swift */; };
 		MEMRVB1 /* EndpointMemoryReviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMRVF1 /* EndpointMemoryReviewSheet.swift */; };
+		A13C10C4000000000000F002 /* LiveStateClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13C10C4000000000000F001 /* LiveStateClockTests.swift */; };
 		SIVTSTB1 /* ServingInventoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVTSTF1 /* ServingInventoryPresentationTests.swift */; };
 		SMETB001 /* ServingMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SMETF001 /* ServingMemoryTests.swift */; };
 		SRVRTB1 /* ServingRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRVRTF1 /* ServingRowsTests.swift */; };
@@ -40,6 +44,7 @@
 		MIDMDB1 /* ModelUpdateModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDMDF1 /* ModelUpdateModels.swift */; };
 		MIDAPB1 /* AppHostModelUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDAPF1 /* AppHostModelUpdates.swift */; };
 		MIDSTB1 /* ManagedModelInstallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MIDSTF1 /* ManagedModelInstallStore.swift */; };
+		A13C10C4000000000000F004 /* LiveStateClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13C10C4000000000000F003 /* LiveStateClock.swift */; };
 		SIVCOOB1 /* ServingInventoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVCOOF1 /* ServingInventoryCoordinator.swift */; };
 		SIVLOCB1 /* LocalModelHostDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVLOCF1 /* LocalModelHostDiscovery.swift */; };
 		SIVMODB1 /* ServingInventoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIVMODF1 /* ServingInventoryModels.swift */; };
@@ -57,7 +62,6 @@
 		TRNDSSB1 /* TrainingDatasetSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSSF1 /* TrainingDatasetSheet.swift */; };
 		TRNDSDB1 /* TrainingDatasetDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSDF1 /* TrainingDatasetDraft.swift */; };
 		PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRMEMF1 /* ProcessMemorySnapshot.swift */; };
-		344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */; };
 		1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */; };
 		BE10FB560CF5CCF42E69AB69 /* HostedComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */; };
 		DA220300AF9616739E5D2445 /* HostedModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 005CE28BCD11F9309E165034 /* HostedModelsView.swift */; };
@@ -79,7 +83,7 @@
 		28MEM001B /* SystemResourceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM001F /* SystemResourceMonitor.swift */; };
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
 		A91D00000000000000000001 /* StandaloneReclaimUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91D00000000000000000002 /* StandaloneReclaimUITests.swift */; };
-		26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* WorkbenchReviewUITests.swift */; };
+		26UIBLD101 /* NativeUITestEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* NativeUITestEnvironment.swift */; };
 		B62D00000000000000000001 /* ServingUXRealUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B62D00000000000000000002 /* ServingUXRealUITests.swift */; };
 		EXIST001 /* ExistingEndpointRealUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXIST002 /* ExistingEndpointRealUITests.swift */; };
 		5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E77000000000000004F /* SetupAssistantUITests.swift */; };
@@ -139,6 +143,8 @@
 		28OVWB02 /* OverviewPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28OVWF02 /* OverviewPresentationTests.swift */; };
 		E8BED0000000000000000011 /* EmbeddingMeshTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BED0000000000000000001 /* EmbeddingMeshTaskModels.swift */; };
 		1F3E00000000000000000011 /* ServingInferenceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F3E00000000000000000001 /* ServingInferenceControls.swift */; };
+		1F3E00000000000000000012 /* ServingConfigurationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F3E00000000000000000002 /* ServingConfigurationPanel.swift */; };
+		5B21E0000000000000000011 /* ServingRuntimeExperimentalControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B21E0000000000000000001 /* ServingRuntimeExperimentalControls.swift */; };
 		29A710000000000000000011 /* InferenceTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A710000000000000000001 /* InferenceTaskModels.swift */; };
 		5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000001 /* InferenceSettings.swift */; };
 		29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A710000000000000000002 /* TaskArtifactVerifier.swift */; };
@@ -204,6 +210,7 @@
 		LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSPRSF1 /* LMStudioShelfPresentation.swift */; };
 		LMSVWSB1 /* LMStudioShelfViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSVWSF1 /* LMStudioShelfViews.swift */; };
 		MNUBRTB1 /* MenuBarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNUBRTF1 /* MenuBarTests.swift */; };
+		MNUBIB01 /* MenuBarInsertionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNUBIF01 /* MenuBarInsertionTests.swift */; };
 		TRNPRSB1 /* TrainingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNPRSF1 /* TrainingPresentation.swift */; };
 		LABPRSB1 /* LabPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABPRSF1 /* LabPresentation.swift */; };
 		LABRMDB1 /* LabRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABRMDF1 /* LabRemodelTests.swift */; };
@@ -227,7 +234,6 @@
 		STGPRBB1 /* SettingsDirectoryProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGPRBF1 /* SettingsDirectoryProbe.swift */; };
 		STGDET01 /* SettingsEngineDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGDET02 /* SettingsEngineDetection.swift */; };
 		STGRMDB1 /* SettingsRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGRMDF1 /* SettingsRemodelTests.swift */; };
-		SHLRNDB1 /* ShellRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHLRNDF1 /* ShellRenderTests.swift */; };
 		DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCRMDF1 /* DiscoverRemodelTests.swift */; };
 		LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSRMDF1 /* LMStudioRemodelTests.swift */; };
 		RCLVWSB1 /* ReclaimViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLVWSF1 /* ReclaimViews.swift */; };
@@ -333,6 +339,7 @@
 		27ABCD000000000000000002 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000002 /* DesignSystem.swift */; };
 		27ABCD000000000000000003 /* AppRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000003 /* AppRouteTests.swift */; };
 		27ABCD000000000000000004 /* DesignLintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000004 /* DesignLintTests.swift */; };
+		WBTHEMETSTB1 /* WorkbenchThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WBTHEMETSTF1 /* WorkbenchThemeTests.swift */; };
 		27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */; };
 		27ABCD000000000000000020 /* LibraryTypeGroupingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */; };
 		27ABCD000000000000000023 /* ConversionProgressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000023 /* ConversionProgressTests.swift */; };
@@ -340,6 +347,11 @@
 		27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000014 /* CompareLayoutTests.swift */; };
 		27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000008 /* IntakeContractTests.swift */; };
 		27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000006 /* ModelTaskTests.swift */; };
+		7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */; };
+		E71200000000000000000F02 /* ServingInspectorPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */; };
+		E71200000000000000000F12 /* ModelServingDefaultsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F11 /* ModelServingDefaultsTests.swift */; };
+		E71200000000000000000F14 /* ModelServingDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F13 /* ModelServingDefaults.swift */; };
+		E71200000000000000000F04 /* ServingInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F03 /* ServingInspector.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 		5A1E5E770000000000000042 /* agent-worker.py in Resources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000041 /* agent-worker.py */; };
@@ -392,6 +404,7 @@
 		E70600000000000000000702 /* UseWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000701 /* UseWorkspaceView.swift */; };
 		E70600000000000000000802 /* UseWorkViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000801 /* UseWorkViews.swift */; };
 		E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000901 /* UseWorkspaceCommands.swift */; };
+		E70600000000000000000A02 /* WorkbenchCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70600000000000000000A01 /* WorkbenchCommands.swift */; };
 		E71100000000000000000102 /* MediaReuseSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000101 /* MediaReuseSettings.swift */; };
 		E71100000000000000000202 /* MediaReuseCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000201 /* MediaReuseCapabilities.swift */; };
 		E71100000000000000000302 /* MediaReuseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71100000000000000000301 /* MediaReuseViews.swift */; };
@@ -412,18 +425,22 @@
 		FD0D00000000000000000002 /* FrontDoor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/FrontDoor.swift; sourceTree = "<group>"; };
 		C5C000000000000000000002 /* QuickConnectSnippets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickConnectSnippets.swift; sourceTree = "<group>"; };
 		FD0D00000000000000000006 /* FrontDoorEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/FrontDoorEditor.swift; sourceTree = "<group>"; };
+		AB5E000000000000000000A2 /* WorkbenchKeyWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/WorkbenchKeyWizard.swift; sourceTree = "<group>"; };
+		AB5E000000000000000000A4 /* WorkbenchKeySetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchKeySetupTests.swift; path = WorkbenchKeySetupTests.swift; sourceTree = "<group>"; };
 		E71400000000000000000101 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/TerminalSession.swift; sourceTree = "<group>"; };
 		E71400000000000000000201 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/TerminalWorkspaceView.swift; sourceTree = "<group>"; };
 		E71400000000000000000301 /* TerminalSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionTests.swift; sourceTree = "<group>"; };
 		E71200000000000000000401 /* ServingClientSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingClientSetup.swift; sourceTree = "<group>"; };
 		E71200000000000000000301 /* ServingMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingMonitorView.swift; sourceTree = "<group>"; };
 		E71200000000000000000501 /* ModelSourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ModelSourcesView.swift; sourceTree = "<group>"; };
+		7C3A91E0D4B25F6A8E1C0F01 /* ServingRolesPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingRolesPresentation.swift; sourceTree = "<group>"; };
 		E71200000000000000000201 /* ServingWorkspaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingWorkspaceViews.swift; sourceTree = "<group>"; };
 		E71200000000000000000101 /* ServingTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ServingTelemetry.swift; sourceTree = "<group>"; };
 		INVTSTF1 /* ServingInventoryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryCoordinatorTests.swift; path = ServingInventoryCoordinatorTests.swift; sourceTree = "<group>"; };
 		MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointMemoryPolicyReviewTests.swift; path = EndpointMemoryPolicyReviewTests.swift; sourceTree = "<group>"; };
 		MNGTSTF1 /* ManagedModelInstallStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStoreTests.swift; path = ManagedModelInstallStoreTests.swift; sourceTree = "<group>"; };
 		MEMRVF1 /* EndpointMemoryReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointMemoryReviewSheet.swift; path = UI/Views/EndpointMemoryReviewSheet.swift; sourceTree = "<group>"; };
+		A13C10C4000000000000F001 /* LiveStateClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LiveStateClockTests.swift; path = LiveStateClockTests.swift; sourceTree = "<group>"; };
 		SIVTSTF1 /* ServingInventoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryPresentationTests.swift; path = ServingInventoryPresentationTests.swift; sourceTree = "<group>"; };
 		SMETF001 /* ServingMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingMemoryTests.swift; path = ServingMemoryTests.swift; sourceTree = "<group>"; };
 		SRVRTF1 /* ServingRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRowsTests.swift; path = ServingRowsTests.swift; sourceTree = "<group>"; };
@@ -437,6 +454,7 @@
 		MIDMDF1 /* ModelUpdateModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelUpdateModels.swift; path = Models/ModelUpdateModels.swift; sourceTree = "<group>"; };
 		MIDAPF1 /* AppHostModelUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostModelUpdates.swift; path = Services/AppHostModelUpdates.swift; sourceTree = "<group>"; };
 		MIDSTF1 /* ManagedModelInstallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ManagedModelInstallStore.swift; path = Services/ManagedModelInstallStore.swift; sourceTree = "<group>"; };
+		A13C10C4000000000000F003 /* LiveStateClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LiveStateClock.swift; path = Services/LiveStateClock.swift; sourceTree = "<group>"; };
 		SIVCOOF1 /* ServingInventoryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryCoordinator.swift; path = Services/ServingInventoryCoordinator.swift; sourceTree = "<group>"; };
 		SIVLOCF1 /* LocalModelHostDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LocalModelHostDiscovery.swift; path = Services/LocalModelHostDiscovery.swift; sourceTree = "<group>"; };
 		SIVMODF1 /* ServingInventoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryModels.swift; path = Models/ServingInventoryModels.swift; sourceTree = "<group>"; };
@@ -460,7 +478,6 @@
 		TRNDSSF1 /* TrainingDatasetSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetSheet.swift; path = UI/Views/TrainingDatasetSheet.swift; sourceTree = "<group>"; };
 		TRNDSDF1 /* TrainingDatasetDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetDraft.swift; path = Services/TrainingDatasetDraft.swift; sourceTree = "<group>"; };
 		PRMEMF1 /* ProcessMemorySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProcessMemorySnapshot.swift; path = Services/ProcessMemorySnapshot.swift; sourceTree = "<group>"; };
-		74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsUITests.swift; sourceTree = "<group>"; };
 		B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsRenderTests.swift; sourceTree = "<group>"; };
 		B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedComparisonView.swift; path = UI/Views/HostedComparisonView.swift; sourceTree = "<group>"; };
 		005CE28BCD11F9309E165034 /* HostedModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedModelsView.swift; path = UI/Views/HostedModelsView.swift; sourceTree = "<group>"; };
@@ -482,7 +499,7 @@
 		28MEM001F /* SystemResourceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceMonitor.swift; path = Services/SystemResourceMonitor.swift; sourceTree = "<group>"; };
 		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
 		A91D00000000000000000002 /* StandaloneReclaimUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StandaloneReclaimUITests.swift; sourceTree = "<group>"; };
-		26UIREF101 /* WorkbenchReviewUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchReviewUITests.swift; sourceTree = "<group>"; };
+		26UIREF101 /* NativeUITestEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeUITestEnvironment.swift; sourceTree = "<group>"; };
 		B62D00000000000000000002 /* ServingUXRealUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServingUXRealUITests.swift; sourceTree = "<group>"; };
 		EXIST002 /* ExistingEndpointRealUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExistingEndpointRealUITests.swift; sourceTree = "<group>"; };
 		5A1E5E77000000000000004F /* SetupAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantUITests.swift; sourceTree = "<group>"; };
@@ -505,6 +522,8 @@
 
 		24FREF000006 /* WorkbenchAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPI.swift; path = Services/WorkbenchAPI.swift; sourceTree = "<group>"; };
 		E8BED0000000000000000001 /* EmbeddingMeshTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EmbeddingMeshTaskModels.swift; path = Models/EmbeddingMeshTaskModels.swift; sourceTree = "<group>"; };
+		1F3E00000000000000000002 /* ServingConfigurationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingConfigurationPanel.swift; path = UI/Views/ServingConfigurationPanel.swift; sourceTree = "<group>"; };
+		5B21E0000000000000000001 /* ServingRuntimeExperimentalControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRuntimeExperimentalControls.swift; path = UI/Views/ServingRuntimeExperimentalControls.swift; sourceTree = "<group>"; };
 		1F3E00000000000000000001 /* ServingInferenceControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInferenceControls.swift; path = UI/Views/ServingInferenceControls.swift; sourceTree = "<group>"; };
 		29A710000000000000000001 /* InferenceTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceTaskModels.swift; path = Models/InferenceTaskModels.swift; sourceTree = "<group>"; };
 		5A1E5E770000000000000001 /* InferenceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = InferenceSettings.swift; path = Models/InferenceSettings.swift; sourceTree = "<group>"; };
@@ -596,11 +615,11 @@
 		STGPRBF1 /* SettingsDirectoryProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsDirectoryProbe.swift; path = UI/Views/SettingsDirectoryProbe.swift; sourceTree = "<group>"; };
 		STGDET02 /* SettingsEngineDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsEngineDetection.swift; path = Services/SettingsEngineDetection.swift; sourceTree = "<group>"; };
 		STGRMDF1 /* SettingsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsRemodelTests.swift; path = SettingsRemodelTests.swift; sourceTree = "<group>"; };
-		SHLRNDF1 /* ShellRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ShellRenderTests.swift; path = ShellRenderTests.swift; sourceTree = "<group>"; };
 		DSCRMDF1 /* DiscoverRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverRemodelTests.swift; path = DiscoverRemodelTests.swift; sourceTree = "<group>"; };
 		LMSRMDF1 /* LMStudioRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioRemodelTests.swift; path = LMStudioRemodelTests.swift; sourceTree = "<group>"; };
 		LABPRSF1 /* LabPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabPresentation.swift; path = UI/Views/LabPresentation.swift; sourceTree = "<group>"; };
 		LABRMDF1 /* LabRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabRemodelTests.swift; path = LabRemodelTests.swift; sourceTree = "<group>"; };
+		MNUBIF01 /* MenuBarInsertionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MenuBarInsertionTests.swift; path = MenuBarInsertionTests.swift; sourceTree = "<group>"; };
 		MNUBRTF1 /* MenuBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MenuBarTests.swift; path = MenuBarTests.swift; sourceTree = "<group>"; };
 		TRNPRSF1 /* TrainingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingPresentation.swift; path = UI/Views/TrainingPresentation.swift; sourceTree = "<group>"; };
 		TRNVWSF1 /* TrainingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingViews.swift; path = UI/Views/TrainingViews.swift; sourceTree = "<group>"; };
@@ -733,6 +752,7 @@
 		27ABCD100000000000000002 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignSystem.swift; path = UI/DesignSystem.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000003 /* AppRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRouteTests.swift; path = AppRouteTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000004 /* DesignLintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignLintTests.swift; path = DesignLintTests.swift; sourceTree = "<group>"; };
+		WBTHEMETSTF1 /* WorkbenchThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchThemeTests.swift; path = WorkbenchThemeTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeCoordinatorTests.swift; path = IntakeCoordinatorTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryTypeGroupingTests.swift; path = LibraryTypeGroupingTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000023 /* ConversionProgressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConversionProgressTests.swift; path = ConversionProgressTests.swift; sourceTree = "<group>"; };
@@ -740,6 +760,11 @@
 		27ABCD100000000000000014 /* CompareLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareLayoutTests.swift; path = CompareLayoutTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000008 /* IntakeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeContractTests.swift; path = IntakeContractTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000006 /* ModelTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTaskTests.swift; path = ModelTaskTests.swift; sourceTree = "<group>"; };
+		7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRolesPresentationTests.swift; path = ServingRolesPresentationTests.swift; sourceTree = "<group>"; };
+		E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInspectorPresentationTests.swift; path = ServingInspectorPresentationTests.swift; sourceTree = "<group>"; };
+		E71200000000000000000F11 /* ModelServingDefaultsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelServingDefaultsTests.swift; path = ModelServingDefaultsTests.swift; sourceTree = "<group>"; };
+		E71200000000000000000F13 /* ModelServingDefaults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelServingDefaults.swift; path = Services/ModelServingDefaults.swift; sourceTree = "<group>"; };
+		E71200000000000000000F03 /* ServingInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingInspector.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		26CFREF001 /* ContractFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixtureTests.swift; sourceTree = "<group>"; };
@@ -810,6 +835,7 @@
 		E70600000000000000000701 /* UseWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkspaceView.swift; sourceTree = "<group>"; };
 		E70600000000000000000801 /* UseWorkViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/UseWorkViews.swift; sourceTree = "<group>"; };
 		E70600000000000000000901 /* UseWorkspaceCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/UseWorkspaceCommands.swift; sourceTree = "<group>"; };
+		E70600000000000000000A01 /* WorkbenchCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/WorkbenchCommands.swift; sourceTree = "<group>"; };
 		E71100000000000000000101 /* MediaReuseSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/MediaReuseSettings.swift; sourceTree = "<group>"; };
 		E71100000000000000000201 /* MediaReuseCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MediaReuseCapabilities.swift; sourceTree = "<group>"; };
 		E71100000000000000000301 /* MediaReuseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/MediaReuseViews.swift; sourceTree = "<group>"; };
@@ -872,6 +898,7 @@
 
 				A17A00000000000000000004 /* TailnetSharingWizard.swift */,
 				FD0D00000000000000000006 /* FrontDoorEditor.swift */,
+				AB5E000000000000000000A2 /* WorkbenchKeyWizard.swift */,
 				B9D0A82C10303319EF8D18EC /* ClientSetupWizard.swift */,
 				9C74C7957035E6C7413AEA49 /* CaviConnectionClient.swift */,
 				563321E30A75D5D8D3051AF6 /* ClientSetupSession.swift */,
@@ -897,12 +924,15 @@
 				24FREF000004 /* ModelItem.swift */,
 				E8BED0000000000000000001 /* EmbeddingMeshTaskModels.swift */,
 				1F3E00000000000000000001 /* ServingInferenceControls.swift */,
+				1F3E00000000000000000002 /* ServingConfigurationPanel.swift */,
+				5B21E0000000000000000001 /* ServingRuntimeExperimentalControls.swift */,
 				29A710000000000000000001 /* InferenceTaskModels.swift */,
 				5A1E5E770000000000000001 /* InferenceSettings.swift */,
 				29A710000000000000000002 /* TaskArtifactVerifier.swift */,
 				A0D100000000000000000001 /* LocalAudioRouting.swift */,
 				C0DE00000000000000000001 /* InferenceTaskCoordinator.swift */,
 				E70600000000000000000901 /* UseWorkspaceCommands.swift */,
+				E70600000000000000000A01 /* WorkbenchCommands.swift */,
 				E70600000000000000000801 /* UseWorkViews.swift */,
 				E70600000000000000000701 /* UseWorkspaceView.swift */,
 				E70600000000000000000601 /* UseWorkspaceCoordinator.swift */,
@@ -918,6 +948,8 @@
 				E71200000000000000000401 /* ServingClientSetup.swift */,
 				E71400000000000000000201 /* TerminalWorkspaceView.swift */,
 				E71200000000000000000201 /* ServingWorkspaceViews.swift */,
+				E71200000000000000000F03 /* ServingInspector.swift */,
+				7C3A91E0D4B25F6A8E1C0F01 /* ServingRolesPresentation.swift */,
 				E71200000000000000000101 /* ServingTelemetry.swift */,
 				E70500000000000000000401 /* TaskDestinationPanel.swift */,
 				E70500000000000000000301 /* ServedTaskSessions.swift */,
@@ -982,6 +1014,7 @@
 				A6C0100000000000000000F04 /* ComparisonInsightsView.swift */,
 				24FREF057 /* UsageTracker.swift */,
 				D52F00000000000000000001 /* ModelPurposeStore.swift */,
+				E71200000000000000000F13 /* ModelServingDefaults.swift */,
 				D53F00000000000000000001 /* ModelShowdownResults.swift */,
 				D52F00000000000000000002 /* ModelFamilyReview.swift */,
 				D52F00000000000000000003 /* ServedModelsView.swift */,
@@ -992,6 +1025,7 @@
 				24FREF05B /* LineageModels.swift */,
 				24FREF05C /* LineageIndexer.swift */,
 				SIVLOCF1 /* LocalModelHostDiscovery.swift */,
+				A13C10C4000000000000F003 /* LiveStateClock.swift */,
 				SIVCOOF1 /* ServingInventoryCoordinator.swift */,
 				SIVMODF1 /* ServingInventoryModels.swift */,
 				SMEMF001 /* ServingMemory.swift */,
@@ -1168,12 +1202,12 @@
 				HLTRMDF1 /* HealthRemodelTests.swift */,
 				CLNRMDF1 /* ClientsRemodelTests.swift */,
 				STGRMDF1 /* SettingsRemodelTests.swift */,
-				SHLRNDF1 /* ShellRenderTests.swift */,
 				DSCRMDF1 /* DiscoverRemodelTests.swift */,
 				LMSRMDF1 /* LMStudioRemodelTests.swift */,
 				TRNRMDF1 /* TrainingRemodelTests.swift */,
 				LABRMDF1 /* LabRemodelTests.swift */,
 				MNUBRTF1 /* MenuBarTests.swift */,
+				MNUBIF01 /* MenuBarInsertionTests.swift */,
 				ADPRMDF1 /* AdoptRemodelTests.swift */,
 				INTRMDF1 /* IntakeRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
@@ -1209,6 +1243,7 @@
 				INVTSTF1 /* ServingInventoryCoordinatorTests.swift */,
 				MEMTSTF1 /* EndpointMemoryPolicyReviewTests.swift */,
 				MNGTSTF1 /* ManagedModelInstallStoreTests.swift */,
+				A13C10C4000000000000F001 /* LiveStateClockTests.swift */,
 				SIVTSTF1 /* ServingInventoryPresentationTests.swift */,
 				SMETF001 /* ServingMemoryTests.swift */,
 				SRVRTF1 /* ServingRowsTests.swift */,
@@ -1242,6 +1277,7 @@
 				27TST009 /* UpdateCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 				27ABCD100000000000000004 /* DesignLintTests.swift */,
+				WBTHEMETSTF1 /* WorkbenchThemeTests.swift */,
 				27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */,
 				27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */,
 				27ABCD100000000000000023 /* ConversionProgressTests.swift */,
@@ -1251,6 +1287,10 @@
 				27ABCD100000000000000014 /* CompareLayoutTests.swift */,
 				27ABCD100000000000000008 /* IntakeContractTests.swift */,
 				27ABCD100000000000000006 /* ModelTaskTests.swift */,
+				7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */,
+				AB5E000000000000000000A4 /* WorkbenchKeySetupTests.swift */,
+				E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */,
+				E71200000000000000000F11 /* ModelServingDefaultsTests.swift */,
 			);
 			path = mlx-macTests;
 			sourceTree = "<group>";
@@ -1258,10 +1298,9 @@
 		26UIGRP001 /* mlx-macUITests */ = {
 			isa = PBXGroup;
 			children = (
-				74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */,
 				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
 				A91D00000000000000000002 /* StandaloneReclaimUITests.swift */,
-				26UIREF101 /* WorkbenchReviewUITests.swift */,
+				26UIREF101 /* NativeUITestEnvironment.swift */,
 				B62D00000000000000000002 /* ServingUXRealUITests.swift */,
 				EXIST002 /* ExistingEndpointRealUITests.swift */,
 				5A1E5E77000000000000004F /* SetupAssistantUITests.swift */,
@@ -1441,10 +1480,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */,
 				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
 				A91D00000000000000000001 /* StandaloneReclaimUITests.swift in Sources */,
-				26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */,
+				26UIBLD101 /* NativeUITestEnvironment.swift in Sources */,
 				B62D00000000000000000001 /* ServingUXRealUITests.swift in Sources */,
 				EXIST001 /* ExistingEndpointRealUITests.swift in Sources */,
 				5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */,
@@ -1461,6 +1499,7 @@
 				FD0D00000000000000000001 /* FrontDoor.swift in Sources */,
 				C5C000000000000000000001 /* QuickConnectSnippets.swift in Sources */,
 				FD0D00000000000000000005 /* FrontDoorEditor.swift in Sources */,
+				AB5E000000000000000000A1 /* WorkbenchKeyWizard.swift in Sources */,
 				5C26F286C9BC5A9F2AF524FB /* ClientSetupWizard.swift in Sources */,
 				A9E1D351562EE68904C2F8AB /* CaviConnectionClient.swift in Sources */,
 				9D0BF2F8015F0911EAEA03B9 /* ClientSetupSession.swift in Sources */,
@@ -1487,12 +1526,15 @@
 				24BBLD000004 /* x */,
 				E8BED0000000000000000011 /* EmbeddingMeshTaskModels.swift in Sources */,
 				1F3E00000000000000000011 /* ServingInferenceControls.swift in Sources */,
+				1F3E00000000000000000012 /* ServingConfigurationPanel.swift in Sources */,
+				5B21E0000000000000000011 /* ServingRuntimeExperimentalControls.swift in Sources */,
 				29A710000000000000000011 /* InferenceTaskModels.swift in Sources */,
 				5A1E5E770000000000000002 /* InferenceSettings.swift in Sources */,
 				29A710000000000000000012 /* TaskArtifactVerifier.swift in Sources */,
 				A0D100000000000000000011 /* LocalAudioRouting.swift in Sources */,
 				C0DE00000000000000000011 /* InferenceTaskCoordinator.swift in Sources */,
 				E70600000000000000000902 /* UseWorkspaceCommands.swift in Sources */,
+				E70600000000000000000A02 /* WorkbenchCommands.swift in Sources */,
 				E70600000000000000000802 /* UseWorkViews.swift in Sources */,
 				E70600000000000000000702 /* UseWorkspaceView.swift in Sources */,
 				E70600000000000000000602 /* UseWorkspaceCoordinator.swift in Sources */,
@@ -1507,6 +1549,8 @@
 				E71200000000000000000502 /* ModelSourcesView.swift in Sources */,
 				E71200000000000000000402 /* ServingClientSetup.swift in Sources */,
 				E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */,
+				E71200000000000000000F04 /* ServingInspector.swift in Sources */,
+				7C3A91E0D4B25F6A8E1C0B01 /* ServingRolesPresentation.swift in Sources */,
 				E71200000000000000000102 /* ServingTelemetry.swift in Sources */,
 				E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */,
 				E70500000000000000000302 /* ServedTaskSessions.swift in Sources */,
@@ -1656,6 +1700,7 @@
 				A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */,
 				24BBLD059 /* UsageTracker.swift in Sources */,
 				D52C00000000000000000001 /* ModelPurposeStore.swift in Sources */,
+				E71200000000000000000F14 /* ModelServingDefaults.swift in Sources */,
 				D53C00000000000000000001 /* ModelShowdownResults.swift in Sources */,
 				D52C00000000000000000002 /* ModelFamilyReview.swift in Sources */,
 				D52C00000000000000000003 /* ServedModelsView.swift in Sources */,
@@ -1666,6 +1711,7 @@
 				24BBLD05D /* LineageModels.swift in Sources */,
 				24BBLD05E /* LineageIndexer.swift in Sources */,
 				SIVLOCB1 /* LocalModelHostDiscovery.swift in Sources */,
+				A13C10C4000000000000F004 /* LiveStateClock.swift in Sources */,
 				SIVCOOB1 /* ServingInventoryCoordinator.swift in Sources */,
 				SIVMODB1 /* ServingInventoryModels.swift in Sources */,
 				SMEMB001 /* ServingMemory.swift in Sources */,
@@ -1743,12 +1789,12 @@
 				HLTRMDB1 /* HealthRemodelTests.swift in Sources */,
 				CLNRMDB1 /* ClientsRemodelTests.swift in Sources */,
 				STGRMDB1 /* SettingsRemodelTests.swift in Sources */,
-				SHLRNDB1 /* ShellRenderTests.swift in Sources */,
 				DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */,
 				LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */,
 				TRNRMDB1 /* TrainingRemodelTests.swift in Sources */,
 				LABRMDB1 /* LabRemodelTests.swift in Sources */,
 				MNUBRTB1 /* MenuBarTests.swift in Sources */,
+				MNUBIB01 /* MenuBarInsertionTests.swift in Sources */,
 				ADPRMDB1 /* AdoptRemodelTests.swift in Sources */,
 				INTRMDB1 /* IntakeRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
@@ -1784,6 +1830,7 @@
 				INVTSTB1 /* ServingInventoryCoordinatorTests.swift in Sources */,
 				MEMTSTB1 /* EndpointMemoryPolicyReviewTests.swift in Sources */,
 				MNGTSTB1 /* ManagedModelInstallStoreTests.swift in Sources */,
+				A13C10C4000000000000F002 /* LiveStateClockTests.swift in Sources */,
 				SIVTSTB1 /* ServingInventoryPresentationTests.swift in Sources */,
 				SMETB001 /* ServingMemoryTests.swift in Sources */,
 				SRVRTB1 /* ServingRowsTests.swift in Sources */,
@@ -1804,6 +1851,7 @@
 				C5C000000000000000000003 /* QuickConnectSnippetsTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27ABCD000000000000000004 /* DesignLintTests.swift in Sources */,
+				WBTHEMETSTB1 /* WorkbenchThemeTests.swift in Sources */,
 				27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */,
 				27ABCD000000000000000020 /* LibraryTypeGroupingTests.swift in Sources */,
 				27ABCD000000000000000023 /* ConversionProgressTests.swift in Sources */,
@@ -1813,6 +1861,10 @@
 				27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */,
 				27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */,
 				27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */,
+				7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */,
+				AB5E000000000000000000A3 /* WorkbenchKeySetupTests.swift in Sources */,
+				E71200000000000000000F02 /* ServingInspectorPresentationTests.swift in Sources */,
+				E71200000000000000000F12 /* ModelServingDefaultsTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,
 				27TSTB03 /* JSONCTolerantTests.swift in Sources */,
