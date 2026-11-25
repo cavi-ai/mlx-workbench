@@ -276,4 +276,28 @@ final class MenuBarTests: XCTestCase {
             try data.write(to: url.appendingPathComponent("popover-light.png"))
         }
     }
+
+    private func externalServers(_ count: Int) -> [ServerInfo] {
+        (0..<count).map { ServerInfo(repo: "/ext/model-\($0)", runtime: "mlx_lm", port: 9000 + $0, pid: 500 + $0, state: "running", logPath: nil, startedAt: nil, receipt: "r\($0)") }
+    }
+
+    func testExternalServersAreCollapsedAndNeverCountedInTheHeader() {
+        let rows = ServingRows.build(slots: [], servers: externalServers(21), snapshot: .empty)
+        let sections = MenuBarPresentation.sections(slots: [], rows: rows)
+        XCTAssertTrue(sections.roles.isEmpty)
+        XCTAssertEqual(sections.others.count, 21)
+        XCTAssertEqual(MenuBarPresentation.otherServersTitle(count: sections.others.count), "Other servers (21)")
+        XCTAssertEqual(MenuBarPresentation.fleetSummary(slots: [], states: [:]), "No always-on endpoints")
+    }
+
+    func testRoleSlotsGetTopLevelRowsAndRoleLessSlotsJoinOthers() {
+        let coding = EndpointSlot(enabled: true, port: 8095, modelPath: "/m/coder", role: .coding, loadOnRequest: true)
+        let plain = EndpointSlot(enabled: true, port: 8100, modelPath: "/m/plain")
+        let rows = ServingRows.build(slots: [coding, plain], servers: externalServers(2), snapshot: .empty)
+        let sections = MenuBarPresentation.sections(slots: [coding, plain], rows: rows)
+        XCTAssertEqual(sections.roles.map(\.role), [.coding])
+        XCTAssertEqual(sections.roles.first?.slot?.id, coding.id)
+        XCTAssertEqual(sections.others.count, 3)
+        XCTAssertEqual(MenuBarPresentation.fleetSummary(slots: [coding, plain], states: [:]), "0 of 2 endpoints running")
+    }
 }

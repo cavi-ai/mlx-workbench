@@ -405,10 +405,14 @@ existing endpoints keep their current access mode.
 
 The **CPU** icon identifies MLX Workbench in the macOS menu bar. Use
 **Settings → Serving → Show in macOS menu bar** to show it again if removed.
-Open it for model status, start/stop, reviewed unload,
-API copy actions, Monitor, Settings and Quit. Available-but-unloaded external
+Open it for the Workbench API address, one row per assigned role
+(model, port, loaded or unloaded, Copy base URL, Copy model ID, reviewed
+Unload or Stop), the Tailscale share, Monitor, Settings and Quit. The header
+counts Workbench endpoints only, such as "2 of 3 endpoints running". Servers
+outside the fleet and endpoints without a role appear under a collapsed
+**Other servers (N)** group. Available-but-unloaded external
 models are omitted from this quick menu. Closing the main window keeps
 Workbench and its model servers running. Use **Open MLX Workbench** to return
 to the window. Login-item controls remain under Memory for startup persistence.
 
-Roles are chosen on the Serving page: each role row names its endpoint, and the menu bar lists the assigned roles. Open an assigned role's endpoint to review its memory settings. Coding can use an idle timeout, while Utility can release weights after each request, including with a Splash preset. For Splash, Serving shows reported effective context separately from a configured limit. If a Splash load fails, review its saved launch preset before applying changes.
+Roles are chosen on the Serving page: each role row names its endpoint, and the menu bar lists the assigned roles. There are no separate Coding or Utility defaults; OpenCode setup uses the Coding role's endpoint. Open an assigned role's endpoint to review its memory settings. Coding can use an idle timeout, while Utility can release weights after each request, including with a Splash preset. For Splash, Serving shows reported effective context separately from a configured limit. If a Splash load fails, review its saved launch preset before applying changes.

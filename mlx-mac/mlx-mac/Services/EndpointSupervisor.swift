@@ -262,25 +262,6 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Fleet actions (spec 09; P2 UI consumes these)
 
-    @discardableResult
-    func setRoleDefault(_ role: EndpointDefaultRole, slotID: UUID?) -> Bool {
-        guard beginUserOperation() else { return false }
-        defer { activeUserOperations -= 1 }
-        if let slotID, !fleet.slots.contains(where: { $0.id == slotID && $0.enabled && $0.usesJIT }) {
-            lastError = "Choose an enabled load-on-request endpoint."
-            return false
-        }
-        if fleet.roleDefaults?[role] == slotID {
-            lastError = nil
-            return true
-        }
-        var candidate = fleet
-        var defaults = candidate.roleDefaults ?? EndpointRoleDefaults()
-        defaults[role] = slotID
-        candidate.roleDefaults = defaults.coding == nil && defaults.utility == nil ? nil : defaults
-        return commit(candidate)
-    }
-
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
     /// Returns the saved slot ID so callers can read its startup state.
@@ -487,11 +468,6 @@ final class EndpointSupervisor: ObservableObject {
         guard let slot = fleet.slots.first(where: { $0.id == id }) else { return }
         var candidate = fleet
         candidate.slots.removeAll { $0.id == id }
-        if var defaults = candidate.roleDefaults {
-            if defaults.coding == id { defaults.coding = nil }
-            if defaults.utility == id { defaults.utility = nil }
-            candidate.roleDefaults = defaults.coding == nil && defaults.utility == nil ? nil : defaults
-        }
         guard commit(candidate) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         if slot.enabled, !(await stopServing(slot)) { syncShim(); return }

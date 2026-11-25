@@ -480,37 +480,11 @@ struct FrontDoorSettings: Codable, Equatable, Sendable {
     var apiKeySHA256: String
 }
 
-/// The two endpoint roles the fleet can designate as defaults. Distinct from
-/// the legacy `UseCase` slot role, which is unchanged.
-enum EndpointDefaultRole: String, CaseIterable, Identifiable {
-    case coding
-    case utility
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .coding: return "Coding"
-        case .utility: return "Utility"
-        }
-    }
-}
-
-/// Saved per-role default endpoint choices, by slot UUID. Missing entries stay
-/// unresolved; stale UUIDs are never silently substituted.
-struct EndpointRoleDefaults: Codable, Equatable, Sendable {
+/// Legacy per-role default slot ids, read only so `migratingRoleDefaults()` can
+/// assign roles; never written.
+struct EndpointRoleDefaults: Decodable, Equatable, Sendable {
     var coding: UUID? = nil
     var utility: UUID? = nil
-
-    subscript(role: EndpointDefaultRole) -> UUID? {
-        get { role == .coding ? coding : utility }
-        set {
-            switch role {
-            case .coding: coding = newValue
-            case .utility: utility = newValue
-            }
-        }
-    }
 }
 
 struct EndpointFleetConfig: Codable, Equatable, Sendable {
@@ -518,8 +492,17 @@ struct EndpointFleetConfig: Codable, Equatable, Sendable {
     /// Whether the login LaunchAgent (boot persistence) is installed.
     var installedAtLogin: Bool
     var frontDoor: FrontDoorSettings? = nil
-    /// Absent in older fleets; synthesized decoding keeps them readable.
+    /// Decoded from older fleets for migration; encoding omits it.
     var roleDefaults: EndpointRoleDefaults? = nil
+
+    enum CodingKeys: String, CodingKey { case slots, installedAtLogin, frontDoor, roleDefaults }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(slots, forKey: .slots)
+        try container.encode(installedAtLogin, forKey: .installedAtLogin)
+        try container.encodeIfPresent(frontDoor, forKey: .frontDoor)
+    }
 
     static let maxSlots = 16
 
@@ -546,15 +529,6 @@ struct EndpointFleetConfig: Codable, Equatable, Sendable {
             result.slots[index].role = role
         }
         return result
-    }
-
-    /// The saved default slot for a role, only if it still exists, is enabled
-    /// and uses JIT. Both roles may resolve to the same slot.
-    func defaultSlot(for role: EndpointDefaultRole) -> EndpointSlot? {
-        guard let id = roleDefaults?[role],
-              let slot = slots.first(where: { $0.id == id }),
-              slot.enabled, slot.usesJIT else { return nil }
-        return slot
     }
 }
 

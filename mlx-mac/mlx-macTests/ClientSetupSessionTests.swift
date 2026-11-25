@@ -9,19 +9,19 @@ final class ClientSetupSessionTests: XCTestCase {
     private let endpoint = WireEndpoint(baseURL: "http://127.0.0.1:8766/v1", modelName: "org/model")
     private let key = "connection-test-private-key-0123456789"
 
-    func testOpenCodeSelectsSavedCodingEndpointOrLeavesItUnavailable() async throws {
+    func testOpenCodeSelectsTheCodingRoleEndpointOrLeavesItUnavailable() async throws {
         let home = try temporaryHome(), wiring = coordinator(home)
         let wrong = ServerInfo(repo: "org/other", runtime: "mlx_lm", port: 8767, pid: 124, state: "running", jit: true)
         let chosen = server()
-        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "org/model", loadOnRequest: true)
-        let fleet = EndpointFleetConfig(slots: [slot], installedAtLogin: false, roleDefaults: EndpointRoleDefaults(coding: slot.id))
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "org/model", role: .coding, loadOnRequest: true)
+        let fleet = EndpointFleetConfig(slots: [slot], installedAtLogin: false)
         let session = ClientSetupSession(wiring: wiring, servers: { [wrong, chosen] }, fleet: { fleet }, detect: { _ in true })
         await session.load()
         XCTAssertEqual(session.selectedID, chosen.id)
         let missing = ClientSetupSession(wiring: wiring, servers: { [wrong] }, fleet: { fleet }, detect: { _ in true })
         await missing.load()
         XCTAssertNil(missing.selectedID)
-        XCTAssertTrue(missing.error?.contains("Coding default is unavailable") == true)
+        XCTAssertTrue(missing.error?.contains("The Coding endpoint is unavailable") == true)
     }
 
     func testNativeFormatsPreserveUnrelatedSettingsAndSelectModel() throws {

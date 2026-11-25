@@ -6,23 +6,45 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
-    func testRoleDefaultsPersistShareAndClearOnRemoval() async throws {
+    func testLegacyFleetStillSavesAfterARefusedSave() async throws {
         let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
         let world = FakeServeWorld()
-        let jit = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/splash", loadOnRequest: true)
-        let eager = EndpointSlot(enabled: true, port: 8926, modelPath: "/Models/eager", loadOnRequest: false)
+        let id = UUID()
+        let json = """
+        [{"slots":[{"id":"\(id.uuidString)","enabled":false,"port":8925,"modelPath":"/Models/a"}],\
+        "installedAtLogin":false,"roleDefaults":{"coding":"\(id.uuidString)"}}]
+        """
+        let fleetURL = home.appendingPathComponent("fleet.json")
+        try Data(json.utf8).write(to: fleetURL)
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")),
+            fleetStore: JSONStore<EndpointFleetConfig>(fileURL: fleetURL))
+        await supervisor.addSlot(modelPath: "/Models/b", port: 8926)
+        XCTAssertEqual(supervisor.fleet.slots.count, 2)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: home.path)
+        await supervisor.addSlot(modelPath: "/Models/c", port: 8928)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
+        XCTAssertEqual(supervisor.fleet.slots.count, 2)
+        XCTAssertNotNil(supervisor.persistenceError)
+        await supervisor.addSlot(modelPath: "/Models/d", port: 8927)
+        XCTAssertEqual(supervisor.fleet.slots.count, 3)
+        XCTAssertEqual(supervisor.fleet.slots.last?.modelPath, "/Models/d")
+    }
+
+    func testRemovingARoleSlotFreesTheRoleAndWritesNoRoleDefaults() async throws {
+        let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let world = FakeServeWorld()
+        let jit = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/splash", role: .coding, loadOnRequest: true)
+        let eager = EndpointSlot(enabled: true, port: 8926, modelPath: "/Models/eager", role: .general, loadOnRequest: false)
         let store = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
         try store.replaceAll([EndpointFleetConfig(slots: [jit, eager], installedAtLogin: false)])
         let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
             store: JSONStore(fileURL: home.appendingPathComponent("legacy.json")), fleetStore: store)
-        XCTAssertFalse(supervisor.setRoleDefault(.coding, slotID: eager.id))
-        XCTAssertTrue(supervisor.setRoleDefault(.coding, slotID: jit.id))
-        XCTAssertTrue(supervisor.setRoleDefault(.utility, slotID: jit.id))
-        let saved = try XCTUnwrap(store.load().first)
-        XCTAssertEqual(saved.defaultSlot(for: .coding)?.id, jit.id)
-        XCTAssertEqual(saved.defaultSlot(for: .utility)?.id, jit.id)
         await supervisor.removeSlot(id: jit.id)
-        XCTAssertNil(try XCTUnwrap(store.load().first).roleDefaults)
+        let saved = try XCTUnwrap(store.load().first)
+        XCTAssertNil(saved.slot(for: .coding))
+        XCTAssertEqual(saved.slot(for: .general)?.id, eager.id)
+        XCTAssertNil(saved.roleDefaults)
     }
     func testSplashPresetRefusesBusyUnknownAndStaleGeneration() async throws {
         let home = try makeHome(); defer { try? FileManager.default.removeItem(at: home) }

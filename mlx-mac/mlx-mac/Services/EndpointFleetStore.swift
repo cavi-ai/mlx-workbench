@@ -45,7 +45,8 @@ struct EndpointFleetStore {
     func load() -> EndpointFleetLoad {
         if fileManager.fileExists(atPath: fleetStore.url.path) {
             do {
-                let config = (try fleetStore.load().first ?? .empty).migratingRoleDefaults()
+                var config = (try fleetStore.load().first ?? .empty).migratingRoleDefaults()
+                config.roleDefaults = nil
                 return EndpointFleetLoad(config: config, problem: nil)
             } catch {
                 return EndpointFleetLoad(

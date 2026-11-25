@@ -245,6 +245,10 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertEqual(migrated.slots.first { $0.id == general }?.role, .general)
         XCTAssertEqual(migrated.slots.first { $0.id == coding }?.role, .coding)
         XCTAssertEqual(migrated.roleDefaults, decoded.roleDefaults)
+        let reencoded = try JSONEncoder().encode(migrated)
+        let keys = try XCTUnwrap(try JSONSerialization.jsonObject(with: reencoded) as? [String: Any]).keys
+        XCTAssertFalse(keys.contains("roleDefaults"))
+        XCTAssertNil(try JSONDecoder().decode(EndpointFleetConfig.self, from: reencoded).roleDefaults)
     }
 
     func testClassificationRolePassesValidation() throws {
