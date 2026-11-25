@@ -289,11 +289,57 @@ final class WiringCoordinatorTests: XCTestCase {
     func testOpencodePlanCreatesProviderAndModel() throws {
         let after = try ClientAdapters.opencode.plan(nil, endpoint)
         let parsed = try JSONCTolerant.parse(after)
-        let provider = parsed["provider"] as? [String: Any]
-        let local = provider?["mlx-local"] as? [String: Any]
-        XCTAssertEqual((local?["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8766/v1")
-        XCTAssertNotNil(local?["models"] as? [String: Any])
-        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertNil(parsed["provider"])
+        let local = try XCTUnwrap((parsed["providers"] as? [String: Any])?["mlx-agent"] as? [String: Any])
+        XCTAssertEqual(local["name"] as? String, "mlx-agent (local)")
+        XCTAssertEqual(local["package"] as? String, "aisdk:@ai-sdk/openai-compatible")
+        XCTAssertNil(local["npm"])
+        XCTAssertNil(local["options"])
+        XCTAssertEqual((local["settings"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8766/v1")
+        XCTAssertEqual((local["settings"] as? [String: Any])?["apiKey"] as? String, "workbench")
+        XCTAssertEqual((local["models"] as? [String: Any])?.keys.sorted(), ["qwen3-8b"])
+        XCTAssertEqual(parsed["model"] as? String, "mlx-agent/qwen3-8b")
+    }
+
+    func testOpencodePlanAddsProvidersEntryBesideLMStudioWithoutTouchingIt() throws {
+        let before = """
+        {"providers": {"lmstudio": {"name": "LM Studio (local)", "package": "aisdk:@ai-sdk/openai-compatible",
+          "settings": {"baseURL": "http://127.0.0.1:1234/v1"}, "models": {"qwen": {"name": "Qwen"}}}}}
+        """
+        let beforeParsed = try JSONCTolerant.parse(before)
+        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))
+        XCTAssertNil(parsed["provider"])
+        let providers = try XCTUnwrap(parsed["providers"] as? [String: Any])
+        XCTAssertEqual(providers.keys.sorted(), ["lmstudio", "mlx-agent"])
+        XCTAssertEqual(NSDictionary(dictionary: try XCTUnwrap(providers["lmstudio"] as? [String: Any])),
+                       NSDictionary(dictionary: try XCTUnwrap((beforeParsed["providers"] as? [String: Any])?["lmstudio"] as? [String: Any])))
+    }
+
+    func testOpencodePlanMigratesLegacyMlxLocalKeepingModelSettings() throws {
+        let before = """
+        {"provider": {
+          "mlx-local": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "http://127.0.0.1:8766/v1"},
+            "models": {"qwen3-8b": {"limit": {"context": 32768}}, "gone": {"name": "Gone"}}},
+          "ollama": {"options": {"baseURL": "http://127.0.0.1:11434/v1"}, "models": {"llama3": {}}}}}
+        """
+        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))
+        let legacy = try XCTUnwrap(parsed["provider"] as? [String: Any])
+        XCTAssertEqual(legacy.keys.sorted(), ["ollama"])
+        let models = try XCTUnwrap(((parsed["providers"] as? [String: Any])?["mlx-agent"] as? [String: Any])?["models"] as? [String: Any])
+        XCTAssertEqual(models.keys.sorted(), ["qwen3-8b"])
+        XCTAssertEqual(((models["qwen3-8b"] as? [String: Any])?["limit"] as? [String: Any])?["context"] as? Int, 32768)
+
+        let onlyLegacy = #"{"provider": {"mlx-local": {"options": {"baseURL": "http://127.0.0.1:8766/v1"}, "models": {"qwen3-8b": {}}}}}"#
+        XCTAssertNil(try JSONCTolerant.parse(ClientAdapters.opencode.plan(onlyLegacy, endpoint))["provider"])
+    }
+
+    func testOpencodePlanDropsModelsTheEndpointNoLongerServes() throws {
+        let first = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "qwen3-8b", models: ["gemma-3", "qwen3-8b"])
+        let afterFirst = try ClientAdapters.opencode.plan(nil, first)
+        let second = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "qwen3-8b", models: ["qwen3-8b"])
+        let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(afterFirst, second))
+        let models = try XCTUnwrap(((parsed["providers"] as? [String: Any])?["mlx-agent"] as? [String: Any])?["models"] as? [String: Any])
+        XCTAssertEqual(models.keys.sorted(), ["qwen3-8b"])
     }
 
     func testOpencodePlanPreservesUnrelatedKeysAndCommentsAreNormalized() throws {
@@ -301,31 +347,27 @@ final class WiringCoordinatorTests: XCTestCase {
         let after = try ClientAdapters.opencode.plan(before, endpoint)
         let parsed = try JSONCTolerant.parse(after)
         XCTAssertEqual(parsed["theme"] as? String, "dark")
-        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertEqual(parsed["model"] as? String, "mlx-agent/qwen3-8b")
     }
 
-    func testOpencodePlanKeepsModelsListedAtTheWiredBaseURLAndOtherProviders() throws {
+    func testOpencodePlanDropsAliasMovesBaseURLAndKeepsOtherProviders() throws {
         let before = """
-        {"provider": {
-          "mlx-local": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "http://127.0.0.1:8766/v1"},
+        {"providers": {
+          "mlx-agent": {"name": "mlx-agent (local)", "package": "aisdk:@ai-sdk/openai-compatible",
+            "settings": {"baseURL": "http://127.0.0.1:8765/v1"},
             "models": {"qwen3-8b-alias": {"name": "Qwen alias"}, "qwen3-8b": {"limit": {"context": 32768, "output": 4096}}}},
-          "ollama": {"options": {"baseURL": "http://127.0.0.1:11434/v1"}, "models": {"llama3": {}}}},
+          "ollama": {"settings": {"baseURL": "http://127.0.0.1:11434/v1"}, "models": {"llama3": {}}}},
          "model": "ollama/llama3"}
         """
         let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))
-        let providers = try XCTUnwrap(parsed["provider"] as? [String: Any])
-        let models = try XCTUnwrap((providers["mlx-local"] as? [String: Any])?["models"] as? [String: Any])
-        XCTAssertEqual(models.keys.sorted(), ["qwen3-8b", "qwen3-8b-alias"])
+        let providers = try XCTUnwrap(parsed["providers"] as? [String: Any])
+        let local = try XCTUnwrap(providers["mlx-agent"] as? [String: Any])
+        let models = try XCTUnwrap(local["models"] as? [String: Any])
+        XCTAssertEqual(models.keys.sorted(), ["qwen3-8b"])
         XCTAssertEqual(((models["qwen3-8b"] as? [String: Any])?["limit"] as? [String: Any])?["context"] as? Int, 32768)
-        XCTAssertEqual((models["qwen3-8b-alias"] as? [String: Any])?["name"] as? String, "Qwen alias")
-        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertEqual((local["settings"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8766/v1")
+        XCTAssertEqual(parsed["model"] as? String, "mlx-agent/qwen3-8b")
         XCTAssertEqual(((providers["ollama"] as? [String: Any])?["models"] as? [String: Any])?.keys.sorted(), ["llama3"])
-
-        let moved = before.replacingOccurrences(of: "127.0.0.1:8766", with: "127.0.0.1:8765")
-        let rewired = try JSONCTolerant.parse(ClientAdapters.opencode.plan(moved, endpoint))
-        let local = (rewired["provider"] as? [String: Any])?["mlx-local"] as? [String: Any]
-        XCTAssertEqual((local?["models"] as? [String: Any])?.keys.sorted(), ["qwen3-8b"])
-        XCTAssertEqual((local?["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8766/v1")
     }
 
     func testOpenCodeSetupCheckReadsTheMergedGlobalConfig() async throws {
@@ -368,11 +410,24 @@ final class WiringCoordinatorTests: XCTestCase {
         let door = WireEndpoint(baseURL: "http://127.0.0.1:8939/v1", modelName: "qwen3-8b",
                                 apiKeySHA256: EndpointCredentialStore.digest(token), models: ["gemma-3", "org/coder", "qwen3-8b"])
         let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.authenticatedPlan(nil, door, key: token))
-        let local = try XCTUnwrap((parsed["provider"] as? [String: Any])?["mlx-local"] as? [String: Any])
+        let local = try XCTUnwrap((parsed["providers"] as? [String: Any])?["mlx-agent"] as? [String: Any])
+        XCTAssertNil(parsed["provider"])
         XCTAssertEqual((local["models"] as? [String: Any])?.keys.sorted(), ["gemma-3", "org/coder", "qwen3-8b"])
-        XCTAssertEqual((local["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8939/v1")
-        XCTAssertEqual((local["options"] as? [String: Any])?["apiKey"] as? String, token)
-        XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertEqual((local["settings"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8939/v1")
+        XCTAssertEqual((local["settings"] as? [String: Any])?["apiKey"] as? String, token)
+        XCTAssertNil(local["options"])
+        XCTAssertEqual(parsed["model"] as? String, "mlx-agent/qwen3-8b")
+    }
+
+    func testOpenCodeSetupCheckIsReadyOnTheProvidersShape() throws {
+        let home = try makeHome()
+        let folder = home.appendingPathComponent(".config/opencode", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try #"{"providers": {"mlx-agent": {"name": "mlx-agent (local)", "package": "aisdk:@ai-sdk/openai-compatible", "settings": {"baseURL": "http://127.0.0.1:8766/v1"}, "models": {"qwen3-8b": {}}}}, "model": "mlx-agent/qwen3-8b"}"#
+            .write(to: folder.appendingPathComponent("opencode.jsonc"), atomically: true, encoding: .utf8)
+        let serving = ServerInfo(repo: "qwen3-8b", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: [serving]), .ready)
+        XCTAssertEqual(OpenCodeSetupCheck.run(home: home, servers: []), .notServing(port: 8766))
     }
 
     func testOpenCodeSetupCheckIsReadyThroughTheRunningFrontDoor() throws {
@@ -597,7 +652,7 @@ final class WiringCoordinatorTests: XCTestCase {
         let hash = try XCTUnwrap(coordinator.previewHash)
         let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { [server] })
         XCTAssertEqual(transaction?.receipts.count, 1)
-        XCTAssertEqual(try JSONCTolerant.parse(String(contentsOf: config))["model"] as? String, "mlx-local//models/qwen-converted")
+        XCTAssertEqual(try JSONCTolerant.parse(String(contentsOf: config))["model"] as? String, "mlx-agent//models/qwen-converted")
         coordinator.rollback()
         XCTAssertEqual(try String(contentsOf: config), original)
     }
@@ -789,7 +844,7 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertTrue(transaction?.failures.isEmpty == true)
         XCTAssertEqual(transaction?.resultSummary, "Wired 1 client to qwen3-8b.")
         let written = try String(contentsOf: opencodeConfig)
-        XCTAssertEqual(try JSONCTolerant.parse(written)["model"] as? String, "mlx-local/qwen3-8b")
+        XCTAssertEqual(try JSONCTolerant.parse(written)["model"] as? String, "mlx-agent/qwen3-8b")
         let backup = try XCTUnwrap(transaction?.receipts.first?.backupPath)
         XCTAssertEqual(try String(contentsOfFile: backup), "{\"theme\": \"dark\"}")
 

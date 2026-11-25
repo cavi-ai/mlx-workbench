@@ -42,7 +42,7 @@ enum ServingClient: String, CaseIterable, Identifiable {
         let key = protected ? "${WORKBENCH_API_KEY}" : "workbench"
         switch self {
         case .opencode:
-            return Self.json(["provider": ["mlx-local": ["npm": "@ai-sdk/openai-compatible", "options": ["baseURL": base, "apiKey": protected ? "{env:WORKBENCH_API_KEY}" : "workbench"], "models": [model: [String: String]()]]], "model": "mlx-local/" + model])
+            return Self.json(["providers": ["mlx-agent": ["name": "mlx-agent (local)", "package": "aisdk:@ai-sdk/openai-compatible", "settings": ["baseURL": base, "apiKey": protected ? "{env:WORKBENCH_API_KEY}" : "workbench"], "models": [model: [String: String]()]]], "model": "mlx-agent/" + model])
         case .openclaw:
             var provider: [String: Any] = ["baseUrl": base, "api": "openai-completions", "models": [["id": model, "name": URL(fileURLWithPath: model).lastPathComponent]]]
             if protected { provider["apiKey"] = key } else { provider["auth"] = "none" }

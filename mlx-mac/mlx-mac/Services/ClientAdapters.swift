@@ -136,7 +136,9 @@ struct ClientAdapter: Sendable {
 }
 
 enum ClientAdapters {
-    static let providerID = "mlx-local"
+    static let providerID = "mlx-agent"
+    /// Workbench's earlier OpenCode provider id, written under the deprecated top-level `provider` key.
+    static let legacyProviderID = "mlx-local"
 
     static let all: [ClientAdapter] = [opencode, continue_, zed, aider, AgentClientAdapters.openclaw,
         AgentClientAdapters.hermes, AgentClientAdapters.codex, AgentClientAdapters.claude, lmStudio, ollama]
@@ -149,20 +151,26 @@ enum ClientAdapters {
         advisoryNote: nil,
         apiKeyPlan: { contents, key in
             var config = try JSONCTolerant.parse(contents)
-            var providers = config["provider"] as? [String: Any] ?? [:]
+            var providers = config["providers"] as? [String: Any] ?? [:]
             var local = providers[providerID] as? [String: Any] ?? [:]
-            var options = local["options"] as? [String: Any] ?? [:]
-            options["apiKey"] = key
-            local["options"] = options; providers[providerID] = local; config["provider"] = providers
+            var settings = local["settings"] as? [String: Any] ?? [:]
+            settings["apiKey"] = key
+            local["settings"] = settings; providers[providerID] = local; config["providers"] = providers
             return try JSONCTolerant.serialize(config)
         },
         read: { contents in
             readJSON(contents) { config in
-                let providers = config["provider"] as? [String: Any]
-                guard let local = providers?[providerID] as? [String: Any],
-                      let baseURL = (local["options"] as? [String: Any])?["baseURL"] as? String,
-                      ClientEndpointURL.port(of: baseURL) != nil else { return .noWorkbenchEntry }
-                let prefix = "\(providerID)/"
+                // Current entry first; the deprecated `provider["mlx-local"]` block is still recognized.
+                var id = providerID
+                var local = (config["providers"] as? [String: Any])?[providerID] as? [String: Any]
+                var baseURL = (local?["settings"] as? [String: Any])?["baseURL"] as? String
+                if baseURL.flatMap(ClientEndpointURL.port(of:)) == nil {
+                    id = legacyProviderID
+                    local = (config["provider"] as? [String: Any])?[legacyProviderID] as? [String: Any]
+                    baseURL = (local?["options"] as? [String: Any])?["baseURL"] as? String
+                }
+                guard let local, let baseURL, ClientEndpointURL.port(of: baseURL) != nil else { return .noWorkbenchEntry }
+                let prefix = "\(id)/"
                 var models = ((local["models"] as? [String: Any])?.keys.sorted()) ?? []
                 if let selected = config["model"] as? String {
                     guard selected.hasPrefix(prefix) else {
@@ -179,19 +187,23 @@ enum ClientAdapters {
         if config["$schema"] == nil || (config["$schema"] as? String)?.isEmpty == true {
             config["$schema"] = "https://opencode.ai/config.json"
         }
-        var provider = (config["provider"] as? [String: Any]) ?? [:]
-        // Models already listed at this endpoint's port stay selectable; another port serves other models.
-        let existing = provider[providerID] as? [String: Any]
-        let existingURL = (existing?["options"] as? [String: Any])?["baseURL"] as? String
-        let samePort = existingURL.flatMap(ClientEndpointURL.port(of:)).map { $0 == ClientEndpointURL.port(of: endpoint.baseURL) } ?? false
-        var models = samePort ? (existing?["models"] as? [String: Any]) ?? [:] : [:]
-        for name in endpoint.models + [endpoint.modelName] where models[name] == nil { models[name] = [String: Any]() }
-        provider[providerID] = [
-            "npm": "@ai-sdk/openai-compatible",
-            "options": ["baseURL": endpoint.baseURL, "apiKey": "workbench"],
-            "models": models,
-        ]
-        config["provider"] = provider
+        var providers = (config["providers"] as? [String: Any]) ?? [:]
+        var legacy = (config["provider"] as? [String: Any]) ?? [:]
+        let existing = providers[providerID] as? [String: Any]
+        let legacyModels = (legacy[legacyProviderID] as? [String: Any])?["models"] as? [String: Any]
+        // Exactly the endpoint's models; settings of names that remain carry over.
+        let previous = (existing?["models"] as? [String: Any]) ?? legacyModels ?? [:]
+        var models: [String: Any] = [:]
+        for name in endpoint.models + [endpoint.modelName] { models[name] = previous[name] ?? [String: Any]() }
+        var entry = existing ?? [:]
+        entry["name"] = "mlx-agent (local)"
+        entry["package"] = "aisdk:@ai-sdk/openai-compatible"
+        entry["settings"] = ["baseURL": endpoint.baseURL, "apiKey": "workbench"]
+        entry["models"] = models
+        providers[providerID] = entry
+        config["providers"] = providers
+        legacy.removeValue(forKey: legacyProviderID)
+        if legacy.isEmpty { config.removeValue(forKey: "provider") } else { config["provider"] = legacy }
         config["model"] = "\(providerID)/\(endpoint.modelName)"
         return try JSONCTolerant.serialize(config)
     }

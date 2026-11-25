@@ -3530,9 +3530,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         confirm.click()
         XCTAssertTrue(app.buttons["connect-app-test"].waitForExistence(timeout: 10))
         let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
-        let providers = try XCTUnwrap(written["provider"] as? [String: Any])
-        let provider = try XCTUnwrap(providers["mlx-local"] as? [String: Any])
-        let options = try XCTUnwrap(provider["options"] as? [String: Any])
+        let providers = try XCTUnwrap(written["providers"] as? [String: Any])
+        let provider = try XCTUnwrap(providers["mlx-agent"] as? [String: Any])
+        let options = try XCTUnwrap(provider["settings"] as? [String: Any])
         XCTAssertEqual(options["baseURL"] as? String, "http://127.0.0.1:8767/v1")
         XCTAssertEqual(written["theme"] as? String, "dark")
         capture("Run-to-Clients-applied-endpoint")
@@ -3568,7 +3568,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         confirm.click()
         XCTAssertTrue(text(containing: "Wired 1 client").waitForExistence(timeout: 15))
         let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
-        XCTAssertEqual(written["model"] as? String, "mlx-local/org/Qwen")
+        XCTAssertEqual(written["model"] as? String, "mlx-agent/org/Qwen")
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".config/zed").path))
         capture("Setup-doctor-client-created")
         app.buttons["Roll back last wiring"].click()
@@ -3676,9 +3676,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             let copy = app.buttons["client-copy-inference-key"]
             XCTAssertTrue(copy.waitForExistence(timeout: 10))
             let parsed = try JSONSerialization.jsonObject(with: Data(contentsOf: opencode)) as? [String: Any]
-            let providers = parsed?["provider"] as? [String: Any]
-            let local = providers?["mlx-local"] as? [String: Any]
-            XCTAssertEqual((local?["options"] as? [String: Any])?["apiKey"] as? String, key)
+            let providers = parsed?["providers"] as? [String: Any]
+            let local = providers?["mlx-agent"] as? [String: Any]
+            XCTAssertEqual((local?["settings"] as? [String: Any])?["apiKey"] as? String, key)
             XCTAssertFalse(try String(contentsOf: zed).contains(key))
             for _ in 0..<6 where !copy.isHittable { app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -200) }
             copy.click()
@@ -3804,9 +3804,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             confirm.click()
             XCTAssertTrue(text(containing: "Wired 1 client to org/Qwen-second.").waitForExistence(timeout: 10))
             let landed = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any]
-            let provider = landed?["provider"] as? [String: Any]
-            let local = provider?["mlx-local"] as? [String: Any]
-            XCTAssertEqual((local?["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8767/v1")
+            let provider = landed?["providers"] as? [String: Any]
+            let local = provider?["mlx-agent"] as? [String: Any]
+            XCTAssertEqual((local?["settings"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8767/v1")
             XCTAssertEqual(landed?["theme"] as? String, "dark")
             XCTAssertFalse(confirm.exists)
             capture("Clients-\(appearance)-confirmed")
