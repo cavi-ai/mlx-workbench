@@ -122,7 +122,7 @@ enum FleetRouter {
         let routeRole: RouteRole
         let reason: String
 
-        var id: String { "\(routeRole.rawValue)-\(reason)" }
+        var id: String { "\(role?.rawValue ?? "-")-\(routeRole.rawValue)-\(reason)" }
         var fleetRole: String { routeRole.rawValue }
 
         init(role: ServingRole, reason: String) {
@@ -260,13 +260,13 @@ enum FleetRouter {
             let matchingServer = servers.first(where: { $0.port == slot.port })
             let taskKinds = matchingServer?.taskKinds ?? []
             let isTypedServer = matchingServer.map { !$0.supportsChatCompletions } ?? false
-            let inferredRole = isTypedServer ? inferredTypedRole(from: taskKinds) : nil
 
+            // A slot's role decides its route; task_kinds only classify role-less typed slots.
             let resolvedRouteRole: RouteRole
-            if let inferred = inferredRole {
-                resolvedRouteRole = inferred
-            } else if let slotRole = slot.role {
+            if let slotRole = slot.role {
                 resolvedRouteRole = routeRole(for: slotRole)
+            } else if isTypedServer, let inferred = inferredTypedRole(from: taskKinds) {
+                resolvedRouteRole = inferred
             } else {
                 // Unassigned chat slot: ignored, not skipped.
                 continue
