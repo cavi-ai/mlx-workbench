@@ -231,6 +231,29 @@ Changing a field on an endpoint (load mode, memory policy, Splash preset, infere
 it that endpoint's own value.
 Endpoints saved by earlier releases keep all of their own values.
 
+### Serving inspector layout, configuration and profiles
+
+In a wide window the inspector has two columns: the settings sections (up to 640 pt) and
+**Configuration** filling the rest. Narrower windows use one column with **Configuration**
+after **Status**. Numeric fields and pickers size to their content; the system prompt takes the
+column width.
+
+**Configuration** shows the selected endpoint's effective settings as sorted-key JSON in
+monospaced text, with each setting's source (**Model default** or **This endpoint**). The
+picker switches the view to the model default or a saved profile. **Copy JSON** copies the
+shown text. The JSON contains no API key or key digest; protection appears as `"protected" : true`.
+
+A profile is a named settings set saved per model: inference settings, memory policy, load
+on request, Splash preset and serving profile id.
+
+- **Save as profile…** stores the endpoint's effective settings under a name (unique per model, up to 60 characters).
+- **Apply…** writes the selected profile's values into the endpoint. Fields that equal the model default keep following it. The preview lists a running endpoint that restarts; confirm rechecks the endpoint, refuses while work holds the model or requests are active, stops it through the idle-checked stop, saves, restarts it and reports an endpoint that did not come back.
+- **Make model default…** (with a profile selected) previews and confirms that profile as the model default. For the endpoint's own values use **Save as model default**.
+- **Rename…** edits the selected profile. **Remove…** asks for confirmation naming the profile before deleting it. Neither restarts an endpoint.
+
+The menu bar lists each endpoint as one line (state dot, model, port) with an actions menu
+(the ⋯ button) holding the same actions as before.
+
 ### Inference settings for saved endpoints
 
 Open an endpoint's actions menu and choose **Inference settings…** to jump to its

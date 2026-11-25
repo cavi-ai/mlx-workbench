@@ -113,7 +113,14 @@ struct MenuBarView: View {
     private func modelActions(rows: [ServingRow], models: [LibraryModel]) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     ForEach(rows) { row in
-                        Menu(MenuBarPresentation.rowTitle(row, models: models)) {
+                        HStack(spacing: WorkbenchSpacing.xs) {
+                        if case .endpoint(let slot, _, _) = row {
+                            Circle().fill(menuStateColor(slot)).frame(width: 8, height: 8).accessibilityHidden(true)
+                        }
+                        Text(MenuBarPresentation.rowTitle(row, models: models)).font(WorkbenchTypography.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: WorkbenchSpacing.xs)
+                        Menu {
                             switch row {
                             case .endpoint(let slot, _, let service):
                                 Text(MenuBarPresentation.availability(slot, state: endpoint.slotStates[slot.id], residency: endpoint.slotResidencies[slot.id]))
@@ -176,6 +183,10 @@ struct MenuBarView: View {
                                     Button("Copy model ID") { ServedModelsSelection.copy(service.modelID) }
                                 }
                             }
+                        } label: {
+                            Image(systemName: "ellipsis.circle").accessibilityLabel("Actions")
+                        }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         }
                         .accessibilityIdentifier("serving-menu-endpoint-\(row.id)")
                     }
@@ -249,6 +260,11 @@ struct MenuBarView: View {
             }
             .accessibilityIdentifier("serving-menu-role-\(item.role.rawValue)")
         }
+    }
+
+    private func menuStateColor(_ slot: EndpointSlot) -> Color {
+        if case .running = endpoint.slotStates[slot.id] { return WorkbenchColor.success }
+        return slot.enabled ? WorkbenchColor.warning : WorkbenchColor.muted
     }
 
     private func roleAvailability(_ slot: EndpointSlot) -> String {

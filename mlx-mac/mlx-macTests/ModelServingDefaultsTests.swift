@@ -78,6 +78,99 @@ final class ModelServingDefaultsTests: XCTestCase {
         XCTAssertNil(reopened.defaults(for: "/Models/b"))
     }
 
+    func testProfileSurvivesReloadAndLegacyFileHasNone() throws {
+        let root = try makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("model-defaults.json")
+        let legacy = ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 512))
+        let encoded = String(decoding: try JSONEncoder().encode(legacy), as: UTF8.self)
+        try Data("[{\"modelPath\":\"/Models/a\",\"defaults\":\(encoded)}]".utf8).write(to: file)
+        let store = ModelDefaultsStore(store: JSONStore(fileURL: file))
+        XCTAssertEqual(store.defaults(for: "/Models/a"), legacy)
+        XCTAssertEqual(store.profiles(for: "/Models/a"), [])
+        let profile = ServingSettingsProfile(name: "Terse", settings: ModelServingDefaults(inference: LocalInferenceOptions(systemPrompt: "Be terse", temperature: 0.2)))
+        try store.saveProfile(profile, for: "/Models/a")
+        let reopened = ModelDefaultsStore(store: JSONStore(fileURL: file))
+        XCTAssertEqual(reopened.profiles(for: "/Models/a"), [profile])
+        XCTAssertEqual(reopened.defaults(for: "/Models/a"), legacy)
+        try reopened.save(nil, for: "/Models/a")
+        XCTAssertEqual(reopened.profiles(for: "/Models/a"), [profile])
+    }
+
+    func testApplyingAProfilePreviewsTheRunningSlotAndConfirmRewritesIt() async throws {
+        let (supervisor, defaults, _, following, _, root) = try await runningFleet()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try defaults.save(ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 256)), for: "/Models/a")
+        let profile = ServingSettingsProfile(name: "Long", settings: ModelServingDefaults(inference: LocalInferenceOptions(thinkingOff: true, maximumTokens: 4096)))
+        let preview = try await supervisor.previewApplyingProfile(slotID: following.id, profile: profile)
+        XCTAssertEqual(preview.restarting.map(\.id), [following.id])
+        XCTAssertEqual(preview.following.map(\.id), [following.id])
+        let confirmed = await supervisor.confirmModelDefaultsChange(preview)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == following.id })
+        XCTAssertEqual(supervisor.effectiveSlot(slot).inferenceOptions, profile.settings.inference)
+        XCTAssertEqual(defaults.defaults(for: "/Models/a")?.inference.maximumTokens, 256)
+    }
+
+    func testApplyingRefusesDriftAndInUseEndpointsLeavingFleetUnchanged() async throws {
+        let (supervisor, defaults, world, following, _, root) = try await runningFleet()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try defaults.save(ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 256)), for: "/Models/a")
+        let profile = ServingSettingsProfile(name: "Long", settings: ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 4096)))
+        let before = supervisor.fleet
+        supervisor.mayStopSlot = { _ in false }
+        var preview = try await supervisor.previewApplyingProfile(slotID: following.id, profile: profile)
+        var confirmed = await supervisor.confirmModelDefaultsChange(preview)
+        XCTAssertFalse(confirmed)
+        XCTAssertTrue(try XCTUnwrap(supervisor.lastError).contains("Finish the operation using :8925"))
+        XCTAssertEqual(supervisor.fleet, before)
+        supervisor.mayStopSlot = nil
+        // The model default changes after the preview while the server keeps running: the recheck must refuse.
+        preview = try await supervisor.previewApplyingProfile(slotID: following.id, profile: profile)
+        let changedDefaults = ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 4096))
+        try defaults.save(changedDefaults, for: "/Models/a")
+        confirmed = await supervisor.confirmModelDefaultsChange(preview)
+        XCTAssertFalse(confirmed)
+        XCTAssertTrue(try XCTUnwrap(supervisor.lastError).contains("Review the profile again"))
+        XCTAssertEqual(supervisor.fleet, before)
+        XCTAssertEqual(defaults.defaults(for: "/Models/a"), changedDefaults)
+        XCTAssertTrue(try world.status().contains { $0.port == 8925 })
+    }
+
+    func testApplyingAProfileWithoutTheDefaultServingProfileDropsItButKeepsMatchingFieldsFollowing() async throws {
+        let root = try makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let options = StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)
+        var strata = ServingProfile(id: UUID(), name: "Paged", modelPath: "/Models/a", options: options)
+        strata.verification = ServingProfileVerification(options: options, modelFingerprint: "model", runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: CanarySuite.cases.map {
+                CanaryResult(id: $0.id, title: $0.title, passed: true, failureReason: nil, responseExcerpt: "fixture",
+                             tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+            }, verifiedAt: Date())
+        var slot = EndpointSlot(enabled: false, port: 8092, modelPath: "/Models/a", loadOnRequest: false)
+        slot.overrides = [.servingProfile]
+        let (supervisor, defaults) = try makeSupervisor(root: root, slots: [slot])
+        supervisor.profileResolver = { $0 == strata.id ? strata : nil }
+        try defaults.save(ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 256), servingProfileID: strata.id), for: "/Models/a")
+        XCTAssertNil(supervisor.effectiveSlot(slot).servingProfile)
+        let plain = ServingSettingsProfile(name: "Plain", settings: ModelServingDefaults(inference: LocalInferenceOptions(maximumTokens: 256), loadOnRequest: false))
+        let preview = try await supervisor.previewApplyingProfile(slotID: slot.id, profile: plain)
+        let confirmed = await supervisor.confirmModelDefaultsChange(preview)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        let saved = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == slot.id })
+        XCTAssertNil(supervisor.effectiveSlot(saved).servingProfile)
+        XCTAssertEqual(saved.overrides, [.servingProfile])
+    }
+
+    func testConfigurationJSONCarriesEffectiveValuesAndNoKeyMaterial() throws {
+        var slot = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/a", loadOnRequest: true)
+        slot.apiKeySHA256 = String(repeating: "a", count: 64)
+        slot.acceleration = LocalInferenceOptions(maximumTokens: 777, temperature: 0.3)
+        let json = try ServingConfiguration.json(effective: slot)
+        XCTAssertTrue(json.contains("777"))
+        XCTAssertTrue(json.contains("\"protected\" : true"))
+        XCTAssertFalse(json.contains(String(repeating: "a", count: 64)))
+        XCTAssertFalse(json.lowercased().contains("sha256"))
+    }
+
     private func runningFleet() async throws -> (EndpointSupervisor, ModelDefaultsStore, FakeServeWorld, EndpointSlot, EndpointSlot, URL) {
         let root = try makeRoot()
         let world = FakeServeWorld()

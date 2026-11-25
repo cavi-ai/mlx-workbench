@@ -96,7 +96,31 @@ struct ServingInspector<Content: View>: View {
         _options = State(initialValue: slot.map { endpoint.effectiveSlot($0).inferenceOptions } ?? .init())
     }
 
+    /// Two columns (settings, then Configuration) when the pane is wide enough, else one column with Configuration after Status.
     var body: some View {
+        Group {
+            if let slot {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                        sectionStack(configuration: nil)
+                            .frame(minWidth: 480, idealWidth: 560, maxWidth: 640, alignment: .leading)
+                        ServingConfigurationPanel(endpoint: endpoint, slot: slot)
+                            .frame(minWidth: 360, idealWidth: 400, maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    sectionStack(configuration: slot).frame(maxWidth: 640, alignment: .leading)
+                }
+            } else {
+                sectionStack(configuration: nil).frame(maxWidth: 640, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: options) { _, _ in preview = nil; error = nil }
+        .onChange(of: slot) { _, value in options = value.map { endpoint.effectiveSlot($0).inferenceOptions } ?? .init(); preview = nil; defaultsPreview = nil }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("serving-inspector")
+    }
+
+    private func sectionStack(configuration slot: EndpointSlot?) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
             ForEach(sections) { section in
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -106,13 +130,10 @@ struct ServingInspector<Content: View>: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                 }.id(section)
+                if section == .status, let slot { ServingConfigurationPanel(endpoint: endpoint, slot: slot) }
             }
         }
-        .frame(maxWidth: 720, alignment: .leading)
-        .onChange(of: options) { _, _ in preview = nil; error = nil }
-        .onChange(of: slot) { _, value in options = value.map { endpoint.effectiveSlot($0).inferenceOptions } ?? .init(); preview = nil; defaultsPreview = nil }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("serving-inspector")
+        .labeledContentStyle(ServingRowStyle())
     }
 
     @ViewBuilder
@@ -179,16 +200,9 @@ struct ServingInspector<Content: View>: View {
                 .disabled(slot.enabled)
             resetConfirm
             if let defaultsPreview {
-                ModelDefaultsRestartList(preview: defaultsPreview)
-                HStack {
-                    Button("Cancel") { self.defaultsPreview = nil }
-                    Button("Confirm model default") {
-                        busy = true
-                        Task {
-                            if await endpoint.confirmModelDefaultsChange(defaultsPreview) { error = nil } else { error = endpoint.lastError }
-                            self.defaultsPreview = nil; busy = false
-                        }
-                    }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
+                ModelDefaultsConfirmation(endpoint: endpoint, preview: defaultsPreview, confirmTitle: "Confirm model default") { failure in
+                    error = failure
+                    self.defaultsPreview = nil
                 }
             } else {
                 Button("Save as model default") {
@@ -214,7 +228,7 @@ struct ServingInspector<Content: View>: View {
                 }
             }.disabled(slot.enabled)
             if let profile = slot.servingProfile {
-                LabeledContent("Profile", value: "\(profile.name) · \(profile.options.decodingTitle)")
+                LabeledContent("Strata profile", value: "\(profile.name) · \(profile.options.decodingTitle)")
                 if let onManageProfile {
                     Button("Manage profile in Run") { onManageProfile(profile) }.disabled(slot.enabled)
                 }
@@ -239,10 +253,12 @@ struct ServingInspector<Content: View>: View {
                 .toggleStyle(.checkbox)
                 .disabled(options.accelerationRequested || !options.systemPrompt.isEmpty)
             if let mib = options.sharedPrefixCacheMiB {
-                Picker("Budget", selection: Binding(get: { mib }, set: { options.sharedPrefixCacheMiB = $0 })) {
-                    ForEach(LocalInferenceBounds.choices(LocalInferenceBounds.sharedPrefixCacheMiB, including: mib), id: \.self) {
-                        Text("\($0) MiB").tag($0)
-                    }
+                LabeledContent("Budget") {
+                    Picker("Budget", selection: Binding(get: { mib }, set: { options.sharedPrefixCacheMiB = $0 })) {
+                        ForEach(LocalInferenceBounds.choices(LocalInferenceBounds.sharedPrefixCacheMiB, including: mib), id: \.self) {
+                            Text("\($0) MiB").tag($0)
+                        }
+                    }.labelsHidden().fixedSize()
                 }
             }
             ServingCaption(ServingInspectorPresentation.caption(Field.sharedPrefixCacheMiB))
@@ -314,12 +330,52 @@ extension ServingInspectorPresentation {
     }
 }
 
+/// The affected endpoints with Cancel and Confirm for a reviewed defaults change or profile apply.
+/// `finish` receives the failure text, or nil on success and on cancel.
+struct ModelDefaultsConfirmation: View {
+    @ObservedObject var endpoint: EndpointSupervisor
+    let preview: ModelDefaultsChangePreview
+    let confirmTitle: String
+    let finish: (String?) -> Void
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            ModelDefaultsRestartList(preview: preview)
+            HStack {
+                Button("Cancel") { finish(nil) }.disabled(busy)
+                Button(confirmTitle) {
+                    busy = true
+                    Task {
+                        let saved = await endpoint.confirmModelDefaultsChange(preview)
+                        busy = false
+                        finish(saved ? nil : endpoint.lastError)
+                    }
+                }.buttonStyle(.workbenchPrimary).disabled(busy || endpoint.isChanging)
+            }
+        }
+    }
+}
+
+/// Fixed label column with the control beside it, so fields and pickers keep their own width.
+struct ServingRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.md) {
+            configuration.label.frame(width: 170, alignment: .leading)
+            configuration.content
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 /// Endpoints listed before a defaults change is confirmed.
 struct ModelDefaultsRestartList: View {
     let preview: ModelDefaultsChangePreview
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            if preview.following.isEmpty {
+            if preview.appliedSlot != nil {
+                ServingCaption("Writes this profile's values into :\(preview.following.first?.port ?? 0).")
+            } else if preview.following.isEmpty {
                 ServingCaption("No endpoint follows this model's defaults.")
             } else {
                 ServingCaption("Endpoints that follow these defaults: " + preview.following.map { ":\($0.port)" }.joined(separator: ", "))

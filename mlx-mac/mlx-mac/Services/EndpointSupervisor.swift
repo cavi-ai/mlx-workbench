@@ -765,9 +765,7 @@ final class EndpointSupervisor: ObservableObject {
         for slot in following where slot.enabled {
             guard case .some(.running) = slotStates[slot.id] else { continue }
             let before = effectiveSlot(slot), after = effectiveSlot(slot, defaults: defaults)
-            guard before.inferenceOptions != after.inferenceOptions || before.memoryPolicy != after.memoryPolicy
-                    || before.loadOnRequest != after.loadOnRequest || before.splashPresetName != after.splashPresetName
-                    || before.servingProfile?.id != after.servingProfile?.id else { continue }
+            guard Self.launchSettingsDiffer(before, after) else { continue }
             let hash = try await accelerationPreviewHash(after)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
             plans[slot.id] = hash
@@ -776,18 +774,96 @@ final class EndpointSupervisor: ObservableObject {
         return ModelDefaultsChangePreview(modelPath: modelPath, defaults: defaults, following: following, restarting: restarting, plans: plans)
     }
 
-    /// Rechecks the preview, stops the listed running endpoints through the occupancy and idle checks, saves the defaults, then
-    /// restarts them. Fails, naming the endpoint, when one does not come back.
+    private static func launchSettingsDiffer(_ before: EndpointSlot, _ after: EndpointSlot) -> Bool {
+        before.inferenceOptions != after.inferenceOptions || before.memoryPolicy != after.memoryPolicy
+            || before.loadOnRequest != after.loadOnRequest || before.splashPresetName != after.splashPresetName
+            || before.servingProfile?.id != after.servingProfile?.id
+    }
+
+    /// Named settings profiles saved for a model.
+    func settingsProfiles(for modelPath: String) -> [ServingSettingsProfile] { modelDefaultsStore?.profiles(for: modelPath) ?? [] }
+
+    /// Saves the endpoint's effective settings under a name. Nothing is restarted.
+    @discardableResult
+    func saveSettingsProfile(name: String, fromSlot id: UUID) throws -> ServingSettingsProfile {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        guard let slot = fleet.slots.first(where: { $0.id == id }) else { throw WorkflowEvidenceError.invalid("Endpoint no longer exists.") }
+        let profile = ServingSettingsProfile(name: name, settings: ServingSettings.defaults(from: effectiveSlot(slot)))
+        try modelDefaultsStore.saveProfile(profile, for: slot.modelPath)
+        return profile
+    }
+
+    func renameSettingsProfile(_ profile: ServingSettingsProfile, to name: String, modelPath: String) throws {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        var renamed = profile
+        renamed.name = name
+        try modelDefaultsStore.saveProfile(renamed, for: modelPath)
+    }
+
+    func removeSettingsProfile(id: UUID, modelPath: String) throws {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        try modelDefaultsStore.removeProfile(id: id, for: modelPath)
+    }
+
+    /// Previews writing a profile's values into one endpoint, listing it when a running server must restart. The change goes
+    /// through `confirmModelDefaultsChange`.
+    func previewApplyingProfile(slotID: UUID, profile: ServingSettingsProfile) async throws -> ModelDefaultsChangePreview {
+        guard let slot = fleet.slots.first(where: { $0.id == slotID }) else { throw WorkflowEvidenceError.invalid("Endpoint no longer exists.") }
+        func resolve(_ id: UUID?) -> ServingProfile? {
+            id.flatMap { id in profileResolver?(id) ?? (slot.servingProfile?.id == id ? slot.servingProfile : nil) }
+        }
+        let defaults = modelDefaults(for: slot.modelPath)
+        var servingProfile: ServingProfile?
+        if let id = profile.settings.servingProfileID {
+            servingProfile = resolve(id)
+            guard servingProfile?.modelPath == slot.modelPath else {
+                throw WorkflowEvidenceError.invalid("The serving profile saved in this profile is unavailable for this model.")
+            }
+        }
+        let candidate = ServingSettings.applying(profile.settings, to: slot, servingProfile: servingProfile,
+                                                 modelDefaults: defaults, defaultsServingProfile: resolve(defaults?.servingProfileID))
+        if let message = candidate.inferenceOptions.validationError { throw WorkflowEvidenceError.invalid(message) }
+        var resolved = fleet
+        if let index = resolved.slots.firstIndex(where: { $0.id == slotID }) { resolved.slots[index] = effectiveSlot(candidate) }
+        try resolved.validated()
+        let after = effectiveSlot(candidate)
+        let hash = try await accelerationPreviewHash(after)
+        guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        var restarting: [EndpointSlot] = []
+        if slot.enabled, case .some(.running) = slotStates[slot.id], Self.launchSettingsDiffer(effectiveSlot(slot), after) {
+            restarting.append(slot)
+        }
+        return ModelDefaultsChangePreview(modelPath: slot.modelPath, defaults: nil, following: [slot], restarting: restarting,
+                                          plans: [slot.id: hash], appliedSlot: candidate, appliedProfile: profile)
+    }
+
+    /// Rechecks the preview, stops the listed running endpoints through the occupancy and idle checks, saves the defaults (or the
+    /// profile-applied endpoint), then restarts them. Fails, naming the endpoint, when one does not come back.
     func confirmModelDefaultsChange(_ preview: ModelDefaultsChangePreview) async -> Bool {
         guard beginUserOperation() else { lastError = "Wait for the endpoint operation to finish."; return false }
         defer { activeUserOperations -= 1 }
+        let applying = preview.appliedSlot != nil
         do {
-            guard try await previewModelDefaultsChange(modelPath: preview.modelPath, to: preview.defaults) == preview else {
-                throw WorkflowEvidenceError.invalid("Endpoints or launch plans changed. Review the model defaults again.")
+            let current: ModelDefaultsChangePreview
+            if let applied = preview.appliedSlot, let profile = preview.appliedProfile {
+                current = try await previewApplyingProfile(slotID: applied.id, profile: profile)
+            } else {
+                current = try await previewModelDefaultsChange(modelPath: preview.modelPath, to: preview.defaults)
             }
-            guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
-            try await stopIdleRunning(preview.restarting, purpose: "changing its model defaults")
-            try modelDefaultsStore.save(preview.defaults, for: preview.modelPath)
+            guard current == preview else {
+                throw WorkflowEvidenceError.invalid(applying
+                    ? "The endpoint or its launch plan changed. Review the profile again."
+                    : "Endpoints or launch plans changed. Review the model defaults again.")
+            }
+            try await stopIdleRunning(preview.restarting, purpose: applying ? "applying a profile" : "changing its model defaults")
+            if var applied = preview.appliedSlot {
+                applied.accelerationPreviewHash = nil
+                if applied.splashPresetName != nil { applied.profilePreviewHash = preview.plans[applied.id] }
+                guard commit(replacing: applied) else { throw WorkflowEvidenceError.invalid(lastError ?? "Endpoint settings could not be saved.") }
+            } else {
+                guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+                try modelDefaultsStore.save(preview.defaults, for: preview.modelPath)
+            }
             var failed: [Int] = []
             for slot in preview.restarting {
                 pendingUserServeBySlot.removeValue(forKey: slot.id)
@@ -797,7 +873,7 @@ final class EndpointSupervisor: ObservableObject {
                 if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }) { failed.append(slot.port) }
             }
             guard failed.isEmpty else {
-                throw WorkflowEvidenceError.invalid("Defaults saved, but did not restart: " + failed.map { ":\($0)" }.joined(separator: ", "))
+                throw WorkflowEvidenceError.invalid((applying ? "Profile applied, but did not restart: " : "Defaults saved, but did not restart: ") + failed.map { ":\($0)" }.joined(separator: ", "))
             }
             lastError = nil
             return true

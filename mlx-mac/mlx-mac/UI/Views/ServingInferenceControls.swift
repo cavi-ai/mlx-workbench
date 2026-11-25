@@ -197,11 +197,13 @@ struct ServingAccelerationRows: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             if context.isText {
-                Picker("Decoding", selection: $options.promptLookup) {
-                    Text("Standard").tag(false)
-                    Text("Reuse prompt text").tag(true)
+                LabeledContent("Decoding") {
+                    Picker("Decoding", selection: $options.promptLookup) {
+                        Text("Standard").tag(false)
+                        Text("Reuse prompt text").tag(true)
+                    }
+                    .labelsHidden().pickerStyle(.segmented).fixedSize().accessibilityIdentifier("serve-text-decoding")
                 }
-                .pickerStyle(.segmented).accessibilityIdentifier("serve-text-decoding")
                 ServingCaption(ServingInspectorPresentation.caption(Field.promptLookup))
                 accessory(.promptLookup)
                 DisclosureGroup("Hardware acceleration") {
@@ -246,20 +248,24 @@ struct ServingInferenceRows: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             if context.supportsReasoningOverride {
-                Picker("Reasoning", selection: $options.thinkingOff) {
-                    Text("Model default").tag(false)
-                    Text("Skip reasoning").tag(true)
-                }.accessibilityIdentifier("serve-thinking")
+                LabeledContent("Reasoning") {
+                    Picker("Reasoning", selection: $options.thinkingOff) {
+                        Text("Model default").tag(false)
+                        Text("Skip reasoning").tag(true)
+                    }.labelsHidden().fixedSize().accessibilityIdentifier("serve-thinking")
+                }
                 ServingCaption(ServingInspectorPresentation.caption(Field.thinkingOff))
                 accessory(.thinkingOff)
             }
             if context.hasGenerationDefaults {
-                Picker("Default output length", selection: $options.maximumTokens) {
-                    Text("Engine default").tag(Int?.none)
-                    ForEach(LocalInferenceBounds.choices(LocalInferenceBounds.maximumTokens, including: options.maximumTokens), id: \.self) { value in
-                        Text("\(value.formatted()) tokens").tag(Optional(value))
-                    }
-                }.accessibilityIdentifier("serve-output-length")
+                LabeledContent("Default output length") {
+                    Picker("Default output length", selection: $options.maximumTokens) {
+                        Text("Engine default").tag(Int?.none)
+                        ForEach(LocalInferenceBounds.choices(LocalInferenceBounds.maximumTokens, including: options.maximumTokens), id: \.self) { value in
+                            Text("\(value.formatted()) tokens").tag(Optional(value))
+                        }
+                    }.labelsHidden().fixedSize().accessibilityIdentifier("serve-output-length")
+                }
                 ServingCaption(ServingInspectorPresentation.caption(Field.maximumTokens))
                 accessory(.maximumTokens)
             }
@@ -273,12 +279,14 @@ struct ServingInferenceRows: View {
                     accessory(.systemPrompt)
                     LabeledContent("Temperature") {
                         TextField("Model default", value: $options.temperature, format: .number)
+                            .multilineTextAlignment(.trailing).frame(width: 120)
                             .accessibilityIdentifier("serve-default-temperature")
                     }
                     ServingCaption(ServingInspectorPresentation.caption(Field.temperature))
                     accessory(.temperature)
                     LabeledContent("Top-p") {
                         TextField("Model default", value: $options.topP, format: .number)
+                            .multilineTextAlignment(.trailing).frame(width: 120)
                             .accessibilityIdentifier("serve-default-top-p")
                     }
                     ServingCaption(ServingInspectorPresentation.caption(Field.topP))
