@@ -42,6 +42,23 @@ enum ModelCategory: String, CaseIterable, Identifiable {
     func contains(_ model: LibraryModel) -> Bool {
         types.contains(model.item.task?.type ?? .other)
     }
+
+    /// The category's tone for type icons, tags and keys.
+    var color: Color {
+        switch self {
+        case .chat: return WorkbenchColor.chatTone
+        case .vision: return WorkbenchColor.visionTone
+        case .speech: return WorkbenchColor.speechTone
+        case .image: return WorkbenchColor.imageTone
+        case .creative: return WorkbenchColor.creativeTone
+        case .other: return WorkbenchColor.muted
+        }
+    }
+
+    /// The category listing a type; a type no category lists belongs to Other.
+    static func of(_ type: ModelTaskType) -> ModelCategory {
+        allCases.first { $0.types.contains(type) } ?? .other
+    }
 }
 
 /// The Library filter chosen in the sidebar, shared with the Library table.

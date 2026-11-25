@@ -46,6 +46,27 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Words a Library search matches for this type: its titles and the short names people type.
+    var searchTerms: [String] {
+        let aliases: [String]
+        switch self {
+        case .textLLM: aliases = ["llm"]
+        case .visionLanguage: aliases = ["vlm", "multimodal"]
+        case .speechToText: aliases = ["stt", "asr", "speech recognition", "transcribe"]
+        case .textToSpeech: aliases = ["tts", "speech synthesis"]
+        case .musicGeneration: aliases = ["audio generation"]
+        case .embedding: aliases = ["embeddings"]
+        case .classification: aliases = ["classify"]
+        case .imageGeneration: aliases = ["text-to-image", "diffusion"]
+        case .videoGeneration: aliases = ["text-to-video"]
+        case .meshGeneration: aliases = ["mesh"]
+        case .visionProjector: aliases = ["mmproj"]
+        case .speculativeDraft: aliases = ["speculative"]
+        case .other: aliases = []
+        }
+        return [title, kindTitle] + aliases
+    }
+
     /// The Library's Type column: one word per kind of output.
     var kindTitle: String {
         switch self {

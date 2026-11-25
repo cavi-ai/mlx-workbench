@@ -57,21 +57,26 @@ struct WorkbenchPalette: Sendable {
     let canvas, sidebar, surface, well, hairline, ink, muted: UInt32
     let accent, action, actionPressed, onAccent, onAccentFill: UInt32
     let success, warning, failure: UInt32
+    /// Model category tones for type icons and tags.
+    let chatTone, visionTone, speechTone, imageTone, creativeTone: UInt32
 
     static let midnight = WorkbenchPalette(
         canvas: 0x0D0E11, sidebar: 0x07080A, surface: 0x181A1E, well: 0x22252B, hairline: 0x2E3138,
         ink: 0xF4F5F7, muted: 0x9599A3, accent: 0xFFD43B, action: 0xFFD43B, actionPressed: 0xE7BA24,
-        onAccent: 0x111111, onAccentFill: 0x111111, success: 0x3DD68C, warning: 0xFFA53D, failure: 0xFF6B6B)
+        onAccent: 0x111111, onAccentFill: 0x111111, success: 0x3DD68C, warning: 0xFFA53D, failure: 0xFF6B6B,
+        chatTone: 0x6CB6FF, visionTone: 0xB392F0, speechTone: 0x3CCFCF, imageTone: 0xF27BD9, creativeTone: 0xB8E05A)
 
     static let graphite = WorkbenchPalette(
         canvas: 0x1D1D1D, sidebar: 0x161616, surface: 0x282828, well: 0x333333, hairline: 0x404040,
         ink: 0xF2F2F2, muted: 0xA6A6A6, accent: 0xFFD43B, action: 0xFFD43B, actionPressed: 0xE7BA24,
-        onAccent: 0x111111, onAccentFill: 0x111111, success: 0x3CCB7F, warning: 0xFFA53D, failure: 0xFF7066)
+        onAccent: 0x111111, onAccentFill: 0x111111, success: 0x3CCB7F, warning: 0xFFA53D, failure: 0xFF7066,
+        chatTone: 0x6CB6FF, visionTone: 0xB392F0, speechTone: 0x3CCFCF, imageTone: 0xF27BD9, creativeTone: 0xB8E05A)
 
     static let paper = WorkbenchPalette(
         canvas: 0xF3F3EF, sidebar: 0xE9E9E4, surface: 0xFFFFFF, well: 0xE7E7E1, hairline: 0xD1D1C9,
         ink: 0x111111, muted: 0x5C5C56, accent: 0x785900, action: 0xFFD43B, actionPressed: 0xE7BA24,
-        onAccent: 0x111111, onAccentFill: 0xFFFFFF, success: 0x146C3A, warning: 0x8C4600, failure: 0xB0241E)
+        onAccent: 0x111111, onAccentFill: 0xFFFFFF, success: 0x146C3A, warning: 0x8C4600, failure: 0xB0241E,
+        chatTone: 0x0B5CAD, visionTone: 0x6E40C9, speechTone: 0x066A6B, imageTone: 0xA3219A, creativeTone: 0x4A6600)
 
     /// A fixed swatch of one role, independent of the active theme.
     func color(_ role: KeyPath<WorkbenchPalette, UInt32>) -> Color {
@@ -143,6 +148,12 @@ enum WorkbenchColor {
     static var success: Color { active.success }
     static var warning: Color { active.warning }
     static var failure: Color { active.failure }
+    /// Model category tones; each reads at 4.5:1 on canvas, surface and well.
+    static var chatTone: Color { active.chatTone }
+    static var visionTone: Color { active.visionTone }
+    static var speechTone: Color { active.speechTone }
+    static var imageTone: Color { active.imageTone }
+    static var creativeTone: Color { active.creativeTone }
 
     private static var active: Tokens {
         switch WorkbenchThemeState.shared.theme {
@@ -163,6 +174,7 @@ enum WorkbenchColor {
         let canvas, sidebar, surface, well, hairline, ink, muted: Color
         let accent, action, actionPressed, onAccent, onAccentFill: Color
         let success, warning, failure: Color
+        let chatTone, visionTone, speechTone, imageTone, creativeTone: Color
 
         private init(_ theme: WorkbenchTheme) {
             func role(_ name: String, _ value: KeyPath<WorkbenchPalette, UInt32>) -> Color {
@@ -184,6 +196,11 @@ enum WorkbenchColor {
             success = role("Success", \.success)
             warning = role("Warning", \.warning)
             failure = role("Failure", \.failure)
+            chatTone = role("ChatTone", \.chatTone)
+            visionTone = role("VisionTone", \.visionTone)
+            speechTone = role("SpeechTone", \.speechTone)
+            imageTone = role("ImageTone", \.imageTone)
+            creativeTone = role("CreativeTone", \.creativeTone)
         }
     }
 

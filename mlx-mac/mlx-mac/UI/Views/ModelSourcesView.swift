@@ -8,6 +8,8 @@ struct ModelSourceRow: Identifiable {
     let model: String
     let provider: String
     let state: String
+    /// Nil when neither the Library scan nor the provider reports a type.
+    let type: ModelTaskType?
     var id: String { members.map(\.id).sorted().first ?? "" }
     var row: ServingRow { members[0] }
     static let defaultSortOrder = [KeyPathComparator(\ModelSourceRow.model)]
@@ -36,7 +38,8 @@ struct ModelSourceRow: Identifiable {
             let service = ServingWorkspacePresentation.service(first)
             return ModelSourceRow(members: members, model: ServingWorkspacePresentation.name(first, models: models),
                                   provider: service?.host?.provider == .ollama ? "Ollama" : (service?.providerName ?? "MLX Workbench"),
-                                  state: members.count > 1 ? "\(members.count) connections" : (service?.statusText ?? ServingWorkspacePresentation.status(first)))
+                                  state: members.count > 1 ? "\(members.count) connections" : (service?.statusText ?? ServingWorkspacePresentation.status(first)),
+                                  type: members.lazy.compactMap { ModelSourcesPresentation.type($0, models: models) }.first)
         }.sorted(using: sortOrder.isEmpty ? defaultSortOrder : sortOrder)
     }
 }
@@ -45,13 +48,25 @@ private struct ModelSourceListRow: View {
     let source: ModelSourceRow
     let selected: Bool
     var body: some View {
+        let tone = source.type.map { ModelCategory.of($0).color } ?? WorkbenchColor.muted
         HStack(spacing: WorkbenchSpacing.md) {
-            Image(systemName: "cube.transparent").foregroundStyle(WorkbenchColor.muted)
+            Image(systemName: source.type?.symbolName ?? "cube")
+                .symbolRenderingMode(.hierarchical).foregroundStyle(tone)
+                .frame(width: WorkbenchSize.controlRowHeight, height: WorkbenchSize.controlRowHeight)
+                .background(tone.opacity(.fill), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text(source.model).lineLimit(1).truncationMode(.middle).accessibilityIdentifier("sources-model-cell")
                 Text(source.provider).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             Spacer(minLength: WorkbenchSpacing.sm)
+            if let type = source.type {
+                Text(type.kindTitle).font(WorkbenchTypography.label).foregroundStyle(tone)
+                    .padding(.horizontal, WorkbenchSpacing.xs).padding(.vertical, WorkbenchSpacing.xxxs)
+                    .background(tone.opacity(.fill), in: Capsule())
+                    .help(type.title).accessibilityLabel("Type: " + type.title)
+                    .accessibilityIdentifier("sources-model-type")
+            }
             Text(source.state).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
         }.foregroundStyle(WorkbenchColor.ink)
             .padding(.horizontal, WorkbenchSpacing.md)
@@ -96,6 +111,88 @@ enum ModelSourcesPresentation {
             return query.isEmpty || [ServingWorkspacePresentation.modelID(row), service?.name ?? "", service?.providerName ?? "MLX Workbench"]
                 .contains { $0.localizedCaseInsensitiveContains(query) }
         }
+    }
+
+    /// The Library scan of the model's files, then what the serving runtime or provider reports.
+    static func type(_ row: ServingRow, models: [LibraryModel]) -> ModelTaskType? {
+        let service = ServingWorkspacePresentation.service(row)
+        let server = ServingWorkspacePresentation.server(row)
+        var paths = [service?.modelPath, server?.path, server?.modelIdentity]
+        if case .endpoint(let slot, _, _) = row { paths.append(slot.modelPath) }
+        for path in paths.compactMap({ $0 }) where !path.isEmpty {
+            if let type = models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?.item.task?.type {
+                return type
+            }
+        }
+        if let server {
+            if let kind = server.taskKinds?.first { return taskType(kind) }
+            switch server.runtime {
+            case "mlx-vlm": return .visionLanguage
+            case "mlx_lm", "strata", "splash": return .textLLM
+            default: break
+            }
+        }
+        guard let hosted = service?.hostedModel else { return nil }
+        if service?.host?.provider == .comfyUI { return .imageGeneration }
+        switch hosted.category?.lowercased() {
+        case "llm": return .textLLM
+        case "vlm": return .visionLanguage
+        case "embedding", "embeddings": return .embedding
+        case "decision": return .classification
+        default: break
+        }
+        let capabilities = Set((hosted.capabilities ?? []).map { $0.lowercased() })
+        if capabilities.contains("embedding") { return .embedding }
+        if capabilities.contains("vision") { return .visionLanguage }
+        if capabilities.contains("completion") { return .textLLM }
+        return nil
+    }
+
+    /// The key above the list: each category present, in sidebar order, then models with no reported type.
+    static func key(_ catalog: [ModelSourceRow]) -> [ModelSourceKeyEntry] {
+        var counts: [ModelCategory?: Int] = [:]
+        for source in catalog { counts[source.type.map(ModelCategory.of), default: 0] += 1 }
+        return (ModelCategory.allCases.map(Optional.some) + [nil]).compactMap { category in
+            counts[category].map { ModelSourceKeyEntry(category: category, count: $0) }
+        }
+    }
+
+    private static func taskType(_ kind: String) -> ModelTaskType {
+        switch kind {
+        case "embedding": return .embedding
+        case "classification": return .classification
+        case "transcribe": return .speechToText
+        case "speak": return .textToSpeech
+        case "music_generation": return .musicGeneration
+        case "image_generation": return .imageGeneration
+        case "video_generation": return .videoGeneration
+        case "mesh_generation": return .meshGeneration
+        case "image_understanding", "video_understanding": return .visionLanguage
+        default: return .other
+        }
+    }
+}
+
+struct ModelSourceKeyEntry: Identifiable, Equatable {
+    let category: ModelCategory?
+    let count: Int
+    var id: String { category?.rawValue ?? "unreported" }
+}
+
+private struct ModelSourceKeyItem: View {
+    let category: ModelCategory?
+    let count: Int
+    var body: some View {
+        let tone = category?.color ?? WorkbenchColor.muted
+        HStack(spacing: WorkbenchSpacing.xxs) {
+            Image(systemName: category?.symbolName ?? "cube").symbolRenderingMode(.hierarchical).foregroundStyle(tone)
+            Text(category?.title ?? "Type not reported").foregroundStyle(WorkbenchColor.ink)
+            Text("\(count)").monospacedDigit().foregroundStyle(WorkbenchColor.muted)
+        }.font(WorkbenchTypography.metadata)
+            .padding(.horizontal, WorkbenchSpacing.xs).padding(.vertical, WorkbenchSpacing.xxxs)
+            .background(tone.opacity(.fill), in: Capsule())
+            .fixedSize()
+            .accessibilityElement(children: .combine)
     }
 }
 
@@ -302,6 +399,15 @@ struct ModelSourcesView: View {
                     Button("Connection details") { showingDetails = true }
                         .accessibilityIdentifier("sources-show-details")
                 }
+            }
+            let key = ModelSourcesPresentation.key(catalog)
+            if !key.isEmpty {
+                let items = ForEach(key) { entry in ModelSourceKeyItem(category: entry.category, count: entry.count) }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { items }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: WorkbenchSize.tileMinimum), spacing: WorkbenchSpacing.xs, alignment: .leading)],
+                              alignment: .leading, spacing: WorkbenchSpacing.xs) { items }
+                }.accessibilityIdentifier("sources-type-key")
             }
             List(catalog, selection: $selectedID) { source in
                 ModelSourceListRow(source: source, selected: source.id == selectedID)

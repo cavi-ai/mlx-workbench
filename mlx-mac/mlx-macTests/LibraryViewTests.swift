@@ -67,6 +67,40 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(Set(result.flatMap(\.members).map(\.id)), Set(original.map(\.id)))
     }
 
+    func testModelSourcesTagEachModelWithItsTypeAndKeyTheCategories() {
+        func hosted(_ provider: ModelHostProvider, _ id: String, port: Int, category: String? = nil, capabilities: [String]? = nil) -> ServingRow {
+            let host = ModelHost(name: id, provider: provider, baseURL: "http://127.0.0.1:\(port)")
+            let model = HostedModel(hostID: host.id, modelID: id, name: id, capabilities: capabilities, category: category)
+            let snapshot = ServingInventorySnapshot.make(engine: [], hosts: [HostInventory(host: host, models: [model], capturedAt: Date())],
+                                                         managedReceipts: "/receipts", capturedAt: Date())
+            return .service(snapshot.services[0])
+        }
+        let scanned = LibraryModel(item: ModelItem(
+            path: "/models/qwen-vl", name: "qwen-vl", bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil,
+            architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,
+            readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
+            task: ModelTask(type: .visionLanguage, useCases: [], source: "scan", confidence: "high"), servingRuntime: nil,
+            splashFamily: nil))
+        let original: [ServingRow] = [
+            .server(ServerInfo(path: "/models/qwen-vl", runtime: "mlx_lm", port: 8091, state: "running"), service: nil),
+            .server(ServerInfo(path: "/models/kokoro", runtime: "tasks", port: 8092, state: "running", taskKinds: ["speak"]), service: nil),
+            .server(ServerInfo(path: "/models/coder", runtime: "splash", port: 8095, state: "running"), service: nil),
+            hosted(.lmStudio, "nomic-embed", port: 1234, category: "embeddings"),
+            hosted(.ollama, "llava:latest", port: 11434, capabilities: ["completion", "vision"]),
+            hosted(.comfyUI, "checkpoints/flux.safetensors", port: 8188, category: "checkpoints"),
+            hosted(.openAICompatible, "gpt-oss", port: 8000)
+        ]
+        let result = ModelSourceRow.rows(original, models: [scanned], sortOrder: [])
+        XCTAssertEqual(result.count, original.count)
+        let types = original.map { row in result.first { $0.members.contains { $0.id == row.id } }?.type }
+        XCTAssertEqual(types, [.visionLanguage, .textToSpeech, .textLLM, .embedding, .visionLanguage, .imageGeneration, nil])
+        XCTAssertEqual(ModelSourcesPresentation.key(result), [
+            ModelSourceKeyEntry(category: .chat, count: 1), ModelSourceKeyEntry(category: .vision, count: 2),
+            ModelSourceKeyEntry(category: .speech, count: 1), ModelSourceKeyEntry(category: .image, count: 1),
+            ModelSourceKeyEntry(category: .other, count: 1), ModelSourceKeyEntry(category: nil, count: 1)
+        ])
+    }
+
     func testInspectorEvidenceRendersLabeledRowsInsteadOfKeyValueText() {
         let home = NSHomeDirectory()
         let rows = ModelDetailsPresentation.evidenceRows(["path=\(home)/.models/a", "quant_bits=4", "signature=abc", "free text"])
@@ -365,6 +399,29 @@ final class LibraryViewTests: XCTestCase {
             quantization: nil
         )
         XCTAssertEqual(pathMatches.map(\.primaryDisplayName), ["Bravo"])
+    }
+
+    func testSearchMatchesModelTypeCategoryAndShortNames() {
+        func model(_ type: ModelTaskType?, name: String) -> LibraryModel {
+            LibraryModel(item: ModelItem(
+                path: "/models/\(name)", name: name, bytes: 1, modifiedAt: nil, shard: nil, modelKey: name,
+                architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil,
+                readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
+                task: type.map { ModelTask(type: $0, useCases: [], source: "scan", confidence: "high") }))
+        }
+        let voice = model(.textToSpeech, name: "kokoro"), image = model(.imageGeneration, name: "flux"),
+            mesh = model(.meshGeneration, name: "triposg"), chat = model(.textLLM, name: "qwen"), unlabeled = model(nil, name: "blob")
+        let all = [voice, image, mesh, chat, unlabeled]
+        func names(_ query: String) -> [String] {
+            all.filter { LibraryPresentation.matchesSearch($0, query: query) }.map(\.item.name)
+        }
+        XCTAssertEqual(names("tts"), ["kokoro"])
+        XCTAssertEqual(names("Speech"), ["kokoro"])
+        XCTAssertEqual(names("image and video"), ["flux"])
+        XCTAssertEqual(names("3d"), ["triposg"])
+        XCTAssertEqual(names("music and 3d"), ["triposg"])
+        XCTAssertEqual(names("llm"), ["qwen"])
+        XCTAssertEqual(names("embedding and other"), ["blob"])
     }
 
     func testReadinessFilterLimitsVisibleVariants() {

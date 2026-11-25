@@ -77,6 +77,10 @@ final class WorkbenchThemeTests: XCTestCase {
                     XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.ink, in: appearance), background), 7, context)
                     XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.muted, in: appearance), background), 4.5, context)
                     XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.accent, in: appearance), background), 4.5, context)
+                    for category in ModelCategory.allCases {
+                        XCTAssertGreaterThanOrEqual(ratio(resolved(category.color, in: appearance), background), 4.5,
+                                                    context + " " + category.rawValue)
+                    }
                 }
                 XCTAssertGreaterThanOrEqual(ratio(resolved(WorkbenchColor.onAccent, in: appearance),
                                                   resolved(WorkbenchColor.action, in: appearance)), 7, context)

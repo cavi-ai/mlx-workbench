@@ -264,10 +264,19 @@ enum LibraryPresentation {
         + model.sourcePaths
         + model.outputPaths
         + userFacingEvidence(model.evidence)
+        + typeTerms(model)
 
         return searchFields
             .compactMap { $0 }
             .contains { $0.localizedLowercase.contains(normalizedQuery) }
+    }
+
+    /// The model's type, its sidebar category and its use cases, so a search for "tts" or "Image and video" finds it.
+    private static func typeTerms(_ model: LibraryModel) -> [String] {
+        let type = model.item.task?.type ?? .other
+        return type.searchTerms
+            + ModelCategory.allCases.filter { $0.types.contains(type) }.map(\.title)
+            + (model.item.task?.useCases ?? [])
     }
 
     private static func matchesReadiness(_ model: LibraryModel, readiness: ModelReadiness?) -> Bool {
@@ -834,7 +843,7 @@ struct LibraryView: View {
 
     private var searchControls: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
-            TextField("Search or paste a Hugging Face link", text: $search)
+            TextField("Search name, type or category, or paste a Hugging Face link", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .focused($searchFocused)
                 .onSubmit { if searchIsLink { addModel() } }
