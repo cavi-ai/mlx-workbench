@@ -64,6 +64,24 @@ final class ModelServingDefaultsTests: XCTestCase {
         XCTAssertEqual(ServingSettings.source(of: .systemPrompt, slot: slot), .modelDefault)
     }
 
+    func testSplashFilesFollowModelDefaultsAndCanBeOverriddenIndependently() {
+        var slot = EndpointSlot(enabled: false, port: 8925, modelPath: "/Models/a", loadOnRequest: true)
+        slot.overrides = []
+        let defaults = ModelServingDefaults(inference: LocalInferenceOptions(
+            splashDraftModel: "/Models/default-draft", splashChatTemplate: "/Models/default.jinja"))
+        let inherited = ServingSettings.effective(slot: slot, defaults: defaults)
+        XCTAssertEqual(inherited.inferenceOptions, defaults.inference)
+
+        let selected = ModelServingDefaults(inference: LocalInferenceOptions(splashChatTemplate: "/Models/custom.jinja"))
+        let applied = ServingSettings.applying(selected, to: slot, servingProfile: nil,
+            modelDefaults: defaults, defaultsServingProfile: nil)
+        XCTAssertEqual(ServingSettings.effective(slot: applied, defaults: defaults).inferenceOptions, selected.inference)
+
+        let otherDefaults = ModelServingDefaults(inference: LocalInferenceOptions(
+            splashDraftModel: "/Models/new-draft", splashChatTemplate: "/Models/new.jinja"))
+        XCTAssertEqual(ServingSettings.effective(slot: applied, defaults: otherDefaults).inferenceOptions, selected.inference)
+    }
+
     func testStoreRoundTripUnderHostedTestRoot() throws {
         let url = WorkbenchStatePaths.modelDefaults()
         XCTAssertTrue(url.path.hasPrefix(WorkbenchStatePaths.hostedTestRoot.path))
@@ -205,6 +223,51 @@ final class ModelServingDefaultsTests: XCTestCase {
         XCTAssertTrue(try world.status().contains { $0.port == 8925 })
         let slot = try XCTUnwrap(supervisor.fleet.slots.first { $0.id == following.id })
         XCTAssertEqual(supervisor.effectiveSlot(slot).inferenceOptions.maximumTokens, 1024)
+    }
+
+    func testChangingSplashDefaultsReplacesReviewedPlansForRunningAndStoppedEndpoints() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let world = FakeServeWorld()
+        var running = EndpointSlot(enabled: true, port: 8925, modelPath: "/Models/a", loadOnRequest: true)
+        running.splashPresetName = "editing"
+        running.overrides = []
+        running.profilePreviewHash = "old-plan"
+        var stopped = EndpointSlot(enabled: false, port: 8926, modelPath: running.modelPath, loadOnRequest: true)
+        stopped.splashPresetName = running.splashPresetName
+        stopped.overrides = []
+        stopped.profilePreviewHash = "old-plan"
+        let receipt = root.appendingPathComponent("existing.json")
+        try JSONSerialization.data(withJSONObject: ["pid": 1, "port": running.port, "path": running.modelPath,
+            "preview_hash": "old-plan"]).write(to: receipt)
+        world.preload(repo: running.modelPath, port: running.port, jit: true, activeRequests: 0, receipt: receipt.path)
+        let (supervisor, _) = try makeSupervisor(root: root, slots: [running, stopped], world: world)
+        supervisor.splashLifecycle = { _ in
+            var base = world.lifecycle
+            base.configured = { options in
+                var lifecycle = world.lifecycle
+                lifecycle.jitPreview = { _, port, _ in "\(options.splashDraftModel ?? "engine-default"):\(port)" }
+                lifecycle.jitStart = { path, port, hash, _ in
+                    let receipt = root.appendingPathComponent("new-\(port).json")
+                    try JSONSerialization.data(withJSONObject: ["pid": 1, "port": port, "path": path,
+                        "preview_hash": hash]).write(to: receipt)
+                    world.preload(repo: path, port: port, jit: true, activeRequests: 0, receipt: receipt.path)
+                }
+                return lifecycle
+            }
+            return base
+        }
+        await supervisor.reconcile()
+        XCTAssertEqual(supervisor.slotStates[running.id], .running(modelPath: running.modelPath, port: running.port))
+        let defaults = ModelServingDefaults(inference: LocalInferenceOptions(splashDraftModel: "/Models/new-draft"))
+        let preview = try await supervisor.previewModelDefaultsChange(modelPath: running.modelPath, to: defaults)
+        XCTAssertEqual(preview.restarting.map(\.id), [running.id])
+        let confirmed = await supervisor.confirmModelDefaultsChange(preview)
+        XCTAssertTrue(confirmed, supervisor.lastError ?? "")
+        XCTAssertEqual(supervisor.fleet.slots.map(\.profilePreviewHash), ["/Models/new-draft:8925", "/Models/new-draft:8926"])
+        let enabled = await supervisor.setSlotEnabled(id: stopped.id, true)
+        XCTAssertTrue(enabled)
+        XCTAssertEqual(try world.status().compactMap(\.port).sorted(), [8925, 8926])
     }
 
     func testConfirmRefusesWhenTheListedSlotDriftedAndSavesNothing() async throws {

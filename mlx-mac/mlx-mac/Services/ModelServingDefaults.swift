@@ -10,6 +10,7 @@ import Foundation
 enum ServingSettingKey: String, Codable, CaseIterable, Hashable, Sendable {
     case loadOnRequest, memoryPolicy, splashPreset, servingProfile
     case m5Prefill, promptLookup, visionCache, thinkingOff, maximumTokens, systemPrompt, temperature, topP, sharedPrefixCacheMiB
+    case splashDraftModel, splashChatTemplate
 }
 
 struct ModelServingDefaults: Codable, Equatable, Sendable {
@@ -129,6 +130,8 @@ enum ServingSettings {
         if old.temperature != new.temperature { keys.insert(.temperature) }
         if old.topP != new.topP { keys.insert(.topP) }
         if old.sharedPrefixCacheMiB != new.sharedPrefixCacheMiB { keys.insert(.sharedPrefixCacheMiB) }
+        if old.splashDraftModel != new.splashDraftModel { keys.insert(.splashDraftModel) }
+        if old.splashChatTemplate != new.splashChatTemplate { keys.insert(.splashChatTemplate) }
         return keys
     }
 
@@ -149,6 +152,8 @@ enum ServingSettings {
         if follows(.temperature) { options.temperature = base.temperature }
         if follows(.topP) { options.topP = base.topP }
         if follows(.sharedPrefixCacheMiB) { options.sharedPrefixCacheMiB = base.sharedPrefixCacheMiB }
+        if follows(.splashDraftModel) { options.splashDraftModel = base.splashDraftModel }
+        if follows(.splashChatTemplate) { options.splashChatTemplate = base.splashChatTemplate }
         result.acceleration = options.requested ? options : nil
         if follows(.loadOnRequest), let mode = defaults.loadOnRequest { result.loadOnRequest = mode }
         if follows(.memoryPolicy), let policy = defaults.memoryPolicy { result.memoryPolicy = policy }
@@ -197,7 +202,7 @@ struct ModelDefaultsChangePreview: Equatable {
     let defaults: ModelServingDefaults?
     let following: [EndpointSlot]
     let restarting: [EndpointSlot]
-    /// Post-change launch plan hash per restarting slot.
+    /// Post-change launch plans for restarting slots and changed Splash preset settings.
     var plans: [UUID: String] = [:]
     /// Set when the change rewrites one endpoint from a profile instead of the model defaults.
     var appliedSlot: EndpointSlot? = nil

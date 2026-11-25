@@ -426,6 +426,8 @@ extension ServingInspectorPresentation {
         case .temperature: return "Temperature"
         case .topP: return "Top-p"
         case .sharedPrefixCacheMiB: return "Shared prefix cache"
+        case .splashDraftModel: return "Splash draft model"
+        case .splashChatTemplate: return "Splash chat template"
         }
     }
 
@@ -454,6 +456,8 @@ extension ServingInspectorPresentation {
         case .temperature: return sampling(options.temperature)
         case .topP: return sampling(options.topP)
         case .sharedPrefixCacheMiB: return options.sharedPrefixCacheMiB.map { "\($0) MiB" } ?? "Off"
+        case .splashDraftModel: return options.splashDraftModel ?? "Family's cached draft"
+        case .splashChatTemplate: return options.splashChatTemplate ?? "Model's own template"
         }
     }
 

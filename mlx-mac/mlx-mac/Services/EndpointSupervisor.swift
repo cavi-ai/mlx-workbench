@@ -812,14 +812,17 @@ final class EndpointSupervisor: ObservableObject {
         try resolved.validated()
         var restarting: [EndpointSlot] = []
         var plans: [UUID: String] = [:]
-        for slot in following where slot.enabled {
-            guard case .some(.running) = slotStates[slot.id] else { continue }
+        for slot in following {
             let before = effectiveSlot(slot), after = effectiveSlot(slot, defaults: defaults)
             guard Self.launchSettingsDiffer(before, after) else { continue }
+            let running: Bool
+            if slot.enabled, case .some(.running) = slotStates[slot.id] { running = true }
+            else { running = false }
+            guard running || before.splashPresetName != nil || after.splashPresetName != nil else { continue }
             let hash = try await accelerationPreviewHash(after)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
             plans[slot.id] = hash
-            restarting.append(slot)
+            if running { restarting.append(slot) }
         }
         return ModelDefaultsChangePreview(modelPath: modelPath, defaults: defaults, following: following, restarting: restarting, plans: plans)
     }
@@ -905,14 +908,20 @@ final class EndpointSupervisor: ObservableObject {
                     ? "The endpoint or its launch plan changed. Review the profile again."
                     : "Endpoints or launch plans changed. Review the model defaults again.")
             }
-            try await stopIdleRunning(preview.restarting, purpose: applying ? "applying a profile" : "changing its model defaults")
-            if var applied = preview.appliedSlot {
-                applied.accelerationPreviewHash = nil
-                if applied.splashPresetName != nil { applied.profilePreviewHash = preview.plans[applied.id] }
-                guard commit(replacing: applied) else { throw WorkflowEvidenceError.invalid(lastError ?? "Endpoint settings could not be saved.") }
-            } else {
-                guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
-                try modelDefaultsStore.save(preview.defaults, for: preview.modelPath)
+            do {
+                try await stopIdleRunning(preview.restarting, purpose: applying ? "applying a profile" : "changing its model defaults")
+                if let applied = preview.appliedSlot {
+                    guard let hash = preview.plans[applied.id],
+                          let stamped = stampedCandidate(applied, hash: hash),
+                          commit(replacing: stamped) else {
+                        throw WorkflowEvidenceError.invalid(lastError ?? "Endpoint settings could not be saved.")
+                    }
+                } else {
+                    try saveReviewedModelDefaults(preview)
+                }
+            } catch {
+                await restartSavedSlots(preview.restarting)
+                throw error
             }
             var failed: [Int] = []
             for slot in preview.restarting {
@@ -928,6 +937,29 @@ final class EndpointSupervisor: ObservableObject {
             lastError = nil
             return true
         } catch { lastError = AppHost.render(error); return false }
+    }
+
+    private func saveReviewedModelDefaults(_ preview: ModelDefaultsChangePreview) throws {
+        guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+        let previousDefaults = modelDefaultsStore.defaults(for: preview.modelPath)
+        var next = fleet
+        for index in next.slots.indices {
+            let slot = next.slots[index]
+            guard let hash = preview.plans[slot.id] else { continue }
+            let before = effectiveSlot(slot, defaults: previousDefaults)
+            let after = effectiveSlot(slot, defaults: preview.defaults)
+            guard before.splashPresetName != nil || after.splashPresetName != nil else { continue }
+            next.slots[index].profilePreviewHash = after.splashPresetName != nil || after.servingProfile != nil ? hash : nil
+        }
+        try modelDefaultsStore.save(preview.defaults, for: preview.modelPath)
+        if next != fleet, !commit(next) {
+            let message = lastError ?? "Reviewed launch settings could not be saved."
+            do { try modelDefaultsStore.save(previousDefaults, for: preview.modelPath) }
+            catch {
+                throw WorkflowEvidenceError.invalid("\(message) The previous model defaults could not be restored. \(AppHost.render(error))")
+            }
+            throw WorkflowEvidenceError.invalid(message)
+        }
     }
 
     /// Stops the running servers of `slots` through the occupancy and idle checks, then confirms none is still running.
@@ -1316,15 +1348,15 @@ final class EndpointSupervisor: ObservableObject {
             try await stopIdleRunning(running, purpose: purpose)
         } catch {
             // Endpoints already stopped come back on their current key; nothing was saved.
-            await restartOnCurrentKey(running)
+            await restartSavedSlots(running)
             lastError = AppHost.render(error)
             return nil
         }
-        do { guard try commit(next, savingKey: token) else { await restartOnCurrentKey(running); return nil } }
-        catch { await restartOnCurrentKey(running); lastError = AppHost.render(error); return nil }
+        do { guard try commit(next, savingKey: token) else { await restartSavedSlots(running); return nil } }
+        catch { await restartSavedSlots(running); lastError = AppHost.render(error); return nil }
         var failed: [Int] = []
         for slot in running where fleet.slots.contains(where: { $0.id == slot.id && $0.enabled }) {
-            await restartOnCurrentKey([slot])
+            await restartSavedSlots([slot])
             let live = (try? await statusProvider()) ?? []
             if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" && $0.apiKeySHA256 == digest }) {
                 failed.append(slot.port)
@@ -1460,7 +1492,7 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     /// Starts the enabled slots again from the saved fleet, as a user-requested serve.
-    private func restartOnCurrentKey(_ slots: [EndpointSlot]) async {
+    private func restartSavedSlots(_ slots: [EndpointSlot]) async {
         for slot in slots where fleet.slots.contains(where: { $0.id == slot.id && $0.enabled }) {
             pendingUserServeBySlot.removeValue(forKey: slot.id)
             slotAttemptTimestamps[slot.id] = []

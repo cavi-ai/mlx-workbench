@@ -244,6 +244,8 @@ restart. A default that makes an endpoint's settings illegal is refused at the p
 on a field previews and confirms like other inference changes, with the endpoint stopped.
 Changing a field on an endpoint (load mode, memory policy, Splash preset, inference) makes
 it that endpoint's own value.
+Splash draft and template paths also follow model defaults unless the endpoint overrides them.
+Changing those defaults reviews the resulting launch plans for affected Splash preset endpoints.
 Endpoints saved by earlier releases keep all of their own values.
 
 ### Serving inspector layout, presets and profiles
