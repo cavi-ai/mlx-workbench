@@ -248,6 +248,13 @@ enum WorkbenchMenuBarItem {
     static let title = "MLX Workbench"
     static let systemImage = "cpu"
     static let storageKey = "showsWorkbenchMenuBarItem"
+
+    /// Writes only a changed value; returns whether it wrote. An absent key reads as shown.
+    static func store(_ shown: Bool, in defaults: UserDefaults) -> Bool {
+        guard shown != (defaults.object(forKey: storageKey) as? Bool ?? true) else { return false }
+        defaults.set(shown, forKey: storageKey)
+        return true
+    }
 }
 
 /// Strings the menu draws; pure so no file-system lookup happens during rendering.

@@ -88,7 +88,7 @@ struct MlxWorkbenchApp: App {
 
     private var menuBarInsertion: Binding<Bool> {
         Binding(get: { !isHostedUnitTest && showsMenuBarItem }, set: { shown in
-            if !isHostedUnitTest { showsMenuBarItem = shown }
+            if !isHostedUnitTest { _ = WorkbenchMenuBarItem.store(shown, in: .standard) }
         })
     }
 
