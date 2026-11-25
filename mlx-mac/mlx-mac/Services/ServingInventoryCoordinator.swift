@@ -109,7 +109,7 @@ final class ServingInventoryCoordinator: ObservableObject {
 
     static func pathsForRemoval(engine: ServingEngineSnapshot?, engineError: String?,
                                 hosts: ServingHostSnapshot, managedReceipts: String) throws -> [String] {
-        var issues = hosts.errors
+        var issues = hostIssues(hosts, engine: engine?.servers ?? [])
         if let engineError { issues["engine"] = engineError }
         if let engine { issues.merge(engine.errors) { _, newer in newer } }
         if !issues.isEmpty {
@@ -132,6 +132,18 @@ final class ServingInventoryCoordinator: ObservableObject {
             managedReceipts: managedReceipts, capturedAt: Date(), hostProcessIDs: hosts.processIDs).services
         let enginePaths = engine.servers.flatMap { [$0.modelIdentity] + [$0.repo, $0.path].compactMap { $0 } }
         return enginePaths + hostServices.filter(\.isLocal).flatMap { [$0.modelID] + [$0.modelPath].compactMap { $0 } }
+    }
+
+    /// Host errors that leave serving ownership unknown. A local listener that is a running
+    /// engine server belongs to the engine, which reports its model; that server's own model
+    /// list, which may need its API key, does not decide ownership.
+    static func hostIssues(_ hosts: ServingHostSnapshot, engine: [ServerInfo]) -> [String: String] {
+        hosts.errors.filter { key, _ in
+            guard let inventory = hosts.inventories.first(where: { "host:" + $0.host.id.uuidString == key }),
+                  let pid = hosts.processIDs[inventory.host.id],
+                  let port = try? inventory.host.validatedURL().port else { return true }
+            return !engine.contains { $0.pid == pid && $0.port == port && $0.state == "running" }
+        }
     }
 
     private func refreshEngine(fresh: Bool = false) async -> Result<ServingEngineSnapshot, Error>? {
@@ -189,7 +201,8 @@ final class ServingInventoryCoordinator: ObservableObject {
             hosts: lastHosts.inventories, managedReceipts: managedReceipts,
             capturedAt: lastEngineCapturedAt ?? now(), hostProcessIDs: lastHosts.processIDs)
         next.capturedAt = now()
-        next.sourceErrors = lastHosts.errors.merging(lastEngine?.errors ?? [:]) { _, newer in newer }
+        next.sourceErrors = Self.hostIssues(lastHosts, engine: engineError == nil ? lastEngine?.servers ?? [] : [])
+            .merging(lastEngine?.errors ?? [:]) { _, newer in newer }
         if let engineError { next.sourceErrors["engine"] = engineError }
         let freshIDs = Set(next.services.map(\.id))
         for prior in snapshot.services where !freshIDs.contains(prior.id) {

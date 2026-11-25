@@ -24,7 +24,7 @@ Expand a row to see its versions. A version is marked **Keep** only with evidenc
 
 Select versions, or **Select extra versions**, then **Remove selected…**. The review lists how each copy leaves the disk and skips copies a guard refuses, with the reason:
 
-Before removal, Workbench checks current serving ownership. A successful discovery drops automatically detected servers that have stopped listening, and a saved connection whose address refuses the connection is shown as offline: no server runs there, so it serves no model and does not pause removal. If a local source cannot be checked, the removal message names the source and its error. Resolve it in Serving and retry. Disk inventory remains available while removal is paused.
+Before removal, Workbench checks current serving ownership. A successful discovery drops automatically detected servers that have stopped listening, and a saved connection whose address refuses the connection is shown as offline: no server runs there, so it serves no model and does not pause removal. A detected listener that is a running engine server is checked through the engine, which reports its model, so a model list that needs that server's API key does not pause removal. If a local source cannot be checked, the removal message names the source and its error. Resolve it in Serving and retry. Disk inventory remains available while removal is paused.
 
 | Copy | Removal |
 |---|---|

@@ -135,6 +135,26 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
         XCTAssertNil(hosts.errors[saved.id])
     }
 
+    func testEngineGatewayModelListErrorDoesNotBlockRemoval() throws {
+        let gateway = ModelHost(name: "Local model server · :8095", provider: .openAICompatible, baseURL: "http://127.0.0.1:8095")
+        let other = ModelHost(name: "Local model server · :9000", provider: .openAICompatible, baseURL: "http://127.0.0.1:9000")
+        let engine = ServingEngineSnapshot(servers: [server(path: "/models/served", pid: 34790, port: 8095)])
+        func hosts(_ listeners: [ModelHost]) -> ServingHostSnapshot {
+            ServingHostSnapshot(inventories: listeners.map { HostInventory(host: $0, models: [], capturedAt: capturedAt) },
+                                errors: Dictionary(uniqueKeysWithValues: listeners.map { ("host:" + $0.id.uuidString, "HTTP 401") }),
+                                processIDs: [gateway.id: 34790, other.id: 5150])
+        }
+
+        let paths = try ServingInventoryCoordinator.pathsForRemoval(
+            engine: engine, engineError: nil, hosts: hosts([gateway]), managedReceipts: managedReceipts)
+        XCTAssertTrue(paths.contains("/models/served"))
+        XCTAssertThrowsError(try ServingInventoryCoordinator.pathsForRemoval(
+            engine: engine, engineError: nil, hosts: hosts([gateway, other]), managedReceipts: managedReceipts)) { error in
+            XCTAssertTrue(error.localizedDescription.contains(":9000"))
+            XCTAssertFalse(error.localizedDescription.contains(":8095"))
+        }
+    }
+
     func testRemovalNamesUnavailableSourcesAndFailsClosed() throws {
         let host = hostInventory()
         let key = "host:" + host.host.id.uuidString
