@@ -81,6 +81,7 @@ struct ServingInspector<Content: View>: View {
 
     @State private var options: LocalInferenceOptions
     @State private var preview: EndpointInferencePreview?
+    @State private var defaultsPreview: ModelDefaultsChangePreview?
     @State private var busy = false
     @State private var error: String?
 
@@ -92,7 +93,7 @@ struct ServingInspector<Content: View>: View {
         self.context = context
         self.onManageProfile = onManageProfile
         self.content = content
-        _options = State(initialValue: slot?.inferenceOptions ?? .init())
+        _options = State(initialValue: slot.map { endpoint.effectiveSlot($0).inferenceOptions } ?? .init())
     }
 
     var body: some View {
@@ -109,7 +110,7 @@ struct ServingInspector<Content: View>: View {
         }
         .frame(maxWidth: 720, alignment: .leading)
         .onChange(of: options) { _, _ in preview = nil; error = nil }
-        .onChange(of: slot) { _, value in options = value?.inferenceOptions ?? .init(); preview = nil }
+        .onChange(of: slot) { _, value in options = value.map { endpoint.effectiveSlot($0).inferenceOptions } ?? .init(); preview = nil; defaultsPreview = nil }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("serving-inspector")
     }
@@ -119,24 +120,97 @@ struct ServingInspector<Content: View>: View {
         switch (section, slot) {
         case (.inference, let slot?): inferenceRows(slot)
         case (.acceleration, let slot?): accelerationRows(slot)
+        case (.load, let slot?) where slot.overrides != nil:
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                content(section)
+                marker(.loadOnRequest, label: ServingInspectorPresentation.label(.loadOnRequest))
+                marker(.memoryPolicy, label: ServingInspectorPresentation.label(.memoryPolicy))
+                marker(.splashPreset, label: ServingInspectorPresentation.label(.splashPreset))
+                marker(.servingProfile, label: ServingInspectorPresentation.label(.servingProfile))
+                resetConfirm
+            }
         default: content(section)
+        }
+    }
+
+    /// "Model default" / "This endpoint" under a field; Reset previews returning it to the model default.
+    private func marker(_ key: ServingSettingKey, label: String? = nil) -> AnyView {
+        guard let slot, slot.overrides != nil else { return AnyView(EmptyView()) }
+        return AnyView(HStack {
+            if let label { Text(label).font(WorkbenchTypography.label) }
+            Text(ServingInspectorPresentation.sourceLabel(key, slot: slot))
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            Spacer()
+            if slot.overrides?.contains(key) == true {
+                Button("Reset") {
+                    busy = true; error = nil
+                    Task {
+                        do { preview = try await endpoint.previewResettingOverrides(id: slot.id, keys: [key]) }
+                        catch { self.error = AppHost.render(error) }
+                        busy = false
+                    }
+                }.buttonStyle(.borderless).disabled(slot.enabled || busy)
+            }
+        })
+    }
+
+    @ViewBuilder
+    private var resetConfirm: some View {
+        if let preview, preview.overrides != slot?.overrides {
+            HStack {
+                Text("Reset reviewed: launch plan \(preview.hash)").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Spacer()
+                Button("Confirm and save") {
+                    busy = true
+                    Task {
+                        if await endpoint.confirmSlotInference(preview) { self.preview = nil } else { error = endpoint.lastError; self.preview = nil }
+                        busy = false
+                    }
+                }.buttonStyle(.workbenchPrimary).disabled(busy || endpoint.isChanging)
+            }
         }
     }
 
     private func inferenceRows(_ slot: EndpointSlot) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             if slot.enabled { InlineMessage(kind: .info, text: "Stop this endpoint to change its inference settings.") }
-            ServingInferenceRows(options: $options, context: context, allowRequestDefaults: slot.usesJIT)
+            ServingInferenceRows(options: $options, context: context, allowRequestDefaults: slot.usesJIT,
+                                 accessory: { marker($0.settingKey) })
                 .disabled(slot.enabled)
+            resetConfirm
+            if let defaultsPreview {
+                ModelDefaultsRestartList(preview: defaultsPreview)
+                HStack {
+                    Button("Cancel") { self.defaultsPreview = nil }
+                    Button("Confirm model default") {
+                        busy = true
+                        Task {
+                            if await endpoint.confirmModelDefaultsChange(defaultsPreview) { error = nil } else { error = endpoint.lastError }
+                            self.defaultsPreview = nil; busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
+                }
+            } else {
+                Button("Save as model default") {
+                    busy = true; error = nil
+                    Task {
+                        do { defaultsPreview = try await endpoint.previewSavingAsModelDefault(id: slot.id) }
+                        catch { self.error = AppHost.render(error) }
+                        busy = false
+                    }
+                }.accessibilityIdentifier("serve-save-model-default")
+            }
+            if let error { InlineMessage(kind: .error, text: error) }
         }.disabled(busy)
     }
 
     private func accelerationRows(_ slot: EndpointSlot) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Group {
-                ServingAccelerationRows(options: $options, context: context)
+                ServingAccelerationRows(options: $options, context: context, accessory: { marker($0.settingKey) })
                 if slot.usesJIT && slot.apiKeySHA256 != nil && slot.splashPresetName == nil && slot.servingProfile == nil && !slot.isTrainedAdapter {
                     sharedPrefixCache
+                    marker(.sharedPrefixCacheMiB)
                 }
             }.disabled(slot.enabled)
             if let profile = slot.servingProfile {
@@ -181,7 +255,7 @@ struct ServingInspector<Content: View>: View {
                 Button("Reset") { options = .init() }.buttonStyle(.borderless).disabled(slot.enabled)
                     .accessibilityIdentifier("serve-inference-reset")
             }
-            Button("Discard changes") { options = slot.inferenceOptions; preview = nil; error = nil }
+            Button("Discard changes") { options = endpoint.effectiveSlot(slot).inferenceOptions; preview = nil; error = nil }
             Spacer()
             if let preview {
                 Button("Confirm and save") {
@@ -206,6 +280,139 @@ struct ServingInspector<Content: View>: View {
                     }
                 }.buttonStyle(.workbenchPrimary).disabled(slot.enabled || busy || endpoint.isChanging || options.validationError != nil)
             }
+        }
+    }
+}
+
+extension ServingInspectorPresentation.Field {
+    var settingKey: ServingSettingKey { ServingSettingKey(rawValue: rawValue)! }
+}
+
+extension ServingInspectorPresentation {
+    /// "Model default" or "This endpoint" for one setting of a slot.
+    static func sourceLabel(_ key: ServingSettingKey, slot: EndpointSlot) -> String {
+        ServingSettings.source(of: key, slot: slot) == .modelDefault ? "Model default" : "This endpoint"
+    }
+
+    /// Human label for a setting.
+    static func label(_ key: ServingSettingKey) -> String {
+        switch key {
+        case .loadOnRequest: return "Load on request"
+        case .memoryPolicy: return "Memory policy"
+        case .splashPreset: return "Splash preset"
+        case .servingProfile: return "Serving profile"
+        case .m5Prefill: return "M5 prompt processing"
+        case .promptLookup: return "Prompt text reuse"
+        case .visionCache: return "Image feature reuse"
+        case .thinkingOff: return "Reasoning"
+        case .maximumTokens: return "Default output length"
+        case .systemPrompt: return "Default system prompt"
+        case .temperature: return "Temperature"
+        case .topP: return "Top-p"
+        case .sharedPrefixCacheMiB: return "Shared prefix cache"
+        }
+    }
+}
+
+/// Endpoints listed before a defaults change is confirmed.
+struct ModelDefaultsRestartList: View {
+    let preview: ModelDefaultsChangePreview
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if preview.following.isEmpty {
+                ServingCaption("No endpoint follows this model's defaults.")
+            } else {
+                ServingCaption("Endpoints that follow these defaults: " + preview.following.map { ":\($0.port)" }.joined(separator: ", "))
+            }
+            if !preview.restarting.isEmpty {
+                InlineMessage(kind: .warning, text: "Confirming restarts running endpoints: " + preview.restarting.map { ":\($0.port)" }.joined(separator: ", "))
+            }
+        }
+    }
+}
+
+/// Edits one model's serving defaults. Used by the Library inspector; a change previews the affected endpoints before saving.
+struct ServingDefaultsEditor: View {
+    @ObservedObject var endpoint: EndpointSupervisor
+    let model: LibraryModel
+    let context: ServingInferenceContext
+    /// Verified serving profiles for this model.
+    var profiles: [ServingProfile] = []
+
+    @State private var options = LocalInferenceOptions()
+    @State private var loadOnRequest = true
+    @State private var loadTouched = false
+    @State private var memoryEnabled = false
+    @State private var keepLoaded = false
+    @State private var idleMinutes = 10
+    @State private var splashName = ""
+    @State private var profileID: UUID?
+    @State private var preview: ModelDefaultsChangePreview?
+    @State private var error: String?
+    @State private var loaded = false
+
+    /// Load on request is written only after the user changes it; the saved values of the other fields round-trip.
+    private var draft: ModelServingDefaults {
+        let saved = endpoint.modelDefaults(for: model.item.path)
+        var value = saved ?? ModelServingDefaults()
+        value.inference = options
+        value.loadOnRequest = loadTouched ? loadOnRequest : saved?.loadOnRequest
+        value.memoryPolicy = memoryEnabled ? EndpointMemoryPolicy(idleTimeoutSeconds: idleMinutes * 60, keepLoaded: keepLoaded, minimumHeadroomGB: saved?.memoryPolicy?.minimumHeadroomGB ?? 2) : nil
+        let name = splashName.trimmingCharacters(in: .whitespacesAndNewlines)
+        value.splashPresetName = name.isEmpty ? nil : name
+        value.servingProfileID = profileID
+        return value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Toggle("Load on request", isOn: Binding(get: { loadOnRequest }, set: { loadOnRequest = $0; loadTouched = true })).toggleStyle(.checkbox)
+            Toggle("Memory policy", isOn: $memoryEnabled).toggleStyle(.checkbox)
+            if memoryEnabled {
+                Stepper("Unload after \(idleMinutes) min idle", value: $idleMinutes, in: 0...1440)
+                Toggle("Keep loaded", isOn: $keepLoaded).toggleStyle(.checkbox)
+            }
+            LabeledContent("Splash preset") { TextField("None", text: $splashName) }
+            Picker("Serving profile", selection: $profileID) {
+                Text("None").tag(UUID?.none)
+                ForEach(profiles) { Text($0.name).tag(Optional($0.id)) }
+            }
+            ServingInferenceRows(options: $options, context: context, allowRequestDefaults: loadOnRequest)
+            if let message = options.validationError { InlineMessage(kind: .warning, text: message) }
+            if let error { InlineMessage(kind: .error, text: error) }
+            if let preview { ModelDefaultsRestartList(preview: preview) }
+            HStack {
+                Button("Clear defaults") { review(nil) }.disabled(endpoint.modelDefaults(for: model.item.path) == nil)
+                Spacer()
+                if let preview {
+                    Button("Cancel") { self.preview = nil }
+                    Button("Confirm and save") {
+                        Task {
+                            if await endpoint.confirmModelDefaultsChange(preview) { self.preview = nil; error = nil }
+                            else { error = endpoint.lastError; self.preview = nil }
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
+                } else {
+                    Button("Review") { review(draft) }.buttonStyle(.workbenchPrimary).disabled(options.validationError != nil)
+                }
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            guard let saved = endpoint.modelDefaults(for: model.item.path) else { return }
+            options = saved.inference; loadOnRequest = saved.loadOnRequest ?? true
+            if let policy = saved.memoryPolicy { memoryEnabled = true; keepLoaded = policy.keepLoaded; idleMinutes = policy.idleTimeoutSeconds / 60 }
+            splashName = saved.splashPresetName ?? ""; profileID = saved.servingProfileID
+        }
+        .accessibilityIdentifier("serving-defaults-editor")
+    }
+
+    private func review(_ value: ModelServingDefaults?) {
+        error = nil
+        Task {
+            do { preview = try await endpoint.previewModelDefaultsChange(modelPath: model.item.path, to: value) }
+            catch { self.error = AppHost.render(error) }
         }
     }
 }

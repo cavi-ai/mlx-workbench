@@ -245,6 +245,8 @@ class AppHost {
         )
         if endpoint == nil {
             supervised.reconcileStatus = { try await clock.servers() }
+            supervised.modelDefaultsStore = ModelDefaultsStore()
+            supervised.profileResolver = { [weak profiles] id in profiles?.profiles.first { $0.id == id } }
             supervised.adapterLaunch = AdapterEndpointLaunch(
                 preview: { receipt, base, port in
                     let plan = try await api.trainedAdapterPreview(receipt: receipt, port: port, runtime: "mlx_lm")
@@ -336,6 +338,9 @@ class AppHost {
         hosts.resourceUseBlocked = { [weak self] in
             guard let self else { return true }
             return self.hostedComparison.activeRunID != nil || self.comparison.activeRunID != nil
+        }
+        self.endpoint.mayStopSlot = { [weak self] slot in
+            self?.servedModelChange(identity: slot.modelPath, workbenchManaged: true).allowed ?? false
         }
         self.servingInventory.mayChange = { [weak self] service in
             self?.servedModelChange(identity: service.modelID, workbenchManaged: service.isWorkbenchManaged).allowed ?? false

@@ -71,6 +71,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   per-record storage, one-time JSON migration, legacy JSON kept as backup)
   through `ModelWorkflowStore`, `VerificationStore` and
   `ComparisonRecordArchive`, on their coordinators' serial I/O queues.
+  `ModelDefaultsStore` (`model-defaults.json`) holds per-model serving defaults on a serial queue;
+  `ServingSettings.effective` resolves a slot's `overrides` against them.
   Usage and Watch histories also use serial I/O queues. Watch batches new alerts
   in one locked JSON mutation and publishes them after the write succeeds.
 - Default state paths: `Services/WorkbenchStatePaths.swift`.

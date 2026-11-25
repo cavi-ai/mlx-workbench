@@ -64,6 +64,12 @@ final class EndpointSupervisor: ObservableObject {
     var splashPresetLookup: ((String) async throws -> SplashPreset)?
     /// Explicit MLX-LM launch for a trained-adapter endpoint. Nil in tests that do not serve adapters.
     var adapterLaunch: AdapterEndpointLaunch?
+    /// Per-model defaults that slots with `overrides != nil` follow. Nil in tests that do not use them.
+    var modelDefaultsStore: ModelDefaultsStore?
+    /// Resolves a default's serving profile id through the profile owner.
+    var profileResolver: ((UUID) -> ServingProfile?)?
+    /// Occupancy gate for stopping a slot's model; nil allows it.
+    var mayStopSlot: ((EndpointSlot) -> Bool)?
     var generateAPIKey: () throws -> String = EndpointCredentialStore.generate
     var saveAPIKey: (String) throws -> Void = EndpointCredentialStore.save
     var removeAPIKey: (String) throws -> Void = EndpointCredentialStore.remove
@@ -192,11 +198,12 @@ final class EndpointSupervisor: ObservableObject {
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let old = fleet.slots.first
         var slot = old ?? EndpointSlot(enabled: false, port: port, modelPath: modelPath)
-        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
+        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil; slot.overrides = [] }
         slot.enabled = true; slot.port = port; slot.modelPath = modelPath
         slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
         if let mode = loadOnRequest ?? (old == nil ? lifecycle.jitPreview != nil : nil) { slot.loadOnRequest = mode }
         if old == nil, slot.usesJIT { slot.memoryPolicy = .automatic }
+        if old == nil { slot.overrides = [] }
         guard validate(slot, isNew: old == nil), commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: slot.id)
         slotAttemptTimestamps[slot.id] = []
@@ -291,6 +298,11 @@ final class EndpointSupervisor: ObservableObject {
                                      loadOnRequest: usesJIT, memoryPolicy: usesJIT ? (memoryPolicy ?? .automatic) : nil)
         candidate.acceleration = inference.requested ? inference : nil
         candidate.servingProfile = profile
+        candidate.overrides = ServingSettings.changedKeys(from: .init(), to: inference)
+        if loadOnRequest != nil { candidate.overrides?.insert(.loadOnRequest) }
+        if memoryPolicy != nil { candidate.overrides?.insert(.memoryPolicy) }
+        if profile != nil { candidate.overrides?.insert(.servingProfile) }
+        if splashPreset != nil { candidate.overrides?.insert(.splashPreset) }
         if let splashPreset {
             guard profile == nil, usesJIT, let lookup = splashPresetLookup else { lastError = "Splash presets require a load-on-request endpoint."; return nil }
             do { guard try await lookup(splashPreset.name) == splashPreset else { lastError = "The preset changed. Review it again."; return nil } }
@@ -311,7 +323,7 @@ final class EndpointSupervisor: ObservableObject {
             guard validate(candidate, isNew: true) else { return nil }
             if inference.requested || profile != nil || splashPreset != nil {
                 let before = fleet
-                let hash = try await accelerationPreviewHash(candidate, pendingKey: token)
+                let hash = try await accelerationPreviewHash(effectiveSlot(candidate), pendingKey: token)
                 guard !hash.isEmpty, fleet == before else { throw WorkflowEvidenceError.invalid("Endpoint configuration changed. Review the new endpoint again.") }
                 if inference.requested { candidate.accelerationPreviewHash = hash }
                 if profile != nil || splashPreset != nil { candidate.profilePreviewHash = hash }
@@ -460,7 +472,7 @@ final class EndpointSupervisor: ObservableObject {
         }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         var slot = old
-        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil }
+        if slot.modelPath != modelPath { slot.acceleration = nil; slot.accelerationPreviewHash = nil; slot.overrides = [] }
         slot.modelPath = modelPath; slot.servingProfile = nil; slot.splashPresetName = nil; slot.profilePreviewHash = nil
         guard commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
@@ -697,7 +709,8 @@ final class EndpointSupervisor: ObservableObject {
             }
             var candidate = fleet
             candidate.slots[index].loadOnRequest = enabled
-            if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic }
+            candidate.slots[index].overrides?.insert(.loadOnRequest)
+            if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic; candidate.slots[index].overrides?.insert(.memoryPolicy) }
             if !enabled && candidate.slots[index].isTrainedAdapter { candidate.slots[index].memoryPolicy = nil }
             guard validate(candidate.slots[index], isNew: false), commit(candidate) else { return }
             if let current, (current.jit == true) != enabled {
@@ -727,11 +740,130 @@ final class EndpointSupervisor: ObservableObject {
         try await requireStoppedForInference(slot)
         var candidate = slot
         candidate.acceleration = options.requested ? options : nil
-        let hash = try await accelerationPreviewHash(candidate)
+        if let current = slot.overrides {
+            candidate.overrides = current.union(ServingSettings.changedKeys(from: effectiveSlot(slot).inferenceOptions, to: options))
+        }
+        let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
         guard !hash.isEmpty, fleet.slots.contains(slot) else {
             throw WorkflowEvidenceError.invalid("Endpoint settings changed. Preview inference settings again.")
         }
-        return EndpointInferencePreview(slot: slot, options: options, hash: hash)
+        return EndpointInferencePreview(slot: slot, options: options, hash: hash, overrides: candidate.overrides)
+    }
+
+    // MARK: - Model defaults
+
+    /// Looks up a model's saved defaults; nil without a store.
+    func modelDefaults(for modelPath: String) -> ModelServingDefaults? { modelDefaultsStore?.defaults(for: modelPath) }
+
+    /// The slot with model defaults applied; a slot with `overrides == nil` is returned unchanged.
+    func effectiveSlot(_ slot: EndpointSlot) -> EndpointSlot {
+        effectiveSlot(slot, defaults: modelDefaults(for: slot.modelPath))
+    }
+
+    /// The one merge site: the slot resolved against the given defaults and the profile owner.
+    func effectiveSlot(_ slot: EndpointSlot, defaults: ModelServingDefaults?) -> EndpointSlot {
+        guard slot.overrides != nil else { return slot }
+        let profile = defaults?.servingProfileID.flatMap { id in profileResolver?(id) ?? (slot.servingProfile?.id == id ? slot.servingProfile : nil) }
+        return ServingSettings.effective(slot: slot, defaults: defaults, profile: profile)
+    }
+
+    /// Lists slots that follow the model's defaults. `restarting` are running ones whose launch plan changes, each with
+    /// its post-change plan hash. Refused when the resulting fleet is not legal.
+    func previewModelDefaultsChange(modelPath: String, to defaults: ModelServingDefaults?) async throws -> ModelDefaultsChangePreview {
+        let following = fleet.slots.filter { $0.overrides != nil && HFRepoID.matches($0.modelPath, modelPath) }
+        var resolved = fleet
+        for index in resolved.slots.indices where following.contains(where: { $0.id == resolved.slots[index].id }) {
+            resolved.slots[index] = effectiveSlot(resolved.slots[index], defaults: defaults)
+        }
+        try resolved.validated()
+        var restarting: [EndpointSlot] = []
+        var plans: [UUID: String] = [:]
+        for slot in following where slot.enabled {
+            guard case .some(.running) = slotStates[slot.id] else { continue }
+            let before = effectiveSlot(slot), after = effectiveSlot(slot, defaults: defaults)
+            guard before.inferenceOptions != after.inferenceOptions || before.memoryPolicy != after.memoryPolicy
+                    || before.loadOnRequest != after.loadOnRequest || before.splashPresetName != after.splashPresetName
+                    || before.servingProfile?.id != after.servingProfile?.id else { continue }
+            let hash = try await accelerationPreviewHash(after)
+            guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+            plans[slot.id] = hash
+            restarting.append(slot)
+        }
+        return ModelDefaultsChangePreview(modelPath: modelPath, defaults: defaults, following: following, restarting: restarting, plans: plans)
+    }
+
+    /// Rechecks the preview, stops the listed running endpoints through the occupancy and idle checks, saves the defaults, then
+    /// restarts them. Fails, naming the endpoint, when one does not come back.
+    func confirmModelDefaultsChange(_ preview: ModelDefaultsChangePreview) async -> Bool {
+        guard beginUserOperation() else { lastError = "Wait for the endpoint operation to finish."; return false }
+        defer { activeUserOperations -= 1 }
+        do {
+            guard try await previewModelDefaultsChange(modelPath: preview.modelPath, to: preview.defaults) == preview else {
+                throw WorkflowEvidenceError.invalid("Endpoints or launch plans changed. Review the model defaults again.")
+            }
+            guard let modelDefaultsStore else { throw WorkflowEvidenceError.invalid("Model defaults are unavailable.") }
+            var generations: [ServerInfo] = []
+            if !preview.restarting.isEmpty {
+                guard let stop = lifecycle.stopObservedIfIdle else {
+                    throw WorkflowEvidenceError.invalid("Idle-checked stop is unavailable in this runtime. No endpoint was changed.")
+                }
+                let live = try await statusProvider()
+                for slot in preview.restarting {
+                    if let mayStopSlot, !mayStopSlot(slot) {
+                        throw WorkflowEvidenceError.invalid("Finish the operation using :\(slot.port) before changing its model defaults.")
+                    }
+                    guard let server = live.first(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }),
+                          (server.activeRequests ?? 0) == 0 else {
+                        throw WorkflowEvidenceError.invalid("Endpoint :\(slot.port) is not running or has active requests. Review again.")
+                    }
+                    generations.append(server)
+                }
+                for server in generations { try await stop(server) }
+                let after = try await statusProvider()
+                if let port = generations.compactMap(\.port).first(where: { port in after.contains { $0.port == port && $0.state?.lowercased() == "running" } }) {
+                    throw WorkflowEvidenceError.invalid("Endpoint :\(port) is still running. Defaults were not saved.")
+                }
+            }
+            try modelDefaultsStore.save(preview.defaults, for: preview.modelPath)
+            var failed: [Int] = []
+            for slot in preview.restarting {
+                pendingUserServeBySlot.removeValue(forKey: slot.id)
+                slotAttemptTimestamps[slot.id] = []
+                await reconcile(userRequestedSlotID: slot.id)
+                let live = (try? await statusProvider()) ?? []
+                if !live.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }) { failed.append(slot.port) }
+            }
+            guard failed.isEmpty else {
+                throw WorkflowEvidenceError.invalid("Defaults saved, but did not restart: " + failed.map { ":\($0)" }.joined(separator: ", "))
+            }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
+    }
+
+    /// Saves the slot's current values as its model's defaults, previewed like any other defaults change.
+    func previewSavingAsModelDefault(id: UUID) async throws -> ModelDefaultsChangePreview {
+        guard let slot = fleet.slots.first(where: { $0.id == id }) else { throw WorkflowEvidenceError.invalid("Endpoint no longer exists.") }
+        return try await previewModelDefaultsChange(modelPath: slot.modelPath, to: ServingSettings.defaults(from: effectiveSlot(slot)))
+    }
+
+    /// Previews returning fields to the model's defaults; `confirmSlotInference` saves it. The endpoint must be stopped.
+    func previewResettingOverrides(id: UUID, keys: Set<ServingSettingKey>) async throws -> EndpointInferencePreview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard let slot = fleet.slots.first(where: { $0.id == id }), let current = slot.overrides else {
+            throw WorkflowEvidenceError.invalid("Endpoint no longer exists.")
+        }
+        try await requireStoppedForInference(slot)
+        var candidate = slot
+        candidate.overrides = current.subtracting(keys)
+        let resolved = effectiveSlot(candidate)
+        candidate.acceleration = resolved.acceleration
+        let hash = try await accelerationPreviewHash(resolved)
+        guard !hash.isEmpty, fleet.slots.contains(slot) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Preview again.")
+        }
+        return EndpointInferencePreview(slot: slot, options: resolved.inferenceOptions, hash: hash, overrides: candidate.overrides)
     }
 
     func confirmSlotInference(_ preview: EndpointInferencePreview) async -> Bool {
@@ -744,8 +876,9 @@ final class EndpointSupervisor: ObservableObject {
             try await requireStoppedForInference(preview.slot)
             var candidate = preview.slot
             candidate.acceleration = preview.options.requested ? preview.options : nil
+            candidate.overrides = preview.overrides
             candidate.accelerationPreviewHash = nil
-            let hash = try await accelerationPreviewHash(candidate)
+            let hash = try await accelerationPreviewHash(effectiveSlot(candidate))
             guard hash == preview.hash, fleet.slots.contains(preview.slot) else {
                 throw WorkflowEvidenceError.invalid("Launch plan changed. Preview inference settings again.")
             }
@@ -860,6 +993,7 @@ final class EndpointSupervisor: ObservableObject {
             var candidate = review.slot
             candidate.splashPresetName = review.preset.name
             candidate.memoryPolicy = nil
+            candidate.overrides?.formUnion([.splashPreset, .memoryPolicy])
             candidate.profilePreviewHash = review.previewHash
             guard commit(replacing: candidate) else { return false }
             saved = true
@@ -1048,6 +1182,7 @@ final class EndpointSupervisor: ObservableObject {
             }
             var candidate = fleet
             candidate.slots[index].memoryPolicy = policy
+            candidate.slots[index].overrides?.insert(.memoryPolicy)
             guard commit(candidate) else { return }
             saved = true
             if let current, let pid = current.pid {
@@ -1276,8 +1411,9 @@ final class EndpointSupervisor: ObservableObject {
         syncShim()
     }
 
-    private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
-        guard pendingStops[slot.id] == nil, fleet.slots.contains(slot) else { return }
+    private func reconcileSlot(_ stored: EndpointSlot, running: [ServerInfo]) async {
+        guard pendingStops[stored.id] == nil, fleet.slots.contains(stored) else { return }
+        let slot = effectiveSlot(stored)
         if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath || slot.inferenceOptions.accelerationRequested || slot.inferenceOptions.thinkingOff {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
@@ -1319,7 +1455,7 @@ final class EndpointSupervisor: ObservableObject {
             if ours.matchesUnadaptedModel(slot.modelPath) {
                 do {
                     if let hash = try await confirmedAccelerationHash(ours, slot: slot), hash != slot.accelerationPreviewHash {
-                        guard fleet.slots.contains(slot), let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) else { return }
+                        guard fleet.slots.contains(stored), let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) else { return }
                         var candidate = fleet
                         candidate.slots[index].accelerationPreviewHash = hash
                         guard commit(candidate) else {
@@ -1404,6 +1540,7 @@ final class EndpointSupervisor: ObservableObject {
                 slotStates[slot.id] = .waitingForServer
                 return
             }
+            if stored.overrides != nil { try EndpointFleetConfig(slots: [slot], installedAtLogin: false).validated() }
             let lifecycle = try servingLifecycle(slot)
             let preview: @Sendable (String, Int) async throws -> String
             let start: @Sendable (String, Int, String) async throws -> Void
@@ -1419,7 +1556,7 @@ final class EndpointSupervisor: ObservableObject {
             }
             let hash = try await preview(slot.modelPath, slot.port)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
-            guard fleet.slots.contains(slot) else { return }
+            guard fleet.slots.contains(stored) else { return }
             if slot.splashPresetName != nil, let reviewed = slot.profilePreviewHash, reviewed != hash {
                 throw WorkflowEvidenceError.invalid("The Splash preset changed. Review it before restarting.")
             }

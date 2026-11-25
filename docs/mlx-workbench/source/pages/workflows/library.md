@@ -106,6 +106,11 @@ failed check ([Agent readiness](prepare.md#agent-readiness)). **Reveal in Finder
 
 **Select for Compare** is available for ready chat, speech, music, image, video, 3D and classification models. It opens the matching comparison mode and selects the model without starting a run. Run offers chat endpoints and typed model-job endpoints for supported standalone model types. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 
+**Serving defaults** in the model inspector edits the model's inference settings and load-on-request
+choice. **Review** lists the endpoints that follow the defaults and the running ones that
+restart on **Confirm and save**; **Clear defaults** removes them. See
+[Model defaults](run.md#model-defaults).
+
 ### Local inference tasks
 
 **Run on** selects a **One-off run** or a running typed model server. Both use

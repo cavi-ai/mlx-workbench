@@ -191,6 +191,7 @@ struct ServingInferenceControls: View {
 struct ServingAccelerationRows: View {
     @Binding var options: LocalInferenceOptions
     let context: ServingInferenceContext
+    var accessory: (ServingInspectorPresentation.Field) -> AnyView = { _ in AnyView(EmptyView()) }
     typealias Field = ServingInspectorPresentation.Field
 
     var body: some View {
@@ -202,18 +203,21 @@ struct ServingAccelerationRows: View {
                 }
                 .pickerStyle(.segmented).accessibilityIdentifier("serve-text-decoding")
                 ServingCaption(ServingInspectorPresentation.caption(Field.promptLookup))
+                accessory(.promptLookup)
                 DisclosureGroup("Hardware acceleration") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Toggle("M5 prompt processing", isOn: $options.m5Prefill).toggleStyle(.checkbox)
                             .disabled(!context.supportsM5 && !options.m5Prefill)
                             .accessibilityIdentifier("serve-m5-prefill")
                         ServingCaption(ServingInspectorPresentation.caption(Field.m5Prefill))
+                        accessory(.m5Prefill)
                     }.padding(.top, WorkbenchSpacing.xs)
                 }
             } else if context.isVision {
                 Toggle("Reuse image features", isOn: $options.visionCache).toggleStyle(.checkbox)
                     .accessibilityIdentifier("serve-vision-cache")
                 ServingCaption(ServingInspectorPresentation.caption(Field.visionCache))
+                accessory(.visionCache)
             } else if context.isStrata {
                 Text("A serving profile controls decoding, expert memory and context. Verify the profile before use.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -235,6 +239,8 @@ struct ServingInferenceRows: View {
     @Binding var options: LocalInferenceOptions
     let context: ServingInferenceContext
     var allowRequestDefaults = false
+    /// Per-field accessory (source marker) shown under each field's caption.
+    var accessory: (ServingInspectorPresentation.Field) -> AnyView = { _ in AnyView(EmptyView()) }
     typealias Field = ServingInspectorPresentation.Field
 
     var body: some View {
@@ -245,6 +251,7 @@ struct ServingInferenceRows: View {
                     Text("Skip reasoning").tag(true)
                 }.accessibilityIdentifier("serve-thinking")
                 ServingCaption(ServingInspectorPresentation.caption(Field.thinkingOff))
+                accessory(.thinkingOff)
             }
             if context.hasGenerationDefaults {
                 Picker("Default output length", selection: $options.maximumTokens) {
@@ -254,6 +261,7 @@ struct ServingInferenceRows: View {
                     }
                 }.accessibilityIdentifier("serve-output-length")
                 ServingCaption(ServingInspectorPresentation.caption(Field.maximumTokens))
+                accessory(.maximumTokens)
             }
             if allowRequestDefaults && context.supportsRequestDefaults {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -262,16 +270,19 @@ struct ServingInferenceRows: View {
                         .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
                         .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
                     ServingCaption(ServingInspectorPresentation.caption(Field.systemPrompt))
+                    accessory(.systemPrompt)
                     LabeledContent("Temperature") {
                         TextField("Model default", value: $options.temperature, format: .number)
                             .accessibilityIdentifier("serve-default-temperature")
                     }
                     ServingCaption(ServingInspectorPresentation.caption(Field.temperature))
+                    accessory(.temperature)
                     LabeledContent("Top-p") {
                         TextField("Model default", value: $options.topP, format: .number)
                             .accessibilityIdentifier("serve-default-top-p")
                     }
                     ServingCaption(ServingInspectorPresentation.caption(Field.topP))
+                    accessory(.topP)
                 }
             } else if context.supportsRequestDefaults {
                 ServingCaption("System prompt, temperature and top-p apply to load-on-request endpoints. Turn on Load on request to set them.")

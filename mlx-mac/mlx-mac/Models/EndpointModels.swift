@@ -79,6 +79,7 @@ struct EndpointInferencePreview {
     let slot: EndpointSlot
     let options: LocalInferenceOptions
     let hash: String
+    var overrides: Set<ServingSettingKey>? = nil
 }
 
 struct EndpointAuthenticationReview: Identifiable {
@@ -456,6 +457,8 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var apiKeySHA256: String? = nil
     /// Completed training receipt for an adapter endpoint. Nil for an ordinary model endpoint.
     var trainingReceipt: String? = nil
+    /// Nil: every field is this slot's own value. A set: fields outside it follow the model's defaults.
+    var overrides: Set<ServingSettingKey>? = nil
     var inferenceOptions: LocalInferenceOptions { acceleration ?? .init() }
     var isTrainedAdapter: Bool { trainingReceipt != nil }
     var usesJIT: Bool { loadOnRequest == true }

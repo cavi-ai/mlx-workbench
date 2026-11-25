@@ -346,6 +346,8 @@
 		27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000006 /* ModelTaskTests.swift */; };
 		7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */; };
 		E71200000000000000000F02 /* ServingInspectorPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */; };
+		E71200000000000000000F12 /* ModelServingDefaultsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F11 /* ModelServingDefaultsTests.swift */; };
+		E71200000000000000000F14 /* ModelServingDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F13 /* ModelServingDefaults.swift */; };
 		E71200000000000000000F04 /* ServingInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000F03 /* ServingInspector.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
@@ -754,6 +756,8 @@
 		27ABCD100000000000000006 /* ModelTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTaskTests.swift; path = ModelTaskTests.swift; sourceTree = "<group>"; };
 		7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRolesPresentationTests.swift; path = ServingRolesPresentationTests.swift; sourceTree = "<group>"; };
 		E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInspectorPresentationTests.swift; path = ServingInspectorPresentationTests.swift; sourceTree = "<group>"; };
+		E71200000000000000000F11 /* ModelServingDefaultsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelServingDefaultsTests.swift; path = ModelServingDefaultsTests.swift; sourceTree = "<group>"; };
+		E71200000000000000000F13 /* ModelServingDefaults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelServingDefaults.swift; path = Services/ModelServingDefaults.swift; sourceTree = "<group>"; };
 		E71200000000000000000F03 /* ServingInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingInspector.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
@@ -1001,6 +1005,7 @@
 				A6C0100000000000000000F04 /* ComparisonInsightsView.swift */,
 				24FREF057 /* UsageTracker.swift */,
 				D52F00000000000000000001 /* ModelPurposeStore.swift */,
+				E71200000000000000000F13 /* ModelServingDefaults.swift */,
 				D53F00000000000000000001 /* ModelShowdownResults.swift */,
 				D52F00000000000000000002 /* ModelFamilyReview.swift */,
 				D52F00000000000000000003 /* ServedModelsView.swift */,
@@ -1275,6 +1280,7 @@
 				27ABCD100000000000000006 /* ModelTaskTests.swift */,
 				7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */,
 				E71200000000000000000F01 /* ServingInspectorPresentationTests.swift */,
+				E71200000000000000000F11 /* ModelServingDefaultsTests.swift */,
 			);
 			path = mlx-macTests;
 			sourceTree = "<group>";
@@ -1683,6 +1689,7 @@
 				A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */,
 				24BBLD059 /* UsageTracker.swift in Sources */,
 				D52C00000000000000000001 /* ModelPurposeStore.swift in Sources */,
+				E71200000000000000000F14 /* ModelServingDefaults.swift in Sources */,
 				D53C00000000000000000001 /* ModelShowdownResults.swift in Sources */,
 				D52C00000000000000000002 /* ModelFamilyReview.swift in Sources */,
 				D52C00000000000000000003 /* ServedModelsView.swift in Sources */,
@@ -1845,6 +1852,7 @@
 				27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */,
 				7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */,
 				E71200000000000000000F02 /* ServingInspectorPresentationTests.swift in Sources */,
+				E71200000000000000000F12 /* ModelServingDefaultsTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,
 				27TSTB03 /* JSONCTolerantTests.swift in Sources */,

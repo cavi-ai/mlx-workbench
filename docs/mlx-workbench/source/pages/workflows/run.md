@@ -215,6 +215,22 @@ The menu bar item aggregates endpoints ("N of M endpoints running") and provides
 If login-item installation fails partway through, Workbench rolls back the
 changes and reports any part of the previous setup it could not restore.
 
+### Model defaults
+
+Endpoints created by role assignment, swap, Use chat setup or **Add custom endpoint** follow
+the model's serving defaults for every field they do not set themselves. The Serving
+inspector marks each inference field **Model default** or **This endpoint**; **Reset** returns
+an overridden field to the default. **Save as model default** writes the endpoint's current
+values. Before a changed default is saved, the preview lists the endpoints that follow it and
+the running ones that restart on confirm, each with its launch-plan hash. Confirm rechecks
+the endpoints, refuses while work holds the model or requests are active, stops each endpoint
+through the idle-checked stop, saves the defaults, and reports any endpoint that did not
+restart. A default that makes an endpoint's settings illegal is refused at the preview. **Reset**
+on a field previews and confirms like other inference changes, with the endpoint stopped.
+Changing a field on an endpoint (load mode, memory policy, Splash preset, inference) makes
+it that endpoint's own value.
+Endpoints saved by earlier releases keep all of their own values.
+
 ### Inference settings for saved endpoints
 
 Open an endpoint's actions menu and choose **Inference settings…** to jump to its

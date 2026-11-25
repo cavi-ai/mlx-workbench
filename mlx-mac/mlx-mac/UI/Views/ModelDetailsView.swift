@@ -381,6 +381,15 @@ struct ModelDetailsView: View {
                     }
                 }
 
+                if model.readiness == .ready {
+                    DisclosureGroup("Serving defaults") {
+                        ServingDefaultsEditor(endpoint: appHost.endpoint, model: model,
+                                              context: .resolve(model: model, chip: appHost.hardwareProfile.chip),
+                                              profiles: appHost.servingProfiles.profiles.filter { $0.modelPath == model.item.path && $0.hasPassedVerification })
+                            .padding(.top, WorkbenchSpacing.sm)
+                    }
+                }
+
                 Divider()
                 DisclosureGroup("Model details") {
                     DetailGrid(rows: ModelDetailsPresentation.displayRows(for: model, prepareDestination: prepareDestination))
