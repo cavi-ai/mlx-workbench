@@ -21,6 +21,7 @@
 		E71200000000000000000402 /* ServingClientSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000401 /* ServingClientSetup.swift */; };
 		E71200000000000000000302 /* ServingMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000301 /* ServingMonitorView.swift */; };
 		E71200000000000000000502 /* ModelSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000501 /* ModelSourcesView.swift */; };
+		7C3A91E0D4B25F6A8E1C0B01 /* ServingRolesPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3A91E0D4B25F6A8E1C0F01 /* ServingRolesPresentation.swift */; };
 		E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000201 /* ServingWorkspaceViews.swift */; };
 		E71200000000000000000102 /* ServingTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71200000000000000000101 /* ServingTelemetry.swift */; };
 		INVTSTB1 /* ServingInventoryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = INVTSTF1 /* ServingInventoryCoordinatorTests.swift */; };
@@ -340,6 +341,7 @@
 		27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000014 /* CompareLayoutTests.swift */; };
 		27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000008 /* IntakeContractTests.swift */; };
 		27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000006 /* ModelTaskTests.swift */; };
+		7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 		5A1E5E770000000000000042 /* agent-worker.py in Resources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000041 /* agent-worker.py */; };
@@ -419,6 +421,7 @@
 		E71200000000000000000401 /* ServingClientSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingClientSetup.swift; sourceTree = "<group>"; };
 		E71200000000000000000301 /* ServingMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingMonitorView.swift; sourceTree = "<group>"; };
 		E71200000000000000000501 /* ModelSourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ModelSourcesView.swift; sourceTree = "<group>"; };
+		7C3A91E0D4B25F6A8E1C0F01 /* ServingRolesPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingRolesPresentation.swift; sourceTree = "<group>"; };
 		E71200000000000000000201 /* ServingWorkspaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/ServingWorkspaceViews.swift; sourceTree = "<group>"; };
 		E71200000000000000000101 /* ServingTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ServingTelemetry.swift; sourceTree = "<group>"; };
 		INVTSTF1 /* ServingInventoryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingInventoryCoordinatorTests.swift; path = ServingInventoryCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -741,6 +744,7 @@
 		27ABCD100000000000000014 /* CompareLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareLayoutTests.swift; path = CompareLayoutTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000008 /* IntakeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeContractTests.swift; path = IntakeContractTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000006 /* ModelTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTaskTests.swift; path = ModelTaskTests.swift; sourceTree = "<group>"; };
+		7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingRolesPresentationTests.swift; path = ServingRolesPresentationTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		26CFREF001 /* ContractFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixtureTests.swift; sourceTree = "<group>"; };
@@ -921,6 +925,7 @@
 				E71200000000000000000401 /* ServingClientSetup.swift */,
 				E71400000000000000000201 /* TerminalWorkspaceView.swift */,
 				E71200000000000000000201 /* ServingWorkspaceViews.swift */,
+				7C3A91E0D4B25F6A8E1C0F01 /* ServingRolesPresentation.swift */,
 				E71200000000000000000101 /* ServingTelemetry.swift */,
 				E70500000000000000000401 /* TaskDestinationPanel.swift */,
 				E70500000000000000000301 /* ServedTaskSessions.swift */,
@@ -1254,6 +1259,7 @@
 				27ABCD100000000000000014 /* CompareLayoutTests.swift */,
 				27ABCD100000000000000008 /* IntakeContractTests.swift */,
 				27ABCD100000000000000006 /* ModelTaskTests.swift */,
+				7C3A91E0D4B25F6A8E1C0F02 /* ServingRolesPresentationTests.swift */,
 			);
 			path = mlx-macTests;
 			sourceTree = "<group>";
@@ -1511,6 +1517,7 @@
 				E71200000000000000000502 /* ModelSourcesView.swift in Sources */,
 				E71200000000000000000402 /* ServingClientSetup.swift in Sources */,
 				E71200000000000000000202 /* ServingWorkspaceViews.swift in Sources */,
+				7C3A91E0D4B25F6A8E1C0B01 /* ServingRolesPresentation.swift in Sources */,
 				E71200000000000000000102 /* ServingTelemetry.swift in Sources */,
 				E70500000000000000000402 /* TaskDestinationPanel.swift in Sources */,
 				E70500000000000000000302 /* ServedTaskSessions.swift in Sources */,
@@ -1817,6 +1824,7 @@
 				27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */,
 				27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */,
 				27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */,
+				7C3A91E0D4B25F6A8E1C0B02 /* ServingRolesPresentationTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,
 				27TSTB03 /* JSONCTolerantTests.swift in Sources */,

@@ -243,19 +243,67 @@ private struct ServingModelRow: View {
 }
 
 struct ServingModelList: View {
-    let rows: [ServingRow]
+    let roleRows: [ServingRolesPresentation.RoleRow]
+    let customRows: [ServingRow]
+    let otherRows: [ServingRow]
+    let slots: [EndpointSlot]
     let models: [LibraryModel]
     let states: [UUID: EndpointState]
     let sourceIssueCount: Int
     @Binding var selectedID: String?
     @Binding var includesAvailable: Bool
+    let choose: (ServingRole, LibraryModel) -> Void
+    let change: (EndpointSlot, LibraryModel) -> Void
+    let toggle: (EndpointSlot) -> Void
     let add: () -> Void
     let monitor: () -> Void
     let refresh: () -> Void
     let showSources: () -> Void
     @State private var query = ""
-    private var visibleRows: [ServingRow] {
+    @State private var othersExpanded = false
+    private func visible(_ rows: [ServingRow]) -> [ServingRow] {
         rows.filter { query.isEmpty || (ServingWorkspacePresentation.name($0, models: models) + " " + ServingWorkspacePresentation.provider($0)).localizedCaseInsensitiveContains(query) }
+    }
+
+    private func modelMenu(_ title: String, role: ServingRole, assigned: Bool, pick: @escaping (LibraryModel) -> Void) -> some View {
+        let candidates = ServingRolesPresentation.candidates(for: role, models: models, slots: slots)
+        return Menu(title) {
+            ForEach(candidates, id: \.item.path) { model in
+                Button(model.displayName) { pick(model) }
+            }
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .disabled(candidates.isEmpty)
+        .help(candidates.isEmpty ? "No ready \(role.title) models in Library." : "")
+        .accessibilityIdentifier("serving-role-\(role.rawValue)-\(assigned ? "change" : "choose")")
+    }
+
+    @ViewBuilder
+    private func roleRow(_ entry: ServingRolesPresentation.RoleRow) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack {
+                Label(entry.title, systemImage: entry.role.symbolName).font(WorkbenchTypography.emphasis)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if entry.isAssigned {
+                    Text(verbatim: entry.portText).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            if let slot = entry.slot, let row = entry.row {
+                Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.secondary).lineLimit(1)
+                ServingStatusLabel(row: row, states: states).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
+                HStack {
+                    Button(slot.enabled ? "Stop" : "Start…") { toggle(slot) }.buttonStyle(.borderless)
+                        .accessibilityIdentifier("serving-role-\(entry.role.rawValue)-toggle")
+                    modelMenu("Change model…", role: entry.role, assigned: true) { change(slot, $0) }
+                }
+            } else {
+                Text(entry.unassignedText).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                modelMenu("Choose model…", role: entry.role, assigned: false) { choose(entry.role, $0) }
+            }
+        }
+        .padding(.vertical, WorkbenchSpacing.xs)
+        .tag(entry.row?.id ?? entry.id)
+        .accessibilityIdentifier("serving-\(entry.id)")
     }
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -268,21 +316,33 @@ struct ServingModelList: View {
             TextField("Filter models", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, WorkbenchSpacing.md)
                 .accessibilityIdentifier("serving-model-filter")
             List(selection: $selectedID) {
-                ForEach(ServingWorkspacePresentation.Section.allCases, id: \.self) { section in
-                    let entries = visibleRows.filter { ServingWorkspacePresentation.section($0) == section }
-                    if !entries.isEmpty { Section(section.rawValue) {
-                ForEach(entries) { row in
-                    ServingModelRow(row: row, models: models, states: states)
-                        .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
-                        .accessibilityIdentifier("serving-model-\(row.id)")
+                Section("Roles") {
+                    ForEach(roleRows) { roleRow($0) }
                 }
-                    } }
+                Section("Custom endpoints") {
+                    ForEach(visible(customRows)) { row in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            if let label = ServingRolesPresentation.roleLabel(row) {
+                                Text(label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            }
+                            ServingModelRow(row: row, models: models, states: states)
+                        }
+                            .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
+                            .accessibilityIdentifier("serving-model-\(row.id)")
+                    }
+                    Button("Add custom endpoint…", action: add).buttonStyle(.borderless)
+                        .accessibilityIdentifier("serving-add-custom-endpoint")
+                }
+                Section {
+                    DisclosureGroup(ServingRolesPresentation.othersTitle(count: otherRows.count), isExpanded: $othersExpanded) {
+                        ForEach(visible(otherRows)) { row in
+                            ServingModelRow(row: row, models: models, states: states)
+                                .padding(.vertical, WorkbenchSpacing.xs).tag(row.id)
+                                .accessibilityIdentifier("serving-model-\(row.id)")
+                        }
+                    }.accessibilityIdentifier("serving-other-servers")
                 }
             }.listStyle(.sidebar).accessibilityIdentifier("serving-model-list")
-            .overlay {
-                if rows.isEmpty { ContentUnavailableView("No endpoints", systemImage: "server.rack", description: Text("Serve a model to get started.")) }
-                else if visibleRows.isEmpty { ContentUnavailableView.search(text: query) }
-            }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 Toggle("Include available models", isOn: $includesAvailable).toggleStyle(.checkbox)
                     .font(WorkbenchTypography.secondary).accessibilityIdentifier("serving-include-available")

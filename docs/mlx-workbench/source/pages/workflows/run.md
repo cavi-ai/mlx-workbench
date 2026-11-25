@@ -45,7 +45,7 @@ To run one model on more than one endpoint, open **Settings → Serving → Dupl
 
 To reach several endpoints through one address, open **Settings → Serving → Front door**, enter a port and choose **Create key and start**. Workbench creates one front door key in Keychain, saves the port and key reference in `endpoint-fleet.json`, and runs `mlx-agent serve front-door` on 127.0.0.1 while Workbench is open. A port already in use is refused. The front door routes requests by model name to running load-on-request chat endpoints and typed task endpoints (such as `/v1/embeddings` for `embedding` routes and `/v1/systemone` for `classification` routes) that use its key; to add an endpoint, stop it and choose **Use front door key…** in **API & security**, which is previewed and confirmed like other authentication changes. `/v1/models` advertises both chat models and typed routes with their `task_kinds`, and the section shows the base URL, chat models and typed routes, with **Copy key**, **Refresh**, **Set up OpenCode…** and **Stop**. Starting, stopping, swapping or removing an endpoint automatically refreshes the front door's route list while it is running. Each model name behind the front door must map to a single endpoint using the front door key: if two enabled endpoints share the key and advertise the same model name, **Settings → Serving → Front door** warns about the collision and the front door omits that name from `/v1/models` and returns `409 ambiguous_model` until only one endpoint uses the front door key for that model. Endpoints keep their own ports, loading and memory admission, and the front door key stays in Keychain when no endpoint uses it.
 
-The endpoint list separates live endpoints, saved configurations and available models from other apps. Each saved configuration shows its current status. The list shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Sources that missed the latest refresh are listed under the endpoint list, with each source and its message in the sheet. They do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
+The endpoint list has three sections. **Roles** has one row per serving role, in catalog order, each on its own canonical port; an assigned role shows its model, port and status with **Stop** or **Start** and **Change model…**, and an unassigned role shows **Not assigned - :port** and **Choose model…**. **Custom endpoints** lists saved endpoints without a role and **Add custom endpoint…**. **Other servers on this Mac** is collapsed, with a count, and lists external servers and inventory entries. **Choose model…** lists ready Library models whose task the role accepts; the review shows the role's port and a confirmation adds the endpoint. Each row shows model, provider, address and status. **Include available models** adds external models that are not loaded; these are hidden by default. When live endpoints identify the same local model path, select an address in the model details to manage that endpoint. Filtering changes only this list. Sources that missed the latest refresh are listed under the endpoint list, with each source and its message in the sheet. They do not cover the working endpoints with diagnostics. Refresh reads status without loading models.
 
 **API & security** contains the base URL, model ID, port and API-key controls. Copy the URL or model ID directly. Stop a saved endpoint before changing its port, enabling/disabling authentication or resetting its key. Authentication changes are previewed and confirmed. The endpoint remains bound to loopback.
 
@@ -176,8 +176,9 @@ endpoint.
 
 ## Serve models to other apps
 
+To serve a model for a role, choose **Choose model…** on that role's row in the endpoint list. To serve one on a port you pick, choose **Add custom endpoint…**; this is the only place a new endpoint gets a port you choose. An endpoint's port can also be changed afterward in **API & security**.
 Select a ready model, then choose **Save as endpoint** in **Serve a model** (**Start now** starts one server instead).
-Set the port, role and **Load on request**, and, with load on request, whether weights are
+Set the port and **Load on request**, and, with load on request, whether weights are
 released after each request or kept loaded. Choose **Add endpoint…** (**Add unverified endpoint…** for a
 model that has not passed verification) and review the model, port, verification and memory warnings, then
 confirm. Up to eight endpoints can be saved, each on its own stable port between 1024 and 65535
@@ -190,7 +191,7 @@ rows with status and copy controls. **Start…** reviews fit and verification be
 
 **Remove…** in a row's overflow menu removes an endpoint and stops it after confirmation.
 The model files stay in Library. Work using that model must finish before its
-endpoint can stop. The overflow menu also holds role, load mode, memory management, inference settings,
+endpoint can stop. **Change model…** on an assigned role swaps its model on the same port. The overflow menu also holds load mode, memory management, inference settings,
 API key and **Show in Library** actions, and **Wire roles…** and login startup sit below the list. Acceleration remains opt-in; serving a
 model does not establish that one configuration is fastest for every workload.
 
@@ -199,9 +200,9 @@ model does not establish that one configuration is fastest for every workload.
 Saved endpoints in **Served models** keep chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.
 Starting one endpoint checks that endpoint immediately. The background supervisor handles repairs for the rest of the fleet.
 
-- **Add endpoint…** suggests the next free port. Up to eight endpoints.
+- **Choose model…** on a role row uses that role's canonical port; **Add custom endpoint…** suggests the next free port. Up to eight endpoints.
 - Endpoints require a verified model unless you explicitly override for an unverified one.
-- Each endpoint row shows status, restarts, a fit chip, a role, **Stop** or **Start…**, and an overflow menu with the remaining controls.
+- Each endpoint row shows status, restarts, a fit chip, **Stop** or **Start…**, and an overflow menu with the remaining controls.
 - **Memory** displays a live **Fleet co-residency budget** bar combining per-modality estimates (LLM, Vision, Audio, Video, Image, Embedding), load-on-request dormant state, Splash memory caps and any configured shared agent memory limit. When one or more models lack size data, the bar surfaces the partial known total alongside the unknown slot count without fabricating sizes.
 - **Model router…** (**Wire roles…**) writes routes for running chat, vision and embedding endpoints that serve a `publisher/model` ID. Workbench lists local endpoints with basename-only IDs and typed audio or media endpoints separately from the generated config. A route can use Front door when the listener advertises the model and the endpoint shares its key. The generated `fleet-router.yaml` uses `MLX_AGENT_LOCAL_API_KEY` for protected routes, so a config can include only endpoints that use the same API key.
 
@@ -390,4 +391,4 @@ models are omitted from this quick menu. Closing the main window keeps
 Workbench and its model servers running. Use **Open MLX Workbench** to return
 to the window. Login-item controls remain under Memory for startup persistence.
 
-Serving defaults assign load-on-request endpoints to roles. Roles can share one endpoint, worker and memory policy; open an assigned endpoint to review its memory settings. Coding can use an idle timeout, while Utility can release weights after each request, including with a Splash preset. For Splash, Serving shows reported effective context separately from a configured limit. If a Splash load fails, review its saved launch preset before applying changes.
+Roles are chosen on the Serving page: each role row names its endpoint, and the menu bar lists the assigned roles. Open an assigned role's endpoint to review its memory settings. Coding can use an idle timeout, while Utility can release weights after each request, including with a Splash preset. For Splash, Serving shows reported effective context separately from a configured limit. If a Splash load fails, review its saved launch preset before applying changes.

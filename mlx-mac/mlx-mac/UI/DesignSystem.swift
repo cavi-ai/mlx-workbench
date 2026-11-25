@@ -370,7 +370,6 @@ extension WorkbenchSize {
         static let runtimeWidth: CGFloat = 210
         static let portField: CGFloat = 96
         static let contextWidth: CGFloat = 190
-        static let roleWidth: CGFloat = 150
         static let loadToggle: CGFloat = 170
         static let overflow: CGFloat = 28
         static let slotModelMinimum: CGFloat = 160

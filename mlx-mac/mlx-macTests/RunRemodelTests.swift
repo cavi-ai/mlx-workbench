@@ -1450,8 +1450,9 @@ extension RunRemodelTests {
         }
         XCTAssertTrue(lines.contains { $0.lowercased().contains("serve a model") }, "The newly selected Library model keeps its setup workspace")
         XCTAssertEqual(rows(named: "alder"), 1, "The endpoint and its running server are one row")
-        XCTAssertEqual(rows(named: "birch"), 1, "The third-party local service has a row")
-        XCTAssertEqual(rows(named: "cedar"), 1, "A launched server without an endpoint has one row")
+        XCTAssertEqual(rows(named: "birch"), 0, "The third-party local service stays under the collapsed other servers")
+        XCTAssertEqual(rows(named: "cedar"), 0, "A launched server without an endpoint stays under the collapsed other servers")
+        XCTAssertTrue(lines.contains { $0.lowercased().contains("other servers on this mac (2)") })
     }
 
     func testRunWithNothingServingSaysSo() async throws {
@@ -1460,7 +1461,7 @@ extension RunRemodelTests {
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(400))
         let lines = try renderedLines(try pngData(hosting)).map { $0.lowercased() }
-        XCTAssertTrue(lines.contains { $0.contains("no endpoints") })
+        XCTAssertTrue(lines.contains { $0.contains("not assigned") })
     }
 
     // MARK: Endpoint changes
@@ -1677,6 +1678,25 @@ extension RunRemodelTests {
         let released = await changes.stop(alder)
         XCTAssertNil(released)
         XCTAssertEqual(try persistedSlots(app).map(\.enabled), [false])
+    }
+
+    /// A model change is refused while work holds the endpoint's current model, and the slot keeps its model.
+    func testModelChangeIsRefusedWhileWorkHoldsTheModel() async throws {
+        let gate = ProtectionGate()
+        let verification = try await makeVerification(passing: [], gate: gate)
+        let app = try await ServingWorld.host(verification: verification)
+        await app.comparison.waitForHistory()
+        let changes = EndpointChanges(appHost: app)
+        let alder = try XCTUnwrap(app.endpoint.fleet.slots.first)
+        app.verification.verifyNow(modelPath: alder.modelPath, signature: nil)
+        XCTAssertTrue(app.occupancy.blocksStop(modelIdentity: alder.modelPath))
+        let review = changes.reviewSwap(slot: alder, to: try libraryModel(app, ServingWorld.selectedModel))
+        let result = await changes.confirm(review)
+        XCTAssertEqual(result, .refused("Finish the operation using this model before stopping or removing its endpoint."))
+        XCTAssertEqual(try persistedSlots(app).map(\.modelPath), [alder.modelPath])
+        await gate.open()
+        let deadline = Date().addingTimeInterval(5)
+        while app.verification.activeModelPath != nil, Date() < deadline { await settle(20) }
     }
 
     // MARK: Pages that are not shown

@@ -74,7 +74,6 @@ struct ServeView: View {
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
-    @State private var newSlotRole: ServingRole?
     @State private var newSlotLoadOnRequest = true
     @StateObject private var fleetHold: FleetOverrideHold
     private var pendingFleetAction: PendingFleetAction? {
@@ -82,7 +81,6 @@ struct ServeView: View {
         nonmutating set { fleetHold.pending = newValue }
     }
     @State private var showFleetRouter = false
-    @State private var showsRoleDefaults = false
     @State private var showLoginItemPreview = false
     @State private var loginPlans: [LoginItemPlan] = []
     @State private var loginFitOverride = false
@@ -151,9 +149,13 @@ struct ServeView: View {
             Group {
                 if viewport.size.width >= WorkbenchSize.Serving.splitMinimum {
                     HStack(spacing: 0) {
-                        ServingModelList(rows: workspaceRows, models: models, states: endpoint.slotStates,
+                        ServingModelList(roleRows: ServingRolesPresentation.roleRows(slots: endpoint.fleet.slots, rows: workspaceRows),
+                            customRows: ServingRolesPresentation.customRows(workspaceRows),
+                            otherRows: ServingRolesPresentation.otherRows(workspaceRows),
+                            slots: endpoint.fleet.slots, models: models, states: endpoint.slotStates,
                             sourceIssueCount: inventory.snapshot.sourceErrors.count,
                             selectedID: $workspaceSelection, includesAvailable: $includesAvailable,
+                            choose: chooseModel, change: changeModel, toggle: toggleEndpoint,
                             add: openServerSetup, monitor: { onRouteSelection(.monitor) },
                             refresh: { Task { await refreshServing() } }, showSources: { showsSourceIssues = true })
                         Divider()
@@ -332,15 +334,6 @@ struct ServeView: View {
 
     private var workspaceDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Button { showsRoleDefaults = true } label: {
-                    Label("Defaults", systemImage: "slider.horizontal.3")
-                }
-                .accessibilityIdentifier("serving-defaults")
-                Spacer()
-            }
-            .padding(.horizontal, WorkbenchSpacing.md)
-            .padding(.vertical, WorkbenchSpacing.sm)
             VStack(alignment: .leading, spacing: 0) {
                 if let pending = pendingFleetAction {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -361,13 +354,6 @@ struct ServeView: View {
             .accessibilityIdentifier("serving-model-workspace")
         }
         .sheet(isPresented: $showFleetRouter) { FleetRouterSheet(appHost: appHost) }
-        .sheet(isPresented: $showsRoleDefaults) {
-            ServingRoleDefaultsSheet(endpoint: endpoint, models: models) { slot in
-                workspaceSelection = "endpoint-\(slot.id.uuidString)"
-                showsServerSetup = false
-                workspaceTab = .connection
-            }
-        }
     }
 
     private var workspaceScroll: some View {
@@ -1399,17 +1385,6 @@ struct ServeView: View {
                 Button("Copy base URL") { ServedModelsSelection.copy("http://127.0.0.1:\(slot.port)/v1") }
                 Divider()
             }
-            Picker("Role", selection: Binding(
-                get: { slot.role },
-                set: { newRole in
-                    Task { await endpoint.updateSlot(id: slot.id, modelPath: slot.modelPath, port: slot.port, role: newRole) }
-                }
-            )) {
-                Text("Unassigned").tag(ServingRole?.none)
-                ForEach(ServingRole.allCases.filter(\.isChat)) { role in
-                    Text(role.title).tag(ServingRole?.some(role))
-                }
-            }
             Toggle("Load on request", isOn: Binding(
                 get: { slot.usesJIT },
                 set: { value in Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) } }))
@@ -1629,13 +1604,6 @@ struct ServeView: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: WorkbenchSize.Run.portField)
         }
-        Picker("Role", selection: $newSlotRole) {
-            Text("Unassigned").tag(ServingRole?.none)
-            ForEach(ServingRole.allCases.filter(\.isChat)) { role in
-                Text(role.title).tag(ServingRole?.some(role))
-            }
-        }
-        .frame(width: WorkbenchSize.Run.roleWidth)
     }
 
     private var addEndpointLoadToggle: some View {
@@ -1653,12 +1621,32 @@ struct ServeView: View {
     private var changes: EndpointChanges { EndpointChanges(appHost: appHost) }
 
     private func prepareAddEndpoint() {
-        switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: newSlotRole,
+        switch changes.reviewAdd(model: selectedModel, portText: endpointPortText, suggestedPort: suggestedPort, role: nil,
                                  loadOnRequest: newSlotLoadOnRequest, keepLoaded: keepModelLoaded, requireKey: requireAPIKey, inference: inferenceOptions, profile: modelWorkflow.servingProfile, splashPreset: inferenceContext.isSplash ? selectedSplashPreset : nil) {
         case .noModel: return
         case .portRejected(let message): endpointPortError = message
         case .review(let review): endpointPortError = nil; action = review
         }
+    }
+
+    /// Reviews a new endpoint for a role on that role's canonical port.
+    private func chooseModel(for role: ServingRole, _ model: LibraryModel) {
+        switch changes.reviewAdd(model: model, portText: "", suggestedPort: endpoint.fleet.port(for: role), role: role,
+                                 loadOnRequest: true, keepLoaded: false, requireKey: false) {
+        case .noModel: return
+        case .portRejected(let message): actionError = message
+        case .review(let review): actionError = nil; action = review
+        }
+    }
+
+    private func changeModel(of slot: EndpointSlot, to model: LibraryModel) {
+        actionError = nil
+        action = changes.reviewSwap(slot: slot, to: model)
+    }
+
+    private func toggleEndpoint(_ slot: EndpointSlot) {
+        if slot.enabled { Task { actionError = await changes.stop(slot) } }
+        else { prepare(slot: slot, remove: false) }
     }
 
     private func prepare(slot: EndpointSlot, remove: Bool) {
@@ -1667,7 +1655,7 @@ struct ServeView: View {
 
     private func confirmation(_ pending: EndpointChangeReview) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text(pending.remove ? "Remove endpoint?" : pending.slot == nil ? "Add this endpoint?" : "Start this endpoint?")
+            Text(pending.remove ? "Remove endpoint?" : pending.slot == nil ? "Add this endpoint?" : pending.swapTo != nil ? "Change this endpoint's model?" : "Start this endpoint?")
                 .font(WorkbenchTypography.cardTitle)
             Text(pending.model?.displayName ?? pending.slot?.modelPath ?? "Model").textSelection(.enabled)
             Text(verbatim: pending.remove ? "Its endpoint will stop. Model files stay in Library."
@@ -1693,7 +1681,7 @@ struct ServeView: View {
             HStack {
                 Button("Cancel") { action = nil }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(pending.remove ? "Remove endpoint" : pending.slot != nil ? "Start endpoint" : pending.unverified ? "Add unverified endpoint" : "Add endpoint") {
+                Button(pending.remove ? "Remove endpoint" : pending.swapTo != nil ? (pending.unverified ? "Change to unverified model" : "Change model") : pending.slot != nil ? "Start endpoint" : pending.unverified ? "Add unverified endpoint" : "Add endpoint") {
                     Task { await apply(pending) }
                 }.buttonStyle(.workbenchPrimary).disabled(endpoint.isChanging)
             }
@@ -1905,6 +1893,8 @@ struct EndpointChangeReview: Identifiable {
     var inference = LocalInferenceOptions()
     var profile: ServingProfile? = nil
     var splashPreset: SplashPreset? = nil
+    /// Set for a model change on `slot`: confirmation swaps the slot to this model on its port.
+    var swapTo: LibraryModel? = nil
 }
 
 /// Reviews endpoint changes and rechecks them against current state when confirmed.
@@ -1963,6 +1953,13 @@ struct EndpointChanges {
             unverified: !remove && !appHost.isModelVerified(slot.modelPath), remove: remove)
     }
 
+    /// Reviews moving an endpoint to another model on the same port.
+    func reviewSwap(slot: EndpointSlot, to model: LibraryModel) -> EndpointChangeReview {
+        EndpointChangeReview(model: model, slot: slot, port: slot.port, role: slot.role, loadOnRequest: slot.usesJIT,
+            keepLoaded: false, requireKey: false, memoryWarning: memoryWarning(for: model.item.path),
+            unverified: !appHost.isModelVerified(model.item.path), remove: false, swapTo: model)
+    }
+
     private func memoryWarning(for path: String) -> String? {
         guard let verdict = appHost.runFleetVerdict(adding: path) else { return nil }
         if case .fits = verdict { return nil }
@@ -1997,6 +1994,22 @@ struct EndpointChanges {
                 if let refusal = stopRefusal(slot) { return .refused(refusal) }
                 await endpoint.removeSlot(id: slot.id)
                 return endpoint.lastError.map(Confirmation.refused) ?? .completed
+            }
+            if let target = review.swapTo {
+                if let refusal = stopRefusal(slot) { return .refused(refusal) }
+                guard ServedModelsSelection.canConfirm(model: target, models: models),
+                      ServedModelsSelection.candidates(models: models, slots: endpoint.fleet.slots.filter { $0.id != slot.id }, query: "")
+                          .contains(where: { $0.item.path == target.item.path }) else {
+                    return .refused("The model changed; review it again.")
+                }
+                guard review.memoryWarning == memoryWarning(for: target.item.path) else { return .refused("Memory conditions changed; review the endpoint again.") }
+                guard review.unverified == !appHost.isModelVerified(target.item.path) else { return .refused("Verification changed; review the endpoint again.") }
+                if !overrideMemory, let hold = memoryHold(for: target.item.path) { return .memoryHold(hold) }
+                await endpoint.swapSlot(id: slot.id, to: target.item.path, allowUnverified: review.unverified)
+                if let error = endpoint.lastError, endpoint.fleet.slots.first(where: { $0.id == slot.id })?.modelPath != target.item.path {
+                    return .refused(error)
+                }
+                return startResult(slotID: slot.id)
             }
             guard review.memoryWarning == memoryWarning(for: slot.modelPath) else { return .refused("Memory conditions changed; review the endpoint again.") }
             guard review.unverified == !appHost.isModelVerified(slot.modelPath) else { return .refused("Verification changed; review the endpoint again.") }
