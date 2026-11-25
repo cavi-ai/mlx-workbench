@@ -980,6 +980,8 @@ actor WorkbenchAPI {
             if !defaults.systemPrompt.isEmpty { args += ["--system-prompt", defaults.systemPrompt] }
             if let value = defaults.temperature { args += ["--default-temperature", String(value)] }
             if let value = defaults.topP { args += ["--default-top-p", String(value)] }
+            if let path = defaults.splashDraftModel { args += ["--splash-draft-model", path] }
+            if let path = defaults.splashChatTemplate { args += ["--splash-chat-template", path] }
         }
         if let apiKeyFile { args += ["--api-key-file", apiKeyFile] }
         else if let apiKeySHA256 { args += ["--api-key-sha256", apiKeySHA256] }
@@ -1044,6 +1046,7 @@ actor WorkbenchAPI {
                       sharedPrefixCacheMiB: Int? = nil, apiKeyFile: String? = nil) async throws -> [String: Any] {
         let effectivePrefixCacheMiB = sharedPrefixCacheMiB ?? requestDefaults?.sharedPrefixCacheMiB
         let resolvedRuntime = (effectivePrefixCacheMiB != nil && runtime == "auto") ? "mlx_lm" : runtime
+        try Self.checkSplashLaunch(runtime: resolvedRuntime, options: requestDefaults)
         var resolvedKeyFile = apiKeyFile
         if let mib = effectivePrefixCacheMiB {
             if resolvedKeyFile == nil, let digest = apiKeySHA256 {
@@ -1095,7 +1098,25 @@ actor WorkbenchAPI {
                 throw WorkflowEvidenceError.invalid("The engine did not confirm these request defaults. Review the endpoint settings.")
             }
         }
+        if let defaults = requestDefaults, defaults.splashLaunchRequested {
+            func confirms(_ key: String, _ requested: String?) -> Bool {
+                guard let requested else { return true }
+                guard let reported = plan[key] as? String else { return false }
+                return URL(fileURLWithPath: reported).standardizedFileURL.path == URL(fileURLWithPath: requested).standardizedFileURL.path
+            }
+            guard plan.string("runtime") == "splash", confirms("splash_draft_model", defaults.splashDraftModel),
+                  confirms("splash_chat_template", defaults.splashChatTemplate) else {
+                throw WorkflowEvidenceError.invalid("The engine did not confirm the Splash draft model and chat template. Review the Splash files.")
+            }
+        }
         return plan
+    }
+
+    /// Splash launch files reach the engine only with a runtime that can use them.
+    static func checkSplashLaunch(runtime: String, options: LocalInferenceOptions?) throws {
+        guard ServeLaunch.splashLaunchIsLegal(runtime: runtime, options: options) else {
+            throw BridgeError.remote(code: "invalid_arguments", message: ServeLaunch.splashLaunchMessage, remediation: "Review the Splash settings.")
+        }
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
@@ -1106,6 +1127,7 @@ actor WorkbenchAPI {
                     sharedPrefixCacheMiB: Int? = nil, apiKeyFile: String? = nil) async throws -> [String: Any] {
         let effectivePrefixCacheMiB = sharedPrefixCacheMiB ?? requestDefaults?.sharedPrefixCacheMiB
         let resolvedRuntime = (effectivePrefixCacheMiB != nil && runtime == "auto") ? "mlx_lm" : runtime
+        try Self.checkSplashLaunch(runtime: resolvedRuntime, options: requestDefaults)
         var resolvedKeyFile = apiKeyFile
         if effectivePrefixCacheMiB != nil, resolvedKeyFile == nil {
             guard let apiKeySHA256 else {

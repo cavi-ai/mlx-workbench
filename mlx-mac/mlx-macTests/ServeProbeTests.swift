@@ -1358,3 +1358,19 @@ private final class ProbeStreamPeer: @unchecked Sendable {
         }
     }
 }
+
+final class SplashLaunchArgumentTests: XCTestCase {
+    func testSplashDraftModelAndChatTemplateReachServeStartArguments() {
+        let options = LocalInferenceOptions(splashDraftModel: "/models/drafts/qwen-dflash2", splashChatTemplate: "/templates/chat.jinja")
+        let argv = WorkbenchAPI.serveArguments(model: "/models/qwen", runtime: "splash", port: 8094, receipts: "/state",
+                                               jit: true, previewHash: "reviewed", requestDefaults: options, profileName: "agent")
+
+        func value(after flag: String) -> String? {
+            argv.firstIndex(of: flag).flatMap { argv.index(after: $0) < argv.endIndex ? argv[argv.index(after: $0)] : nil }
+        }
+        XCTAssertEqual(value(after: "--splash-draft-model"), "/models/drafts/qwen-dflash2")
+        XCTAssertEqual(value(after: "--splash-chat-template"), "/templates/chat.jinja")
+        XCTAssertEqual(value(after: "--profile"), "agent")
+        XCTAssertEqual(argv.suffix(3), ["--confirm", "--preview-hash", "reviewed"])
+    }
+}
