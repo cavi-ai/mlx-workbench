@@ -48,6 +48,9 @@ struct ContentView: View {
         NavigationSplitView {
             AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges,
                        models: appHost.librarySnapshot?.models ?? [])
+                // An opaque sidebar instead of the vibrant list material, so the desktop never shows through.
+                .scrollContentBackground(.hidden)
+                .background(WorkbenchColor.sidebar)
                 .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations

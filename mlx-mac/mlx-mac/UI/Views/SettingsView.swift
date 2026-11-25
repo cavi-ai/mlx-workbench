@@ -78,6 +78,7 @@ struct SettingsView: View {
     @StateObject private var duplication: DuplicationPolicyCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     @AppStorage(WorkbenchMenuBarItem.storageKey) private var showsMenuBarItem = true
+    @AppStorage(WorkbenchTheme.storageKey) private var themeID = WorkbenchTheme.system.rawValue
     private let probe: SettingsDirectoryProbe
     private let onRouteSelection: (AppRoute) -> Void
 
@@ -130,6 +131,7 @@ struct SettingsView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                             engineSection
+                            appearanceSection
                             locationsSection
                             storageSection
                             servingSection
@@ -367,6 +369,34 @@ struct SettingsView: View {
             }
         } footer: {
             Text("Where converted models and quarantined files are written.")
+        }
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceSection: some View {
+        let selected = WorkbenchTheme(storedID: themeID)
+        return SettingsSection(title: "Appearance") {
+            SettingsRow(label: "Theme", stacked: layout.stacksRows) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.sm) { themeSwatches(selected: selected) }
+                    Grid(horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.sm) {
+                        GridRow { themeSwatches(selected: selected, in: 0..<2) }
+                        GridRow { themeSwatches(selected: selected, in: 2..<4) }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Theme")
+            }
+        } footer: {
+            Text("Applies to every window at once. Not part of Save.")
+        }
+    }
+
+    @ViewBuilder
+    private func themeSwatches(selected: WorkbenchTheme, in range: Range<Int> = 0..<WorkbenchTheme.allCases.count) -> some View {
+        ForEach(Array(WorkbenchTheme.allCases[range])) { theme in
+            WorkbenchThemeSwatch(theme: theme, selected: theme == selected) { themeID = theme.rawValue }
         }
     }
 
@@ -1109,6 +1139,76 @@ struct SettingsToggleRow: View {
                 .controlSize(.small)
                 .labelsHidden()
         }
+    }
+}
+
+/// A selectable theme tile: a miniature canvas with a card, two text lines and the accent.
+/// System shows its light and dark halves side by side.
+struct WorkbenchThemeSwatch: View {
+    let theme: WorkbenchTheme
+    let selected: Bool
+    let action: () -> Void
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: WorkbenchSpacing.xs) {
+                preview
+                    .frame(width: WorkbenchSize.Settings.themeSwatchWidth, height: WorkbenchSize.Settings.themeSwatchHeight)
+                    .clipShape(shape)
+                    .overlay {
+                        shape.strokeBorder(selected ? WorkbenchColor.accent : WorkbenchColor.hairline,
+                                           lineWidth: selected ? WorkbenchSize.Settings.themeSelectionStroke : WorkbenchSpacing.hairline)
+                    }
+                Text(theme.title)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(selected ? WorkbenchColor.ink : WorkbenchColor.muted)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(theme.summary)
+        .accessibilityLabel(theme.title)
+        .accessibilityHint(theme.summary)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("settings-theme-" + theme.rawValue)
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        switch theme.colorScheme {
+        case nil:
+            HStack(spacing: 0) {
+                miniature(theme.light)
+                miniature(theme.dark)
+            }
+        case .light?:
+            miniature(theme.light)
+        default:
+            miniature(theme.dark)
+        }
+    }
+
+    private func miniature(_ palette: WorkbenchPalette) -> some View {
+        // The card peeks in from the top leading corner and runs off the tile's other edges.
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Capsule().fill(palette.color(\.ink))
+                .frame(height: WorkbenchSize.Settings.themeSwatchLine)
+            Capsule().fill(palette.color(\.muted))
+                .frame(height: WorkbenchSize.Settings.themeSwatchLine)
+                .padding(.trailing, WorkbenchSpacing.xs)
+            Capsule().fill(palette.color(\.accent))
+                .frame(width: WorkbenchSpacing.md, height: WorkbenchSize.Settings.themeSwatchLine)
+        }
+        .padding(WorkbenchSpacing.xs)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(palette.color(\.surface), in: RoundedRectangle(cornerRadius: WorkbenchRadius.chip, style: .continuous))
+        .padding([.top, .leading], WorkbenchSpacing.xs)
+        .background(palette.color(\.canvas))
     }
 }
 
