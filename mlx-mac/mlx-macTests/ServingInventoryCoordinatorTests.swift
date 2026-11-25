@@ -173,6 +173,21 @@ final class ServingInventoryCoordinatorTests: XCTestCase {
             engineError: nil, hosts: ServingHostSnapshot(), managedReceipts: managedReceipts))
     }
 
+    func testDoctorReportsUnavailableEngineDiscovery() async {
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [], supportsDiscovery: false) }, readMemory: { _ in [:] })
+        await coordinator.refresh(refreshHosts: true)
+        XCTAssertNotNil(coordinator.snapshot.sourceErrors["engine-ownership"])
+        XCTAssertEqual(coordinator.sourceName("engine-ownership"), "Serving engine")
+    }
+
+    func testDoctorReportsUnknownEngineModelIdentity() async {
+        let coordinator = ServingInventoryCoordinator(managedReceipts: managedReceipts,
+            fetchEngine: { ServingEngineSnapshot(servers: [self.server(path: "")]) }, readMemory: { _ in [:] })
+        await coordinator.refresh(refreshHosts: true)
+        XCTAssertNotNil(coordinator.snapshot.sourceErrors["engine-ownership"])
+    }
+
     func testCancelledRefreshCannotReusePriorOwnership() async throws {
         let gate = InventoryTestGate()
         let entered = expectation(description: "second engine read")

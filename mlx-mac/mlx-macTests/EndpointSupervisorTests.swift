@@ -1060,6 +1060,37 @@ final class EndpointSupervisorTests: XCTestCase {
         }
     }
 
+    func testProfileReviewSavesVerifiedProfileAndRejectsOccupiedPort() async throws {
+        let world = FakeServeWorld()
+        let recorder = LifecycleRecorder()
+        world.recorder = recorder
+        let slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/Models/a")
+        let profile = revisionProfile(path: slot.modelPath, fingerprint: "model")
+        let url = temporaryURL("profile-review.json")
+        let store = JSONStore<EndpointFleetConfig>(fileURL: url)
+        try store.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: store)
+        supervisor.profileLifecycle = { _ in world.lifecycle }
+        let review = try await supervisor.previewSlotProfile(slot: slot, profile: profile)
+        world.preload(repo: "/Models/other", port: slot.port)
+        let occupied = await supervisor.confirmSlotProfile(review)
+        XCTAssertFalse(occupied)
+        XCTAssertEqual(supervisor.fleet.slots, [slot])
+        world.kill(port: slot.port)
+        let fresh = try await supervisor.previewSlotProfile(slot: slot, profile: profile)
+        let saved = await supervisor.confirmSlotProfile(fresh)
+        XCTAssertTrue(saved)
+        var expected = slot
+        expected.servingProfile = profile
+        expected.profilePreviewHash = "hash-1"
+        XCTAssertEqual(supervisor.fleet.slots, [expected])
+        XCTAssertEqual(try store.load().first?.slots, [expected])
+        XCTAssertFalse(expected.enabled)
+        XCTAssertFalse(recorder.events.contains { $0.hasPrefix("start:") || $0.hasPrefix("stop:") })
+        XCTAssertTrue(try world.status().isEmpty)
+    }
+
     func testAccelerationSaveFailureKeepsPersistedSettings() async throws {
         let world = FakeServeWorld()
         let slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/Models/a")

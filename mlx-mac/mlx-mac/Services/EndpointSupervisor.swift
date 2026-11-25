@@ -1,6 +1,12 @@
 import Darwin
 import Foundation
 
+struct EndpointServingProfileReview {
+    let slot: EndpointSlot
+    let profile: ServingProfile?
+    let hash: String
+}
+
 // MARK: - EndpointSupervisor
 //
 // Always-on Endpoint (premium spec 06), fleet-shaped internally (spec 09
@@ -711,6 +717,54 @@ final class EndpointSupervisor: ObservableObject {
         } catch {
             lastError = "Could not change endpoint load mode: \(AppHost.render(error))"
         }
+    }
+
+    func previewSlotProfile(slot: EndpointSlot, profile: ServingProfile?) async throws -> EndpointServingProfileReview {
+        guard beginUserOperation() else { throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish.") }
+        defer { activeUserOperations -= 1 }
+        guard fleet.slots.contains(slot), slot.splashPresetName == nil,
+              profile.map({ $0.hasPassedVerification && $0.modelPath == slot.modelPath }) ?? true else {
+            throw WorkflowEvidenceError.invalid("Endpoint or verified profile changed. Review it again.")
+        }
+        try await requireStoppedForAuthentication(slot)
+        var candidate = slot
+        candidate.servingProfile = profile
+        candidate.profilePreviewHash = nil
+        candidate.accelerationPreviewHash = nil
+        let hash = try await accelerationPreviewHash(candidate)
+        guard !hash.isEmpty, fleet.slots.contains(slot) else {
+            throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the profile again.")
+        }
+        try await requireStoppedForAuthentication(slot)
+        return EndpointServingProfileReview(slot: slot, profile: profile, hash: hash)
+    }
+
+    func confirmSlotProfile(_ review: EndpointServingProfileReview) async -> Bool {
+        guard beginUserOperation() else { return false }
+        defer { activeUserOperations -= 1 }
+        do {
+            guard fleet.slots.contains(review.slot), review.slot.splashPresetName == nil,
+                  review.profile.map({ $0.hasPassedVerification && $0.modelPath == review.slot.modelPath }) ?? true else {
+                throw WorkflowEvidenceError.invalid("Endpoint or verified profile changed. Review it again.")
+            }
+            try await requireStoppedForAuthentication(review.slot)
+            var candidate = review.slot
+            candidate.servingProfile = review.profile
+            candidate.profilePreviewHash = nil
+            candidate.accelerationPreviewHash = nil
+            let hash = try await accelerationPreviewHash(candidate)
+            guard hash == review.hash, fleet.slots.contains(review.slot) else {
+                throw WorkflowEvidenceError.invalid("Launch plan changed. Review the profile again.")
+            }
+            try await requireStoppedForAuthentication(review.slot)
+            guard fleet.slots.contains(review.slot) else {
+                throw WorkflowEvidenceError.invalid("Endpoint settings changed. Review the profile again.")
+            }
+            if candidate.servingProfile != nil { candidate.profilePreviewHash = hash }
+            guard validate(candidate, isNew: false), commit(replacing: candidate) else { return false }
+            lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
     }
 
     /// Inference setting changes never stop a running endpoint. Disable it first,

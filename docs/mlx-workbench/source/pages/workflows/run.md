@@ -345,11 +345,15 @@ Opening the panel never refreshes external hosts. The refresh button beside each
 
 Saved serving profiles carry runtime settings for one model through verification and the endpoint configuration. They are used by the optional Strata runtime; see [Strata](strata.md).
 
+The selected endpoint shows its configured profile or Splash preset. To change a saved Strata endpoint's profile, stop it, choose **Change serving profile…** beside **Serving profile**, choose a verified profile or runtime defaults, and review the launch settings before saving. The endpoint stays stopped until you start it.
+
 If disabling or removing an endpoint cannot confirm its server stopped, Run keeps the failure visible. **Retry stopping servers** rechecks the server identity and retries the stop. Automatic starts for that endpoint remain paused until the stop is confirmed.
 
 ## Local serving inventory and menu bar
 
 **Served models** shows Workbench endpoints alongside services started by MLX Agent, including Strata, and recognized local Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible server processes. Discovery reads this user’s listening processes and provider APIs at their actual ports. Engine services are found through registered receipt locations and live engine process arguments. Discovery does not search model folders or add external servers to automatic restart supervision. An older engine reports that cross-location engine discovery needs an update.
+
+**Serving Doctor** is available from Serving, the menu bar and a blocked Library removal. **Recheck connections** reads serving and source status without stopping services or retrying removal. Independently identified offline discoveries and authenticated local mirrors matched to a running engine process do not count as connection issues. Remaining source errors and reported endpoint failures are shown with links to the relevant endpoint, Model Sources or Health; choose and review any action yourself. Saved sources are separate from running services.
 
 Rows distinguish loaded, unloaded, loading, failed and unknown residency. The same service reported through its engine receipt and listening process appears once. Failed sources retain dated observations and an error. Paths, runtime, active requests and process identity appear when available. Provider APIs may omit storage locations or residency.
 Background discovery checks less often when a successful scan finds no active local servers. Opening Serving, Monitor, Model sources or the menu bar panel refreshes discovery immediately.

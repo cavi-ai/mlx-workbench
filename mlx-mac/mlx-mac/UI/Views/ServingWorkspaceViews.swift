@@ -364,13 +364,10 @@ struct ServingModelList: View {
                 Toggle("Include available models", isOn: $includesAvailable).toggleStyle(.checkbox)
                     .font(WorkbenchTypography.secondary).accessibilityIdentifier("serving-include-available")
                 Button("Open live Monitor", action: monitor).buttonStyle(.borderless)
-                if sourceIssueCount > 0 {
-                    Button(ServingWorkspacePresentation.sourceIssueTitle(sourceIssueCount), action: showSources)
-                        .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.muted)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("serving-source-issues")
-                }
+                Button(sourceIssueCount > 0 ? "Serving Doctor (\(sourceIssueCount))" : "Serving Doctor", action: showSources)
+                    .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.muted)
+                    .help(sourceIssueCount > 0 ? ServingWorkspacePresentation.sourceIssueTitle(sourceIssueCount) : "Check serving connections and endpoints that need attention.")
+                    .accessibilityIdentifier("serving-source-issues")
             }.padding(WorkbenchSpacing.md)
         }
         .frame(minWidth: WorkbenchSize.Serving.sidebar, idealWidth: WorkbenchSize.Serving.sidebar, maxWidth: WorkbenchSize.Serving.sidebar)

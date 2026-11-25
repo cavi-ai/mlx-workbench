@@ -70,7 +70,7 @@ struct MenuBarView: View {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
             }
             if !inventory.snapshot.sourceErrors.isEmpty {
-                Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Open Serving to inspect") { openManager() }
+                Button("\(inventory.snapshot.sourceErrors.count) sources unavailable · Open Serving Doctor") { openManager(showDoctor: true) }
             }
             if !sections.others.isEmpty {
                 Divider()
@@ -86,6 +86,7 @@ struct MenuBarView: View {
             Divider()
             HStack {
                 Button("Open Serving") { openManager() }
+                Button("Serving Doctor") { openManager(showDoctor: true) }
                 Button("Live Monitor") { selectedRouteID = AppRoute.monitor.rawValue; openApp() }
                 Spacer()
                 Button { Task { await workflow.refreshServers(); await inventory.refresh(refreshHosts: true, fresh: true) } } label: {
@@ -287,8 +288,8 @@ struct MenuBarView: View {
         }
     }
 
-    private func openManager(rowID: String? = nil) {
-        appHost.handoffs.send(ServingFocusRequest(rowID: rowID), as: .openServing)
+    private func openManager(rowID: String? = nil, showDoctor: Bool = false) {
+        appHost.handoffs.send(ServingFocusRequest(rowID: rowID, showDoctor: showDoctor), as: .openServing)
         selectedRouteID = AppRoute.run.rawValue
         openApp()
     }

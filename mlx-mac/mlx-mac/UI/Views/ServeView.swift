@@ -86,6 +86,7 @@ struct ServeView: View {
     @State private var showLoginItemPreview = false
     @State private var loginPlans: [LoginItemPlan] = []
     @State private var loginFitOverride = false
+    @State private var profileSlot: EndpointSlot?
     @State private var memoryReviewSlot: EndpointSlot?
     @State private var loginPlist = ""
     @State private var loginBusy = false
@@ -176,11 +177,9 @@ struct ServeView: View {
                             Spacer()
                             Button("Serve a model", action: openServerSetup).accessibilityIdentifier("serving-add-model")
                             Button("Monitor") { onRouteSelection(.monitor) }
-                            if !inventory.snapshot.sourceErrors.isEmpty {
-                                Button { showsSourceIssues = true } label: { Image(systemName: "info.circle") }
-                                    .accessibilityLabel(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
-                                    .help(ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
-                            }
+                            Button(inventory.snapshot.sourceErrors.isEmpty ? "Serving Doctor" : "Serving Doctor (\(inventory.snapshot.sourceErrors.count))") { showsSourceIssues = true }
+                                .help(inventory.snapshot.sourceErrors.isEmpty ? "Check serving connections and endpoints that need attention."
+                                      : ServingWorkspacePresentation.sourceIssueTitle(inventory.snapshot.sourceErrors.count))
                         }.padding(WorkbenchSpacing.md)
                         Divider()
                         workspaceDetail
@@ -228,6 +227,9 @@ struct ServeView: View {
         }
         .sheet(item: $memoryReviewSlot) { slot in
             EndpointMemoryReviewSheet(slot: slot, endpoint: endpoint, api: appHost.api)
+        }
+        .sheet(item: $profileSlot) { slot in
+            EndpointProfileSheet(slot: slot, endpoint: endpoint, profiles: profiles)
         }
         .sheet(isPresented: $showingSplashEditor) {
             SplashPresetEditor(api: appHost.api) { preset in
@@ -755,6 +757,17 @@ struct ServeView: View {
             }
             .help(ServingInspectorPresentation.caption(.splashPreset))
         }
+        if case .endpoint(let slot, _, _) = row, slot.splashPresetName == nil, context.isStrata {
+            LabeledContent("Serving profile") {
+                Text(slot.servingProfile?.name ?? "Runtime defaults").lineLimit(1)
+                if let profile = slot.servingProfile, !profile.hasPassedVerification || profile.modelPath != slot.modelPath {
+                    Text("Invalid profile").foregroundStyle(WorkbenchColor.failure)
+                }
+                Button("Change serving profile…") { profileSlot = slot }
+                    .disabled(slot.enabled || endpoint.isChanging || endpoint.pendingStops[slot.id] != nil)
+            }
+            .help("Stop the endpoint to change its verified profile. The endpoint stays stopped after the change.")
+        }
         if case .endpoint(let slot, _, _) = row {
             LabeledContent("Loading") {
                 Toggle("Load on request", isOn: Binding(get: { slot.usesJIT }, set: { value in
@@ -814,6 +827,7 @@ struct ServeView: View {
             workspaceSelection = id
         } else if workspaceSelection == nil { workspaceSelection = workspaceRows.first?.id }
         showsServerSetup = false
+        if request.showDoctor { showsSourceIssues = true }
         appHost.handoffs.finish(request, as: .openServing)
     }
 
@@ -855,22 +869,39 @@ struct ServeView: View {
     private var sourceIssuesSheet: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             HStack {
-                Text("Connections").font(WorkbenchTypography.cardTitle)
+                Text("Serving Doctor").font(WorkbenchTypography.cardTitle)
                 Spacer()
-                Button("Refresh") { Task { await refreshServing() } }.disabled(inventory.isRefreshing)
+                Button("Recheck connections") { Task { await inventory.refresh(refreshHosts: true) } }.disabled(inventory.isRefreshing)
                 Button("Done") { showsSourceIssues = false }.keyboardShortcut(.cancelAction)
             }
-            Text("These sources did not answer the latest refresh. Other endpoints remain available.")
+            Text("Recheck connections before retrying model removal. Running services and saved sources are listed separately in Serving and Model Sources.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    let attentionRows = servingRows.filter { ServingWorkspacePresentation.attentionReason($0) != nil }
+                    if inventory.snapshot.sourceErrors.isEmpty && attentionRows.isEmpty { Text("No connection issues reported.") }
+                    ForEach(attentionRows) { row in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text(ServingWorkspacePresentation.name(row, models: models)).font(WorkbenchTypography.label)
+                            if let reason = ServingWorkspacePresentation.attentionReason(row) {
+                                Text(reason).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                            }
+                            Button("Open endpoint") {
+                                workspaceSelection = row.id; showsServerSetup = false; showsSourceIssues = false
+                            }
+                        }
+                    }
                     ForEach(inventory.snapshot.sourceErrors.keys.sorted(), id: \.self) { source in
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                            Text(source).font(WorkbenchTypography.label).textSelection(.enabled)
+                            Text(inventory.sourceName(source)).font(WorkbenchTypography.label).textSelection(.enabled)
                             Text(inventory.snapshot.sourceErrors[source] ?? "Unavailable").font(WorkbenchTypography.secondary).textSelection(.enabled)
                         }
                     }
                 }
+            }
+            HStack {
+                Button("Model Sources") { showsSourceIssues = false; onRouteSelection(.sources) }
+                Button("Health") { showsSourceIssues = false; onRouteSelection(.health) }
             }
         }.padding(WorkbenchSpacing.lg).frame(minWidth: WorkbenchSize.Run.memoryPopoverWidth, idealWidth: WorkbenchSize.windowDefaultWidth / 2, minHeight: WorkbenchSize.Serving.promptMaximum * 2)
     }
@@ -2317,6 +2348,66 @@ private struct SplashPresetEditor: View {
         defer { busy = false }
         do { try await api.saveSplashPreset(preset); await saved(preset); dismiss() }
         catch { self.error = AppHost.render(error) }
+    }
+}
+
+private struct EndpointProfileSheet: View {
+    let slot: EndpointSlot
+    @ObservedObject var endpoint: EndpointSupervisor
+    @ObservedObject var profiles: ServingProfileCoordinator
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: UUID?
+    @State private var review: EndpointServingProfileReview?
+    @State private var error: String?
+    @State private var busy = false
+
+    private var choices: [ServingProfile] {
+        profiles.profiles.filter { $0.modelPath == slot.modelPath && $0.hasPassedVerification }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Serving profile").font(WorkbenchTypography.cardTitle)
+            Text("Endpoint on port \(slot.port)")
+            Picker("Profile", selection: $selected) {
+                Text("Runtime defaults").tag(Optional<UUID>.none)
+                ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
+            }.onChange(of: selected) { _, _ in review = nil; error = nil }
+            if review != nil { Text("Confirm the launch settings for this stopped endpoint. It will not start automatically.").font(WorkbenchTypography.secondary) }
+            if let error { InlineMessage(kind: .error, text: error) }
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                if let review {
+                    Button("Save profile") {
+                        Task {
+                            busy = true
+                            if let profile = review.profile, !choices.contains(profile) {
+                                error = "The verified profile changed. Review it again."
+                                self.review = nil
+                            } else if await endpoint.confirmSlotProfile(review) { dismiss() }
+                            else { error = endpoint.lastError; self.review = nil }
+                            busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy)
+                } else {
+                    Button("Review change") {
+                        Task {
+                            busy = true
+                            do {
+                                let profile = selected.flatMap { id in choices.first { $0.id == id } }
+                                guard selected == nil || profile != nil else { throw WorkflowEvidenceError.invalid("The verified profile is no longer available.") }
+                                review = try await endpoint.previewSlotProfile(slot: slot, profile: profile)
+                                error = nil
+                            } catch { self.error = AppHost.render(error) }
+                            busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy)
+                }
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
+        .onAppear { selected = choices.contains(where: { $0.id == slot.servingProfile?.id }) ? slot.servingProfile?.id : nil }
+        .interactiveDismissDisabled(busy)
     }
 }
 

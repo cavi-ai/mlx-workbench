@@ -287,9 +287,11 @@ measured speedup. **Reuse** restores the settings; **Export request…**, inside
 Result JSON, copies the verified engine request. The result export keeps reported
 reuse telemetry. Exporting a request does not copy model weights or input media.
 
-### Delete a model
+### Model actions and removal
 
-**Delete…** moves a model to the Trash after a review that rechecks its identity, its folders and whether it is serving. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).
+Right-click a model to open its available actions. **Use** opens a work session, and **Serve…** opens the serving setup for a ready model. **Manage serving** opens its linked service in Serving when the target is unambiguous. For a single eligible service, **Unload model…** opens the existing review before releasing its weights. Models that need conversion or runtime repair offer those actions instead.
+
+**Move to Trash…** reviews the model and its path before moving it to macOS Trash. Confirmation rechecks its identity, folders and serving ownership. If removal is unavailable, open **Serving Doctor** or expand **Details** to inspect the reason. Recheck connections, resolve any remaining issues, then retry removal yourself. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).
 
 ### Task types
 

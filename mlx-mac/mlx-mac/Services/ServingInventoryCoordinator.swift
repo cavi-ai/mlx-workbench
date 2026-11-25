@@ -114,14 +114,7 @@ final class ServingInventoryCoordinator: ObservableObject {
         if let engine { issues.merge(engine.errors) { _, newer in newer } }
         if !issues.isEmpty {
             let details = issues.keys.sorted().map { key in
-                let name: String
-                if key == "local-listeners" { name = "Local server discovery" }
-                else if key == "host-settings" { name = "Saved model sources" }
-                else if key == "engine" { name = "Serving engine" }
-                else if key.hasPrefix("host:"), let inventory = hosts.inventories.first(where: { "host:" + $0.host.id.uuidString == key }) {
-                    name = inventory.host.name + " (" + inventory.host.baseURL + ")"
-                } else { name = key }
-                return name + ": " + (issues[key] ?? "Unavailable")
+                sourceName(key, hosts: hosts.inventories) + ": " + (issues[key] ?? "Unavailable")
             }.joined(separator: "\n")
             throw ReclaimError.servingOwnershipUnavailable("Model removal is paused because serving ownership could not be checked. Resolve these issues in Serving, then retry:\n" + details)
         }
@@ -144,6 +137,18 @@ final class ServingInventoryCoordinator: ObservableObject {
                   let port = try? inventory.host.validatedURL().port else { return true }
             return !engine.contains { $0.pid == pid && $0.port == port && $0.state == "running" }
         }
+    }
+
+    func sourceName(_ key: String) -> String { Self.sourceName(key, hosts: lastHosts.inventories) }
+
+    static func sourceName(_ key: String, hosts: [HostInventory]) -> String {
+        if key == "local-listeners" { return "Local server discovery" }
+        if key == "host-settings" { return "Saved model sources" }
+        if key == "engine" || key == "engine-ownership" { return "Serving engine" }
+        if let host = hosts.first(where: { "host:" + $0.host.id.uuidString == key })?.host {
+            return host.name + " (" + host.baseURL + ")"
+        }
+        return key
     }
 
     private func refreshEngine(fresh: Bool = false) async -> Result<ServingEngineSnapshot, Error>? {
@@ -201,18 +206,22 @@ final class ServingInventoryCoordinator: ObservableObject {
             hosts: lastHosts.inventories, managedReceipts: managedReceipts,
             capturedAt: lastEngineCapturedAt ?? now(), hostProcessIDs: lastHosts.processIDs)
         next.capturedAt = now()
+        let rawErrors = lastHosts.errors.merging(lastEngine?.errors ?? [:]) { _, newer in newer }
         next.sourceErrors = Self.hostIssues(lastHosts, engine: engineError == nil ? lastEngine?.servers ?? [] : [])
             .merging(lastEngine?.errors ?? [:]) { _, newer in newer }
         if let engineError { next.sourceErrors["engine"] = engineError }
+        else if let engine = lastEngine, !engine.supportsDiscovery || engine.servers.contains(where: { $0.modelIdentity.isEmpty }) {
+            next.sourceErrors["engine-ownership"] = "Serving ownership could not be checked. Update the engine or recheck connections before retrying model removal."
+        }
         let freshIDs = Set(next.services.map(\.id))
         for prior in snapshot.services where !freshIDs.contains(prior.id) {
             let engineFailed = prior.sourceID.hasPrefix("engine:") &&
                 (engineError != nil || lastEngine?.errors.isEmpty == false || lastEngine?.supportsDiscovery == false && !prior.isWorkbenchManaged)
-            if engineFailed || next.sourceErrors[prior.sourceID] != nil {
+            if engineFailed || rawErrors[prior.sourceID] != nil {
                 var stale = prior; stale.stale = true; next.services.append(stale)
             }
         }
-        for index in next.services.indices where next.sourceErrors[next.services[index].sourceID] != nil {
+        for index in next.services.indices where rawErrors[next.services[index].sourceID] != nil {
             next.services[index].stale = true
         }
         snapshot = next
