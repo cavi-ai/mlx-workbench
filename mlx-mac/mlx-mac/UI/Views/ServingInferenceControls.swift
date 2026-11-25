@@ -208,10 +208,10 @@ struct ServingExperimentalCard: View {
 }
 
 /// Acceleration controls for the chosen runtime; captions come from `ServingInspectorPresentation`.
-struct ServingAccelerationRows: View {
+struct ServingAccelerationRows<Accessory: View>: View {
     @Binding var options: LocalInferenceOptions
     let context: ServingInferenceContext
-    var accessory: (ServingInspectorPresentation.Field) -> AnyView = { _ in AnyView(EmptyView()) }
+    @ViewBuilder var accessory: (ServingInspectorPresentation.Field) -> Accessory
     typealias Field = ServingInspectorPresentation.Field
 
     var body: some View {
@@ -250,13 +250,19 @@ struct ServingAccelerationRows: View {
     }
 }
 
+extension ServingAccelerationRows where Accessory == EmptyView {
+    init(options: Binding<LocalInferenceOptions>, context: ServingInferenceContext) {
+        self.init(options: options, context: context, accessory: { _ in EmptyView() })
+    }
+}
+
 /// Reasoning, output length and request defaults; captions come from `ServingInspectorPresentation`.
-struct ServingInferenceRows: View {
+struct ServingInferenceRows<Accessory: View>: View {
     @Binding var options: LocalInferenceOptions
     let context: ServingInferenceContext
     var allowRequestDefaults = false
     /// Per-field accessory (source marker) shown under each field's caption.
-    var accessory: (ServingInspectorPresentation.Field) -> AnyView = { _ in AnyView(EmptyView()) }
+    @ViewBuilder var accessory: (ServingInspectorPresentation.Field) -> Accessory
     typealias Field = ServingInspectorPresentation.Field
 
     var body: some View {
@@ -305,7 +311,7 @@ struct ServingInferenceRows: View {
                             .font(WorkbenchTypography.secondary)
                             .scrollContentBackground(.hidden)
                             .padding(WorkbenchSpacing.xs)
-                            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                             .frame(minHeight: WorkbenchSize.Serving.promptMinimum, maxHeight: WorkbenchSize.Serving.promptMaximum)
                             .accessibilityLabel("Default system prompt").accessibilityIdentifier("serve-system-prompt")
                     }
@@ -317,6 +323,12 @@ struct ServingInferenceRows: View {
                 ServingCaption("System prompt, temperature and top-p apply to load-on-request endpoints. Turn on Load on request to set them.")
             }
         }
+    }
+}
+
+extension ServingInferenceRows where Accessory == EmptyView {
+    init(options: Binding<LocalInferenceOptions>, context: ServingInferenceContext, allowRequestDefaults: Bool = false) {
+        self.init(options: options, context: context, allowRequestDefaults: allowRequestDefaults, accessory: { _ in EmptyView() })
     }
 }
 
@@ -388,7 +400,7 @@ struct ServingFeatureCard<Control: View>: View {
         }
         .padding(WorkbenchSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: WorkbenchRadius.control).strokeBorder(WorkbenchColor.muted.opacity(0.25)))
+        .background(RoundedRectangle(cornerRadius: WorkbenchRadius.control).strokeBorder(WorkbenchColor.muted.opacity(.stroke)))
         .contentShape(Rectangle())
         .help(detail)
     }

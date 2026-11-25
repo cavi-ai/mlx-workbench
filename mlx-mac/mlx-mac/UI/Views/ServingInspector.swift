@@ -248,24 +248,26 @@ struct ServingInspector<Content: View>: View {
     }
 
     /// "Model default" / "This endpoint" under a field; Reset previews returning it to the model default.
-    private func marker(_ key: ServingSettingKey, label: String? = nil) -> AnyView {
-        guard let slot, slot.overrides != nil else { return AnyView(EmptyView()) }
-        return AnyView(HStack {
-            if let label { Text(label).font(WorkbenchTypography.label) }
-            Text(ServingInspectorPresentation.sourceLabel(key, slot: slot))
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            Spacer()
-            if slot.overrides?.contains(key) == true {
-                Button("Reset") {
-                    busy = true; error = nil
-                    Task {
-                        do { preview = try await endpoint.previewResettingOverrides(id: slot.id, keys: [key]) }
-                        catch { self.error = AppHost.render(error) }
-                        busy = false
-                    }
-                }.buttonStyle(.borderless).disabled(slot.enabled || busy)
+    @ViewBuilder
+    private func marker(_ key: ServingSettingKey, label: String? = nil) -> some View {
+        if let slot, slot.overrides != nil {
+            HStack {
+                if let label { Text(label).font(WorkbenchTypography.label) }
+                Text(ServingInspectorPresentation.sourceLabel(key, slot: slot))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Spacer()
+                if slot.overrides?.contains(key) == true {
+                    Button("Reset") {
+                        busy = true; error = nil
+                        Task {
+                            do { preview = try await endpoint.previewResettingOverrides(id: slot.id, keys: [key]) }
+                            catch { self.error = AppHost.render(error) }
+                            busy = false
+                        }
+                    }.buttonStyle(.borderless).disabled(slot.enabled || busy)
+                }
             }
-        })
+        }
     }
 
     @ViewBuilder

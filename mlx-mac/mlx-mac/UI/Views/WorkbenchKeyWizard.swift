@@ -169,7 +169,7 @@ struct WorkbenchKeyWizard: View {
                     catch { message = AppHost.render(error) }
                 }
             }
-            Text(setup.exportTemplate).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+            Text(setup.exportTemplate).font(WorkbenchTypography.value).textSelection(.enabled)
             Button("Copy template") { ServedModelsSelection.copy(setup.exportTemplate) }
             Button("Set up an app…") { showsSetup = true }
         }

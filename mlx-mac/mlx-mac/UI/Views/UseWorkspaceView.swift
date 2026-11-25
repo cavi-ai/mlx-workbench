@@ -312,10 +312,10 @@ struct UseWorkspaceView: View {
                         case .chooseRole, .noModel: break
                         }
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             Text("\(choice.role.title) · :\(String(choice.port))")
                             if let replaced = choice.replacesName {
-                                Text("Replaces \(replaced)").font(.caption).foregroundStyle(.secondary)
+                                Text("Replaces \(replaced)").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.disabled(chatServerBusy).accessibilityIdentifier("use-role-\(choice.role.rawValue)")

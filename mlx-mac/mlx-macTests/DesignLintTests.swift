@@ -31,10 +31,11 @@ final class DesignLintTests: XCTestCase {
     }
 
     @MainActor
-    func testSurfaceAndWellStepAboveTheSystemWindowBackground() throws {
+    func testSurfaceAndWellStepAboveTheWindowCanvas() throws {
         for name in [NSAppearance.Name.aqua, .darkAqua] {
             let appearance = try XCTUnwrap(NSAppearance(named: name))
-            let window = resolved(NSColor.windowBackgroundColor, in: appearance)
+            // Themed windows paint the canvas token as their background.
+            let window = resolved(WorkbenchColor.canvas, in: appearance)
             let surface = resolved(WorkbenchColor.surface, in: appearance).composited(over: window)
             let well = resolved(WorkbenchColor.well, in: appearance).composited(over: window)
             let surfaceRatio = ratio(surface, window), wellRatio = ratio(well, window)

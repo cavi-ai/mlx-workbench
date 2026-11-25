@@ -82,7 +82,7 @@ enum ServingWorkspacePresentation {
     /// Red when the row needs attention, green while running, muted otherwise.
     static func dotColor(_ row: ServingRow) -> Color {
         if attentionReason(row) != nil { return WorkbenchColor.failure }
-        return isRunning(row) ? WorkbenchColor.success : WorkbenchColor.muted.opacity(0.5)
+        return isRunning(row) ? WorkbenchColor.success : WorkbenchColor.muted
     }
     static func baseURL(_ row: ServingRow) -> String? {
         if case .endpoint(let slot, _, _) = row { return "http://127.0.0.1:\(slot.port)/v1" }
