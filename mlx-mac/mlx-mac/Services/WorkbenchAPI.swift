@@ -1555,6 +1555,13 @@ actor WorkbenchAPI {
                 guard let id = value.string("id"), let installed = value.bool("installed") else { return nil }
                 return OutputBackend(id: id, installed: installed)
             }
+            let provenance = raw["provenance"] as? [String: Any]
+            let projector = (provenance?["projector"] as? [String: Any]).flatMap { value -> MLXOutput.Projector? in
+                guard provenance?.string("tool") == "mlx-agent.gguf",
+                      let path = value.string("path"), path.hasPrefix("/"),
+                      let bytes = try? value.requiredInt64("bytes", at: "outputs.provenance.projector.bytes"), bytes > 0 else { return nil }
+                return MLXOutput.Projector(path: path, bytes: bytes)
+            }
             return MLXOutput(
                 path: path,
                 name: raw.string("name") ?? path,
@@ -1565,7 +1572,8 @@ actor WorkbenchAPI {
                 runtime: raw.string("runtime"),
                 backend: backend,
                 splashFamily: (raw["splash"] as? [String: Any])?.string("family"),
-                precision: raw.string("precision")
+                precision: raw.string("precision"),
+                projector: projector
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {

@@ -80,6 +80,8 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable, Sendable {
     var reclaimSourceAfterVerification: Bool? = nil
     /// Bit widths intake or the GGUF scan allows for this source; nil means 4 and 8.
     var allowedBits: [Int]? = nil
+    /// The Library selected this sidecar and the conversion preview must include it.
+    var expectedProjectorPath: String? = nil
 
     var persistenceIdentifier: String {
         id.uuidString

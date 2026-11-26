@@ -173,6 +173,8 @@ struct LibraryModel: Codable, Equatable, Hashable {
     let sourcePaths: [String]
     let outputPaths: [String]
     let evidence: [String]
+    /// Outputs that used this sidecar. These paths don't identify the projector as a runnable model.
+    let projectorOutputPaths: [String]?
 
     var modelItem: ModelItem { item }
     var familyKey: String { normalizedFamilyKey }
@@ -185,7 +187,8 @@ struct LibraryModel: Codable, Equatable, Hashable {
         capabilities: [UseCase]? = nil,
         sourcePaths: [String]? = nil,
         outputPaths: [String]? = nil,
-        evidence: [String]? = nil
+        evidence: [String]? = nil,
+        projectorOutputPaths: [String]? = nil
     ) {
         let derivedFamilyKey = normalizedFamilyKey ?? Self.normalizeFamilyKey(from: item)
         let derivedDisplayName = displayName ?? Self.makeDisplayName(from: item, normalizedFamilyKey: derivedFamilyKey)
@@ -200,6 +203,7 @@ struct LibraryModel: Codable, Equatable, Hashable {
         self.capabilities = derivedCapabilities
         self.sourcePaths = derivedSourcePaths
         self.outputPaths = derivedOutputPaths
+        self.projectorOutputPaths = projectorOutputPaths
         self.evidence = evidence ?? Self.makeEvidence(
             from: item,
             normalizedFamilyKey: derivedFamilyKey,
@@ -228,7 +232,7 @@ struct LibraryModel: Codable, Equatable, Hashable {
         case "ready", "converted", "available":
             return .ready
         case "needsconversion", "pending", "queued":
-            return .needsConversion
+            return item.isUnsupportedDraft ? .companion : .needsConversion
         case "companion":
             return .companion
         case "needsruntime", "runtimemissing", "missingruntime":

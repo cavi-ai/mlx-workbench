@@ -310,7 +310,7 @@ The engine labels each model with a task type. The type decides what the app off
 | Embedding, other | No | None | None |
 | Speculative drafter | Never | None | None |
 
-Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own. Vision projector files and drafters that no port converts are **Companion**: they have no conversion of their own, so the inspector offers **Convert base model…** when the base GGUF is in the same folder and still needs conversion, or **Get base model…** to open the intake window for the repository the file came from.
+Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own. Drafters without a conversion port and unattached vision projectors appear as **Companion**. **Convert base model…** appears when the companion identifies one matching, pending GGUF in its folder. A projector opened this way must appear in the conversion preview before you can confirm. **Get base model…** opens intake when the scan identifies a base repository or the repository containing the projector bundle.
 
 ## Model sources
 

@@ -221,7 +221,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         return true
     }
 
-    func inspect(source: ModelItem, snapshot: LibrarySnapshot?, qBits: Int = 4) {
+    func inspect(source: ModelItem, snapshot: LibrarySnapshot?, qBits: Int = 4, expectedProjectorPath: String? = nil) {
         selectedSource = source
         selectedSnapshot = snapshot
         conversionPreviewQBits = nil
@@ -250,7 +250,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
                     source: source,
                     outputPath: output.path,
                     state: .inspectingSource,
-                    message: "Ready to preview conversion."
+                    message: "Ready to preview conversion.",
+                    expectedProjectorPath: expectedProjectorPath
                 )
             )
         case .blocked(let output, let reason):
@@ -260,7 +261,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
                     outputPath: output.path,
                     state: .failed,
                     message: reason,
-                    errorMessage: reason
+                    errorMessage: reason,
+                    expectedProjectorPath: expectedProjectorPath
                 )
             )
         }
@@ -397,15 +399,27 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
         conversionPreviewQBits = qBits
         conversionPreviewOutput = output
-        update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil))
+        update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil), clearPreviewHash: true)
         do {
             let response = try await api.convertPreview(workflow.sourcePath, qBits, output)
+            guard workflow.id == requestedID else { return }
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 await fail("Conversion preview did not include a preview hash.")
                 return
             }
-            update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: "Preview ready for confirmation.", errorMessage: .some(nil))
+            var message = "Preview ready for confirmation."
+            if let expected = workflow.expectedProjectorPath {
+                let name = URL(fileURLWithPath: expected).lastPathComponent
+                guard let projector = (response["projector"] as? [String: Any])?.string("path"),
+                      projector.hasPrefix("/"), HFRepoID.matches(expected, projector) else {
+                    await fail("The conversion preview does not include \(name). Check that it is the only compatible projector beside the base model, then preview again.")
+                    return
+                }
+                message = "Preview includes \(name) and is ready for confirmation."
+            }
+            update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: message, errorMessage: .some(nil))
         } catch {
+            guard workflow.id == requestedID else { return }
             await fail("Conversion preview failed: \(AppHost.render(error))")
         }
     }
@@ -1142,7 +1156,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         state: ConversionWorkflowState,
         completedModelPath: String? = nil,
         message: String? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        expectedProjectorPath: String? = nil
     ) -> ConversionWorkflow {
         var record = makeWorkflow(
             sourcePath: source.path, sourceModelKey: source.modelKey, sourceSignature: source.signature,
@@ -1150,6 +1165,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             message: message, errorMessage: errorMessage
         )
         record.allowedBits = source.qBits
+        record.expectedProjectorPath = expectedProjectorPath
         return record
     }
 
@@ -1280,7 +1296,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
             subfolder: base.subfolder,
             localSourcePath: base.localSourcePath,
             reclaimSourceAfterVerification: base.reclaimSourceAfterVerification,
-            allowedBits: base.allowedBits
+            allowedBits: base.allowedBits,
+            expectedProjectorPath: base.expectedProjectorPath
         )
     }
 

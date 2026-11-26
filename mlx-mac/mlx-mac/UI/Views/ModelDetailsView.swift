@@ -17,7 +17,7 @@ struct ModelActions {
     /// no port converts only run beside their model, so they offer nothing.
     var canPrepare: Bool {
         (model.readiness != .ready || model.item.path.lowercased().hasSuffix(".gguf")) && !model.item.isCompanion
-            && !(model.item.draft != nil && model.item.draft?.port == nil)
+            && !model.item.isUnsupportedDraft
     }
 
     /// The prepare action's label: unconverted weights convert, everything else is prepared.
@@ -29,7 +29,7 @@ struct ModelActions {
     }
 
     /// The converted model a projector was attached to.
-    var attachedOutput: String? { model.item.isCompanion ? model.outputPaths.first : nil }
+    var attachedOutput: String? { model.readiness == .ready ? model.projectorOutputPaths?.first : nil }
 
     /// Run serves chat models. Compare also supports ready media models.
     var canServe: Bool { ModelTaskPresentation.supportsEndpoint(model) }
@@ -74,10 +74,11 @@ struct ModelActions {
         convert(model)
     }
 
-    /// Opens Convert for a model's GGUF; a companion's base converts with its projector attached.
-    func convert(_ source: LibraryModel) {
+    /// Opens Convert for a model's GGUF, requiring the selected projector when launched from its inspector.
+    func convert(_ source: LibraryModel, expectedProjectorPath: String? = nil) {
         appHost.selectedModelPath = source.item.path
-        appHost.modelWorkflow.inspect(source: source.item, snapshot: appHost.librarySnapshot, qBits: appHost.config.qBits)
+        appHost.modelWorkflow.inspect(source: source.item, snapshot: appHost.librarySnapshot,
+                                      qBits: appHost.config.qBits, expectedProjectorPath: expectedProjectorPath)
         onRouteSelection(.prepare)
     }
 
@@ -121,20 +122,46 @@ struct ModelActions {
 
 /// The base model step a companion offers, resolved from the latest Library snapshot.
 enum CompanionBase: Equatable {
-    /// The base GGUF sits beside the companion and still needs conversion.
+    /// A uniquely identified base GGUF beside the companion still needs conversion.
     case convert(LibraryModel)
-    /// The base is not on disk; the companion's repository provides it.
+    /// Open the base or projector bundle repository in Intake for review.
     case download(repo: String)
 
     static func resolve(for model: LibraryModel, in models: [LibraryModel]) -> CompanionBase? {
         guard model.readiness == .companion else { return nil }
-        let folder = (model.item.path as NSString).deletingLastPathComponent
-        let base = models.first { candidate in
-            candidate.readiness == .needsConversion && candidate.item.draft == nil && !candidate.item.isCompanion
-                && (candidate.item.path as NSString).deletingLastPathComponent == folder
+        let item = model.item
+        let folder = (item.path as NSString).deletingLastPathComponent
+        let declaredName = item.identity?.baseModelName ?? item.draft?.target
+        let name = declaredName.map { value in
+            value.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains).map(String.init).joined()
+        }.flatMap { $0.isEmpty ? nil : $0 }
+        let repo = repositoryID(item.identity?.baseModelRepo)
+        let candidates = models.filter { candidate in
+            let source = candidate.item
+            guard candidate.readiness == .needsConversion, source.draft == nil, !source.isCompanion,
+                  source.path.lowercased().hasSuffix(".gguf"), (source.path as NSString).deletingLastPathComponent == folder,
+                  name.map({ $0 == candidate.normalizedFamilyKey }) ?? true else { return false }
+            let sourceRepos = [repositoryID(source.repo), repositoryID(source.identity?.baseModelRepo)].compactMap { $0 }
+            if let repo, !sourceRepos.isEmpty {
+                return sourceRepos.contains { $0.caseInsensitiveCompare(repo) == .orderedSame }
+            }
+            return name != nil
         }
-        if let base { return .convert(base) }
-        return model.item.repo.map { .download(repo: $0) }
+        if candidates.count == 1, let base = candidates.first { return .convert(base) }
+        guard candidates.isEmpty else { return nil }
+        return (repo ?? (item.isCompanion ? repositoryID(item.repo) : nil)).map { .download(repo: $0) }
+    }
+
+    private static func repositoryID(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        let repo: String
+        if let url = URL(string: raw), url.scheme != nil {
+            guard url.scheme == "https", url.host?.lowercased() == "huggingface.co" else { return nil }
+            repo = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        } else {
+            repo = raw
+        }
+        return repo.range(of: #"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil ? repo : nil
     }
 }
 
@@ -173,8 +200,9 @@ enum ModelDetailsPresentation {
         if !extraSources.isEmpty {
             rows.append(DetailRow("Source", extraSources.joined(separator: "\n")))
         }
-        if !model.outputPaths.isEmpty {
-            rows.append(DetailRow("Outputs", model.outputPaths.joined(separator: "\n")))
+        let outputs = model.projectorOutputPaths ?? model.outputPaths
+        if !outputs.isEmpty {
+            rows.append(DetailRow("Outputs", outputs.joined(separator: "\n")))
         }
         rows.append(DetailRow("Architecture", known(model.item.architecture)))
         if let task = model.item.task {
@@ -230,7 +258,7 @@ enum ModelDetailsPresentation {
             if model.item.servingRuntime == "strata" {
                 return "A local GGUF profile is prepared for the Strata runtime."
             }
-            if model.item.isCompanion, !model.outputPaths.isEmpty {
+            if model.projectorOutputPaths?.isEmpty == false {
                 return "This projector was attached to its base model's MLX conversion."
             }
             if !model.outputPaths.isEmpty {
@@ -243,7 +271,7 @@ enum ModelDetailsPresentation {
             if model.item.draft != nil {
                 return "No MLX port converts this drafter; it runs beside its target model."
             }
-            return "A projector has no conversion of its own; converting its base model attaches it."
+            return "A projector can be attached when you convert a compatible base model."
         case .needsRuntime:
             if let backend = model.item.backend, !backend.installed {
                 return "The \(backend.id) backend that runs this model is not installed. Repair runtime opens its installation review in Health."
@@ -397,6 +425,7 @@ struct ModelDetailsView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var verification: VerificationCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
+    @ObservedObject private var intake: IntakeCoordinator
 
     let model: LibraryModel
     let prominentTitle: Bool
@@ -406,6 +435,7 @@ struct ModelDetailsView: View {
         self.appHost = appHost
         _verification = ObservedObject(wrappedValue: appHost.verification)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        _intake = ObservedObject(wrappedValue: appHost.intake)
         self.model = model
         self.prominentTitle = prominentTitle
         self.onRouteSelection = onRouteSelection
@@ -573,15 +603,18 @@ struct ModelDetailsView: View {
                 .buttonStyle(.workbenchPrimary).controlSize(.large)
                 .help("Show the MLX model this projector was converted into")
         case .base(.convert(let base)):
-            Button { actions.convert(base) } label: { Text("Convert base model…").frame(maxWidth: .infinity) }
+            Button {
+                actions.convert(base, expectedProjectorPath: model.item.isCompanion ? model.item.path : nil)
+            } label: { Text("Convert base model…").frame(maxWidth: .infinity) }
                 .buttonStyle(.workbenchPrimary).controlSize(.large)
                 .help("Open Convert for \(base.displayName)")
         case .base(.download(let repo)):
             Button {
-                DiscoverIntakeAction.perform(repo: repo, intake: appHost.intake) { openWindow(id: IntakeWindow.id) }
+                DiscoverIntakeAction.perform(repo: repo, intake: intake) { openWindow(id: IntakeWindow.id) }
             } label: { Text("Get base model…").frame(maxWidth: .infinity) }
                 .buttonStyle(.workbenchPrimary).controlSize(.large)
-                .help("Opens the intake window for \(repo); nothing downloads until you confirm there")
+                .disabled(!DiscoverIntakeAction.isEnabled(intakeIsBusy: intake.isBusy))
+                .help(DiscoverIntakeAction.help(intakeIsBusy: intake.isBusy))
         case .use:
             let title = UseMode.modes(for: model).first == .chat ? "Chat" : "Use"
             Button { actions.use() } label: {

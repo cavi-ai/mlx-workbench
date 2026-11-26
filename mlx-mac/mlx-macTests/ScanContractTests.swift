@@ -20,42 +20,60 @@ final class ScanContractTests: XCTestCase {
 
     func testCompanionScanStatesOfferTheirBaseModelStep() throws {
         let hauhau = "/models/lmstudio/HauhauCS/Qwen-MTP-GGUF"
-        let output = "/models/lmstudio/DavidAU/Fusion-GGUF/Fusion-Q6_K-MLX-6bit"
+        let base = "/models/Base/Base-Q4_K_M.gguf"
+        let drafter = "\(hauhau)/Qwen-FastMTP.gguf"
         var payload = fixture(named: "convert-scan-valid")
         payload["models"] = [
-            ["path": "/models/lmstudio/DavidAU/Fusion-GGUF/mmproj-F32.gguf", "name": "mmproj-F32.gguf", "bytes": 1,
-             "companion": true, "status": "converted", "outputs": [output], "task": ["type": "vision_projector"]],
-            ["path": "\(hauhau)/Qwen-FastMTP.gguf", "name": "Qwen-FastMTP.gguf", "bytes": 1, "companion": false,
-             "status": "companion", "outputs": [], "draft": ["port": NSNull(), "target": "Qwen-FastMTP"],
+            ["path": drafter, "name": "Qwen-FastMTP.gguf", "bytes": 1, "companion": false,
+             "status": "pending", "outputs": [], "q_bits": [], "draft": ["port": NSNull(), "target": "Qwen"],
+             "identity": ["base_model_repo": "https://huggingface.co/Qwen/Qwen-Base"],
              "task": ["type": "speculative_draft", "use_cases": ["speculative_decoding"]]],
-            ["path": "\(hauhau)/mmproj-BF16.gguf", "name": "mmproj-BF16.gguf", "bytes": 1, "companion": true,
-             "status": "companion", "outputs": [], "task": ["type": "vision_projector"]],
-            ["path": "/models/lmstudio/org/Base-GGUF/Base-Q4_K_M.gguf", "name": "Base-Q4_K_M.gguf", "bytes": 1,
-             "status": "pending", "outputs": []],
-            ["path": "/models/lmstudio/org/Base-GGUF/mmproj-F16.gguf", "name": "mmproj-F16.gguf", "bytes": 1,
+            ["path": "/models/Base/A-Unrelated.gguf", "name": "A-Unrelated.gguf", "bytes": 1,
+             "model_key": "unrelated", "status": "pending", "outputs": []],
+            ["path": base, "name": "Base-Q4_K_M.gguf", "bytes": 1,
+             "model_key": "target-base", "status": "pending", "outputs": []],
+            ["path": "/models/Base/mmproj-F16.gguf", "name": "mmproj-F16.gguf", "bytes": 1,
+             "companion": true, "status": "companion", "outputs": [], "identity": ["base_model_name": "Target Base"]],
+            ["path": "/models/Base/mmproj-F32.gguf", "name": "mmproj-F32.gguf", "bytes": 1,
              "companion": true, "status": "companion", "outputs": []],
         ]
-        payload["pending"] = ["/models/lmstudio/org/Base-GGUF/Base-Q4_K_M.gguf"]
-        payload["local_models"] = [
-            ["path": "\(hauhau)/Qwen-FastMTP.gguf", "repo": "HauhauCS/Qwen-MTP-GGUF"],
-            ["path": "\(hauhau)/mmproj-BF16.gguf", "repo": "HauhauCS/Qwen-MTP-GGUF"],
-        ]
+        payload["pending"] = [base, drafter]
+        payload["local_models"] = [["path": drafter, "repo": "HauhauCS/Qwen-MTP-GGUF"]]
         let snapshot = ModelLibraryBuilder.build(scan: try WorkbenchAPI.decodeScan(payload),
             hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 64_000_000_000, macOSVersion: "26"), now: Date())
         func model(_ name: String) throws -> LibraryModel { try XCTUnwrap(snapshot.models.first { $0.item.name == name }) }
 
-        let attached = try model("mmproj-F32.gguf")
-        XCTAssertEqual(attached.readiness, .ready)
-        XCTAssertEqual(attached.outputPaths, [output])
-        let drafter = try model("Qwen-FastMTP.gguf")
-        XCTAssertEqual(drafter.readiness, .companion)
-        XCTAssertEqual(drafter.item.task?.type, .speculativeDraft)
-        XCTAssertEqual(CompanionBase.resolve(for: drafter, in: snapshot.models), .download(repo: "HauhauCS/Qwen-MTP-GGUF"))
-        let loose = try model("mmproj-BF16.gguf")
-        XCTAssertEqual(loose.readiness, .companion)
-        XCTAssertEqual(CompanionBase.resolve(for: loose, in: snapshot.models), .download(repo: "HauhauCS/Qwen-MTP-GGUF"))
+        let draftModel = try model("Qwen-FastMTP.gguf")
+        XCTAssertEqual(draftModel.readiness, .companion)
+        XCTAssertEqual(draftModel.item.task?.type, .speculativeDraft)
+        XCTAssertEqual(CompanionBase.resolve(for: draftModel, in: snapshot.models), .download(repo: "Qwen/Qwen-Base"))
         XCTAssertEqual(CompanionBase.resolve(for: try model("mmproj-F16.gguf"), in: snapshot.models),
                        .convert(try model("Base-Q4_K_M.gguf")))
+        XCTAssertNil(CompanionBase.resolve(for: try model("mmproj-F32.gguf"), in: snapshot.models))
+    }
+
+    func testProjectorAttachmentUsesScannedOutputProvenance() throws {
+        let projector = "/models/Vision/mmproj-F16.gguf"
+        let output = "/models/Vision/Vision-MLX-4bit"
+        func provenance(projectorPath: String, bytes: Int) -> [String: Any] {
+            ["schema_version": "1.0", "tool": "mlx-agent.gguf", "source": ["kind": "gguf", "path": "/models/Vision/Vision.gguf"],
+             "projector": ["path": projectorPath, "name": "mmproj-F16.gguf", "bytes": bytes]]
+        }
+        var payload = fixture(named: "convert-scan-valid")
+        payload["models"] = [["path": projector, "name": "mmproj-F16.gguf", "bytes": 123,
+                              "companion": true, "status": "companion", "outputs": []]]
+        payload["outputs"] = [
+            ["path": output, "provenance": provenance(projectorPath: projector, bytes: 123)],
+            ["path": "/models/Vision/stale-MLX", "provenance": provenance(projectorPath: projector, bytes: 122)],
+            ["path": "/models/Other/other-MLX", "provenance": provenance(projectorPath: "/models/Other/mmproj-F16.gguf", bytes: 123)],
+        ]
+        let snapshot = ModelLibraryBuilder.build(scan: try WorkbenchAPI.decodeScan(payload),
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 64_000_000_000, macOSVersion: "26"), now: Date())
+        let attached = try XCTUnwrap(snapshot.models.first { $0.item.path == projector })
+        XCTAssertEqual(attached.readiness, .ready)
+        XCTAssertTrue(attached.outputPaths.isEmpty, "A projector is not a serving alias for the output")
+        let rows = ModelDetailsPresentation.identityRows(for: attached, prepareDestination: nil)
+        XCTAssertTrue(rows.contains { $0.label == "Outputs" && $0.value == output })
     }
 
     func testScanPreservesAdvertisedConversionWidthsAndEmptyCapabilities() throws {

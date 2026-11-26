@@ -16,6 +16,25 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testCompanionConversionCanConfirmOnlyTheSelectedProjector() async {
+        let projector = "/Models/mmproj-F16.gguf"
+        let matching = await makeHost(preview: ["preview_hash": "matching", "projector": ["path": projector]])
+        matching.modelWorkflow.inspect(source: ggufSource, snapshot: nil, expectedProjectorPath: projector)
+        await matching.modelWorkflow.preview(qBits: 4, out: nil)
+        XCTAssertEqual(matching.modelWorkflow.workflow.state, .readyToConfirm)
+        let reviewed = matching.modelWorkflow.workflow
+        await matching.modelWorkflow.confirm(qBits: 4)
+        XCTAssertEqual(matching.modelWorkflow.workflow.state, .queued)
+
+        let wrong = await makeHost(preview: ["preview_hash": "wrong", "projector": ["path": "/Other/mmproj-F16.gguf"]])
+        wrong.modelWorkflow.restore(reviewed)
+        await wrong.modelWorkflow.preview(qBits: 4, out: nil)
+        XCTAssertEqual(wrong.modelWorkflow.workflow.state, .failed)
+        XCTAssertNil(wrong.modelWorkflow.workflow.previewHash)
+        XCTAssertTrue(wrong.modelWorkflow.workflow.errorMessage?.contains("does not include mmproj-F16.gguf") == true)
+    }
+
+    @MainActor
     func testChangePrecisionInvalidatesPreviewAndUpdatesGGUFDestination() async {
         let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
         var source = ggufSource
