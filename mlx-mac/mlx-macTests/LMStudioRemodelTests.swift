@@ -357,7 +357,7 @@ final class LMStudioRowsTests: XCTestCase {
         let rows = F.rows(presentation, .gguf)
         XCTAssertEqual(rows.count, 1)
         let size = ByteCountFormatter.string(fromByteCount: 1_800_000_000, countStyle: .file)
-        XCTAssertEqual(rows[0].tags, [.visionProjector(help: "mmproj-F16.gguf (\(size)) isn't converted; the MLX output is text only.")])
+        XCTAssertEqual(rows[0].tags, [.visionProjector(help: "mmproj-F16.gguf (\(size)) was found beside this GGUF.")])
         XCTAssertEqual(rows[0].tags[0].title, "Vision projector")
         XCTAssertEqual(rows[0].action, .prepare)
     }

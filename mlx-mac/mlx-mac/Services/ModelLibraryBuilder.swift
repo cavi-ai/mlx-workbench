@@ -33,8 +33,24 @@ enum ModelLibraryBuilder {
         duplicatePaths: Set<String>,
         pendingPaths: Set<String>
     ) -> [LibraryModel] {
+        func projectorIdentity(path: String, bytes: Int64) -> MLXOutput.Projector {
+            let path = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+            return MLXOutput.Projector(path: path, bytes: bytes)
+        }
+        var outputsByProjector: [MLXOutput.Projector: [String]] = [:]
+        for output in scan.outputs {
+            guard let projector = output.projector else { continue }
+            let identity = projectorIdentity(path: projector.path, bytes: projector.bytes)
+            outputsByProjector[identity, default: []].append(output.path)
+        }
+        let scannedOutputs = Set(scan.outputs.map(\.path))
         let ggufModels = scan.models.map { item in
-            LibraryModel(
+            var projectorOutputs: [String]? = nil
+            if item.isCompanion {
+                let identity = projectorIdentity(path: item.path, bytes: item.bytes)
+                projectorOutputs = uniqueStrings((outputsByProjector[identity] ?? []) + item.outputs.filter(scannedOutputs.contains))
+            }
+            return LibraryModel(
                 item: item,
                 normalizedFamilyKey: normalizedFamilyKey(
                     modelKey: item.modelKey,
@@ -44,9 +60,12 @@ enum ModelLibraryBuilder {
                 displayName: displayName(path: item.path, fallbackName: item.name),
                 readiness: readiness(
                     for: item,
+                    projectorOutputs: projectorOutputs,
                     duplicatePaths: duplicatePaths,
                     pendingPaths: pendingPaths
-                )
+                ),
+                outputPaths: item.isCompanion ? [] : nil,
+                projectorOutputPaths: projectorOutputs
             )
         }
         let outputModels = scan.outputs.map { output in
@@ -130,6 +149,7 @@ enum ModelLibraryBuilder {
 
     private static func readiness(
         for item: ModelItem,
+        projectorOutputs: [String]?,
         duplicatePaths: Set<String>,
         pendingPaths: Set<String>
     ) -> ModelReadiness {
@@ -147,6 +167,12 @@ enum ModelLibraryBuilder {
         }
         if ["missingruntime", "needsruntime", "runtimemissing"].contains(status) {
             return .needsRuntime
+        }
+        if let projectorOutputs {
+            return projectorOutputs.isEmpty ? .companion : .ready
+        }
+        if item.isUnsupportedDraft {
+            return .companion
         }
         if duplicatePaths.contains(item.path) {
             return .duplicate

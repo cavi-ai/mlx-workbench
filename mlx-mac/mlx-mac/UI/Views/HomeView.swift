@@ -110,6 +110,8 @@ struct HomeNextAction: Equatable {
             return .init(kind: .run(path), title: "Run selected model", reason: "\(name) is ready for a serve preview. Review the runtime, memory fit and port in Run.", route: AppRoute.run.rawValue)
         case .needsRuntime:
             return .init(kind: .openModel(path), title: "Repair the selected model's runtime", reason: "\(name) is marked \(model.readiness.title). Open the model in Library to review runtime repair.", route: AppRoute.library.rawValue)
+        case .companion:
+            return .init(kind: .openModel(path), title: "Open selected model", reason: "\(name) runs beside its base model. Its Library inspector offers the base model action.", route: AppRoute.library.rawValue)
         case .incompleteCache, .unsupported, .duplicate, .quarantined:
             return .init(kind: .openModel(path), title: "Review selected model", reason: "\(name) is marked \(model.readiness.title). Review its details in Library before choosing another action.", route: AppRoute.library.rawValue)
         }

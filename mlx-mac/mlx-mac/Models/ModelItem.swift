@@ -41,9 +41,11 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     var qBits: [Int]? = nil
     /// The model family Splash's engine serves this output as; nil when Splash does not serve it or is not installed.
     var splashFamily: String? = nil
+    /// The Hugging Face repository the scan's local record names for this file, when it knows one.
+    var repo: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case path, name, bytes, shard, architecture, quantization, parameters
+        case path, name, bytes, shard, architecture, quantization, parameters, repo
         case structure, signature, companion, readable, status, outputs, error, task, draft, backend, identity
         case qBits = "q_bits"
         case splashFamily = "splash_family"
@@ -55,8 +57,9 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
 
     var id: String { path }
 
-    /// A vision projector or similar sidecar that runs only beside its model.
-    var isCompanion: Bool { status == "companion" || companion == true }
+    /// A vision projector or similar sidecar that runs only beside its model; drafters are described by `draft`.
+    var isCompanion: Bool { draft == nil && (status == "companion" || companion == true) }
+    var isUnsupportedDraft: Bool { draft != nil && draft?.port == nil }
 
     init(path: String, name: String, bytes: Int64, modifiedAt: Int?, shard: String?,
          modelKey: String?, architecture: String?, quantization: String?, parameters: String?,
@@ -244,6 +247,11 @@ struct ScanRoots: Codable, Equatable {
 }
 
 struct MLXOutput: Codable, Equatable, Identifiable, Hashable {
+    struct Projector: Codable, Equatable, Hashable {
+        let path: String
+        let bytes: Int64
+    }
+
     let path: String
     let name: String
     let modelKey: String?
@@ -256,9 +264,10 @@ struct MLXOutput: Codable, Equatable, Identifiable, Hashable {
     /// The family Splash's engine finds this output's config to describe, as the scan reports it.
     var splashFamily: String? = nil
     var precision: String? = nil
+    var projector: Projector? = nil
 
     enum CodingKeys: String, CodingKey {
-        case path, name, quantization, provenance, task, runtime, backend, precision
+        case path, name, quantization, provenance, task, runtime, backend, precision, projector
         case modelKey = "model_key"
         case splashFamily = "splash_family"
     }

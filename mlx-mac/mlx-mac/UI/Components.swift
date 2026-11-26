@@ -138,6 +138,8 @@ struct WorkbenchStatus: Equatable {
             self = WorkbenchStatus(label: "Verification Failed", tone: .failure)
         case "needsconversion":
             self = WorkbenchStatus(label: "Needs Conversion", tone: .warning)
+        case "companion":
+            self = WorkbenchStatus(label: "Companion", tone: .information)
         case "needsruntime":
             self = WorkbenchStatus(label: "Needs Runtime", tone: .warning)
         case "incompletecache":

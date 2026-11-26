@@ -478,7 +478,7 @@ private struct RowContext {
 
         var tags: [LMStudioRow.Tag] = []
         var action: LMStudioRow.Action = .prepare
-        if unreadable {
+        if unreadable || model.readiness == .companion {
             action = .none
         } else if !item.outputs.isEmpty {
             tags.append(.converted)
@@ -486,8 +486,11 @@ private struct RowContext {
             action = output.map { .run(path: $0.item.path) } ?? .none
         }
         if !entry.companions.isEmpty {
-            let help = entry.companions.map {
-                "\($0.item.name) (\(ByteCountFormatter.string(fromByteCount: $0.item.bytes, countStyle: .file))) isn't converted; the MLX output is text only."
+            let help = entry.companions.map { projector in
+                let size = ByteCountFormatter.string(fromByteCount: projector.item.bytes, countStyle: .file)
+                let attached = projector.projectorOutputPaths?.contains(where: item.outputs.contains) == true
+                let description = attached ? "is attached to a converted output for this model" : "was found beside this GGUF"
+                return "\(projector.item.name) (\(size)) \(description)."
             }.joined(separator: " ")
             tags.append(.visionProjector(help: help))
         }

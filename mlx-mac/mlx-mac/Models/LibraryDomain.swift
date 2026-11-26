@@ -48,6 +48,8 @@ enum UseCase: String, CaseIterable, Codable, Identifiable {
 enum ModelReadiness: String, CaseIterable, Codable, Identifiable {
     case ready = "ready"
     case needsConversion = "needs_conversion"
+    /// A projector or drafter that runs beside its base model and has no conversion of its own.
+    case companion = "companion"
     case needsRuntime = "needs_runtime"
     case incompleteCache = "incomplete_cache"
     case unsupported = "unsupported"
@@ -62,6 +64,8 @@ enum ModelReadiness: String, CaseIterable, Codable, Identifiable {
             return "Ready"
         case .needsConversion:
             return "Needs Conversion"
+        case .companion:
+            return "Companion"
         case .needsRuntime:
             return "Needs Runtime"
         case .incompleteCache:
@@ -87,6 +91,8 @@ enum ModelReadiness: String, CaseIterable, Codable, Identifiable {
             self = .ready
         case "needsconversion", "conversionneeded", "needsconvert":
             self = .needsConversion
+        case "companion":
+            self = .companion
         case "needsruntime", "runtimemissing", "missingruntime":
             self = .needsRuntime
         case "incompletecache", "cacheincomplete":
@@ -167,6 +173,8 @@ struct LibraryModel: Codable, Equatable, Hashable {
     let sourcePaths: [String]
     let outputPaths: [String]
     let evidence: [String]
+    /// Outputs that used this sidecar. These paths don't identify the projector as a runnable model.
+    let projectorOutputPaths: [String]?
 
     var modelItem: ModelItem { item }
     var familyKey: String { normalizedFamilyKey }
@@ -179,7 +187,8 @@ struct LibraryModel: Codable, Equatable, Hashable {
         capabilities: [UseCase]? = nil,
         sourcePaths: [String]? = nil,
         outputPaths: [String]? = nil,
-        evidence: [String]? = nil
+        evidence: [String]? = nil,
+        projectorOutputPaths: [String]? = nil
     ) {
         let derivedFamilyKey = normalizedFamilyKey ?? Self.normalizeFamilyKey(from: item)
         let derivedDisplayName = displayName ?? Self.makeDisplayName(from: item, normalizedFamilyKey: derivedFamilyKey)
@@ -194,6 +203,7 @@ struct LibraryModel: Codable, Equatable, Hashable {
         self.capabilities = derivedCapabilities
         self.sourcePaths = derivedSourcePaths
         self.outputPaths = derivedOutputPaths
+        self.projectorOutputPaths = projectorOutputPaths
         self.evidence = evidence ?? Self.makeEvidence(
             from: item,
             normalizedFamilyKey: derivedFamilyKey,
@@ -222,7 +232,9 @@ struct LibraryModel: Codable, Equatable, Hashable {
         case "ready", "converted", "available":
             return .ready
         case "needsconversion", "pending", "queued":
-            return .needsConversion
+            return item.isUnsupportedDraft ? .companion : .needsConversion
+        case "companion":
+            return .companion
         case "needsruntime", "runtimemissing", "missingruntime":
             return .needsRuntime
         case "incompletecache", "cacheincomplete":
@@ -387,14 +399,16 @@ private extension ModelReadiness {
             return 1
         case .needsConversion:
             return 2
-        case .incompleteCache:
+        case .companion:
             return 3
-        case .unsupported:
+        case .incompleteCache:
             return 4
-        case .duplicate:
+        case .unsupported:
             return 5
-        case .quarantined:
+        case .duplicate:
             return 6
+        case .quarantined:
+            return 7
         }
     }
 }
