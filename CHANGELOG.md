@@ -12,6 +12,25 @@ and is versioned independently; its pin follows mlx-agent `main`.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-26
+### Added
+
+- Serving: the endpoint list opens with **Roles**, one row per serving role on its canonical port. **Choose model…** assigns a role, **Change model…** swaps its model on the same port, **Add custom endpoint…** serves a model on a port you pick, and **Model router…** routes follow each endpoint's role. Up to sixteen endpoints can be saved.
+- Serving: **Serving defaults** store inference settings, memory policy, load on request and Splash preset per model. Endpoints follow them for every field they do not set themselves; the inspector marks each field **Model default** or **This endpoint**, and a changed default previews the endpoints it restarts before saving.
+- Serving: **Presets** lists the chosen preset's settings that differ from the model default with their source, and **Show JSON…** copies it without any key.
+- Serving: **Serving Doctor** opens from Serving, the menu bar and blocked removals, and stopped Strata endpoints offer a serving profile review.
+- Monitor: **Memory** splits physical memory into Activity Monitor's categories and lists the processes using the most; each endpoint has Performance, Settings, Memory, Connection and Source cards, with wait, prompt and decode shares of the last response.
+- Settings: **Appearance → Theme** offers System, Midnight, Graphite and Paper.
+- Library: search matches each model's type, sidebar category and use cases, and Model sources show each model's type as a colored icon and tag.
+- Library: projectors and drafters with no conversion of their own are **Companion**, with **Convert base model…** when the base GGUF is beside them or **Get base model…** for their repository. A projector attached to a converted model is **Ready** with **Open converted model**.
+
+### Changed
+
+- Engine: `mlx-agent` advances from 0.16.0 to 0.17.0 with image segmentation, stem separation, word timestamps, reference-image renders, project Splash caches, stage timing and scan status for attached projectors and port-less drafters.
+- Serving: the front door is the **Workbench API** row at the top of Serving, on **Settings → Serving → Workbench API port** (default 8090). Protected endpoints and the Workbench API share one Workbench key in Keychain, and Quick Connect switches between **Direct** and **Workbench API** snippets.
+- Serving: a selected endpoint is one scrolling form under a pinned bar with its state, base URL, port, key lock and **Start server…**.
+- Removal no longer pauses for engine-owned gateways whose model list needs an API key, or for saved hosts with no server.
+
 ## [0.12.0] - 2026-11-23
 ### Added
 
@@ -619,7 +638,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.13.0
 [0.12.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.12.0
 [0.11.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.11.0
 [0.10.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.10.0
