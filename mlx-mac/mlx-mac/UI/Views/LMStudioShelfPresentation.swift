@@ -478,7 +478,7 @@ private struct RowContext {
 
         var tags: [LMStudioRow.Tag] = []
         var action: LMStudioRow.Action = .prepare
-        if unreadable {
+        if unreadable || model.readiness == .companion {
             action = .none
         } else if !item.outputs.isEmpty {
             tags.append(.converted)

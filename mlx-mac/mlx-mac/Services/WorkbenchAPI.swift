@@ -1505,6 +1505,9 @@ actor WorkbenchAPI {
         guard let modelsRaw = data["models"] as? [[String: Any]] else {
             throw ScanContractError.invalidRequiredField("models")
         }
+        let repos = ((data["local_models"] as? [[String: Any]]) ?? []).reduce(into: [String: String]()) { found, record in
+            if let path = record.string("path"), let repo = record.string("repo"), found[path] == nil { found[path] = repo }
+        }
         let models = try modelsRaw.enumerated().map { index, raw in
             var item = ModelItem(
                 path: try raw.requiredString("path", at: "models[\(index)].path"),
@@ -1525,6 +1528,7 @@ actor WorkbenchAPI {
                 tensorCount: raw.int("tensor_count"),
                 error: raw.string("error"),
                 task: (raw.bool("companion") == true || raw.string("status") == "companion")
+                    && raw["draft"] as? [String: Any] == nil
                     && (raw["task"] as? [String: Any])?["type"] as? String != "vision_projector"
                     ? ModelTask(type: .visionProjector, useCases: [], source: "scan_companion", confidence: "reported")
                     : ModelTask(dictionary: raw["task"] as? [String: Any]),
@@ -1532,6 +1536,7 @@ actor WorkbenchAPI {
             )
             item.identity = ModelIdentity(dictionary: raw["identity"] as? [String: Any])
             item.qBits = raw["q_bits"] as? [Int]
+            item.repo = repos[item.path]
             return item
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []

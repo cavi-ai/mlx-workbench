@@ -85,6 +85,7 @@ final class LibraryDomainTests: XCTestCase {
         XCTAssertEqual(ModelReadiness.allCases.map(\.rawValue), [
             "ready",
             "needs_conversion",
+            "companion",
             "needs_runtime",
             "incomplete_cache",
             "unsupported",

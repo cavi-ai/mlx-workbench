@@ -310,7 +310,7 @@ The engine labels each model with a task type. The type decides what the app off
 | Embedding, other | No | None | None |
 | Speculative drafter | Never | None | None |
 
-Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own. Vision projector files and drafters that no port converts offer no conversion action.
+Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own. Vision projector files and drafters that no port converts are **Companion**: they have no conversion of their own, so the inspector offers **Convert base model…** when the base GGUF is in the same folder and still needs conversion, or **Get base model…** to open the intake window for the repository the file came from.
 
 ## Model sources
 
@@ -393,4 +393,4 @@ Workbench refreshes inventory after a request and distinguishes acceptance from 
 
 The selected model’s inspector shows **Serving · N** when N observed local services use its exact known local paths. It opens Run, where **Served models** lists each service with provider, endpoint, residency, model location and receipt location when reported; the inspector itself no longer lists them. A provider that does not report a file path or loaded state is shown as unknown. Listing a model does not imply that its weights are loaded.
 
-Vision projector GGUF files appear as **Projector**. Their details show the base model and its declared size when present in the header. A declared base size is not the projector’s measured parameter count. Projectors run beside a matching base model, not independently.
+Vision projector GGUF files appear as **Projector**. Their details show the base model and its declared size when present in the header. A declared base size is not the projector’s measured parameter count. Projectors run beside a matching base model, not independently. A projector attached during its base model's conversion is **Ready**, lists that MLX model under **Outputs**, and offers **Open converted model**.

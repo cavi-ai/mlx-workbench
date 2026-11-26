@@ -414,6 +414,7 @@ extension ModelReadiness {
         switch self {
         case .ready: return "checkmark.circle"
         case .needsConversion: return "arrow.triangle.2.circlepath"
+        case .companion: return "link"
         case .needsRuntime: return "wrench.and.screwdriver"
         case .incompleteCache: return "exclamationmark.triangle"
         case .unsupported: return "nosign"

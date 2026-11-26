@@ -157,6 +157,9 @@ enum ModelLibraryBuilder {
         if pendingPaths.contains(item.path) || ["needsconversion", "pending", "queued", "conversionpending"].contains(status) {
             return .needsConversion
         }
+        if status == "companion" {
+            return .companion
+        }
         return .unsupported
     }
 

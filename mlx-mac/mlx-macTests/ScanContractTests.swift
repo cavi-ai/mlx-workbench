@@ -18,6 +18,46 @@ final class ScanContractTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.label == "Declared base size" && $0.value == "27B" })
     }
 
+    func testCompanionScanStatesOfferTheirBaseModelStep() throws {
+        let hauhau = "/models/lmstudio/HauhauCS/Qwen-MTP-GGUF"
+        let output = "/models/lmstudio/DavidAU/Fusion-GGUF/Fusion-Q6_K-MLX-6bit"
+        var payload = fixture(named: "convert-scan-valid")
+        payload["models"] = [
+            ["path": "/models/lmstudio/DavidAU/Fusion-GGUF/mmproj-F32.gguf", "name": "mmproj-F32.gguf", "bytes": 1,
+             "companion": true, "status": "converted", "outputs": [output], "task": ["type": "vision_projector"]],
+            ["path": "\(hauhau)/Qwen-FastMTP.gguf", "name": "Qwen-FastMTP.gguf", "bytes": 1, "companion": false,
+             "status": "companion", "outputs": [], "draft": ["port": NSNull(), "target": "Qwen-FastMTP"],
+             "task": ["type": "speculative_draft", "use_cases": ["speculative_decoding"]]],
+            ["path": "\(hauhau)/mmproj-BF16.gguf", "name": "mmproj-BF16.gguf", "bytes": 1, "companion": true,
+             "status": "companion", "outputs": [], "task": ["type": "vision_projector"]],
+            ["path": "/models/lmstudio/org/Base-GGUF/Base-Q4_K_M.gguf", "name": "Base-Q4_K_M.gguf", "bytes": 1,
+             "status": "pending", "outputs": []],
+            ["path": "/models/lmstudio/org/Base-GGUF/mmproj-F16.gguf", "name": "mmproj-F16.gguf", "bytes": 1,
+             "companion": true, "status": "companion", "outputs": []],
+        ]
+        payload["pending"] = ["/models/lmstudio/org/Base-GGUF/Base-Q4_K_M.gguf"]
+        payload["local_models"] = [
+            ["path": "\(hauhau)/Qwen-FastMTP.gguf", "repo": "HauhauCS/Qwen-MTP-GGUF"],
+            ["path": "\(hauhau)/mmproj-BF16.gguf", "repo": "HauhauCS/Qwen-MTP-GGUF"],
+        ]
+        let snapshot = ModelLibraryBuilder.build(scan: try WorkbenchAPI.decodeScan(payload),
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 64_000_000_000, macOSVersion: "26"), now: Date())
+        func model(_ name: String) throws -> LibraryModel { try XCTUnwrap(snapshot.models.first { $0.item.name == name }) }
+
+        let attached = try model("mmproj-F32.gguf")
+        XCTAssertEqual(attached.readiness, .ready)
+        XCTAssertEqual(attached.outputPaths, [output])
+        let drafter = try model("Qwen-FastMTP.gguf")
+        XCTAssertEqual(drafter.readiness, .companion)
+        XCTAssertEqual(drafter.item.task?.type, .speculativeDraft)
+        XCTAssertEqual(CompanionBase.resolve(for: drafter, in: snapshot.models), .download(repo: "HauhauCS/Qwen-MTP-GGUF"))
+        let loose = try model("mmproj-BF16.gguf")
+        XCTAssertEqual(loose.readiness, .companion)
+        XCTAssertEqual(CompanionBase.resolve(for: loose, in: snapshot.models), .download(repo: "HauhauCS/Qwen-MTP-GGUF"))
+        XCTAssertEqual(CompanionBase.resolve(for: try model("mmproj-F16.gguf"), in: snapshot.models),
+                       .convert(try model("Base-Q4_K_M.gguf")))
+    }
+
     func testScanPreservesAdvertisedConversionWidthsAndEmptyCapabilities() throws {
         var payload = fixture(named: "convert-scan-valid")
         payload["models"] = [

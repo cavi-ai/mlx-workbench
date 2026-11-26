@@ -23,6 +23,14 @@ struct ModelActions {
     /// The prepare action's label: unconverted weights convert, everything else is prepared.
     var prepareTitle: String { model.item.path.lowercased().hasSuffix(".gguf") || model.readiness == .needsConversion ? "Convert to MLX…" : "Prepare to run" }
 
+    /// What makes a companion usable: converting its base model when that GGUF is on disk, else getting the base.
+    var companionBase: CompanionBase? {
+        CompanionBase.resolve(for: model, in: appHost.librarySnapshot?.models ?? [])
+    }
+
+    /// The converted model a projector was attached to.
+    var attachedOutput: String? { model.item.isCompanion ? model.outputPaths.first : nil }
+
     /// Run serves chat models. Compare also supports ready media models.
     var canServe: Bool { ModelTaskPresentation.supportsEndpoint(model) }
     var canUse: Bool { !UseMode.modes(for: model).isEmpty }
@@ -63,9 +71,19 @@ struct ModelActions {
     }
 
     func prepare() {
-        appHost.selectedModelPath = model.item.path
-        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot, qBits: appHost.config.qBits)
+        convert(model)
+    }
+
+    /// Opens Convert for a model's GGUF; a companion's base converts with its projector attached.
+    func convert(_ source: LibraryModel) {
+        appHost.selectedModelPath = source.item.path
+        appHost.modelWorkflow.inspect(source: source.item, snapshot: appHost.librarySnapshot, qBits: appHost.config.qBits)
         onRouteSelection(.prepare)
+    }
+
+    func openInLibrary(_ path: String) {
+        appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
+        onRouteSelection(.library)
     }
 
     func compare(promptSetID: String? = nil) {
@@ -96,6 +114,27 @@ struct ModelActions {
     func review(runID: UUID) {
         appHost.handoffs.send(ComparisonResultsRequest(runID: runID), as: .reviewComparisonResults)
         onRouteSelection(.compare)
+    }
+}
+
+// MARK: - CompanionBase
+
+/// The base model step a companion offers, resolved from the latest Library snapshot.
+enum CompanionBase: Equatable {
+    /// The base GGUF sits beside the companion and still needs conversion.
+    case convert(LibraryModel)
+    /// The base is not on disk; the companion's repository provides it.
+    case download(repo: String)
+
+    static func resolve(for model: LibraryModel, in models: [LibraryModel]) -> CompanionBase? {
+        guard model.readiness == .companion else { return nil }
+        let folder = (model.item.path as NSString).deletingLastPathComponent
+        let base = models.first { candidate in
+            candidate.readiness == .needsConversion && candidate.item.draft == nil && !candidate.item.isCompanion
+                && (candidate.item.path as NSString).deletingLastPathComponent == folder
+        }
+        if let base { return .convert(base) }
+        return model.item.repo.map { .download(repo: $0) }
     }
 }
 
@@ -191,12 +230,20 @@ enum ModelDetailsPresentation {
             if model.item.servingRuntime == "strata" {
                 return "A local GGUF profile is prepared for the Strata runtime."
             }
+            if model.item.isCompanion, !model.outputPaths.isEmpty {
+                return "This projector was attached to its base model's MLX conversion."
+            }
             if !model.outputPaths.isEmpty {
                 return "An MLX output path was detected for this local model."
             }
             return "The scan marked this local model ready."
         case .needsConversion:
             return "No local MLX output was detected, so this model still needs Prepare work."
+        case .companion:
+            if model.item.draft != nil {
+                return "No MLX port converts this drafter; it runs beside its target model."
+            }
+            return "A projector has no conversion of its own; converting its base model attaches it."
         case .needsRuntime:
             if let backend = model.item.backend, !backend.installed {
                 return "The \(backend.id) backend that runs this model is not installed. Repair runtime opens its installation review in Health."
@@ -347,6 +394,7 @@ struct InspectorCaption: View {
 
 struct ModelDetailsView: View {
     let appHost: AppHost
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var verification: VerificationCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
 
@@ -474,11 +522,13 @@ struct ModelDetailsView: View {
         }
     }
 
-    private enum Primary { case repair, prepare, use, serve, none }
+    private enum Primary: Equatable { case repair, prepare, openOutput(String), base(CompanionBase), use, serve, none }
 
     private var primary: Primary {
         if ModelRuntimeRecoveryRequest(model: model) != nil { return .repair }
         if actions.canPrepare { return .prepare }
+        if let output = actions.attachedOutput { return .openOutput(output) }
+        if let base = actions.companionBase { return .base(base) }
         if actions.canUse { return .use }
         if actions.canServe { return .serve }
         return .none
@@ -518,6 +568,20 @@ struct ModelDetailsView: View {
         case .prepare:
             Button { actions.prepare() } label: { Text(actions.prepareTitle).frame(maxWidth: .infinity) }
                 .buttonStyle(.workbenchPrimary).controlSize(.large)
+        case .openOutput(let path):
+            Button { actions.openInLibrary(path) } label: { Text("Open converted model").frame(maxWidth: .infinity) }
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
+                .help("Show the MLX model this projector was converted into")
+        case .base(.convert(let base)):
+            Button { actions.convert(base) } label: { Text("Convert base model…").frame(maxWidth: .infinity) }
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
+                .help("Open Convert for \(base.displayName)")
+        case .base(.download(let repo)):
+            Button {
+                DiscoverIntakeAction.perform(repo: repo, intake: appHost.intake) { openWindow(id: IntakeWindow.id) }
+            } label: { Text("Get base model…").frame(maxWidth: .infinity) }
+                .buttonStyle(.workbenchPrimary).controlSize(.large)
+                .help("Opens the intake window for \(repo); nothing downloads until you confirm there")
         case .use:
             let title = UseMode.modes(for: model).first == .chat ? "Chat" : "Use"
             Button { actions.use() } label: {
